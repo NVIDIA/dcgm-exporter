@@ -345,7 +345,13 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	}
 	for i := range pids {
 		name, err := systemGetProcessName(pids[i])
-		assert(err)
+		if err != nil {
+			// TOCTOU: process terminated, skip it.
+			if strings.HasSuffix(err.Error(), "Unknown Error") {
+				continue
+			}
+			assert(err)
+		}
 		status.Processes = append(status.Processes, ProcessInfo{
 			PID:        pids[i],
 			Name:       name,
