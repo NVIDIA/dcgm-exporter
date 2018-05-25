@@ -389,3 +389,7 @@ func GetP2PLink(dev1, dev2 *Device) (link P2PLinkType, err error) {
 func (d *Device) GetComputeRunningProcesses() ([]uint, []uint64, error) {
 	return d.handle.deviceGetComputeRunningProcesses()
 }
+
+func (d *Device) GetGraphicsRunningProcesses() ([]uint, []uint64, error) {
+	return d.handle.deviceGetGraphicsRunningProcesses()
+}

@@ -397,3 +397,21 @@ func (h handle) deviceGetComputeRunningProcesses() ([]uint, []uint64, error) {
 	}
 	return pids, mems, errorString(r)
 }
+
+func (h handle) deviceGetGraphicsRunningProcesses() ([]uint, []uint64, error) {
+	var procs [szProcs]C.nvmlProcessInfo_t
+	var count = C.uint(szProcs)
+
+	r := C.nvmlDeviceGetGraphicsRunningProcesses(h.dev, &count, &procs[0])
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil, nil
+	}
+	n := int(count)
+	pids := make([]uint, n)
+	mems := make([]uint64, n)
+	for i := 0; i < n; i++ {
+		pids[i] = uint(procs[i].pid)
+		mems[i] = uint64(procs[i].usedGpuMemory)
+	}
+	return pids, mems, errorString(r)
+}
