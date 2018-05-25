@@ -415,3 +415,41 @@ func (h handle) deviceGetGraphicsRunningProcesses() ([]uint, []uint64, error) {
 	}
 	return pids, mems, errorString(r)
 }
+
+func (h handle) getClocksThrottleReasons() (reason ThrottleReason, err error) {
+	var clocksThrottleReasons C.ulonglong
+
+	r := C.nvmlDeviceGetCurrentClocksThrottleReasons(h.dev, &clocksThrottleReasons)
+
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return ThrottleReasonUnknown, nil
+	}
+
+	if r != C.NVML_SUCCESS {
+		return ThrottleReasonUnknown, errorString(r)
+	}
+
+	switch clocksThrottleReasons {
+	case C.nvmlClocksThrottleReasonGpuIdle:
+		reason = ThrottleReasonGpuIdle
+	case C.nvmlClocksThrottleReasonApplicationsClocksSetting:
+		reason = ThrottleReasonApplicationsClocksSetting
+	case C.nvmlClocksThrottleReasonSwPowerCap:
+		reason = ThrottleReasonSwPowerCap
+	case C.nvmlClocksThrottleReasonHwSlowdown:
+		reason = ThrottleReasonHwSlowdown
+	case C.nvmlClocksThrottleReasonSyncBoost:
+		reason = ThrottleReasonSyncBoost
+	case C.nvmlClocksThrottleReasonSwThermalSlowdown:
+		reason = ThrottleReasonSwThermalSlowdown
+	case C.nvmlClocksThrottleReasonHwThermalSlowdown:
+		reason = ThrottleReasonHwThermalSlowdown
+	case C.nvmlClocksThrottleReasonHwPowerBrakeSlowdown:
+		reason = ThrottleReasonHwPowerBrakeSlowdown
+	case C.nvmlClocksThrottleReasonDisplayClockSetting:
+		reason = ThrottleReasonDisplayClockSetting
+	case C.nvmlClocksThrottleReasonNone:
+		reason = ThrottleReasonNone
+	}
+	return
+}

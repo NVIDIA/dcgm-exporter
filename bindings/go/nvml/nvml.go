@@ -20,6 +20,48 @@ var (
 	ErrUnsupportedGPU     = errors.New("unsupported GPU device")
 )
 
+type ThrottleReason uint
+
+const (
+	ThrottleReasonGpuIdle ThrottleReason = iota
+	ThrottleReasonApplicationsClocksSetting
+	ThrottleReasonSwPowerCap
+	ThrottleReasonHwSlowdown
+	ThrottleReasonSyncBoost
+	ThrottleReasonSwThermalSlowdown
+	ThrottleReasonHwThermalSlowdown
+	ThrottleReasonHwPowerBrakeSlowdown
+	ThrottleReasonDisplayClockSetting
+	ThrottleReasonNone
+	ThrottleReasonUnknown
+)
+
+func (r ThrottleReason) String() string {
+	switch r {
+	case ThrottleReasonGpuIdle:
+		return "Gpu Idle"
+	case ThrottleReasonApplicationsClocksSetting:
+		return "Applications Clocks Setting"
+	case ThrottleReasonSwPowerCap:
+		return "SW Power Cap"
+	case ThrottleReasonHwSlowdown:
+		return "HW Slowdown"
+	case ThrottleReasonSyncBoost:
+		return "Sync Boost"
+	case ThrottleReasonSwThermalSlowdown:
+		return "SW Thermal Slowdown"
+	case ThrottleReasonHwThermalSlowdown:
+		return "HW Thermal Slowdown"
+	case ThrottleReasonHwPowerBrakeSlowdown:
+		return "HW Power Brake Slowdown"
+	case ThrottleReasonDisplayClockSetting:
+		return "Display Clock Setting"
+	case ThrottleReasonNone:
+		return "No clocks throttling"
+	}
+	return "N/A"
+}
+
 type P2PLinkType uint
 
 const (
@@ -122,6 +164,7 @@ type DeviceStatus struct {
 	Clocks      ClockInfo
 	PCI         PCIStatusInfo
 	Processes   []ProcessInfo
+	Throttle    ThrottleReason
 }
 
 func assert(err error) {
@@ -298,6 +341,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	assert(err)
 	pcirx, pcitx, err := d.deviceGetPcieThroughput()
 	assert(err)
+	throttle, err := d.getClocksThrottleReasons()
+	assert(err)
 
 	status = &DeviceStatus{
 		Power:       power,
@@ -327,6 +372,7 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 				TX: pcitx,
 			},
 		},
+		Throttle: throttle,
 	}
 	if power != nil {
 		*status.Power /= 1000 // W
