@@ -385,3 +385,7 @@ func GetP2PLink(dev1, dev2 *Device) (link P2PLinkType, err error) {
 	}
 	return
 }
+
+func (d *Device) GetComputeRunningProcesses() ([]uint, []uint64, error) {
+	return d.handle.deviceGetComputeRunningProcesses()
+}
