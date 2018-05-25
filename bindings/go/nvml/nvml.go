@@ -62,6 +62,21 @@ func (r ThrottleReason) String() string {
 	return "N/A"
 }
 
+type PerfState uint
+
+const (
+	PerfStateMax     = 0
+	PerfStateMin     = 15
+	PerfStateUnknown = 32
+)
+
+func (p PerfState) String() string {
+	if p >= PerfStateMax && p <= PerfStateMin {
+		return fmt.Sprintf("P%d", p)
+	}
+	return "Unknown"
+}
+
 type P2PLinkType uint
 
 const (
@@ -165,6 +180,7 @@ type DeviceStatus struct {
 	PCI         PCIStatusInfo
 	Processes   []ProcessInfo
 	Throttle    ThrottleReason
+	Performance PerfState
 }
 
 func assert(err error) {
@@ -343,6 +359,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	assert(err)
 	throttle, err := d.getClocksThrottleReasons()
 	assert(err)
+	perfState, err := d.getPerformanceState()
+	assert(err)
 
 	status = &DeviceStatus{
 		Power:       power,
@@ -372,7 +390,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 				TX: pcitx,
 			},
 		},
-		Throttle: throttle,
+		Throttle:    throttle,
+		Performance: perfState,
 	}
 	if power != nil {
 		*status.Power /= 1000 // W

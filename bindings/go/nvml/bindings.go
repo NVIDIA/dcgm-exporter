@@ -453,3 +453,18 @@ func (h handle) getClocksThrottleReasons() (reason ThrottleReason, err error) {
 	}
 	return
 }
+
+func (h handle) getPerformanceState() (PerfState, error) {
+	var pstate C.nvmlPstates_t
+
+	r := C.nvmlDeviceGetPerformanceState(h.dev, &pstate)
+
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return PerfStateUnknown, nil
+	}
+
+	if r != C.NVML_SUCCESS {
+		return PerfStateUnknown, errorString(r)
+	}
+	return PerfState(pstate), nil
+}
