@@ -9,6 +9,11 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -416,6 +421,63 @@ func (h handle) deviceGetGraphicsRunningProcesses() ([]uint, []uint64, error) {
 	return pids, mems, errorString(r)
 }
 
+func (h handle) deviceGetAllRunningProcesses() ([]ProcessInfo, error) {
+	cPids, cpMems, err := h.deviceGetComputeRunningProcesses()
+	if err != nil {
+		return nil, err
+	}
+
+	gPids, gpMems, err := h.deviceGetGraphicsRunningProcesses()
+	if err != nil {
+		return nil, err
+	}
+
+	allPids := make(map[uint]ProcessInfo)
+
+	for i, pid := range cPids {
+		name, err := processName(pid)
+		if err != nil {
+			return nil, err
+		}
+		allPids[pid] = ProcessInfo{
+			PID:        pid,
+			Name:       name,
+			MemoryUsed: cpMems[i] / (1024 * 1024), // MiB
+			Type:       Compute,
+		}
+
+	}
+
+	for i, pid := range gPids {
+		pInfo, exists := allPids[pid]
+		if exists {
+			pInfo.Type = ComputeAndGraphics
+			allPids[pid] = pInfo
+		} else {
+			name, err := processName(pid)
+			if err != nil {
+				return nil, err
+			}
+			allPids[pid] = ProcessInfo{
+				PID:        pid,
+				Name:       name,
+				MemoryUsed: gpMems[i] / (1024 * 1024), // MiB
+				Type:       Graphics,
+			}
+		}
+	}
+
+	var processInfo []ProcessInfo
+	for _, v := range allPids {
+		processInfo = append(processInfo, v)
+	}
+	sort.Slice(processInfo, func(i, j int) bool {
+		return processInfo[i].PID < processInfo[j].PID
+	})
+
+	return processInfo, nil
+}
+
 func (h handle) getClocksThrottleReasons() (reason ThrottleReason, err error) {
 	var clocksThrottleReasons C.ulonglong
 
@@ -467,4 +529,18 @@ func (h handle) getPerformanceState() (PerfState, error) {
 		return PerfStateUnknown, errorString(r)
 	}
 	return PerfState(pstate), nil
+}
+
+func processName(pid uint) (string, error) {
+	f := `/proc/` + strconv.FormatUint(uint64(pid), 10) + `/comm`
+	d, err := ioutil.ReadFile(f)
+
+	if err != nil {
+		// TOCTOU: process terminated
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSuffix(string(d), "\n"), err
 }

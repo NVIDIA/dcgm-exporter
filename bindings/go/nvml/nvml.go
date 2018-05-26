@@ -77,6 +77,24 @@ func (p PerfState) String() string {
 	return "Unknown"
 }
 
+type ProcessType uint
+
+const (
+	Compute ProcessType = iota
+	Graphics
+	ComputeAndGraphics
+)
+
+func (t ProcessType) String() string {
+	typ := "C+G"
+	if t == Compute {
+		typ = "C"
+	} else if t == Graphics {
+		typ = "G"
+	}
+	return typ
+}
+
 type P2PLinkType uint
 
 const (
@@ -169,6 +187,7 @@ type ProcessInfo struct {
 	PID        uint
 	Name       string
 	MemoryUsed uint64
+	Type       ProcessType
 }
 
 type DeviceStatus struct {
@@ -457,4 +476,8 @@ func (d *Device) GetComputeRunningProcesses() ([]uint, []uint64, error) {
 
 func (d *Device) GetGraphicsRunningProcesses() ([]uint, []uint64, error) {
 	return d.handle.deviceGetGraphicsRunningProcesses()
+}
+
+func (d *Device) GetAllRunningProcesses() ([]ProcessInfo, error) {
+	return d.handle.deviceGetAllRunningProcesses()
 }
