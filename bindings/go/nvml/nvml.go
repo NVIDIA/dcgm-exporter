@@ -370,8 +370,6 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	assert(err)
 	_, bar1, err := d.deviceGetBAR1MemoryInfo()
 	assert(err)
-	pids, pmems, err := d.deviceGetComputeRunningProcesses()
-	assert(err)
 	el1, el2, emem, err := d.deviceGetMemoryErrorCounter()
 	assert(err)
 	pcirx, pcitx, err := d.deviceGetPcieThroughput()
@@ -379,6 +377,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	throttle, err := d.getClocksThrottleReasons()
 	assert(err)
 	perfState, err := d.getPerformanceState()
+	assert(err)
+	processInfo, err := d.deviceGetAllRunningProcesses()
 	assert(err)
 
 	status = &DeviceStatus{
@@ -411,6 +411,7 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 		},
 		Throttle:    throttle,
 		Performance: perfState,
+		Processes:   processInfo,
 	}
 	if power != nil {
 		*status.Power /= 1000 // W
@@ -426,21 +427,6 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 	}
 	if pcitx != nil {
 		*status.PCI.Throughput.TX /= 1000 // MB/s
-	}
-	for i := range pids {
-		name, err := systemGetProcessName(pids[i])
-		if err != nil {
-			// TOCTOU: process terminated, skip it.
-			if strings.HasSuffix(err.Error(), "Unknown Error") {
-				continue
-			}
-			assert(err)
-		}
-		status.Processes = append(status.Processes, ProcessInfo{
-			PID:        pids[i],
-			Name:       name,
-			MemoryUsed: pmems[i] / (1024 * 1024), // MiB
-		})
 	}
 	return
 }
