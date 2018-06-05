@@ -225,7 +225,8 @@ func GetDriverVersion() (string, error) {
 }
 
 func numaNode(busid string) (uint, error) {
-	b, err := ioutil.ReadFile(fmt.Sprintf("/sys/bus/pci/devices/%s/numa_node", strings.ToLower(busid)))
+	// discard leading zeros of busid
+	b, err := ioutil.ReadFile(fmt.Sprintf("/sys/bus/pci/devices/%s/numa_node", strings.ToLower(busid[4:])))
 	if err != nil {
 		// XXX report node 0 if NUMA support isn't enabled
 		return 0, nil
