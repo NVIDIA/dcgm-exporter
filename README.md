@@ -8,6 +8,18 @@ NVML go bindings are taken from [nvidia-docker 1.0](https://github.com/NVIDIA/nv
 ### NVML Samples
 Three [samples](https://github.com/NVIDIA/gpu-monitoring-tools/blob/master/bindings/go/samples/nvml/README.md) are included to demonstrate how to use the NVML API.
 
+
+## DCGM Go Bindings
+
+[NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/data-center-gpu-manager-dcgm) is a set of tools for managing and monitoring NVIDIA GPUs in cluster environments. It's a low overhead tool suite that performs a variety of functions on each host system including active health monitoring, diagnostics, system validation, policies, power and clock management, group configuration and accounting.
+
+DCGM go bindings makes administering and monitoring containerized GPU applications easy.
+
+### DCGM Samples
+
+DCGM can be run in different modes, seven [samples](https://github.com/NVIDIA/gpu-monitoring-tools/blob/master/bindings/go/samples/dcgm/README.md) and a [REST API](https://github.com/NVIDIA/gpu-monitoring-tools/blob/master/bindings/go/samples/dcgm/restApi/README.md) are included for showing how to use the DCGM API and run it in different modes.
+
+
 ## DCGM exporter
 
 GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/data-center-gpu-manager-dcgm) is a simple shell script that starts nv-hostengine, reads GPU metrics every 1 second and converts it to a standard Prometheus format.
