@@ -44,7 +44,7 @@ func main() {
 		select {
 		case <-ticker.C:
 			for _, gpu := range gpus {
-				st, err := dcgm.GetDeviceStatus(1)
+				st, err := dcgm.GetDeviceStatus(gpu)
 				if err != nil {
 					log.Panicln(err)
 				}
