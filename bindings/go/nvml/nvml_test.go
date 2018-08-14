@@ -192,7 +192,7 @@ func TestDeviceStatus(t *testing.T) {
 				output = status.Performance.String()
 			case "ecc.errors.uncorrected.volatile.device_memory":
 				msg = "ecc error in device memory"
-				ecc := status.Memory.ECCErrors.Global
+				ecc := status.Memory.ECCErrors.Device
 				if ecc != nil {
 					output = strconv.FormatUint(*ecc, 10)
 				}

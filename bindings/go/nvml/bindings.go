@@ -330,14 +330,37 @@ func (h handle) deviceGetDecoderUtilization() (*uint, error) {
 	return uintPtr(usage), errorString(r)
 }
 
-func (h handle) deviceGetMemoryInfo() (*uint64, error) {
+func (h handle) deviceGetMemoryInfo() (totalMem *uint64, devMem DeviceMemory, err error) {
 	var mem C.nvmlMemory_t
 
 	r := C.nvmlDeviceGetMemoryInfo(h.dev, &mem)
 	if r == C.NVML_ERROR_NOT_SUPPORTED {
-		return nil, nil
+		return
 	}
-	return uint64Ptr(mem.used), errorString(r)
+
+	err = errorString(r)
+	if r != C.NVML_SUCCESS {
+		return
+	}
+
+	totalMem = uint64Ptr(mem.total)
+	if totalMem != nil {
+		*totalMem /= 1024 * 1024 // MiB
+	}
+
+	devMem = DeviceMemory{
+		Used: uint64Ptr(mem.used),
+		Free: uint64Ptr(mem.free),
+	}
+
+	if devMem.Used != nil {
+		*devMem.Used /= 1024 * 1024 // MiB
+	}
+
+	if devMem.Free != nil {
+		*devMem.Free /= 1024 * 1024 // MiB
+	}
+	return
 }
 
 func (h handle) deviceGetClockInfo() (*uint, *uint, error) {
