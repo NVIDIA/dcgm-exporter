@@ -20,6 +20,39 @@ var (
 	ErrUnsupportedGPU     = errors.New("unsupported GPU device")
 )
 
+type ModeState uint
+
+const (
+	Enabled ModeState = iota
+	Disabled
+)
+
+func (m ModeState) String() string {
+	switch m {
+	case Enabled:
+		return "Enabled"
+	case Disabled:
+		return "Disabled"
+	}
+	return "N/A"
+}
+
+type Display struct {
+	Mode   ModeState
+	Active ModeState
+}
+
+type Accounting struct {
+	Mode       ModeState
+	BufferSize *uint
+}
+
+type DeviceMode struct {
+	DisplayInfo    Display
+	Persistence    ModeState
+	AccountingInfo Accounting
+}
+
 type ThrottleReason uint
 
 const (
@@ -473,4 +506,28 @@ func (d *Device) GetGraphicsRunningProcesses() ([]uint, []uint64, error) {
 
 func (d *Device) GetAllRunningProcesses() ([]ProcessInfo, error) {
 	return d.handle.deviceGetAllRunningProcesses()
+}
+
+func (d *Device) GetDeviceMode() (mode *DeviceMode, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
+	display, err := d.getDisplayInfo()
+	assert(err)
+
+	p, err := d.getPeristenceMode()
+	assert(err)
+
+	accounting, err := d.getAccountingInfo()
+	assert(err)
+
+	mode = &DeviceMode{
+		DisplayInfo:    display,
+		Persistence:    p,
+		AccountingInfo: accounting,
+	}
+	return
 }

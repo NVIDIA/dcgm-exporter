@@ -567,3 +567,68 @@ func processName(pid uint) (string, error) {
 	}
 	return strings.TrimSuffix(string(d), "\n"), err
 }
+
+func (h handle) getAccountingInfo() (accountingInfo Accounting, err error) {
+	var mode C.nvmlEnableState_t
+	var buffer C.uint
+
+	r := C.nvmlDeviceGetAccountingMode(h.dev, &mode)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+
+	if r != C.NVML_SUCCESS {
+		return accountingInfo, errorString(r)
+	}
+
+	r = C.nvmlDeviceGetAccountingBufferSize(h.dev, &buffer)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+
+	if r != C.NVML_SUCCESS {
+		return accountingInfo, errorString(r)
+	}
+
+	accountingInfo = Accounting{
+		Mode:       ModeState(mode),
+		BufferSize: uintPtr(buffer),
+	}
+	return
+}
+
+func (h handle) getDisplayInfo() (display Display, err error) {
+	var mode, isActive C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetDisplayActive(h.dev, &mode)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+
+	if r != C.NVML_SUCCESS {
+		return display, errorString(r)
+	}
+
+	r = C.nvmlDeviceGetDisplayMode(h.dev, &isActive)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+	if r != C.NVML_SUCCESS {
+		return display, errorString(r)
+	}
+	display = Display{
+		Mode:   ModeState(mode),
+		Active: ModeState(isActive),
+	}
+	return
+}
+
+func (h handle) getPeristenceMode() (state ModeState, err error) {
+	var mode C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetPersistenceMode(h.dev, &mode)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return
+	}
+	return ModeState(mode), errorString(r)
+}
