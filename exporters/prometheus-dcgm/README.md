@@ -2,6 +2,11 @@
 
 Simple script to export metrics from [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/data-center-gpu-manager-dcgm) to [Prometheus](https://prometheus.io/).
 
+### Prerequisites
+* NVIDIA Tesla drivers = R384+ (download from [NVIDIA Driver Downloads page](http://www.nvidia.com/drivers))
+* nvidia-docker version > 2.0 (see how to [install](https://github.com/NVIDIA/nvidia-docker) and it's [prerequisites](https://github.com/nvidia/nvidia-docker/wiki/Installation-\(version-2.0\)#prerequisites))
+* Optionally configure docker to set your [default runtime](https://github.com/NVIDIA/nvidia-container-runtime#daemon-configuration-file) to nvidia
+
 ### DCGM supported GPUs
 
 Make sure all GPUs on the system are DCGM supported, otherwise the script will fail.
@@ -29,22 +34,21 @@ $ docker-compose up
 
 ## Deploy on kubernetes cluster
 ```sh
-# First, set deafult runtime to nvidia on your GPU node by editing /etc/docker/daemon.json.
+# First, set the default runtime to nvidia by editing /etc/docker/daemon.json.
 
-{
-    "default-runtime": "nvidia",
-    "runtimes": {
-    	"nvidia": {
-            "path": "/usr/bin/nvidia-container-runtime",
-            "runtimeArgs": []
-        }
-    }
-}
+# Deploy custom node-exporter with dcgm-exporter, to expose GPU metrics to Prometheus and Grafana
+# Note that nodeSelector field is added to the pod spec to restrict deploying node-exporter only on GPU nodes
 
-$ sudo systemctl daemon-reload
-$ sudo systemctl restart docker
-$ sudo systemctl restart kubelet
-$ kubectl create -f dcgm-exporter-daemonset.yaml
+# Make sure to attach matching label to the GPU node
+$ kubectl label nodes <gpu-node-name> hardware-type=NVIDIAGPU
+
+# Check if the label is added
+$ kubectl get nodes --show-labels
+
+$ kubectl create -f node-exporter-daemonset.yaml
+
+# Check if node-exporter is collecting the metrics
+$ curl -s localhost:9100/metrics | grep dcgm
 ```
 
 ## node-exporter
