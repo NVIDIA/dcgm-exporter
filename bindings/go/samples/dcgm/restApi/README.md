@@ -9,9 +9,9 @@ A sample REST API is provided, demonstrating various endpoints for getting GPU m
 
 $ go build && ./restApi
 
-# Query GPU info
-
-$ curl localhost:8070/dcgm/device/info/id/GPUID
+# Query GPU 0 info
+$ GPUID=0
+$ curl localhost:8070/dcgm/device/info/id/$GPUID
 
 # sample output
 
@@ -35,9 +35,13 @@ CPUAffinity            : 0-11
 P2P Available          : None
 ---------------------------------------------------------------------
 
-$ curl localhost:8070/dcgm/device/info/id/GPUID/json
-$ curl localhost:8070/dcgm/device/info/uuid/UUID
-$ curl localhost:8070/dcgm/device/info/uuid/UUID/json
+$ curl localhost:8070/dcgm/device/info/id/$GPUID/json
+
+# Query GPU info using its UUID
+
+$ UUID=$(curl -s localhost:8070/dcgm/device/info/id/$GPUID | grep -i uuid | cut -d ":" -f2 )
+$ curl localhost:8070/dcgm/device/info/uuid/$UUID
+$ curl localhost:8070/dcgm/device/info/uuid/$UUID/json
 
 # sample output
 
@@ -45,8 +49,8 @@ $ curl localhost:8070/dcgm/device/info/uuid/UUID/json
 
 # Query GPU status
 
-$ curl localhost:8070/dcgm/device/status/id/GPUID
-$ curl localhost:8070/dcgm/device/status/id/GPUID/json
+$ curl localhost:8070/dcgm/device/status/id/$GPUID
+$ curl localhost:8070/dcgm/device/status/id/$GPUID/json
 
 # sample output
 
@@ -59,18 +63,21 @@ Decoder Utilization (%) : 0
 Memory Clock (MHz       : 324
 SM Clock (MHz)          : 135
 
-$ curl localhost:8070/dcgm/device/status/uuid/UUID
+$ curl localhost:8070/dcgm/device/status/uuid/$UUID
 
 # sample output
 
 {"Power":20.793,"Temperature":43,"Utilization":{"GPU":0,"Memory":8,"Encoder":0,"Decoder":0},"Memory":{"GlobalUsed":null,"ECCErrors":{"SingleBit":9223372036854775794,"DoubleBit":9223372036854775794}},"Clocks":{"Cores":135,"Memory":324},"PCI":{"BAR1Used":9,"Throughput":{"Rx":129,"Tx":47,"Replays":0},"FBUsed":423},"Performance":8,"FanSpeed":29}
 
-$ curl localhost:8070/dcgm/device/status/uuid/UUID/json
+$ curl localhost:8070/dcgm/device/status/uuid/$UUID/json
 
 # Query GPU process info
 
-$ curl localhost:8070/dcgm/process/info/pid/PID
-$ curl localhost:8070/dcgm/process/info/pid/PID/json
+# Run CUDA nbody sample and get its PID
+$ PID=$(pgrep nbody)
+
+$ curl localhost:8070/dcgm/process/info/pid/$PID
+$ curl localhost:8070/dcgm/process/info/pid/$PID/json
 
 # sample output
 
@@ -78,10 +85,10 @@ $ curl localhost:8070/dcgm/process/info/pid/PID/json
 
 # Query GPU health
 
-$ curl localhost:8070/dcgm/health/id/GPUID
-$ curl localhost:8070/dcgm/health/id/GPUID/json
-$ curl localhost:8070/dcgm/health/uuid/UUID
-$ curl localhost:8070/dcgm/health/uuid/UUID/json
+$ curl localhost:8070/dcgm/health/id/$GPUID
+$ curl localhost:8070/dcgm/health/id/$GPUID/json
+$ curl localhost:8070/dcgm/health/uuid/$UUID
+$ curl localhost:8070/dcgm/health/uuid/$UUID/json
 
 # sample output
 
