@@ -28,6 +28,9 @@ func uintPtrInt(c C.int) *uint {
 }
 
 func uintPtrUnsafe(p unsafe.Pointer) *uint {
+	if p == nil {
+		return nil
+	}
 	uintP := (*uint)(unsafe.Pointer(p))
 	val := *uintP
 	return &val
@@ -44,6 +47,9 @@ func uint64PtrUint(c C.uint) *uint64 {
 }
 
 func uint64PtrUnsafe(p unsafe.Pointer) *uint64 {
+	if p == nil {
+		return nil
+	}
 	uintP := (*uint64)(unsafe.Pointer(p))
 	val := *uintP
 	return &val
@@ -65,6 +71,9 @@ func dblToFloat(val C.double) *float64 {
 }
 
 func dblToFloatUnsafe(val unsafe.Pointer) *float64 {
+	if val == nil {
+		return nil
+	}
 	dblP := (*C.double)(unsafe.Pointer(val))
 	floatP := float64(*dblP)
 	return &floatP
@@ -102,14 +111,14 @@ func isInt64Blank(value int64) bool {
 }
 
 func blank64(val *uint64) *uint64 {
-	if isInt64Blank(int64(*val)) {
+	if val != nil && isInt64Blank(int64(*val)) {
 		return nil
 	}
 	return val
 }
 
 func blank32(val *uint) *uint {
-	if isInt32Blank(int(*val)) {
+	if val != nil && isInt32Blank(int(*val)) {
 		return nil
 	}
 	return val
@@ -126,6 +135,9 @@ func makeVersion2(struct_type uintptr) C.uint {
 }
 
 func roundFloat(f *float64) *float64 {
-	n := math.Round(*f)
-	return &n
+	var val float64
+	if f != nil {
+		val = math.Round(*f)
+	}
+	return &val
 }

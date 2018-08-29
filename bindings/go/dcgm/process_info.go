@@ -134,7 +134,7 @@ func getProcessInfo(groupId groupHandle, pid uint) (processInfo []ProcessInfo, e
 		}
 
 		memory := MemoryInfo{
-			GlobalUsed: uint64Ptr(pidInfo.gpus[i].maxGpuMemoryUsed), // max gpu memory used for this process
+			GlobalUsed: blank64(uint64Ptr(pidInfo.gpus[i].maxGpuMemoryUsed)), // max gpu memory used for this process
 			ECCErrors: ECCErrorsInfo{
 				SingleBit: blank32(uintPtr(pidInfo.gpus[i].eccSingleBit)),
 				DoubleBit: blank32(uintPtr(pidInfo.gpus[i].eccDoubleBit)),

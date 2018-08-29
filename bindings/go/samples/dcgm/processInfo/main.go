@@ -39,8 +39,8 @@ Due to - Power (%)           : {{or .Violations.Power "N/A"}}
        - Low Utilization (%) : {{or .Violations.LowUtilization "N/A"}}
        - Sync Boost (%)      : {{or .Violations.SyncBoost "N/A"}}
 ----------Process Utilization-----------------------------------------
-Avg SM Utilization (%)       : {{.ProcessUtilization.SmUtil}}
-Avg Memory Utilization (%)   : {{.ProcessUtilization.MemUtil}}
+Avg SM Utilization (%)       : {{or .ProcessUtilization.SmUtil "N/A"}}
+Avg Memory Utilization (%)   : {{or .ProcessUtilization.MemUtil "N/A"}}
 ----------------------------------------------------------------------
 `
 )

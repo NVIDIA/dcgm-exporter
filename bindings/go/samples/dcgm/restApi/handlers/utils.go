@@ -75,8 +75,8 @@ Due to - Power (%)           : {{.Violations.Power}}
        - Low Utilization (%) : {{.Violations.LowUtilization}}
        - Sync Boost (%)      : {{.Violations.SyncBoost}}
 ----------Process Utilization-----------------------------------------
-Avg SM Utilization (%)       : {{.ProcessUtilization.SmUtil}}
-Avg Memory Utilization (%)   : {{.ProcessUtilization.MemUtil}}
+Avg SM Utilization (%)       : {{or .ProcessUtilization.SmUtil "N/A"}}
+Avg Memory Utilization (%)   : {{or .ProcessUtilization.MemUtil "N/A"}}
 ----------------------------------------------------------------------
 `
 	healthStatus = `GPU                : {{.GPU}}
