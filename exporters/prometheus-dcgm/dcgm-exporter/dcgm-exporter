@@ -43,8 +43,8 @@ echo "Collecting metrics at ${OUTPUT_FILE} every ${COLLECT_INTERVAL_MS}ms..."
 dcgmi dmon -d "${COLLECT_INTERVAL_MS}" -e \
 "54,"\
 "100,101,"\
-"140,150,155,"\
-"202,203,204,206,207,"\
+"140,150,155,156,"\
+"200,201,202,203,204,206,207,"\
 "230,240,241,242,243,244,245,246,"\
 "251,252,"\
 "310,311,312,313,"\
@@ -77,11 +77,11 @@ function metric(name, type, help, value) {
 
     # Power
     metric("power_usage", "gauge", "Power draw (in W).", $(i++))                                                      # field 155
-    #metric("total_energy_consumption", "counter", "Total energy consumption since boot (in mJ).", $(i++))             # field 156 TOBEFIXED
+    metric("total_energy_consumption", "counter", "Total energy consumption since boot (in mJ).", $(i++))             # field 156 FIXED
 
     # PCIe
-    #metric("pcie_tx_throughput", "counter", "Total number of bytes transmitted through PCIe TX (in KB)", $(i++))                                                                     # field 200 TOBEFIXED
-    #metric("pcie_rx_throughput", "counter", "Total number of bytes received through PCIe RX (in KB)", $(i++))                                                                     # field 201 TOBEFIXED
+    metric("pcie_tx_throughput", "counter", "Total number of bytes transmitted through PCIe TX (in KB)", $(i++))      # field 200 FIXED
+    metric("pcie_rx_throughput", "counter", "Total number of bytes received through PCIe RX (in KB)", $(i++))         # field 201 FIXED
     metric("pcie_replay_counter", "counter", "Total number of PCIe retries.", $(i++))                                 # field 202
 
     # Utilization (the sample period varies depending on the product)

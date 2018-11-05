@@ -1,6 +1,6 @@
 FROM ubuntu:16.04
 
-ARG DCGM_VERSION=1.4.3
+ARG DCGM_VERSION=1.4.6
 
 COPY datacenter-gpu-manager_${DCGM_VERSION}_amd64.deb /tmp
 RUN dpkg -i /tmp/*.deb && rm -f /tmp/*
