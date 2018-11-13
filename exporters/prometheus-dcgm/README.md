@@ -51,6 +51,10 @@ $ kubectl create -f node-exporter-daemonset.yaml
 $ curl -s localhost:9100/metrics | grep dcgm
 ```
 
+### Helm Charts
+
+Another way to gather and visualize GPU metrics in kubernetes cluster is to use our helm charts. Find install and run instrcutions from [here](https://nvidia.github.io/gpu-monitoring-tools/).
+
 ## node-exporter
 
 Add GPU metrics directly to node-exporter.
