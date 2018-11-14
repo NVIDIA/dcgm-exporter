@@ -45,10 +45,17 @@ $ kubectl label nodes <gpu-node-name> hardware-type=NVIDIAGPU
 # Check if the label is added
 $ kubectl get nodes --show-labels
 
+# node-exporter collecting GPU and its default metrics
 $ kubectl create -f node-exporter-daemonset.yaml
 
-# Check if node-exporter is collecting the metrics
+# Check if node-exporter is collecting the GPU metrics successfully
 $ curl -s localhost:9100/metrics | grep dcgm
+
+# node-exporter collecting only GPU metrics
+$ kubectl create -f dcgm-exporter-daemonset.yaml
+
+# Check GPU metrics
+$ curl -s localhost:9101/metrics
 ```
 
 ### Helm Charts
