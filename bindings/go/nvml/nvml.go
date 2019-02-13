@@ -23,8 +23,8 @@ var (
 type ModeState uint
 
 const (
-	Enabled ModeState = iota
-	Disabled
+	Disabled ModeState = iota
+	Enabled
 )
 
 func (m ModeState) String() string {
