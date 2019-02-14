@@ -2,7 +2,7 @@
 
 ## NVML Go Bindings
 
-[NVIDIA Management Library (NVML)](https://developer.nvidia.com/nvidia-management-library-nvml) is a C-based API for monitoring and managing NVIDIA GPU devices. 
+[NVIDIA Management Library (NVML)](https://docs.nvidia.com/deploy/nvml-api/nvml-api-reference.html#nvml-api-reference) is a C-based API for monitoring and managing NVIDIA GPU devices. 
 NVML go bindings are taken from [nvidia-docker 1.0](https://github.com/NVIDIA/nvidia-docker/tree/1.0) with some improvements and additions. NVML headers are also added to the package to make it easy to use and build.
 
 ### NVML Samples
