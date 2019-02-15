@@ -45,8 +45,11 @@ $ kubectl label nodes <gpu-node-name> hardware-type=NVIDIAGPU
 # Check if the label is added
 $ kubectl get nodes --show-labels
 
-# node-exporter collecting GPU and its default metrics
+# node-exporter collecting all GPUs and its default metrics
 $ kubectl create -f node-exporter-daemonset.yaml
+
+# Collect per pod device metrics
+# kubectl create -f pod-devices-exporter/node-device-exporter-daemonset.yaml
 
 # Check if node-exporter is collecting the GPU metrics successfully
 $ curl -s localhost:9100/metrics | grep dcgm
@@ -61,6 +64,10 @@ $ curl -s localhost:9101/metrics
 ### Helm Charts
 
 Another way to gather and visualize GPU metrics in kubernetes cluster is to use our helm charts. Find install and run instrcutions from [here](https://nvidia.github.io/gpu-monitoring-tools/).
+
+### Per Pod GPU metrics
+
+If you want to get per pod device metrics, use [pod-devices-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm/pod-devices-exporter#pod-device-metrics).
 
 ## node-exporter
 
