@@ -77,7 +77,8 @@ func (s *httpServer) serve() {
 }
 
 func (s *httpServer) stop() {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	if err := s.server.Shutdown(ctx); err != nil {
 		log.Printf("Error: %v", err)
