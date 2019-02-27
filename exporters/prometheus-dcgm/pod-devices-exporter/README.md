@@ -1,6 +1,6 @@
 # Pod Device Metrics
 
-Collect per pod device metrics via pod-devices-exporter. pod-device-exporter connects to kubelet gRPC server (/var/lib/kubelet/pod-resources) to get GPU device's pod information and appends to metrics collected by [dcgm-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm/dcgm-exporter).
+Collect per pod device metrics via pod-devices-exporter. pod-device-exporter connects to kubelet gRPC server (/var/lib/kubelet/pod-resources) to get GPU device's pod information and appends to metrics collected by [dcgm-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm/dcgm-exporter). pod-device-exporter leverages Kubernetes [device assignment feature](https://github.com/vikaschoudhary16/community/blob/060a25c441269be476ade624ea0347ebc113e659/keps/sig-node/compute-device-assignment.md) and identifies the GPUs running on a pod.
 
 ### Prerequisites
 * NVIDIA Tesla drivers = R384+ (download from [NVIDIA Driver Downloads page](http://www.nvidia.com/drivers))
