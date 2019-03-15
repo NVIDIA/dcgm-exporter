@@ -2,7 +2,7 @@
 
 A simple go http server serving per pod GPU metrics at localhost:9400/gpu/metrics. The exporter connects to kubelet gRPC server (/var/lib/kubelet/pod-resources) to identify the GPUs running on a pod leveraging Kubernetes [device assignment feature](https://github.com/vikaschoudhary16/community/blob/060a25c441269be476ade624ea0347ebc113e659/keps/sig-node/compute-device-assignment.md) and appends the GPU device's pod information to metrics collected by [dcgm-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm/dcgm-exporter).
 
-The http server allows Prometheus to scrape GPU metrics directly via a separate endpoint without relying on [node-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/blob/master/exporters/prometheus-dcgm/node-exporter-daemonset.yaml). But if you still want to scrape GPU metrics via node-exporter, follow [these instructions](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm#node_exporter).
+The http server allows Prometheus to scrape GPU metrics directly via a separate endpoint without relying on node-exporter. But if you still want to scrape GPU metrics via node-exporter, follow [these instructions](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm#node_exporter).
 
 ### Prerequisites
 * NVIDIA Tesla drivers = R384+ (download from [NVIDIA Driver Downloads page](http://www.nvidia.com/drivers))

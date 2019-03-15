@@ -23,57 +23,25 @@ $ nvidia-smi -L | wc -l
 ```sh
 # Download and install DCGM, then
 
+$ cd bare-metal
 $ sudo make install
 $ sudo systemctl start prometheus-dcgm
 ```
 
-## Container install
+## Docker Install
 ```sh
+$ cd docker
 $ docker-compose up
 ```
 
-## Deploy on kubernetes cluster
+### Docker Run
 ```sh
-# First, set the default runtime to nvidia by editing /etc/docker/daemon.json.
+$ docker run -d --runtime=nvidia --rm --name=nvidia-dcgm-exporter -v /run/prometheus:/run/prometheus nvidia/dcgm-exporter
 
-# Deploy custom node-exporter with dcgm-exporter, to expose GPU metrics to Prometheus and Grafana
-# Note that nodeSelector field is added to the pod spec to restrict deploying node-exporter only on GPU nodes
+# To check the metrics
+$ cat /run/prometheus/dcgm.prom
 
-# Make sure to attach matching label to the GPU node
-$ kubectl label nodes <gpu-node-name> hardware-type=NVIDIAGPU
-
-# Check if the label is added
-$ kubectl get nodes --show-labels
-
-# node-exporter collecting all GPUs and its default metrics
-$ kubectl create -f node-exporter-daemonset.yaml
-
-# Collect per pod device metrics
-# kubectl create -f pod-devices-exporter/node-device-exporter-daemonset.yaml
-
-# Check if node-exporter is collecting the GPU metrics successfully
-$ curl -s localhost:9100/metrics | grep dcgm
-
-# node-exporter collecting only GPU metrics
-$ kubectl create -f dcgm-exporter-daemonset.yaml
-
-# Check GPU metrics
-$ curl -s localhost:9101/metrics
-```
-
-### Helm Charts
-
-Another way to gather and visualize GPU metrics in kubernetes cluster is to use our helm charts. Find install and run instrcutions from [here](https://nvidia.github.io/gpu-monitoring-tools/).
-
-### Per Pod GPU metrics
-
-If you want to get per pod device metrics, use [pod-devices-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm/pod-devices-exporter#pod-device-metrics).
-
-## node-exporter
-
-Add GPU metrics directly to node-exporter.
-```sh
-$ docker run -d --runtime=nvidia --rm --name=nvidia-dcgm-exporter nvidia/dcgm-exporter
+# If you want to add GPU metrics directly to node-exporter container
 $ docker run -d --rm --net="host" --pid="host" --volumes-from nvidia-dcgm-exporter:ro quay.io/prometheus/node-exporter --collector.textfile.directory="/run/prometheus"
 
 $ curl localhost:9100/metrics
@@ -99,3 +67,45 @@ dcgm_total_energy_consumption{gpu="0",uuid="GPU-8f640a3c-7e9a-608d-02a3-f4372d72
 # TYPE dcgm_xid_errors gauge
 dcgm_xid_errors{gpu="0",uuid="GPU-8f640a3c-7e9a-608d-02a3-f4372d72b323"} 0
 ```
+
+## In kubernetes
+
+### [node_exporter](https://github.com/prometheus/node_exporter)
+```sh
+# First, set the default runtime to nvidia by editing /etc/docker/daemon.json.
+
+# Deploy custom node-exporter with dcgm-exporter, to expose GPU metrics to Prometheus and Grafana
+# Note that nodeSelector field is added to the pod spec to restrict deploying node-exporter only on GPU nodes
+
+# Make sure to attach matching label to the GPU node
+$ kubectl label nodes <gpu-node-name> hardware-type=NVIDIAGPU
+
+# Check if the label is added
+$ kubectl get nodes --show-labels
+
+$ cd k8s
+
+# node-exporter collecting all GPUs and its other default metrics
+$ kubectl create -f node-exporter/gpu-node-exporter-daemonset.yaml
+
+# Or to collect per pod GPU metrics and other default system level metrics
+$ kubectl create -f node-exporter/pod-gpu-node-exporter-daemonset.yaml
+
+# Check if node-exporter is collecting the GPU metrics successfully
+$ curl -s localhost:9100/metrics | grep dcgm
+
+# node-exporter collecting only GPU metrics
+$ kubectl create -f node-exporter/gpu-only-node-exporter-daemonset.yaml
+
+# Check GPU metrics
+$ curl -s localhost:9101/metrics
+```
+
+### Per Pod GPU metrics
+
+If you want to get per pod GPU metrics directly in Prometheus, deploy [pod-gpu-metrics-exporter](https://github.com/NVIDIA/gpu-monitoring-tools/tree/master/exporters/prometheus-dcgm/k8s/pod-gpu-metrics-exporter#pod-gpu-metrics-exporter).
+
+
+### Helm Charts
+
+Another way to gather and visualize GPU metrics in kubernetes cluster is to use our helm charts. Find install and run instrcutions from [here](https://nvidia.github.io/gpu-monitoring-tools/).
