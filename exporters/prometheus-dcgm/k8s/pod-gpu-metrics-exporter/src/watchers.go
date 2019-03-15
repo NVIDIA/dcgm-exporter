@@ -3,8 +3,9 @@
 package main
 
 import (
-	"flag"
-	"syscall"
+	"fmt"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/golang/glog"
@@ -19,19 +20,12 @@ const (
 	gpuPodMetrics     = gpuPodMetricsPath + "dcgm-pod.prom"
 )
 
-func main() {
-	defer glog.Flush()
-	flag.Parse()
-
-	glog.Info("Starting FS watcher.")
+func watchAndWriteGPUmetrics() {
 	watcher, err := watchDir(gpuMetricsPath)
 	if err != nil {
 		glog.Fatal(err)
 	}
 	defer watcher.Close()
-
-	glog.Info("Starting OS watcher.")
-	sigs := sigWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	// create gpuPodMetrics dir
 	err = createMetricsDir(gpuPodMetricsPath)
@@ -59,14 +53,40 @@ func main() {
 		case err := <-watcher.Errors:
 			glog.Errorf("inotify: %s", err)
 
-		// exit if there are no events for 20 seconds.
+			// exit if there are no events for 20 seconds.
 		case <-time.After(time.Second * 20):
 			glog.Fatal("No events received. Make sure \"dcgm-exporter\" is running")
 			return
-
-		case sig := <-sigs:
-			glog.V(2).Infof("Received signal \"%v\", shutting down.", sig)
-			return
 		}
 	}
+}
+
+func watchDir(path string) (*fsnotify.Watcher, error) {
+	// Make sure the arg is a dir
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("error getting information for %s: %v", path, err)
+	}
+
+	if !fi.Mode().IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", path)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create FS Watcher: %v", err)
+	}
+
+	err = watcher.Add(path)
+	if err != nil {
+		watcher.Close()
+		return nil, fmt.Errorf("failed to add %s to Watcher: %v", path, err)
+	}
+	return watcher, nil
+}
+
+func sigWatcher(sigs ...os.Signal) chan os.Signal {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, sigs...)
+	return sigChan
 }
