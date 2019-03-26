@@ -248,6 +248,17 @@ func (h handle) deviceGetNvLinkState(link uint) (*uint, error) {
 	return uintPtr(C.uint(isActive)), errorString(r)
 }
 
+func (h handle) deviceGetNvLinkRemotePciInfo(link uint) (*string, error) {
+	var pci C.nvmlPciInfo_t
+
+	r := C.nvmlDeviceGetNvLinkRemotePciInfo(h.dev, C.uint(link), &pci)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
+	return stringPtr(&pci.busId[0]), errorString(r)
+}
+
 func (h handle) deviceGetPowerManagementLimit() (*uint, error) {
 	var power C.uint
 
