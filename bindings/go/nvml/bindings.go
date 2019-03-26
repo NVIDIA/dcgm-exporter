@@ -237,6 +237,17 @@ func (h handle) deviceGetBAR1MemoryInfo() (*uint64, *uint64, error) {
 	return uint64Ptr(bar1.bar1Total), uint64Ptr(bar1.bar1Used), errorString(r)
 }
 
+func (h handle) deviceGetNvLinkState(link uint) (*uint, error) {
+	var isActive C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetNvLinkState(h.dev, C.uint(link), &isActive)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
+	return uintPtr(C.uint(isActive)), errorString(r)
+}
+
 func (h handle) deviceGetPowerManagementLimit() (*uint, error) {
 	var power C.uint
 
