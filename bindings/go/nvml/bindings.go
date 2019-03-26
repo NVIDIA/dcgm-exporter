@@ -259,6 +259,36 @@ func (h handle) deviceGetNvLinkRemotePciInfo(link uint) (*string, error) {
 	return stringPtr(&pci.busId[0]), errorString(r)
 }
 
+func (h handle) deviceGetAllNvLinkRemotePciInfo() ([]*string, error) {
+	busIds := []*string{}
+
+	for i := uint(0); i < C.NVML_NVLINK_MAX_LINKS; i++ {
+		state, err := h.deviceGetNvLinkState(i)
+		if err != nil {
+			return nil, err
+		}
+
+		if state == nil {
+			return nil, nil
+		}
+
+		if *state == C.NVML_FEATURE_ENABLED {
+			pci, err := h.deviceGetNvLinkRemotePciInfo(i)
+			if err != nil {
+				return nil, err
+			}
+
+			if pci == nil {
+				return nil, nil
+			}
+
+			busIds = append(busIds, pci)
+		}
+	}
+
+	return busIds, nil
+}
+
 func (h handle) deviceGetPowerManagementLimit() (*uint, error) {
 	var power C.uint
 
