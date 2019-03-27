@@ -237,6 +237,58 @@ func (h handle) deviceGetBAR1MemoryInfo() (*uint64, *uint64, error) {
 	return uint64Ptr(bar1.bar1Total), uint64Ptr(bar1.bar1Used), errorString(r)
 }
 
+func (h handle) deviceGetNvLinkState(link uint) (*uint, error) {
+	var isActive C.nvmlEnableState_t
+
+	r := C.nvmlDeviceGetNvLinkState(h.dev, C.uint(link), &isActive)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
+	return uintPtr(C.uint(isActive)), errorString(r)
+}
+
+func (h handle) deviceGetNvLinkRemotePciInfo(link uint) (*string, error) {
+	var pci C.nvmlPciInfo_t
+
+	r := C.nvmlDeviceGetNvLinkRemotePciInfo(h.dev, C.uint(link), &pci)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+
+	return stringPtr(&pci.busId[0]), errorString(r)
+}
+
+func (h handle) deviceGetAllNvLinkRemotePciInfo() ([]*string, error) {
+	busIds := []*string{}
+
+	for i := uint(0); i < C.NVML_NVLINK_MAX_LINKS; i++ {
+		state, err := h.deviceGetNvLinkState(i)
+		if err != nil {
+			return nil, err
+		}
+
+		if state == nil {
+			return nil, nil
+		}
+
+		if *state == C.NVML_FEATURE_ENABLED {
+			pci, err := h.deviceGetNvLinkRemotePciInfo(i)
+			if err != nil {
+				return nil, err
+			}
+
+			if pci == nil {
+				return nil, nil
+			}
+
+			busIds = append(busIds, pci)
+		}
+	}
+
+	return busIds, nil
+}
+
 func (h handle) deviceGetPowerManagementLimit() (*uint, error) {
 	var power C.uint
 

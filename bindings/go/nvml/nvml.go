@@ -138,6 +138,12 @@ const (
 	P2PLinkMultiSwitch
 	P2PLinkSingleSwitch
 	P2PLinkSameBoard
+	SingleNVLINKLink
+	TwoNVLINKLinks
+	ThreeNVLINKLinks
+	FourNVLINKLinks
+	FiveNVLINKLinks
+	SixNVLINKLinks
 )
 
 type P2PLink struct {
@@ -159,6 +165,18 @@ func (t P2PLinkType) String() string {
 		return "Single PCI switch"
 	case P2PLinkSameBoard:
 		return "Same board"
+	case SingleNVLINKLink:
+		return "Single NVLink"
+	case TwoNVLINKLinks:
+		return "Two NVLinks"
+	case ThreeNVLINKLinks:
+		return "Three NVLinks"
+	case FourNVLINKLinks:
+		return "Four NVLinks"
+	case FiveNVLINKLinks:
+		return "Five NVLinks"
+	case SixNVLINKLinks:
+		return "Six NVLinks"
 	case P2PLinkUnknown:
 	}
 	return "N/A"
@@ -494,6 +512,37 @@ func GetP2PLink(dev1, dev2 *Device) (link P2PLinkType, err error) {
 		err = ErrUnsupportedP2PLink
 	}
 	return
+}
+
+func GetNVLink(dev1, dev2 *Device) (link P2PLinkType, err error) {
+	nvbusIds1, err := dev1.handle.deviceGetAllNvLinkRemotePciInfo()
+	if err != nil || nvbusIds1 == nil {
+		return P2PLinkUnknown, err
+	}
+
+	nvlink := P2PLinkUnknown
+	for _, nvbusId1 := range nvbusIds1 {
+		if *nvbusId1 == dev2.PCI.BusID {
+			switch nvlink {
+			case P2PLinkUnknown:
+				nvlink = SingleNVLINKLink
+			case SingleNVLINKLink:
+				nvlink = TwoNVLINKLinks
+			case TwoNVLINKLinks:
+				nvlink = ThreeNVLINKLinks
+			case ThreeNVLINKLinks:
+				nvlink = FourNVLINKLinks
+			case FourNVLINKLinks:
+				nvlink = FiveNVLINKLinks
+			case FiveNVLINKLinks:
+				nvlink = SixNVLINKLinks
+			}
+		}
+	}
+
+	// TODO(klueska): Handle NVSwitch semantics
+
+	return nvlink, nil
 }
 
 func (d *Device) GetComputeRunningProcesses() ([]uint, []uint64, error) {
