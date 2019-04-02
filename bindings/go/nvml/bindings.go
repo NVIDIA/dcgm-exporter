@@ -149,6 +149,20 @@ func shutdown() error {
 	return errorString(C.nvmlShutdown_dl())
 }
 
+func systemGetCudaDriverVersion() (*uint, *uint, error) {
+	var v C.int
+
+	r := C.nvmlSystemGetCudaDriverVersion_v2(&v)
+	if r != C.NVML_SUCCESS {
+		return nil, nil, errorString(r)
+	}
+
+	major := uint(v / 1000)
+	minor := uint(v % 1000 / 10)
+
+	return &major, &minor, errorString(r)
+}
+
 func systemGetDriverVersion() (string, error) {
 	var driver [szDriver]C.char
 
