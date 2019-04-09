@@ -27,3 +27,5 @@ spec:
       - name: config-volume
         configMap:
           name: prometheus-config
+
+      hostNetwork: true
