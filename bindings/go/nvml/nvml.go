@@ -281,6 +281,10 @@ func GetDriverVersion() (string, error) {
 	return systemGetDriverVersion()
 }
 
+func GetCudaDriverVersion() (*uint, *uint, error) {
+	return systemGetCudaDriverVersion()
+}
+
 func numaNode(busid string) (uint, error) {
 	// discard leading zeros of busid
 	b, err := ioutil.ReadFile(fmt.Sprintf("/sys/bus/pci/devices/%s/numa_node", strings.ToLower(busid[4:])))
