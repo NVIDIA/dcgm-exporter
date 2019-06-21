@@ -65,8 +65,8 @@ $ go build && ./processInfo
 
 # sample output
 
-# gpu     pid  type    sm   mem   enc   dec   command
-# Idx       #   C/G     %     %     %     %   name
-    0   25712   C+G    13     0     0     0   nbody
-    1       -     -     -     -     -     -   -
+# gpu     pid   type   mem   command
+# Idx       #    C/G     %   name
+    0   25712    C+G     0   nbody
+    1       -      -     -   -
 ```
