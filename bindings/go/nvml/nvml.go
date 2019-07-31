@@ -193,18 +193,24 @@ type PCIInfo struct {
 	Bandwidth *uint
 }
 
+type CudaComputeCapabilityInfo struct {
+	Major *int
+	Minor *int
+}
+
 type Device struct {
 	handle
 
-	UUID        string
-	Path        string
-	Model       *string
-	Power       *uint
-	Memory      *uint64
-	CPUAffinity *uint
-	PCI         PCIInfo
-	Clocks      ClockInfo
-	Topology    []P2PLink
+	UUID                  string
+	Path                  string
+	Model                 *string
+	Power                 *uint
+	Memory                *uint64
+	CPUAffinity           *uint
+	PCI                   PCIInfo
+	Clocks                ClockInfo
+	Topology              []P2PLink
+	CudaComputeCapability CudaComputeCapabilityInfo
 }
 
 type UtilizationInfo struct {
@@ -345,6 +351,8 @@ func NewDevice(idx uint) (device *Device, err error) {
 	assert(err)
 	ccore, cmem, err := h.deviceGetMaxClockInfo()
 	assert(err)
+	cccMajor, cccMinor, err := h.deviceGetCudaComputeCapability()
+	assert(err)
 
 	if minor == nil || busid == nil || uuid == nil {
 		return nil, ErrUnsupportedGPU
@@ -369,6 +377,10 @@ func NewDevice(idx uint) (device *Device, err error) {
 		Clocks: ClockInfo{
 			Cores:  ccore, // MHz
 			Memory: cmem,  // MHz
+		},
+		CudaComputeCapability: CudaComputeCapabilityInfo{
+			Major: cccMajor,
+			Minor: cccMinor,
 		},
 	}
 	if power != nil {
