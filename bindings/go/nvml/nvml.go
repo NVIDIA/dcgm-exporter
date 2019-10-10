@@ -543,8 +543,8 @@ func GetNVLink(dev1, dev2 *Device) (link P2PLinkType, err error) {
 	}
 
 	nvlink := P2PLinkUnknown
-	for _, nvbusId1 := range nvbusIds1 {
-		if *nvbusId1 == dev2.PCI.BusID {
+	for _, nvbusID1 := range nvbusIds1 {
+		if *nvbusID1 == dev2.PCI.BusID {
 			switch nvlink {
 			case P2PLinkUnknown:
 				nvlink = SingleNVLINKLink
