@@ -5,12 +5,14 @@ set -u
 HOST_ENGINE=no
 COLLECT_INTERVAL_MS=1000
 OUTPUT_FILE=/run/prometheus/dcgm.prom
+DCP_METRICS=no
+DCP_FIELDS=""
 
 usage() {
-    echo "usage: $0 [-h] [-e] [-o output_file] [-d collect_interval_ms (>=100)]" >&2
+    echo "usage: $0 [-h] [-e] [-p] [-o output_file] [-d collect_interval_ms (>=100)]" >&2
 }
 
-options=$(getopt -o heo:d: -- "$@")
+options=$(getopt -o hepo:d: -- "$@")
 if [ $? -ne 0 ]; then
     usage && exit 1
 fi
@@ -20,6 +22,7 @@ while true; do
     case "$1" in
         -h) usage && exit 1;;
         -e) HOST_ENGINE=yes; shift;;
+	-p) DCP_METRICS=yes; shift;;
         -o) OUTPUT_FILE=$2; shift 2;;
         -d) COLLECT_INTERVAL_MS=$2; shift 2;;
         *)  break;;
@@ -40,17 +43,23 @@ fi
 
 echo "Collecting metrics at ${OUTPUT_FILE} every ${COLLECT_INTERVAL_MS}ms..."
 
+if [ "${DCP_METRICS}" = "yes" ]; then
+    echo "Collecting DCP metrics as well."
+    DCP_FIELDS=",1001,1002,1003,1004,1005"
+fi
+
 dcgmi dmon -d "${COLLECT_INTERVAL_MS}" -e \
 "54,"\
 "100,101,"\
 "140,150,155,156,"\
 "200,201,202,203,204,206,207,"\
-"230,240,241,242,243,244,245,246,"\
+"230,240,241,242,243,244,245,"\
 "251,252,"\
 "310,311,312,313,"\
 "390,391,392,"\
-"409,419,429,439" | \
-awk -v "out=${OUTPUT_FILE}" -v "ngpus=$(nvidia-smi -L | wc -l)" '
+"409,419,429,439,449"\
+"${DCP_FIELDS}" | \
+awk -v "dcp=${DCP_METRICS}" -v "out=${OUTPUT_FILE}" -v "ngpus=$(nvidia-smi -L | wc -l)" '
 
 function metric(name, type, help, value) {
     if (value !~ "N/A") {
@@ -77,11 +86,11 @@ function metric(name, type, help, value) {
 
     # Power
     metric("power_usage", "gauge", "Power draw (in W).", $(i++))                                                      # field 155
-    metric("total_energy_consumption", "counter", "Total energy consumption since boot (in mJ).", $(i++))             # field 156 FIXED
+    metric("total_energy_consumption", "counter", "Total energy consumption since boot (in mJ).", $(i++))             # field 156 FIXME
 
     # PCIe
-    metric("pcie_tx_throughput", "counter", "Total number of bytes transmitted through PCIe TX (in KB)", $(i++))      # field 200 FIXED
-    metric("pcie_rx_throughput", "counter", "Total number of bytes received through PCIe RX (in KB)", $(i++))         # field 201 FIXED
+    metric("pcie_tx_throughput", "counter", "Total number of bytes transmitted through PCIe TX (in KB) via NVML.", $(i++))      # field 200 FIXME
+    metric("pcie_rx_throughput", "counter", "Total number of bytes received through PCIe RX (in KB) via NVML.", $(i++))         # field 201 FIXME
     metric("pcie_replay_counter", "counter", "Total number of PCIe retries.", $(i++))                                 # field 202
 
     # Utilization (the sample period varies depending on the product)
@@ -98,7 +107,7 @@ function metric(name, type, help, value) {
     metric("board_limit_violation", "counter", "Throttling duration due to board limit constraints (in us).", $(i++)) # field 243 FIXME
     metric("low_util_violation", "counter", "Throttling duration due to low utilization (in us).", $(i++))            # field 244
     metric("reliability_violation", "counter", "Throttling duration due to reliability constraints (in us).", $(i++)) # field 245 FIXME
-    metric("app_clock_violation", "counter", "Total throttling duration (in us).", $(i++))                            # field 246
+    #metric("app_clock_violation", "counter", "Total throttling duration (in us).", $(i++))                            # field 246 TODO
 
     # Memory usage
     metric("fb_free", "gauge", "Framebuffer memory free (in MiB).", $(i++))                                           # field 251
@@ -120,7 +129,18 @@ function metric(name, type, help, value) {
     metric("nvlink_data_crc_error_count_total", "counter", "Total number of NVLink data CRC errors.", $(i++))         # field 419
     metric("nvlink_replay_error_count_total", "counter", "Total number of NVLink retries.", $(i++))                   # field 429
     metric("nvlink_recovery_error_count_total", "counter", "Total number of NVLink recovery errors.", $(i++))         # field 439
-    #metric("nvlink_bandwidth_total", "counter", "Total number of NVLink bandwidth counters for all lanes", $(i++))   # field 449 TODO
+    metric("nvlink_bandwidth_total", "counter", "Total number of NVLink bandwidth counters for all lanes", $(i++))    # field 449 ADDED
+
+    # Add DCP metrics
+    if (dcp == "yes") {
+       metric("fi_prof_gr_engine_active", "gauge", "Ratio of time the graphics engine is active (in %).", $(i++))  # field 1001
+       metric("fi_prof_sm_active", "gauge", "The ratio of cycles an SM has at least 1 warp assigned (in %).", $(i++))  # field 1002
+       metric("fi_prof_sm_occupancy", "gauge", "The ratio of number of warps resident on an SM (in %).", $(i++))  # field 1003
+       metric("fi_prof_pipe_tensor_active", "gauge", "Ratio of cycles the tensor (HMMA) pipe is active (in %).", $(i++))  # field 1004
+       metric("fi_prof_dram_active", "gauge", "Ratio of cycles the device memory interface is active sending or receiving data (in %).", $(i++))  # field 1005
+       #metric("fi_prof_pcie_tx_bytes", "gauge", "The number of bytes transmitted through PCIe TX (device to host) including header and payload (in Bytes) via Perfworks.", $(i++))  # field 1009 TODO
+       #metric("fi_prof_pcie_rx_bytes", "gauge", "The number of bytes recieved through PCIe RX (host to device) including header and payload (in Bytes) via Perfworks.", $(i++))  # field 1010 TODO
+    }
 
     # Flush output file and move it for atomicity
     if (gpu == ngpus - 1) {

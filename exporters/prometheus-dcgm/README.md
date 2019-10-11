@@ -1,5 +1,7 @@
 # NVIDIA DCGM exporter for Prometheus
 
+> Note that in the next releases, we may change some of the metric labels.
+
 Simple script to export metrics from [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/data-center-gpu-manager-dcgm) to [Prometheus](https://prometheus.io/).
 
 ### Prerequisites
@@ -37,6 +39,10 @@ $ docker-compose up
 ### Docker Run
 ```sh
 $ docker run -d --runtime=nvidia --rm --name=nvidia-dcgm-exporter -v /run/prometheus:/run/prometheus nvidia/dcgm-exporter
+
+# To collect DCGM DCP metrics, pass "-p" option and add sys_admin capabilities
+# Note that DCP metrics can only be collcted with driver >= 418.87
+$ docker run -d --rm --cap-add=sys_admin --runtime=nvidia --name=nvidia-dcgm-exporter -v /run/prometheus:/run/prometheus nvidia/dcgm-exporter -p
 
 # To check the metrics
 $ cat /run/prometheus/dcgm.prom
