@@ -19,28 +19,29 @@ static nvmlReturn_t nvmlInit_dl(void) {
 */
 import "C"
 
-type dlhandle struct{ handle unsafe.Pointer }
+type dlhandles struct{ handles []unsafe.Pointer }
 
-var dl dlhandle
+var dl dlhandles
 
 // Initialize NVML, opening a dynamic reference to the NVML library in the process.
-func (dl *dlhandle) nvmlInit() C.nvmlReturn_t {
-	dl.handle = C.dlopen(C.CString("libnvidia-ml.so.1"), C.RTLD_LAZY|C.RTLD_GLOBAL)
-	if dl.handle == C.NULL {
+func (dl *dlhandles) nvmlInit() C.nvmlReturn_t {
+	handle := C.dlopen(C.CString("libnvidia-ml.so.1"), C.RTLD_LAZY|C.RTLD_GLOBAL)
+	if handle == C.NULL {
 		return C.NVML_ERROR_LIBRARY_NOT_FOUND
 	}
+	dl.handles = append(dl.handles, handle)
 	return C.nvmlInit_dl()
 }
 
 // Shutdown NVML, closing our dynamic reference to the NVML library in the process.
-func (dl *dlhandle) nvmlShutdown() C.nvmlReturn_t {
+func (dl *dlhandles) nvmlShutdown() C.nvmlReturn_t {
 	ret := C.nvmlShutdown()
 	if ret != C.NVML_SUCCESS {
 		return ret
 	}
 
-	if dl.handle != C.NULL {
-		err := C.dlclose(dl.handle)
+	for _, handle := range dl.handles {
+		err := C.dlclose(handle)
 		if err != 0 {
 			return C.NVML_ERROR_UNKNOWN
 		}
@@ -50,11 +51,13 @@ func (dl *dlhandle) nvmlShutdown() C.nvmlReturn_t {
 }
 
 // Check to see if a specific symbol is present in the NVMl library.
-func (dl *dlhandle) lookupSymbol(symbol string) C.nvmlReturn_t {
-	C.dlerror()
-	C.dlsym(dl.handle, C.CString(symbol))
-	if unsafe.Pointer(C.dlerror()) != C.NULL {
-		return C.NVML_ERROR_FUNCTION_NOT_FOUND
+func (dl *dlhandles) lookupSymbol(symbol string) C.nvmlReturn_t {
+	for _, handle := range dl.handles {
+		C.dlerror()
+		C.dlsym(handle, C.CString(symbol))
+		if unsafe.Pointer(C.dlerror()) == C.NULL {
+			return C.NVML_SUCCESS
+		}
 	}
-	return C.NVML_SUCCESS
+	return C.NVML_ERROR_FUNCTION_NOT_FOUND
 }
