@@ -36,15 +36,15 @@ fi
 mkdir -p $(dirname ${OUTPUT_FILE})
 trap 'echo "Caught signal, terminating..."' HUP INT QUIT PIPE TERM
 
+if [ -x "$(command -v systemctl)" ] && [ systemctl is-enabled --quiet nvidia-fabricmanager 2> /dev/null] && [ "${HOST_ENGINE}" = "yes" ]; then
+    echo "Warning: Suppressing $0 -e option."
+    echo "nvidia-fabricmanager will start nv-hostengine on this platform."
+    HOST_ENGINE=no
+fi
+
 if [ "${HOST_ENGINE}" = "yes" ]; then
-    if [ -x "$(command -v systemctl)" ] && systemctl is-enabled --quiet nvidia-fabricmanager; then
-        echo "Warning: Suppressing $0 -e option."
-	echo "  nvidia-fabricmanager will start nv-hostengine on this platform."
-	HOST_ENGINE=no
-    else
-        echo "Starting NVIDIA host engine..."
-        nv-hostengine 2> /dev/null
-    fi
+    echo "Starting NVIDIA host engine..."
+    nv-hostengine 2> /dev/null
 fi
 
 echo "Collecting metrics at ${OUTPUT_FILE} every ${COLLECT_INTERVAL_MS}ms..."
