@@ -323,3 +323,75 @@ func (c *ComputeInstance) GetInfo() (info ComputeInstanceInfo, err error) {
 	info.GPUInstance = c.gpuInstance
 	return info, errorString(ret)
 }
+
+// Device.IsMigDeviceHandle()
+func (d *Device) IsMigDeviceHandle() (isMigDevice bool, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceIsMigDeviceHandle")
+	if ret != C.NVML_SUCCESS {
+		return false, errorString(ret)
+	}
+
+	var is C.uint
+	ret = C.nvmlDeviceIsMigDeviceHandle(d.handle.dev, &is)
+	return (is != 0), errorString(ret)
+}
+
+// Device.GetGPUInstanceId()
+func (d *Device) GetGPUInstanceId() (id int, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetGpuInstanceId")
+	if ret != C.NVML_SUCCESS {
+		return 0, errorString(ret)
+	}
+
+	var gi C.uint
+	ret = C.nvmlDeviceGetGpuInstanceId(d.handle.dev, &gi)
+	return int(gi), errorString(ret)
+}
+
+// Device.GetComputeInstanceId()
+func (d *Device) GetComputeInstanceId() (id int, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetComputeInstanceId")
+	if ret != C.NVML_SUCCESS {
+		return 0, errorString(ret)
+	}
+
+	var ci C.uint
+	ret = C.nvmlDeviceGetComputeInstanceId(d.handle.dev, &ci)
+	return int(ci), errorString(ret)
+}
+
+// Device.GetMigDeviceCount()
+func (d *Device) GetMigDeviceCount() (count int, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMigDeviceCount")
+	if ret != C.NVML_SUCCESS {
+		return 0, errorString(ret)
+	}
+
+	var c C.uint
+	ret = C.nvmlDeviceGetMigDeviceCount(d.handle.dev, &c)
+	return int(c), errorString(ret)
+}
+
+// Device.GetMigDeviceHandleByIndex()
+func (d *Device) GetMigDeviceHandleByIndex(index int) (migDevice *Device, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMigDeviceHandleByIndex")
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	var m C.nvmlDevice_t
+	ret = C.nvmlDeviceGetMigDeviceHandleByIndex(d.handle.dev, C.uint(index), &m)
+	return &Device{ handle: handle{m} }, errorString(ret)
+}
+
+// Device.GetMigDeviceHandleByIndex()
+func (d *Device) GetDeviceHandleFromMigDeviceHandle() (device *Device, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetDeviceHandleFromMigDeviceHandle")
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	var parent C.nvmlDevice_t
+	ret = C.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(d.handle.dev, &parent)
+	return &Device{ handle: handle{parent} }, errorString(ret)
+}
