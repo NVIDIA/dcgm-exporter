@@ -761,3 +761,70 @@ func (h handle) getPeristenceMode() (state ModeState, err error) {
 	}
 	return ModeState(mode), errorString(r)
 }
+
+func (h *handle) isMigEnabled() (bool, error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMigMode")
+	if ret != C.NVML_SUCCESS {
+		return false, nil
+	}
+
+	var cm, pm C.uint
+	ret = C.nvmlDeviceGetMigMode(h.dev, &cm, &pm)
+	if ret == C.NVML_ERROR_NOT_SUPPORTED {
+		return false, nil
+	}
+	if ret != C.NVML_SUCCESS {
+		return false, errorString(ret)
+	}
+
+	return (cm == C.NVML_DEVICE_MIG_ENABLE) && (cm == pm), nil
+}
+
+func (h *handle) getMigDevices() ([]handle, error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMaxMigDeviceCount")
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	var c C.uint
+	ret = C.nvmlDeviceGetMaxMigDeviceCount(h.dev, &c)
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	ret = dl.lookupSymbol("nvmlDeviceGetMigDeviceHandleByIndex")
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	var handles []handle
+	for i := 0; i < int(c); i++ {
+		var mig C.nvmlDevice_t
+		ret := C.nvmlDeviceGetMigDeviceHandleByIndex(h.dev, C.uint(i), &mig)
+		if ret == C.NVML_ERROR_NOT_FOUND {
+			continue
+		}
+		if ret != C.NVML_SUCCESS {
+			return nil, errorString(ret)
+		}
+
+		handles = append(handles, handle{mig})
+	}
+
+	return handles, nil
+}
+
+func (h *handle) deviceGetDeviceHandleFromMigDeviceHandle() (handle, error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetDeviceHandleFromMigDeviceHandle")
+	if ret != C.NVML_SUCCESS {
+		return handle{}, errorString(ret)
+	}
+
+	var parent C.nvmlDevice_t
+	ret = C.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(h.dev, &parent)
+	if ret != C.NVML_SUCCESS {
+		return handle{}, errorString(ret)
+	}
+
+	return handle{parent}, nil
+}
