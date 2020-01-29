@@ -16,9 +16,15 @@
 
 package nvml
 
-// #cgo linux LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
-// #cgo darwin LDFLAGS: -ldl -Wl,-undefined,dynamic_lookup
-// #include "nvml.h"
+/*
+#cgo linux LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
+#cgo darwin LDFLAGS: -ldl -Wl,-undefined,dynamic_lookup
+#include "nvml.h"
+
+#undef nvmlEventSetWait
+nvmlReturn_t DECLDIR nvmlEventSetWait(nvmlEventSet_t set, nvmlEventData_t * data, unsigned int timeoutms);
+nvmlReturn_t DECLDIR nvmlEventSetWait_v2(nvmlEventSet_t set, nvmlEventData_t * data, unsigned int timeoutms);
+*/
 import "C"
 
 import (
@@ -44,9 +50,11 @@ const (
 type handle struct{ dev C.nvmlDevice_t }
 type EventSet struct{ set C.nvmlEventSet_t }
 type Event struct {
-	UUID  *string
-	Etype uint64
-	Edata uint64
+	UUID              *string
+	GpuInstanceId     *uint
+	ComputeInstanceId *uint
+	Etype             uint64
+	Edata             uint64
 }
 
 func uintPtr(c C.uint) *uint {
@@ -149,15 +157,27 @@ func DeleteEventSet(es EventSet) {
 func WaitForEvent(es EventSet, timeout uint) (Event, error) {
 	var data C.nvmlEventData_t
 
-	r := C.nvmlEventSetWait(es.set, &data, C.uint(timeout))
+	r := dl.lookupSymbol("nvmlEventSetWait_v2")
+	if r == C.NVML_SUCCESS {
+		r = C.nvmlEventSetWait_v2(es.set, &data, C.uint(timeout))
+	} else {
+		r = C.nvmlEventSetWait(es.set, &data, C.uint(timeout))
+		data.gpuInstanceId = 0xFFFFFFFF
+		data.computeInstanceId = 0xFFFFFFFF
+	}
+	if r != C.NVML_SUCCESS {
+		return Event{}, errorString(r)
+	}
+
 	uuid, _ := handle{data.device}.deviceGetUUID()
 
 	return Event{
-			UUID:  uuid,
-			Etype: uint64(data.eventType),
-			Edata: uint64(data.eventData),
-		},
-		errorString(r)
+		UUID:              uuid,
+		Etype:             uint64(data.eventType),
+		Edata:             uint64(data.eventData),
+		GpuInstanceId:     uintPtr(data.gpuInstanceId),
+		ComputeInstanceId: uintPtr(data.computeInstanceId),
+	}, nil
 }
 
 func shutdown() error {
