@@ -360,15 +360,15 @@ func (d *Device) GetComputeInstanceId() (id int, err error) {
 	return int(ci), errorString(ret)
 }
 
-// Device.GetMigDeviceCount()
-func (d *Device) GetMigDeviceCount() (count int, err error) {
-	ret := dl.lookupSymbol("nvmlDeviceGetMigDeviceCount")
+// Device.GetMaxMigDeviceCount()
+func (d *Device) GetMaxMigDeviceCount() (count int, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMaxMigDeviceCount")
 	if ret != C.NVML_SUCCESS {
 		return 0, errorString(ret)
 	}
 
 	var c C.uint
-	ret = C.nvmlDeviceGetMigDeviceCount(d.handle.dev, &c)
+	ret = C.nvmlDeviceGetMaxMigDeviceCount(d.handle.dev, &c)
 	return int(c), errorString(ret)
 }
 
