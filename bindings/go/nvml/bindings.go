@@ -265,6 +265,15 @@ func (h handle) deviceGetName() (*string, error) {
 	return stringPtr(&name[0]), errorString(r)
 }
 
+func (h handle) deviceGetIndex() (*uint, error) {
+	var index C.uint
+	r := C.nvmlDeviceGetIndex(h.dev, &index)
+	if r != C.NVML_SUCCESS {
+		return nil, errorString(r)
+	}
+	return uintPtr(index), nil
+}
+
 func (h handle) deviceGetUUID() (*string, error) {
 	var uuid [szUUID]C.char
 
