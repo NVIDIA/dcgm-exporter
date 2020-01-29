@@ -40,7 +40,7 @@ import (
 const (
 	szDriver   = C.NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE
 	szName     = C.NVML_DEVICE_NAME_BUFFER_SIZE
-	szUUID     = C.NVML_DEVICE_UUID_BUFFER_SIZE
+	szUUID     = C.NVML_DEVICE_UUID_V2_BUFFER_SIZE
 	szProcs    = 32
 	szProcName = 64
 
