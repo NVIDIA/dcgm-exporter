@@ -108,7 +108,7 @@ type ComputeInstanceInfo struct {
 	ProfileID   uint32
 }
 
-// Device.SetSigMode()
+// Device.SetMigMode()
 func (d *Device) SetMigMode(mode int) (activationStatus error, err error) {
 	ret := dl.lookupSymbol("nvmlDeviceSetMigMode")
 	if ret != C.NVML_SUCCESS {
@@ -120,7 +120,7 @@ func (d *Device) SetMigMode(mode int) (activationStatus error, err error) {
 	return errorString(as), errorString(ret)
 }
 
-// Device.GetSigMode()
+// Device.GetMigMode()
 func (d *Device) GetMigMode() (currentMode, pendingMode int, err error) {
 	ret := dl.lookupSymbol("nvmlDeviceGetMigMode")
 	if ret != C.NVML_SUCCESS {
@@ -360,15 +360,15 @@ func (d *Device) GetComputeInstanceId() (id int, err error) {
 	return int(ci), errorString(ret)
 }
 
-// Device.GetMigDeviceCount()
-func (d *Device) GetMigDeviceCount() (count int, err error) {
-	ret := dl.lookupSymbol("nvmlDeviceGetMigDeviceCount")
+// Device.GetMaxMigDeviceCount()
+func (d *Device) GetMaxMigDeviceCount() (count int, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMaxMigDeviceCount")
 	if ret != C.NVML_SUCCESS {
 		return 0, errorString(ret)
 	}
 
 	var c C.uint
-	ret = C.nvmlDeviceGetMigDeviceCount(d.handle.dev, &c)
+	ret = C.nvmlDeviceGetMaxMigDeviceCount(d.handle.dev, &c)
 	return int(c), errorString(ret)
 }
 
@@ -381,7 +381,7 @@ func (d *Device) GetMigDeviceHandleByIndex(index int) (migDevice *Device, err er
 
 	var m C.nvmlDevice_t
 	ret = C.nvmlDeviceGetMigDeviceHandleByIndex(d.handle.dev, C.uint(index), &m)
-	return &Device{ handle: handle{m} }, errorString(ret)
+	return &Device{handle: handle{m}}, errorString(ret)
 }
 
 // Device.GetMigDeviceHandleByIndex()
@@ -393,5 +393,5 @@ func (d *Device) GetDeviceHandleFromMigDeviceHandle() (device *Device, err error
 
 	var parent C.nvmlDevice_t
 	ret = C.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(d.handle.dev, &parent)
-	return &Device{ handle: handle{parent} }, errorString(ret)
+	return &Device{handle: handle{parent}}, errorString(ret)
 }

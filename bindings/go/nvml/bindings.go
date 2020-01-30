@@ -16,9 +16,15 @@
 
 package nvml
 
-// #cgo linux LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
-// #cgo darwin LDFLAGS: -ldl -Wl,-undefined,dynamic_lookup
-// #include "nvml.h"
+/*
+#cgo linux LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
+#cgo darwin LDFLAGS: -ldl -Wl,-undefined,dynamic_lookup
+#include "nvml.h"
+
+#undef nvmlEventSetWait
+nvmlReturn_t DECLDIR nvmlEventSetWait(nvmlEventSet_t set, nvmlEventData_t * data, unsigned int timeoutms);
+nvmlReturn_t DECLDIR nvmlEventSetWait_v2(nvmlEventSet_t set, nvmlEventData_t * data, unsigned int timeoutms);
+*/
 import "C"
 
 import (
@@ -34,7 +40,7 @@ import (
 const (
 	szDriver   = C.NVML_SYSTEM_DRIVER_VERSION_BUFFER_SIZE
 	szName     = C.NVML_DEVICE_NAME_BUFFER_SIZE
-	szUUID     = C.NVML_DEVICE_UUID_BUFFER_SIZE
+	szUUID     = C.NVML_DEVICE_UUID_V2_BUFFER_SIZE
 	szProcs    = 32
 	szProcName = 64
 
@@ -44,9 +50,11 @@ const (
 type handle struct{ dev C.nvmlDevice_t }
 type EventSet struct{ set C.nvmlEventSet_t }
 type Event struct {
-	UUID  *string
-	Etype uint64
-	Edata uint64
+	UUID              *string
+	GpuInstanceId     *uint
+	ComputeInstanceId *uint
+	Etype             uint64
+	Edata             uint64
 }
 
 func uintPtr(c C.uint) *uint {
@@ -149,15 +157,27 @@ func DeleteEventSet(es EventSet) {
 func WaitForEvent(es EventSet, timeout uint) (Event, error) {
 	var data C.nvmlEventData_t
 
-	r := C.nvmlEventSetWait(es.set, &data, C.uint(timeout))
+	r := dl.lookupSymbol("nvmlEventSetWait_v2")
+	if r == C.NVML_SUCCESS {
+		r = C.nvmlEventSetWait_v2(es.set, &data, C.uint(timeout))
+	} else {
+		r = C.nvmlEventSetWait(es.set, &data, C.uint(timeout))
+		data.gpuInstanceId = 0xFFFFFFFF
+		data.computeInstanceId = 0xFFFFFFFF
+	}
+	if r != C.NVML_SUCCESS {
+		return Event{}, errorString(r)
+	}
+
 	uuid, _ := handle{data.device}.deviceGetUUID()
 
 	return Event{
-			UUID:  uuid,
-			Etype: uint64(data.eventType),
-			Edata: uint64(data.eventData),
-		},
-		errorString(r)
+		UUID:              uuid,
+		Etype:             uint64(data.eventType),
+		Edata:             uint64(data.eventData),
+		GpuInstanceId:     uintPtr(data.gpuInstanceId),
+		ComputeInstanceId: uintPtr(data.computeInstanceId),
+	}, nil
 }
 
 func shutdown() error {
@@ -243,6 +263,15 @@ func (h handle) deviceGetName() (*string, error) {
 		return nil, nil
 	}
 	return stringPtr(&name[0]), errorString(r)
+}
+
+func (h handle) deviceGetIndex() (*uint, error) {
+	var index C.uint
+	r := C.nvmlDeviceGetIndex(h.dev, &index)
+	if r != C.NVML_SUCCESS {
+		return nil, errorString(r)
+	}
+	return uintPtr(index), nil
 }
 
 func (h handle) deviceGetUUID() (*string, error) {
@@ -731,4 +760,71 @@ func (h handle) getPeristenceMode() (state ModeState, err error) {
 		return
 	}
 	return ModeState(mode), errorString(r)
+}
+
+func (h *handle) isMigEnabled() (bool, error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMigMode")
+	if ret != C.NVML_SUCCESS {
+		return false, nil
+	}
+
+	var cm, pm C.uint
+	ret = C.nvmlDeviceGetMigMode(h.dev, &cm, &pm)
+	if ret == C.NVML_ERROR_NOT_SUPPORTED {
+		return false, nil
+	}
+	if ret != C.NVML_SUCCESS {
+		return false, errorString(ret)
+	}
+
+	return (cm == C.NVML_DEVICE_MIG_ENABLE) && (cm == pm), nil
+}
+
+func (h *handle) getMigDevices() ([]handle, error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetMaxMigDeviceCount")
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	var c C.uint
+	ret = C.nvmlDeviceGetMaxMigDeviceCount(h.dev, &c)
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	ret = dl.lookupSymbol("nvmlDeviceGetMigDeviceHandleByIndex")
+	if ret != C.NVML_SUCCESS {
+		return nil, errorString(ret)
+	}
+
+	var handles []handle
+	for i := 0; i < int(c); i++ {
+		var mig C.nvmlDevice_t
+		ret := C.nvmlDeviceGetMigDeviceHandleByIndex(h.dev, C.uint(i), &mig)
+		if ret == C.NVML_ERROR_NOT_FOUND {
+			continue
+		}
+		if ret != C.NVML_SUCCESS {
+			return nil, errorString(ret)
+		}
+
+		handles = append(handles, handle{mig})
+	}
+
+	return handles, nil
+}
+
+func (h *handle) deviceGetDeviceHandleFromMigDeviceHandle() (handle, error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetDeviceHandleFromMigDeviceHandle")
+	if ret != C.NVML_SUCCESS {
+		return handle{}, errorString(ret)
+	}
+
+	var parent C.nvmlDevice_t
+	ret = C.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(h.dev, &parent)
+	if ret != C.NVML_SUCCESS {
+		return handle{}, errorString(ret)
+	}
+
+	return handle{parent}, nil
 }
