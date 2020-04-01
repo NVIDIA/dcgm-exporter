@@ -1,11 +1,10 @@
 FROM ubuntu:16.04
 
-ARG DCGM_VERSION=1.7.1
+ARG DCGM_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     wget && \
     rm -rf /var/lib/apt/lists/*
-	
 
 RUN wget --no-check-certificate https://developer.download.nvidia.com/compute/redist/dcgm/${DCGM_VERSION}/DEBS/datacenter-gpu-manager_${DCGM_VERSION}_amd64.deb && \
     dpkg -i datacenter-gpu-manager_*.deb && \
