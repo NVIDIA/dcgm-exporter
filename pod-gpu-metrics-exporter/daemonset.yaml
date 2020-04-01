@@ -1,17 +1,21 @@
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: pod-gpu-metrics-exporter
-  namespace: monitoring
+  name: gpu-metrics-exporter
+  labels:
+    app.kubernetes.io/name: gpu-metrics-exporter
+    app.kubernetes.io/version: "1.0.0-alpha.0"
 spec:
   template:
     metadata:
       labels:
-        app: pod-gpu-metrics-exporter
+        app.kubernetes.io/name: pod-gpu-metrics-exporter
+        app.kubernetes.io/part-of: gpu-metrics-exporter
+        app.kubernetes.io/version: "1.0.0-alpha.0"
       name: pod-gpu-metrics-exporter
     spec:
       containers:
-      - image: nvidia/pod-gpu-metrics-exporter:v1.0.0-alpha
+      - image: nvidia/pod-gpu-metrics-exporter:1.0.0-alpha
         name: pod-nvidia-gpu-metrics-exporter
         ports:
         - name: gpu-metrics

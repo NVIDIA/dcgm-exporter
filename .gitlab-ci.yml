@@ -1,0 +1,52 @@
+image: docker:latest
+
+services:
+  - docker:dind
+
+variables:
+  DCGM_VERSION: "1.7.1"
+
+stages:
+  - build
+  - release
+
+dcgm:exporter:
+  stage: build
+  script:
+    - apk add make bash
+    - docker login -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
+
+    - make -C dcgm-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" DCGM="${DCGM_VERSION}" build
+    - make -C dcgm-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push
+
+gpu:metrics:exporter:
+  stage: build
+  script:
+    - apk add make bash
+    - docker login -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
+
+    - make -C pod-gpu-metrics-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" build
+    - make -C pod-gpu-metrics-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push
+
+dcgm:exporter:
+  stage: release
+  only:
+    - tags
+  script:
+    - apk add make bash
+    - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
+
+    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_TAG}" DCGM="${DCGM_VERSION}" build
+    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_TAG}" push
+
+gpu:metrics:exporter:
+  stage: release
+  only:
+    - tags
+  script:
+    - apk add make bash
+    - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
+
+    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_SHA}" build
+    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_SHA}" push
+
