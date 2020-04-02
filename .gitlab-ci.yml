@@ -5,6 +5,7 @@ services:
 
 variables:
   DCGM_VERSION: "1.7.1"
+  METRICS_EXPORTER_VERSION: "1.0.0-alpha.0"
 
 stages:
   - build
@@ -36,8 +37,8 @@ dcgm:exporter:
     - apk add make bash
     - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
 
-    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_TAG}" DCGM="${DCGM_VERSION}" build
-    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_TAG}" push
+    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${DCGM_VERSION}" DCGM="${DCGM_VERSION}" build
+    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${DCGM_VERSION}" push
 
 gpu:metrics:exporter:
   stage: release
@@ -47,6 +48,6 @@ gpu:metrics:exporter:
     - apk add make bash
     - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
 
-    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_SHA}" build
-    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${CI_COMMIT_SHA}" push
+    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${METRICS_EXPORTER_VERSION}" build
+    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${METRICS_EXPORTER_VERSION}" push
 
