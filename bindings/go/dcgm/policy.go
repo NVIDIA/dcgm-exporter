@@ -1,8 +1,8 @@
 package dcgm
 
 /*
-#include "dcgm_agent.h"
-#include "dcgm_structs.h"
+#include <dcgm_agent.h>
+#include <dcgm_structs.h>
 
 // wrapper for go callback function
 extern int violationNotify(void* p);
