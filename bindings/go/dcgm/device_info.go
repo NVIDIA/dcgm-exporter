@@ -95,7 +95,7 @@ func getPciBandwidth(gpuId uint) (*uint, error) {
 		return nil, err
 	}
 
-	values := make([]C.dcgmFieldValue_t, fieldsCount)
+	values := make([]C.dcgmFieldValue_v1, fieldsCount)
 	result := C.dcgmGetLatestValuesForFields(handle.handle, C.int(gpuId), &pciFields[0], C.uint(fieldsCount), &values[0])
 	if err = errorString(result); err != nil {
 		_ = fieldGroupDestroy(fieldsId)

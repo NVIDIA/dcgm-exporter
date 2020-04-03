@@ -125,7 +125,7 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 		return
 	}
 
-	values := make([]C.dcgmFieldValue_t, fieldsCount)
+	values := make([]C.dcgmFieldValue_v1, fieldsCount)
 	result := C.dcgmGetLatestValuesForFields(handle.handle, C.int(gpuId), &deviceFields[0], C.uint(fieldsCount), &values[0])
 
 	if err = errorString(result); err != nil {
