@@ -113,15 +113,15 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 	deviceFields[fanSpeed] = C.DCGM_FI_DEV_FAN_SPEED
 
 	fieldsName := fmt.Sprintf("devStatusFields%d", rand.Uint64())
-	fieldsId, err := fieldGroupCreate(fieldsName, deviceFields, fieldsCount)
+	fieldsId, err := FieldGroupCreate(fieldsName, deviceFields, fieldsCount)
 	if err != nil {
 		return
 	}
 
 	groupName := fmt.Sprintf("devStatus%d", rand.Uint64())
-	groupId, err := watchFields(gpuId, fieldsId, groupName)
+	groupId, err := WatchFields(gpuId, fieldsId, groupName)
 	if err != nil {
-		_ = fieldGroupDestroy(fieldsId)
+		_ = FieldGroupDestroy(fieldsId)
 		return
 	}
 
@@ -129,8 +129,8 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 	result := C.dcgmGetLatestValuesForFields(handle.handle, C.int(gpuId), &deviceFields[0], C.uint(fieldsCount), &values[0])
 
 	if err = errorString(result); err != nil {
-		_ = fieldGroupDestroy(fieldsId)
-		_ = destroyGroup(groupId)
+		_ = FieldGroupDestroy(fieldsId)
+		_ = DestroyGroup(groupId)
 		return status, fmt.Errorf("Error getting device status: %s", err)
 	}
 
@@ -176,7 +176,7 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 		FanSpeed:    *uintPtrUnsafe(unsafe.Pointer(&values[fanSpeed].value)),
 	}
 
-	_ = fieldGroupDestroy(fieldsId)
-	_ = destroyGroup(groupId)
+	_ = FieldGroupDestroy(fieldsId)
+	_ = DestroyGroup(groupId)
 	return
 }

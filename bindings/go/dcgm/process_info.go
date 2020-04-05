@@ -61,9 +61,9 @@ type ProcessInfo struct {
 	XIDErrors          XIDErrorInfo
 }
 
-func watchPidFields(gpus ...uint) (groupId groupHandle, err error) {
+func watchPidFields(gpus ...uint) (groupId GroupHandle, err error) {
 	groupName := fmt.Sprintf("watchPids%d", rand.Uint64())
-	group, err := createGroup(groupName)
+	group, err := CreateGroup(groupName)
 	if err != nil {
 		return
 	}
@@ -77,7 +77,7 @@ func watchPidFields(gpus ...uint) (groupId groupHandle, err error) {
 	}
 
 	for _, gpu := range gpus {
-		err = addToGroup(group, gpu)
+		err = AddToGroup(group, gpu)
 		if err != nil {
 			return
 		}
@@ -89,11 +89,11 @@ func watchPidFields(gpus ...uint) (groupId groupHandle, err error) {
 	if err = errorString(result); err != nil {
 		return groupId, fmt.Errorf("Error watching process fields: %s", err)
 	}
-	_ = updateAllFields()
+	_ = UpdateAllFields()
 	return group, nil
 }
 
-func getProcessInfo(groupId groupHandle, pid uint) (processInfo []ProcessInfo, err error) {
+func getProcessInfo(groupId GroupHandle, pid uint) (processInfo []ProcessInfo, err error) {
 	var pidInfo C.dcgmPidInfo_t
 	pidInfo.version = makeVersion1(unsafe.Sizeof(pidInfo))
 	pidInfo.pid = C.uint(pid)
@@ -184,7 +184,7 @@ func getProcessInfo(groupId groupHandle, pid uint) (processInfo []ProcessInfo, e
 		}
 		processInfo = append(processInfo, pInfo)
 	}
-	_ = destroyGroup(groupId)
+	_ = DestroyGroup(groupId)
 	return
 }
 

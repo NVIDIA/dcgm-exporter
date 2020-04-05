@@ -109,7 +109,9 @@ func TestDeviceInfo(t *testing.T) {
 			}
 
 			if strings.Compare(res, output) != 0 {
-				t.Errorf("%v from dcgm is wrong, got: %v, want: %v", msg, output, res)
+				if !strings.Contains(output, "NOT_SUPPORTED") {
+					t.Errorf("%v from dcgm is wrong, got: %v, want: %v", msg, output, res)
+				}
 			}
 		}
 	}

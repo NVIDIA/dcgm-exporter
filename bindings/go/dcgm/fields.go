@@ -15,9 +15,9 @@ const (
 	maxKeepSamples = 0       // nolimit
 )
 
-type fieldHandle struct{ handle C.dcgmFieldGrp_t }
+type FieldHandle struct{ handle C.dcgmFieldGrp_t }
 
-func fieldGroupCreate(fieldsGroupName string, fields []C.ushort, count int) (fieldsId fieldHandle, err error) {
+func FieldGroupCreate(fieldsGroupName string, fields []C.ushort, count int) (fieldsId FieldHandle, err error) {
 	var fieldsGroup C.dcgmFieldGrp_t
 
 	groupName := C.CString(fieldsGroupName)
@@ -27,25 +27,27 @@ func fieldGroupCreate(fieldsGroupName string, fields []C.ushort, count int) (fie
 	if err = errorString(result); err != nil {
 		return fieldsId, fmt.Errorf("Error creating DCGM fields group: %s", err)
 	}
-	fieldsId = fieldHandle{fieldsGroup}
+
+	fieldsId = FieldHandle{fieldsGroup}
 	return
 }
 
-func fieldGroupDestroy(fieldsGroup fieldHandle) (err error) {
+func FieldGroupDestroy(fieldsGroup FieldHandle) (err error) {
 	result := C.dcgmFieldGroupDestroy(handle.handle, fieldsGroup.handle)
 	if err = errorString(result); err != nil {
 		fmt.Errorf("Error destroying DCGM fields group: %s", err)
 	}
+
 	return
 }
 
-func watchFields(gpuId uint, fieldsGroup fieldHandle, groupName string) (groupId groupHandle, err error) {
-	group, err := createGroup(groupName)
+func WatchFields(gpuId uint, fieldsGroup FieldHandle, groupName string) (groupId GroupHandle, err error) {
+	group, err := CreateGroup(groupName)
 	if err != nil {
 		return
 	}
 
-	err = addToGroup(group, gpuId)
+	err = AddToGroup(group, gpuId)
 	if err != nil {
 		return
 	}
@@ -55,12 +57,13 @@ func watchFields(gpuId uint, fieldsGroup fieldHandle, groupName string) (groupId
 		return groupId, fmt.Errorf("Error watching fields: %s", err)
 	}
 
-	_ = updateAllFields()
+	_ = UpdateAllFields()
 	return group, nil
 }
 
-func updateAllFields() error {
+func UpdateAllFields() error {
 	waitForUpdate := C.int(1)
 	result := C.dcgmUpdateAllFields(handle.handle, waitForUpdate)
+
 	return errorString(result)
 }

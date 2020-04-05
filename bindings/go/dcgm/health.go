@@ -23,7 +23,7 @@ type DeviceHealth struct {
 	Watches []SystemWatch
 }
 
-func setHealthWatches(groupId groupHandle) (err error) {
+func setHealthWatches(groupId GroupHandle) (err error) {
 	result := C.dcgmHealthSet(handle.handle, groupId.handle, C.DCGM_HEALTH_WATCH_ALL)
 	if err = errorString(result); err != nil {
 		return fmt.Errorf("Error setting health watches: %s", err)
@@ -33,12 +33,12 @@ func setHealthWatches(groupId groupHandle) (err error) {
 
 func healthCheckByGpuId(gpuId uint) (deviceHealth DeviceHealth, err error) {
 	name := fmt.Sprintf("health%d", rand.Uint64())
-	groupId, err := createGroup(name)
+	groupId, err := CreateGroup(name)
 	if err != nil {
 		return
 	}
 
-	err = addToGroup(groupId, gpuId)
+	err = AddToGroup(groupId, gpuId)
 	if err != nil {
 		return
 	}
@@ -81,7 +81,7 @@ func healthCheckByGpuId(gpuId uint) (deviceHealth DeviceHealth, err error) {
 		Status:  status,
 		Watches: watches,
 	}
-	_ = destroyGroup(groupId)
+	_ = DestroyGroup(groupId)
 	return
 }
 

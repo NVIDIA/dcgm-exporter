@@ -9,9 +9,9 @@ import (
 	"fmt"
 )
 
-type groupHandle struct{ handle C.dcgmGpuGrp_t }
+type GroupHandle struct{ handle C.dcgmGpuGrp_t }
 
-func createGroup(groupName string) (goGroupId groupHandle, err error) {
+func CreateGroup(groupName string) (goGroupId GroupHandle, err error) {
 	var cGroupId C.dcgmGpuGrp_t
 	cname := C.CString(groupName)
 	defer freeCString(cname)
@@ -20,22 +20,25 @@ func createGroup(groupName string) (goGroupId groupHandle, err error) {
 	if err = errorString(result); err != nil {
 		return goGroupId, fmt.Errorf("Error creating group: %s", err)
 	}
-	goGroupId = groupHandle{cGroupId}
+
+	goGroupId = GroupHandle{cGroupId}
 	return
 }
 
-func addToGroup(groupId groupHandle, gpuId uint) (err error) {
+func AddToGroup(groupId GroupHandle, gpuId uint) (err error) {
 	result := C.dcgmGroupAddDevice(handle.handle, groupId.handle, C.uint(gpuId))
 	if err = errorString(result); err != nil {
 		return fmt.Errorf("Error adding GPU %v to group: %s", gpuId, err)
 	}
+
 	return
 }
 
-func destroyGroup(groupId groupHandle) (err error) {
+func DestroyGroup(groupId GroupHandle) (err error) {
 	result := C.dcgmGroupDestroy(handle.handle, groupId.handle)
 	if err = errorString(result); err != nil {
 		return fmt.Errorf("Error destroying group: %s", err)
 	}
+
 	return
 }

@@ -248,7 +248,7 @@ func ViolationRegistration(data unsafe.Pointer) int {
 	return 0
 }
 
-func setPolicy(groupId groupHandle, condition C.dcgmPolicyCondition_t, paramList []policyIndex) (err error) {
+func setPolicy(groupId GroupHandle, condition C.dcgmPolicyCondition_t, paramList []policyIndex) (err error) {
 	var policy C.dcgmPolicy_t
 	policy.version = makeVersion1(unsafe.Sizeof(policy))
 	policy.mode = C.dcgmPolicyMode_t(C.DCGM_OPERATION_MODE_AUTO)
@@ -288,11 +288,11 @@ func registerPolicy(gpuId uint, typ ...policyCondition) (violation chan PolicyVi
 	makePolicyParmsMap()
 
 	name := fmt.Sprintf("policy%d", rand.Uint64())
-	groupId, err := createGroup(name)
+	groupId, err := CreateGroup(name)
 	if err != nil {
 		return
 	}
-	if err = addToGroup(groupId, gpuId); err != nil {
+	if err = AddToGroup(groupId, gpuId); err != nil {
 		return
 	}
 
@@ -384,11 +384,11 @@ func registerPolicy(gpuId uint, typ ...policyCondition) (violation chan PolicyVi
 		}
 		close(violation)
 	}()
-	_ = destroyGroup(groupId)
+	_ = DestroyGroup(groupId)
 	return
 }
 
-func unregisterPolicy(groupId groupHandle, condition C.dcgmPolicyCondition_t) {
+func unregisterPolicy(groupId GroupHandle, condition C.dcgmPolicyCondition_t) {
 	result := C.dcgmPolicyUnregister(handle.handle, groupId.handle, condition)
 
 	if err := errorString(result); err != nil {

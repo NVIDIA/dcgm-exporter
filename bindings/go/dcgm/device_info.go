@@ -83,31 +83,31 @@ func getPciBandwidth(gpuId uint) (*uint, error) {
 
 	fieldsName := fmt.Sprintf("pciBandwidthFields%d", rand.Uint64())
 
-	fieldsId, err := fieldGroupCreate(fieldsName, pciFields, fieldsCount)
+	fieldsId, err := FieldGroupCreate(fieldsName, pciFields, fieldsCount)
 	if err != nil {
 		return nil, err
 	}
 
 	groupName := fmt.Sprintf("pciBandwidth%d", rand.Uint64())
-	groupId, err := watchFields(gpuId, fieldsId, groupName)
+	groupId, err := WatchFields(gpuId, fieldsId, groupName)
 	if err != nil {
-		_ = fieldGroupDestroy(fieldsId)
+		_ = FieldGroupDestroy(fieldsId)
 		return nil, err
 	}
 
 	values := make([]C.dcgmFieldValue_v1, fieldsCount)
 	result := C.dcgmGetLatestValuesForFields(handle.handle, C.int(gpuId), &pciFields[0], C.uint(fieldsCount), &values[0])
 	if err = errorString(result); err != nil {
-		_ = fieldGroupDestroy(fieldsId)
-		_ = destroyGroup(groupId)
+		_ = FieldGroupDestroy(fieldsId)
+		_ = DestroyGroup(groupId)
 		return nil, fmt.Errorf("Error getting Pcie bandwidth: %s", err)
 	}
 
 	gen := uintPtrUnsafe(unsafe.Pointer(&values[maxLinkGen].value))
 	width := uintPtrUnsafe(unsafe.Pointer(&values[maxLinkWidth].value))
 
-	_ = fieldGroupDestroy(fieldsId)
-	_ = destroyGroup(groupId)
+	_ = FieldGroupDestroy(fieldsId)
+	_ = DestroyGroup(groupId)
 
 	genMap := map[uint]uint{
 		1: 250, // MB/s
