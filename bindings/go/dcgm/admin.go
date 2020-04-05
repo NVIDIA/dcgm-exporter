@@ -2,11 +2,10 @@ package dcgm
 
 /*
 #cgo LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
-#cgo CFLAGS: -I/usr/include
 
 #include <dlfcn.h>
-#include <dcgm_agent.h>
-#include <dcgm_structs.h>
+#include "dcgm_agent.h"
+#include "dcgm_structs.h"
 */
 import "C"
 import (
