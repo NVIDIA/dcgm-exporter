@@ -27,10 +27,10 @@ func (p PerfState) String() string {
 }
 
 type UtilizationInfo struct {
-	GPU     *uint // %
-	Memory  *uint // %
-	Encoder *uint // %
-	Decoder *uint // %
+	GPU     int64 // %
+	Memory  int64 // %
+	Encoder int64 // %
+	Decoder int64 // %
 }
 
 type ECCErrorsInfo struct {
@@ -93,7 +93,7 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 		fieldsCount
 	)
 
-	var deviceFields []C.ushort = make([]C.ushort, fieldsCount)
+	deviceFields := make([]Short, fieldsCount)
 	deviceFields[pwr] = C.DCGM_FI_DEV_POWER_USAGE
 	deviceFields[temp] = C.DCGM_FI_DEV_GPU_TEMP
 	deviceFields[sm] = C.DCGM_FI_DEV_GPU_UTIL
@@ -112,8 +112,9 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 	deviceFields[pstate] = C.DCGM_FI_DEV_PSTATE
 	deviceFields[fanSpeed] = C.DCGM_FI_DEV_FAN_SPEED
 
+
 	fieldsName := fmt.Sprintf("devStatusFields%d", rand.Uint64())
-	fieldsId, err := FieldGroupCreate(fieldsName, deviceFields, fieldsCount)
+	fieldsId, err := FieldGroupCreate(fieldsName, deviceFields)
 	if err != nil {
 		return
 	}
@@ -125,10 +126,9 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 		return
 	}
 
-	values := make([]C.dcgmFieldValue_v1, fieldsCount)
-	result := C.dcgmGetLatestValuesForFields(handle.handle, C.int(gpuId), &deviceFields[0], C.uint(fieldsCount), &values[0])
-
-	if err = errorString(result); err != nil {
+	values, err := GetLatestValuesForFields(gpuId, deviceFields)
+	val := toFieldValue(values)
+	if err != nil {
 		_ = FieldGroupDestroy(fieldsId)
 		_ = DestroyGroup(groupId)
 		return status, fmt.Errorf("Error getting device status: %s", err)
@@ -137,10 +137,10 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 	power := dblToFloatUnsafe(unsafe.Pointer(&values[pwr].value))
 
 	gpuUtil := UtilizationInfo{
-		GPU:     uintPtrUnsafe(unsafe.Pointer(&values[sm].value)),
-		Memory:  uintPtrUnsafe(unsafe.Pointer(&values[mem].value)),
-		Encoder: uintPtrUnsafe(unsafe.Pointer(&values[enc].value)),
-		Decoder: uintPtrUnsafe(unsafe.Pointer(&values[dec].value)),
+		GPU:     val[sm].Int64(),
+		Memory:  val[mem].Int64(),
+		Encoder: val[enc].Int64(),
+		Decoder: val[dec].Int64(),
 	}
 
 	memory := MemoryInfo{

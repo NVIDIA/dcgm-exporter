@@ -77,13 +77,13 @@ func getPciBandwidth(gpuId uint) (*uint, error) {
 		fieldsCount
 	)
 
-	pciFields := make([]C.ushort, fieldsCount)
+	pciFields := make([]Short, fieldsCount)
 	pciFields[maxLinkGen] = C.DCGM_FI_DEV_PCIE_MAX_LINK_GEN
 	pciFields[maxLinkWidth] = C.DCGM_FI_DEV_PCIE_MAX_LINK_WIDTH
 
 	fieldsName := fmt.Sprintf("pciBandwidthFields%d", rand.Uint64())
 
-	fieldsId, err := FieldGroupCreate(fieldsName, pciFields, fieldsCount)
+	fieldsId, err := FieldGroupCreate(fieldsName, pciFields)
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +95,8 @@ func getPciBandwidth(gpuId uint) (*uint, error) {
 		return nil, err
 	}
 
-	values := make([]C.dcgmFieldValue_v1, fieldsCount)
-	result := C.dcgmGetLatestValuesForFields(handle.handle, C.int(gpuId), &pciFields[0], C.uint(fieldsCount), &values[0])
-	if err = errorString(result); err != nil {
+	values, err := GetLatestValuesForFields(gpuId, pciFields)
+	if err != nil {
 		_ = FieldGroupDestroy(fieldsId)
 		_ = DestroyGroup(groupId)
 		return nil, fmt.Errorf("Error getting Pcie bandwidth: %s", err)

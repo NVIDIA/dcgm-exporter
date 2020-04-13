@@ -169,13 +169,13 @@ func TestDeviceStatus(t *testing.T) {
 				output = strconv.FormatUint(uint64(*status.Temperature), 10)
 			case "utilization.gpu":
 				msg = "Device gpu utilization"
-				output = strconv.FormatUint(uint64(*status.Utilization.GPU), 10)
+				output = strconv.FormatUint(uint64(status.Utilization.GPU), 10)
 			case "utilization.memory":
 				msg = "Device memory utilization"
-				output = strconv.FormatUint(uint64(*status.Utilization.Memory), 10)
+				output = strconv.FormatUint(uint64(status.Utilization.Memory), 10)
 			case "encoder.stats.averageFps":
 				msg = "Device encoder utilization"
-				output = strconv.FormatUint(uint64(*status.Utilization.Encoder), 10)
+				output = strconv.FormatUint(uint64(status.Utilization.Encoder), 10)
 			case "clocks.current.sm":
 				msg = "Device sm clock"
 				output = strconv.FormatUint(uint64(*status.Clocks.Cores), 10)

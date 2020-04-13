@@ -1,7 +1,25 @@
 package dcgm
 
+import "C"
+
+type Short C.ushort
+
+type FieldValue_v1 struct {
+	Version uint
+	FieldId uint
+	FieldType uint
+	Status int
+	Ts int64
+	Value [4096]byte
+}
+
 var (
-	DCGM_FI = map[string]int{
+	DCGM_FI = map[string]Short{
+		"DCGM_FT_BINARY": Short('b'),
+		"DCGM_FT_DOUBLE": Short('d'),
+		"DCGM_FT_INT64":  Short('i'),
+		"DCGM_FT_STRING": Short('s'),
+		"DCGM_FT_TIMESTAMP": Short('t'),
 		"DCGM_FI_UNKNOWN": 0,
 		"DCGM_FI_DRIVER_VERSION": 1,
 		"DCGM_FI_NVML_VERSION": 2,

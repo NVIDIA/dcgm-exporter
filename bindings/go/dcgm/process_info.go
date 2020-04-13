@@ -142,8 +142,8 @@ func getProcessInfo(groupId GroupHandle, pid uint) (processInfo []ProcessInfo, e
 		}
 
 		gpuUtil := UtilizationInfo{
-			GPU:    blank32(uintPtrInt(pidInfo.gpus[i].smUtilization.average)),
-			Memory: blank32(uintPtrInt(pidInfo.gpus[i].memoryUtilization.average)),
+			GPU:    int64(pidInfo.gpus[i].smUtilization.average),
+			Memory: int64(pidInfo.gpus[i].memoryUtilization.average),
 		}
 
 		violations := ViolationTime{
