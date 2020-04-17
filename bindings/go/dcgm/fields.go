@@ -1,8 +1,8 @@
 package dcgm
 
 /*
-#include "dcgm_agent.h"
-#include "dcgm_structs.h"
+#include "./dcgm_agent.h"
+#include "./dcgm_structs.h"
 */
 import "C"
 import (
@@ -78,7 +78,7 @@ func WatchFieldsWithGroup(fieldsGroup FieldHandle, group GroupHandle) error {
 	return nil
 }
 
-func GetLatestValuesForFields(gpu uint, fields []Short) ([]C.dcgmFieldValue_v1, error) {
+func GetLatestValuesForFields(gpu uint, fields []Short) ([]FieldValue_v1, error) {
 	values := make([]C.dcgmFieldValue_v1, len(fields))
 	cfields := *(*[]C.ushort)(unsafe.Pointer(&fields))
 
@@ -87,7 +87,7 @@ func GetLatestValuesForFields(gpu uint, fields []Short) ([]C.dcgmFieldValue_v1, 
 		return nil, fmt.Errorf("Error watching fields: %s", err)
 	}
 
-	return /*toFieldValue(values)*/ values, nil
+	return toFieldValue(values), nil
 }
 
 func UpdateAllFields() error {
@@ -98,8 +98,6 @@ func UpdateAllFields() error {
 }
 
 func toFieldValue(cfields []C.dcgmFieldValue_v1) []FieldValue_v1 {
-	fmt.Printf("%d\n", len(cfields))
-
 	fields := make([]FieldValue_v1, len(cfields))
 	for i, f := range cfields {
 		fields[i] = FieldValue_v1{

@@ -2,6 +2,7 @@ package dcgm
 
 import (
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -16,7 +17,7 @@ var (
 // 2. Standalone: Connect to an already running nv-hostengine at the specified address
 // Connection address can be passed as command line args: -connect "IP:PORT/Socket" -socket "isSocket"
 // 3. StartHostengine: Open an Unix socket to start and connect to the nv-hostengine and terminate before exiting
-func Init(m mode, args ...string) (err error) {
+func Init(m mode, args ...string) (cleanup func(), err error) {
 	mux.Lock()
 	if dcgmInitCounter < 0 {
 		count := fmt.Sprintf("%d", dcgmInitCounter)
@@ -28,7 +29,11 @@ func Init(m mode, args ...string) (err error) {
 	dcgmInitCounter += 1
 	mux.Unlock()
 
-	return
+	return func() {
+		if err := Shutdown(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to shutdown DCGM with error: `%v`", err)
+		}
+	}, err
 }
 
 // Shutdown stops DCGM and destroy all connections

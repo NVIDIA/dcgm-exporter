@@ -456,10 +456,10 @@ typedef enum dcgmConfigPowerLimitType_enum
  *  @{
  */
 /***************************************************************************************************/
-typedef void *dcgmHandle_t;   //!< Identifier for DCGM Handle
-typedef void *dcgmGpuGrp_t;   //!< Identifier for a group of GPUs. A group can have one or more GPUs
-typedef void *dcgmFieldGrp_t; //!< Identifier for a group of fields.
-typedef void *dcgmStatus_t;   //!< Identifier for list of status codes
+typedef uintptr_t dcgmHandle_t;   //!< Identifier for DCGM Handle
+typedef uintptr_t dcgmGpuGrp_t;   //!< Identifier for a group of GPUs. A group can have one or more GPUs
+typedef uintptr_t dcgmFieldGrp_t; //!< Identifier for a group of fields.
+typedef uintptr_t dcgmStatus_t;   //!< Identifier for list of status codes
 
 /**
  * Connection options for dcgmConnect_v2 (v1)

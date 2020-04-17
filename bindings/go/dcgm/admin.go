@@ -4,8 +4,8 @@ package dcgm
 #cgo LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
 
 #include <dlfcn.h>
-#include "dcgm_agent.h"
-#include "dcgm_structs.h"
+#include "./dcgm_agent.h"
+#include "./dcgm_structs.h"
 */
 import "C"
 import (
@@ -37,7 +37,7 @@ var (
 	hostengineAsChildPid int
 )
 
-func initDcgm(m mode, args ...string) error {
+func initDcgm(m mode, args ...string) (err error) {
 	const (
 		dcgmLib = "libdcgm.so.1"
 	)
@@ -60,6 +60,7 @@ func initDcgm(m mode, args ...string) error {
 	case StartHostengine:
 		return startHostengine()
 	}
+
 	return nil
 }
 
@@ -106,6 +107,10 @@ func stopEmbedded() (err error) {
 }
 
 func connectStandalone(args ...string) (err error) {
+	if len(args) < 2 {
+		return fmt.Errorf("Missing dcgm address and / or port")
+	}
+
 	result := C.dcgmInit()
 	if err = errorString(result); err != nil {
 		return fmt.Errorf("Error initializing DCGM: %s", err)

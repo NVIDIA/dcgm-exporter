@@ -112,9 +112,9 @@ func getProcessInfo(groupId GroupHandle, pid uint) (processInfo []ProcessInfo, e
 	for i := 0; i < int(pidInfo.numGpus); i++ {
 
 		var energy uint64
-		e := blank64(uint64Ptr(pidInfo.gpus[i].energyConsumed))
-		if e != nil {
-			energy = *e / 1000 // mWs to joules
+		e := *uint64Ptr(pidInfo.gpus[i].energyConsumed)
+		if !IsInt64Blank(int64(e)) {
+			energy = e / 1000 // mWs to joules
 		}
 
 		processUtil := ProcessUtilInfo{
@@ -125,19 +125,20 @@ func getProcessInfo(groupId GroupHandle, pid uint) (processInfo []ProcessInfo, e
 			MemUtil:        roundFloat(dblToFloat(pidInfo.gpus[i].processUtilization.memUtil)),
 		}
 
+		// TODO figure out how to deal with blanks
 		pci := PCIStatusInfo{
 			Throughput: PCIThroughputInfo{
-				Rx:      blank64(uint64Ptr(pidInfo.gpus[i].pcieRxBandwidth.average)),
-				Tx:      blank64(uint64Ptr(pidInfo.gpus[i].pcieTxBandwidth.average)),
-				Replays: blank64(uint64Ptr(pidInfo.gpus[i].pcieReplays)),
+				Rx:      *int64Ptr(pidInfo.gpus[i].pcieRxBandwidth.average),
+				Tx:      *int64Ptr(pidInfo.gpus[i].pcieTxBandwidth.average),
+				Replays: *int64Ptr(pidInfo.gpus[i].pcieReplays),
 			},
 		}
 
 		memory := MemoryInfo{
-			GlobalUsed: blank64(uint64Ptr(pidInfo.gpus[i].maxGpuMemoryUsed)), // max gpu memory used for this process
+			GlobalUsed: *int64Ptr(pidInfo.gpus[i].maxGpuMemoryUsed), // max gpu memory used for this process
 			ECCErrors: ECCErrorsInfo{
-				SingleBit: blank32(uintPtr(pidInfo.gpus[i].eccSingleBit)),
-				DoubleBit: blank32(uintPtr(pidInfo.gpus[i].eccDoubleBit)),
+				SingleBit: *int64Ptr(C.longlong(pidInfo.gpus[i].eccSingleBit)),
+				DoubleBit: *int64Ptr(C.longlong(pidInfo.gpus[i].eccDoubleBit)),
 			},
 		}
 
@@ -147,17 +148,17 @@ func getProcessInfo(groupId GroupHandle, pid uint) (processInfo []ProcessInfo, e
 		}
 
 		violations := ViolationTime{
-			Power:          blank64(uint64Ptr(pidInfo.gpus[i].powerViolationTime)),
-			Thermal:        blank64(uint64Ptr(pidInfo.gpus[i].thermalViolationTime)),
-			Reliability:    blank64(uint64Ptr(pidInfo.gpus[i].reliabilityViolationTime)),
-			BoardLimit:     blank64(uint64Ptr(pidInfo.gpus[i].boardLimitViolationTime)),
-			LowUtilization: blank64(uint64Ptr(pidInfo.gpus[i].lowUtilizationTime)),
-			SyncBoost:      blank64(uint64Ptr(pidInfo.gpus[i].syncBoostTime)),
+			Power:          uint64Ptr(pidInfo.gpus[i].powerViolationTime),
+			Thermal:        uint64Ptr(pidInfo.gpus[i].thermalViolationTime),
+			Reliability:    uint64Ptr(pidInfo.gpus[i].reliabilityViolationTime),
+			BoardLimit:     uint64Ptr(pidInfo.gpus[i].boardLimitViolationTime),
+			LowUtilization: uint64Ptr(pidInfo.gpus[i].lowUtilizationTime),
+			SyncBoost:      uint64Ptr(pidInfo.gpus[i].syncBoostTime),
 		}
 
 		clocks := ClockInfo{
-			Cores:  blank32(uintPtrInt(pidInfo.gpus[i].smClock.average)),
-			Memory: blank32(uintPtrInt(pidInfo.gpus[i].memoryClock.average)),
+			Cores:  *int64Ptr(C.longlong(pidInfo.gpus[i].smClock.average)),
+			Memory: *int64Ptr(C.longlong(pidInfo.gpus[i].memoryClock.average)),
 		}
 
 		numErrs := int(pidInfo.gpus[i].numXidCriticalErrors)

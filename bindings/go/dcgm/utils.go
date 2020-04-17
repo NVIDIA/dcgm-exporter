@@ -41,6 +41,11 @@ func uint64Ptr(c C.longlong) *uint64 {
 	return &i
 }
 
+func int64Ptr(c C.longlong) *int64 {
+	i := int64(c)
+	return &i
+}
+
 func uint64PtrUint(c C.uint) *uint64 {
 	i := uint64(c)
 	return &i
@@ -96,29 +101,29 @@ func freeCString(cStr *C.char) {
 	C.free(unsafe.Pointer(cStr))
 }
 
-func isInt32Blank(value int) bool {
+func IsInt32Blank(value int) bool {
 	if value >= dcgmInt32Blank {
 		return true
 	}
 	return false
 }
 
-func isInt64Blank(value int64) bool {
+func IsInt64Blank(value int64) bool {
 	if value >= dcgmInt64Blank {
 		return true
 	}
 	return false
 }
 
-func blank64(val *uint64) *uint64 {
-	if val != nil && isInt64Blank(int64(*val)) {
+func blank64(val *int64) *int64 {
+	if val != nil && IsInt64Blank(*val) {
 		return nil
 	}
 	return val
 }
 
 func blank32(val *uint) *uint {
-	if val != nil && isInt32Blank(int(*val)) {
+	if val != nil && IsInt32Blank(int(*val)) {
 		return nil
 	}
 	return val
