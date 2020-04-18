@@ -1,2 +1,3 @@
-.swp
-.swo
+*.swp
+*.swo
+dcgm-exporter

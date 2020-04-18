@@ -1,0 +1,18 @@
+ARG GOLANG_VERSION
+FROM golang:$GOLANG_VERSION AS builder
+WORKDIR /go/src/github.com/NVIDIA/gpu-monitoring-tools
+
+COPY . .
+
+RUN make binary
+
+FROM registry.access.redhat.com/ubi8:latest
+LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
+
+COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter /usr/bin/
+COPY etc/dcgm-exporter /etc
+
+RUN useradd dcgm-exporter
+USER dcgm-exporter
+
+ENTRYPOINT ["/usr/bin/dcgm-exporter"]
