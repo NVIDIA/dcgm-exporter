@@ -22,7 +22,7 @@ import (
 	"strings"
 	"encoding/csv"
 
-	"github.com/golang/glog"
+	"github.com/sirupsen/logrus"
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
 )
 
@@ -69,7 +69,7 @@ func extractCounters(records [][]string) ([]Counter, error) {
 		}
 
 		if recordIsCommentOrEmpty(record) {
-			glog.V(3).Infof("Skipping line %d (`%v`)", i, record)
+			logrus.Debugf("Skipping line %d (`%v`)", i, record)
 			continue
 		}
 

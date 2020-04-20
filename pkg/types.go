@@ -26,12 +26,20 @@ import (
 
 var (
 	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
+
+	nvidiaResourceName = "nvidia.com/gpu"
+
+	// Note standard resource attributes
+	podAttribute = "pod"
+	namespaceAttribute = "namespace"
+	containerAttribute = "container"
 )
 
 type Config struct {
 	FieldsFile      string
 	Port            int
 	CollectInterval int
+	LogKubernetes   bool
 }
 
 type Transform interface {
@@ -85,4 +93,14 @@ type MetricsServer struct {
 	server http.Server
 	metrics string
 	metricsChan chan string
+}
+
+type PodMapper struct {
+	Config *Config
+}
+
+type PodInfo struct {
+	Name   string
+	Namespace string
+	Container string
 }

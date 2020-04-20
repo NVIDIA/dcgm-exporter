@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
+	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
 )
@@ -32,6 +32,7 @@ var (
 
 	CLIFieldsFile = "fields-file"
 	CLIPort = "port"
+	CLILogKubernetes = "log-kubernetes"
 
 	connectAddr = "localhost"
 	isSocket    = "0"
@@ -57,6 +58,13 @@ func main() {
 			Usage:   "Port",
 			EnvVars: []string{"DCGM_EXPORTER_PORT"},
 		},
+		&cli.BoolFlag{
+			Name:    CLILogKubernetes,
+			Aliases: []string{"k"},
+			Value:   false,
+			Usage:   "Enable logging if kubernetes is available",
+			EnvVars: []string{"DCGM_LOG_KUBERNETES"},
+		},
 	}
 
 	c.Action = func(c *cli.Context) error {
@@ -64,27 +72,25 @@ func main() {
 	}
 
 	if err := c.Run(os.Args); err != nil {
-		glog.Fatal(err)
+		logrus.Fatal(err)
 	}
 }
 
 func Run(c *cli.Context) error {
 	restart:
-	defer glog.Flush()
-
 	config := contextToConfig(c)
 
 	cleanup, err := dcgm.Init(dcgm.Standalone, connectAddr, isSocket)
 	defer cleanup()
 	if err != nil {
-		glog.Fatal(err)
+		logrus.Fatal(err)
 	}
 
 	ch := make(chan string, 10)
 	pipeline, cleanup, err := NewMetricsPipeline(config)
 	defer cleanup()
 	if err != nil {
-		glog.Fatal(err)
+		logrus.Fatal(err)
 	}
 
 	server, cleanup, err := NewMetricsServer(config, ch)
@@ -109,7 +115,7 @@ func Run(c *cli.Context) error {
 			close(stop)
 			err := WaitWithTimeout(&wg, time.Second * 2)
 			if err != nil {
-				glog.Fatal(err)
+				logrus.Fatal(err)
 			}
 
 			if sig == syscall.SIGHUP {
@@ -128,5 +134,6 @@ func contextToConfig(c *cli.Context) *Config {
 		FieldsFile: c.String(CLIFieldsFile),
 		Port: c.Int(CLIPort),
 		CollectInterval: 2000,
+		LogKubernetes: c.Bool(CLILogKubernetes),
 	}
 }

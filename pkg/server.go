@@ -24,7 +24,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/mux"
-	"github.com/golang/glog"
+	"github.com/sirupsen/logrus"
 )
 
 func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), error) {
@@ -37,6 +37,7 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 			WriteTimeout:   10 * time.Second,
 		},
 		metricsChan: metrics,
+		metrics: "",
 	}
 
 	router.HandleFunc("/heath", serverv1.Health)
@@ -53,7 +54,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	go func() {
 		defer httpwg.Done()
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			glog.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
+			logrus.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
 		}
 	}()
 
@@ -72,11 +73,11 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 
 	<-stop
 	if err := s.server.Shutdown(context.Background()); err != nil {
-		glog.Fatalf("Failed to shutdown HTTP server, with err: `%v`", err)
+		logrus.Fatalf("Failed to shutdown HTTP server, with err: `%v`", err)
 	}
 
 	if err := WaitWithTimeout(&httpwg, 3 * time.Second); err != nil {
-		glog.Fatalf("Failed waiting for HTTP server to shutdown, with err: `%v`", err)
+		logrus.Fatalf("Failed waiting for HTTP server to shutdown, with err: `%v`", err)
 	}
 }
 
@@ -86,8 +87,13 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	if s.getMetrics() == "" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("KO"))
+	} else {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	}
 }
 
 func (s *MetricsServer) updateMetrics(m string) {

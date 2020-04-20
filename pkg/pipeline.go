@@ -23,7 +23,7 @@ import (
 	"text/template"
 	"sync"
 
-	"github.com/golang/glog"
+	"github.com/sirupsen/logrus"
 )
 
 func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
@@ -51,6 +51,7 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		countersText: countersText,
 
 		gpuCollector: gpuCollector,
+		transformations: []Transform{NewPodMapper(c)},
 	}, func() {
 		cleanup()
 	}, nil
@@ -89,12 +90,12 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 		case <-t.C:
 			o, err := m.run()
 			if err != nil {
-				glog.Errorf("Failed to collect metrics with error: %v", err)
+				logrus.Errorf("Failed to collect metrics with error: %v", err)
 				continue
 			}
 
 			if len(out) == cap(out) {
-				glog.Errorf("Channel is full skipping")
+				logrus.Errorf("Channel is full skipping")
 			} else {
 				out <- o
 			}
