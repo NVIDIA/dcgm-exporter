@@ -24,34 +24,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-/*
-func TestGetMetrics(t *testing.T) {
-	err := dcgm.Init(dcgm.Embedded);
-	require.NoError(t, err)
-
-	collector := NewDCGMCollector()
-	out, err := collector.GetMetrics()
-
-	require.NoError(t, err)
-	require.NotEmpty(t, out)
-	t.Log(out)
+var sampleCounters = []Counter{
+	{dcgm.DCGM_FI_DEV_GPU_TEMP, "DCGM_FI_DEV_GPU_TEMP", "gauge", "Temperature Help info"},
+	{dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "gauge", "Energy help info"},
+	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
 }
-*/
+ 
 
-func TestFieldGroup(t *testing.T) {
+func TestDCGMCollector(t *testing.T) {
 	cleanup, err := dcgm.Init(dcgm.Embedded);
 	require.NoError(t, err)
 	defer cleanup()
 
-	c, cleanup, err := NewDCGMCollector([]DCGMField{
-		{dcgm.DCGM_FI_DEV_GPU_TEMP, "DCGM_FI_DEV_GPU_TEMP", "gauge", "Renaud"},
-		{dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "gauge", "Renaud"},
-		{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Renaud"},
-	})
+	_, cleanup = testDCGMCollector(t, sampleCounters)
+	cleanup()
+}
+
+func testDCGMCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
+	c, cleanup, err := NewDCGMCollector(counters)
 	require.NoError(t, err)
-	defer cleanup()
 
 	out, err := c.GetMetrics()
 	require.NoError(t, err)
-	fmt.Println(out)
+	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
+	require.Len(t, out[0], len(counters))
+
+	for i, dev := range out {
+		for j, metric := range dev {
+			require.Equal(t, metric.Name, counters[j].FieldName)
+			require.Equal(t, metric.GPU, fmt.Sprintf("%d", i))
+
+			require.NotEmpty(t, metric.Value)
+			require.NotEqual(t, metric.Value, FailedToConvert)
+		}
+	}
+
+	return c, cleanup
 }

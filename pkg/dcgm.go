@@ -32,9 +32,9 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 	return group, func() { dcgm.DestroyGroup(group) }, nil
 }
 
-func NewDeviceFields(fields []DCGMField) []dcgm.Short {
-	deviceFields := make([]dcgm.Short, len(fields))
-	for i, f := range fields {
+func NewDeviceFields(counters []Counter) []dcgm.Short {
+	deviceFields := make([]dcgm.Short, len(counters))
+	for i, f := range counters {
 		deviceFields[i] = f.FieldID
 	}
 

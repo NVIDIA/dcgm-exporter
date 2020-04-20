@@ -18,11 +18,9 @@ package main
 
 import (
 	"os"
-	"os/signal"
 	"syscall"
 	"sync"
 	"time"
-	"fmt"
 
 	"github.com/golang/glog"
 	"github.com/urfave/cli/v2"
@@ -82,13 +80,14 @@ func Run(c *cli.Context) error {
 		glog.Fatal(err)
 	}
 
-	collectorMgr, cleanup, err := NewCollectorMgr(config)
+	ch := make(chan string, 10)
+	pipeline, cleanup, err := NewMetricsPipeline(config)
 	defer cleanup()
 	if err != nil {
 		glog.Fatal(err)
 	}
 
-	server, cleanup, err := NewMetricsServer(config, collectorMgr.Out)
+	server, cleanup, err := NewMetricsServer(config, ch)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -98,7 +97,7 @@ func Run(c *cli.Context) error {
 	stop := make(chan interface{})
 
 	wg.Add(1)
-	go collectorMgr.Run(stop, &wg)
+	go pipeline.Run(ch, stop, &wg)
 
 	wg.Add(1)
 	go server.Run(stop, &wg)
@@ -130,25 +129,4 @@ func contextToConfig(c *cli.Context) *Config {
 		Port: c.Int(CLIPort),
 		CollectInterval: 2000,
 	}
-}
-
-func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
-	c := make(chan struct{})
-	go func() {
-		defer close(c)
-		wg.Wait()
-	}()
-	select {
-	case <-c:
-		return nil
-	case <-time.After(timeout):
-		return fmt.Errorf("Timeout waiting for WaitGroup")
-	}
-}
-
-func newOSWatcher(sigs ...os.Signal) chan os.Signal {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, sigs...)
-
-	return sigChan
 }

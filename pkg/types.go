@@ -20,7 +20,12 @@ import (
 	"sync"
 	"net/http"
 	"text/template"
+
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
+)
+
+var (
+	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
 )
 
 type Config struct {
@@ -29,15 +34,42 @@ type Config struct {
 	CollectInterval int
 }
 
-type Collector interface {
-	GetMetrics() (string, error)
+type Transform interface {
+	Process(metrics [][]Metric) error
+	Name() string
+}
+
+type MetricsPipeline struct {
+	config *Config
+
+	transformations []Transform
+	metricsFormat *template.Template
+	countersText string
+
+	gpuCollector *DCGMCollector
 }
 
 type DCGMCollector struct {
-	Fields []DCGMField
-	Template *template.Template
-	Cleanups []func()
+	Counters []Counter
 	DeviceFields []dcgm.Short
+	Cleanups []func()
+}
+
+type Counter struct {
+	FieldID   dcgm.Short
+	FieldName string
+	PromType  string
+	Help      string
+}
+
+type Metric struct {
+	Name  string
+	Value string
+
+	GPU     string
+	GPUUUID string
+
+	Attributes map[string]string
 }
 
 var promMetricType = map[string]bool{
@@ -45,19 +77,6 @@ var promMetricType = map[string]bool{
 	"counter": true,
 	"histogram": true,
 	"summary": true,
-}
-
-type DCGMField struct {
-	FieldID   dcgm.Short
-	FieldName string
-	PromType  string
-	Help      string
-}
-
-type CollectorMgr struct {
-	Collectors []Collector
-	CollectInterval int
-	Out chan string
 }
 
 type MetricsServer struct {

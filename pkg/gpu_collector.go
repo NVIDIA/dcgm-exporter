@@ -17,48 +17,14 @@
 package main
 
 import (
-	"C"
-	"bytes"
 	"fmt"
-	"text/template"
-
-	//"github.com/golang/glog"
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
 )
 
-/*
-* The goal here is to get to the following format:
-* ```
-* # HELP FIELD_ID HELP_MSG
-* # TYPE FIELD_ID PROM_TYPE
-* ...
-* FIELD_ID{gpu="GPU_INDEX_0",uuid="GPU_UUID"} VALUE
-* ...
-* FIELD_ID{gpu="GPU_INDEX_N",uuid="GPU_UUID"} VALUE
-* ```
-*
-* The expectation is that the template will be given the following
-* values: {.Fields, .Devices, .Values[Device][Field]}
-*
-*/
-
-	var format = `
-{{- range $field := .Fields -}}
-# HELP {{ $field.FieldName }} {{ $field.Help }}
-# TYPE {{ $field.FieldName }} {{ $field.PromType }}
-{{ end }}
-{{ range $i, $dev := .Devices }}{{ range $j, $field := $.Fields }}
-{{ $field.FieldName }}{gpu="{{ $dev.GPU }}" UUID="{{ $dev.UUID }}"} {{ index (index $.Values $i) $j | ToString }}
-{{- end }}
-{{ end }}`
-
-
-func NewDCGMCollector(fields []DCGMField) (*DCGMCollector, func(), error) {
+func NewDCGMCollector(c []Counter) (*DCGMCollector, func(), error) {
 	collector := &DCGMCollector{
-		Template: template.Must(template.New("DCGMFormat").Funcs(
-			template.FuncMap{"ToString": ToString}).Parse(format)),
-		Fields: fields,
-		DeviceFields: NewDeviceFields(fields),
+		Counters: c,
+		DeviceFields: NewDeviceFields(c),
 	}
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields)
@@ -77,6 +43,50 @@ func (c *DCGMCollector) Cleanup() {
 	}
 }
 
+func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
+	count, err := dcgm.GetAllDeviceCount()
+	if err != nil {
+		return nil, err
+	}
+
+	metrics := make([][]Metric, count)
+	for i := uint(0); i < count; i++ {
+		// TODO: This call could be cached
+		deviceInfo, err := dcgm.GetDeviceInfo(i)
+		if err != nil {
+			return nil, err
+		}
+
+		vals, err := dcgm.GetLatestValuesForFields(i, c.DeviceFields)
+		if err != nil {
+			return nil, err
+		}
+
+		metrics[i] = ToMetric(vals, c.Counters, deviceInfo)
+	}
+
+	return metrics, nil
+}
+
+func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric {
+	metrics := make([]Metric, len(values))
+
+	for i, val := range values {
+		metrics[i] = Metric{
+			Name: c[i].FieldName,
+			Value: ToString(val),
+
+			GPU: fmt.Sprintf("%d", d.GPU),
+			GPUUUID: d.UUID,
+
+			Attributes: map[string]string{},
+		}
+	}
+
+	return metrics
+
+}
+
 func ToString(value dcgm.FieldValue_v1) string {
 	switch v := value.FieldType; v {
 	case dcgm.DCGM_FT_STRING:
@@ -86,48 +96,9 @@ func ToString(value dcgm.FieldValue_v1) string {
 	case dcgm.DCGM_FT_INT64:
 		return fmt.Sprintf("%d", value.Int64())
 	default:
-		return "ERROR - FAILED TO CONVERT TO STRING"
+		return FailedToConvert
 	}
-	return "ERROR - FAILED TO CONVERT TO STRING"
+
+	return FailedToConvert
 }
 
-func (c *DCGMCollector) GetMetrics() (string, error) {
-	count, err := dcgm.GetAllDeviceCount()
-	if err != nil {
-		return "", err
-	}
-
-	values := make([][]dcgm.FieldValue_v1, count)
-	devices := make([]dcgm.Device, count)
-	for i := uint(0); i < count; i++ {
-		vals, err := dcgm.GetLatestValuesForFields(i, c.DeviceFields)
-		if err != nil {
-			return "", err
-		}
-
-		values[i] = vals
-
-		deviceInfo, err := dcgm.GetDeviceInfo(i)
-		if err != nil {
-			return "", err
-		}
-
-		devices[i] = deviceInfo
-	}
-
-
-	var res bytes.Buffer
-	if err := c.Template.Execute(&res, struct {
-			Fields []DCGMField
-			Devices []dcgm.Device
-			Values [][]dcgm.FieldValue_v1
-		} { 
-		Fields: c.Fields,
-		Devices: devices,
-		Values: values,
-	}); err != nil {
-		return "", err
-	}
-
-	return res.String(), nil
-}

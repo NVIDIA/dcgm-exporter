@@ -27,19 +27,19 @@ import (
 )
 
 
-func ExtractMetrics(filename string) ([]DCGMField, error) {
+func ExtractCounters(filename string) ([]Counter, error) {
 	records, err := ReadCSVFile(filename)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return nil, err
 	}
 
-	fields, err := extractDCGMFields(records)
+	counters, err := extractCounters(records)
 	if err != nil {
 		return nil, err
 	}
 
-	return fields, err
+	return counters, err
 }
 
 func ReadCSVFile(filename string) ([][]string, error) {
@@ -56,8 +56,8 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractDCGMFields(records [][]string) ([]DCGMField, error) {
-	f := make([]DCGMField, 0, len(records))
+func extractCounters(records [][]string) ([]Counter, error) {
+	f := make([]Counter, 0, len(records))
 
 	for i, record := range records {
 		if len(record) == 0 {
@@ -86,7 +86,7 @@ func extractDCGMFields(records [][]string) ([]DCGMField, error) {
 			return nil, fmt.Errorf("Could not find Prometheus metry type %s", record[1])
 		}
 
-		f = append(f, DCGMField{fieldID, record[0], record[1], record[2]})
+		f = append(f, Counter{fieldID, record[0], record[1], record[2]})
 	}
 
 	return f, nil
