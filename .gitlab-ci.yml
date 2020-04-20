@@ -4,8 +4,6 @@ services:
   - docker:dind
 
 variables:
-  DCGM_VERSION: "1.7.1"
-  METRICS_EXPORTER_VERSION: "1.0.0-alpha.0"
 
 stages:
   - build
@@ -14,40 +12,23 @@ stages:
 dcgm:exporter:
   stage: build
   script:
-    - apk add make bash
+    - apk add make
     - docker login -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
 
-    - make -C dcgm-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" DCGM="${DCGM_VERSION}" build
-    - make -C dcgm-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push
-
-gpu:metrics:exporter:
-  stage: build
-  script:
-    - apk add make bash
-    - docker login -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
-
-    - make -C pod-gpu-metrics-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" build
-    - make -C pod-gpu-metrics-exporter REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" DCGM="${DCGM_VERSION}" build
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push-short
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push-latest
 
 dcgm:exporter:
   stage: release
   only:
     - tags
   script:
-    - apk add make bash
+    - apk add make
     - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
 
-    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${DCGM_VERSION}" DCGM="${DCGM_VERSION}" build
-    - make -C dcgm-exporter REGISTRY="nvidia" TAG="${DCGM_VERSION}" push
-
-gpu:metrics:exporter:
-  stage: release
-  only:
-    - tags
-  script:
-    - apk add make bash
-    - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
-
-    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${METRICS_EXPORTER_VERSION}" build
-    - make -C pod-gpu-metrics-exporter REGISTRY="nvidia" TAG="${METRICS_EXPORTER_VERSION}" push
-
+    - make REGISTRY="nvidia" DCGM="${DCGM_VERSION}" build
+    - make REGISTRY="nvidia" push
+    - make REGISTRY="nvidia" push-short
+    - make REGISTRY="nvidia" push-latest

@@ -17,13 +17,28 @@ MKDIR    ?= mkdir
 REGISTRY ?= nvidia/toolkit
 
 GOLANG_VERSION := 1.14.2
-VERSION        := 2.0.0
+VERSION        := 2.0.0-rc.0
 
-.PHONY: all
+.PHONY: all binary install
 all: ubuntu18.04 ubi8
 
 binary:
 	go build -o dcgm-exporter github.com/NVIDIA/gpu-monitoring-tools/pkg
+
+install: binary
+	install -m 557 dcgm-exporter /usr/bin/dcgm-exporter
+
+push:
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
+
+push-short:
+	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(VERSION)"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)"
+
+push-latest:
+	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
 
 ubuntu18.04:
 	$(DOCKER) build --pull \
