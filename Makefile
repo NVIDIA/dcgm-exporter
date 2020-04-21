@@ -30,7 +30,7 @@ install: binary
 
 push:
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubi8"
 
 push-short:
 	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(VERSION)"
