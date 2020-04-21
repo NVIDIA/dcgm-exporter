@@ -1,15 +1,12 @@
 image: docker:latest
-
 services:
   - docker:dind
-
-variables:
 
 stages:
   - build
   - release
 
-dcgm:exporter:
+build:
   stage: build
   script:
     - apk add make
@@ -20,7 +17,7 @@ dcgm:exporter:
     - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push-short
     - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push-latest
 
-dcgm:exporter:
+release:
   stage: release
   only:
     - tags
