@@ -1,3 +1,4 @@
 *.swp
 *.swo
 dcgm-exporter
+!etc/dcgm-exporter/
