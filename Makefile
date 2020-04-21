@@ -14,7 +14,7 @@
 
 DOCKER   ?= docker
 MKDIR    ?= mkdir
-REGISTRY ?= nvidia/toolkit
+REGISTRY ?= nvidia
 
 GOLANG_VERSION := 1.14.2
 VERSION        := 2.0.0-rc.0
