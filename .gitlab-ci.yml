@@ -12,10 +12,10 @@ build:
     - apk add make
     - docker login -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
 
-    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" DCGM="${DCGM_VERSION}" all
-    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push
-    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push-short
-    - make REGISTRY="${CI_REGISTRY_IMAGE}" TAG="${CI_COMMIT_SHA}" push-latest
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" all
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" push
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" push-short
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" push-latest
 
 release:
   stage: release
@@ -25,7 +25,7 @@ release:
     - apk add make
     - docker login -u "${REGISTRY_USER}" -p "${REGISTRY_TOKEN}"
 
-    - make REGISTRY="nvidia" DCGM="${DCGM_VERSION}" all
-    - make REGISTRY="nvidia" push
-    - make REGISTRY="nvidia" push-short
-    - make REGISTRY="nvidia" push-latest
+    - make TAG="${CI_COMMIT_SHA}" all
+    - make TAG="${CI_COMMIT_SHA}" push
+    - make TAG="${CI_COMMIT_SHA}" push-short
+    - make TAG="${CI_COMMIT_SHA}" push-latest
