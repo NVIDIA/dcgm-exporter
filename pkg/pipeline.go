@@ -27,7 +27,7 @@ import (
 )
 
 func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
-	counters, err := ExtractCounters(c.FieldsFile)
+	counters, err := ExtractCounters(c.CollectorsFile)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -44,6 +44,11 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
+	transformations := []Transform{}
+	if c.Kubernetes {
+		transformations = append(transformations, NewPodMapper(c))
+	}
+
 	return &MetricsPipeline{
 		config: c,
 
@@ -51,7 +56,7 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		countersText: countersText,
 
 		gpuCollector: gpuCollector,
-		transformations: []Transform{NewPodMapper(c)},
+		transformations: transformations,
 	}, func() {
 		cleanup()
 	}, nil

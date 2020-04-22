@@ -30,9 +30,10 @@ import (
 var (
 	BuildVersion = "Filled by the build system"
 
-	CLIFieldsFile = "fields-file"
+	CLIFieldsFile = "collectors"
 	CLIPort = "port"
-	CLILogKubernetes = "log-kubernetes"
+	CLICollectInterval = "collect-interval"
+	CLIKubernetes = "kubernetes"
 
 	connectAddr = "localhost"
 	isSocket    = "0"
@@ -47,9 +48,10 @@ func main() {
 	c.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:    CLIFieldsFile,
-			Usage:   "Path to the file, that contains the DCGM fields to export",
+			Aliases: []string{"f"},
+			Usage:   "Path to the file, that contains the DCGM fields to collect",
 			Value:   "/etc/dcgm-exporter/default.csv",
-			EnvVars: []string{"DCGM_EXPORTER_FIELDS_FILE"},
+			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
 		},
 		&cli.IntFlag{
 			Name:    CLIPort,
@@ -58,12 +60,19 @@ func main() {
 			Usage:   "Port",
 			EnvVars: []string{"DCGM_EXPORTER_PORT"},
 		},
+		&cli.IntFlag{
+			Name:    CLICollectInterval,
+			Aliases: []string{"c"},
+			Value:   2000,
+			Usage:   "Interval of time at which point metrics are collected. Unit is milliseconds (ms).",
+			EnvVars: []string{"DCGM_EXPORTER_PORT"},
+		},
 		&cli.BoolFlag{
-			Name:    CLILogKubernetes,
+			Name:    CLIKubernetes,
 			Aliases: []string{"k"},
 			Value:   false,
-			Usage:   "Enable logging if kubernetes is available",
-			EnvVars: []string{"DCGM_LOG_KUBERNETES"},
+			Usage:   "Enable kubernetes mapping metrics to kubernetes pods",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES"},
 		},
 	}
 
@@ -131,9 +140,9 @@ func Run(c *cli.Context) error {
 
 func contextToConfig(c *cli.Context) *Config {
 	return &Config {
-		FieldsFile: c.String(CLIFieldsFile),
+		CollectorsFile: c.String(CLIFieldsFile),
 		Port: c.Int(CLIPort),
-		CollectInterval: 2000,
-		LogKubernetes: c.Bool(CLILogKubernetes),
+		CollectInterval: c.Int(CLICollectInterval),
+		Kubernetes: c.Bool(CLIKubernetes),
 	}
 }

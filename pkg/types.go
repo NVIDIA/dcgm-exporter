@@ -36,10 +36,10 @@ var (
 )
 
 type Config struct {
-	FieldsFile      string
+	CollectorsFile  string
 	Port            int
 	CollectInterval int
-	LogKubernetes   bool
+	Kubernetes      bool
 }
 
 type Transform interface {

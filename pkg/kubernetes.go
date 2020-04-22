@@ -48,9 +48,7 @@ func (p *PodMapper) Name() string {
 func (p *PodMapper) Process(metrics [][]Metric) error {
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
-		if p.Config.LogKubernetes {
-			logrus.Infof("No Kubelet socket, ignoring")
-		}
+		logrus.Infof("No Kubelet socket, ignoring")
 		return nil
 	}
 
