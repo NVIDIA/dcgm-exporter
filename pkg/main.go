@@ -50,7 +50,7 @@ func main() {
 			Name:    CLIFieldsFile,
 			Aliases: []string{"f"},
 			Usage:   "Path to the file, that contains the DCGM fields to collect",
-			Value:   "/etc/dcgm-exporter/default.csv",
+			Value:   "/etc/dcgm-exporter/default-counters.csv",
 			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
 		},
 		&cli.IntFlag{
