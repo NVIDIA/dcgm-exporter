@@ -9,6 +9,12 @@ RUN make binary
 FROM registry.access.redhat.com/ubi8:latest
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
+ARG DCGM_VERSION
+RUN yum install -y wget libgomp && \
+    wget https://developer.download.nvidia.com/compute/redist/dcgm/${DCGM_VERSION}/RPMS/x86_64/datacenter-gpu-manager-${DCGM_VERSION}-1.x86_64.rpm && \
+    rpm -i ./datacenter-gpu-manager-*.rpm && \
+    rm ./datacenter-gpu-manager-*.rpm
+
 COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter /usr/bin/
 COPY etc/dcgm-exporter /etc
 

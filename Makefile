@@ -16,8 +16,10 @@ DOCKER   ?= docker
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
+DCGM_VERSION   := 1.7.2
 GOLANG_VERSION := 1.14.2
 VERSION        := 2.0.0-rc.0
+FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 .PHONY: all binary install
 all: ubuntu18.04 ubi8
@@ -29,25 +31,27 @@ install: binary
 	install -m 557 dcgm-exporter /usr/bin/dcgm-exporter
 
 push:
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubi8"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
 
 push-short:
-	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(VERSION)"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)"
+	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(DCGM_VERSION)"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(DCGM_VERSION)"
 
 push-latest:
-	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
+	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
 
 ubuntu18.04:
 	$(DOCKER) build --pull \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubuntu18.04" \
-		--file docker/$*/Dockerfile.ubuntu18.04 .
+		--build-arg DCGM_VERSION="$(DCGM_VERSION)" \
+		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" \
+		--file docker/Dockerfile.ubuntu18.04 .
 
 ubi8:
 	$(DOCKER) build --pull \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(VERSION)-ubi8" \
-		--file docker/$*/Dockerfile.ubuntu18.04 .
+		--build-arg DCGM_VERSION="$(DCGM_VERSION)" \
+		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8" \
+		--file docker/Dockerfile.ubi8 .

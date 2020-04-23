@@ -12,6 +12,16 @@ LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter /usr/bin/
 COPY etc/dcgm-exporter /etc
 
+ARG DCGM_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    wget && \
+    rm -rf /var/lib/apt/lists/* && \
+    wget --no-check-certificate https://developer.download.nvidia.com/compute/redist/dcgm/${DCGM_VERSION}/DEBS/datacenter-gpu-manager_${DCGM_VERSION}_amd64.deb && \
+    dpkg -i datacenter-gpu-manager_*.deb && \
+    rm -f datacenter-gpu-manager_*.deb
+
+
 RUN useradd dcgm-exporter
 USER dcgm-exporter
 
