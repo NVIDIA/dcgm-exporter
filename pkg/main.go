@@ -34,9 +34,6 @@ var (
 	CLIPort = "port"
 	CLICollectInterval = "collect-interval"
 	CLIKubernetes = "kubernetes"
-
-	connectAddr = "localhost"
-	isSocket    = "0"
 )
 
 func main() {
@@ -89,7 +86,7 @@ func Run(c *cli.Context) error {
 	restart:
 	config := contextToConfig(c)
 
-	cleanup, err := dcgm.Init(dcgm.Standalone, connectAddr, isSocket)
+	cleanup, err := dcgm.Init(dcgm.Embedded)
 	defer cleanup()
 	if err != nil {
 		logrus.Fatal(err)

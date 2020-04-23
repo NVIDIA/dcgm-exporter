@@ -10,7 +10,7 @@ FROM ubuntu:18.04
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter /usr/bin/
-COPY etc/dcgm-exporter /etc
+COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ARG DCGM_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
