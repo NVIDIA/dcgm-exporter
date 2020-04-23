@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dpkg -i datacenter-gpu-manager_*.deb && \
     rm -f datacenter-gpu-manager_*.deb
 
+ENV NVIDIA_VISIBLE_DEVICES=all
 
 RUN useradd dcgm-exporter
 USER dcgm-exporter
