@@ -44,14 +44,15 @@ push-latest:
 
 ubuntu18.04:
 	$(DOCKER) build --pull \
-		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
-		--build-arg DCGM_VERSION="$(DCGM_VERSION)" \
+		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
+		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" \
 		--file docker/Dockerfile.ubuntu18.04 .
 
 ubi8:
 	$(DOCKER) build --pull \
-		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
-		--build-arg DCGM_VERSION="$(DCGM_VERSION)" \
+		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
+		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
+		--build-arg "VERSION=$(FULL_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8" \
 		--file docker/Dockerfile.ubi8 .

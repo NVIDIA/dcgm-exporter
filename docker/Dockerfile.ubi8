@@ -23,4 +23,16 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 RUN useradd dcgm-exporter
 USER dcgm-exporter
 
+ARG VERSION
+
+LABEL io.k8s.display-name="NVIDIA DCGM Eporter"
+LABEL name="NVIDIA DCGM Exporter"
+LABEL vendor="NVIDIA"
+LABEL version="${VERSION}"
+LABEL release="N/A"
+LABEL summary="Exports GPU Metrics in the prometheus format"
+LABEL description="See summary"
+
+COPY ./LICENSE ./licenses/LICENSE
+
 ENTRYPOINT ["/usr/bin/dcgm-exporter"]
