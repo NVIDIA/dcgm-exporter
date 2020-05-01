@@ -15,10 +15,13 @@ spec:
     spec:
       containers:
       - image: nvidia/dcgm-exporter:2.0.0-rc.0
+        env:
+          - name: DCGM_EXPORTER_PORT
+            value: 9400
         name: dcgm-exporter
         ports:
         - name: gpu-metrics
-          containerPort: 8080
+          containerPort: 9400
         securityContext:
           runAsNonRoot: false
           runAsUser: 0
