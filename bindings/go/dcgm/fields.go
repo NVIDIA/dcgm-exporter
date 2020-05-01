@@ -101,12 +101,12 @@ func toFieldValue(cfields []C.dcgmFieldValue_v1) []FieldValue_v1 {
 	fields := make([]FieldValue_v1, len(cfields))
 	for i, f := range cfields {
 		fields[i] = FieldValue_v1{
-			Version: uint(f.version),
-			FieldId: uint(f.fieldId),
+			Version:   uint(f.version),
+			FieldId:   uint(f.fieldId),
 			FieldType: uint(f.fieldType),
-			Status: int(f.status),
-			Ts: int64(f.ts),
-			Value: f.value,
+			Status:    int(f.status),
+			Ts:        int64(f.ts),
+			Value:     f.value,
 		}
 	}
 
@@ -125,6 +125,6 @@ func (fv FieldValue_v1) String() string {
 	return *(*string)(unsafe.Pointer(&fv.Value[0]))
 }
 
-func (fv FieldValue_v1) Blob() [4096]byte{
+func (fv FieldValue_v1) Blob() [4096]byte {
 	return fv.Value
 }

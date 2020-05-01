@@ -17,19 +17,18 @@
 package main
 
 import (
-	"fmt"
-	"testing"
 	"context"
-	"time"
+	"fmt"
 	"io/ioutil"
 	"os"
+	"testing"
+	"time"
 
-	"github.com/stretchr/testify/require"
-	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
-	"k8s.io/kubernetes/pkg/kubelet/util"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-
+	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
+	"k8s.io/kubernetes/pkg/kubelet/util"
 )
 
 var tmpDir string
@@ -38,7 +37,7 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup := CreateTmpDir(t)
 	defer cleanup()
 
-	cleanup, err := dcgm.Init(dcgm.Embedded);
+	cleanup, err := dcgm.Init(dcgm.Embedded)
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -77,9 +76,9 @@ func TestProcessPodMapper(t *testing.T) {
 	}
 }
 
-func GetGPUUUIDs(metrics [][]Metric) []string{
+func GetGPUUUIDs(metrics [][]Metric) []string {
 	gpus := make([]string, len(metrics))
-	for i, dev := range metrics{
+	for i, dev := range metrics {
 		gpus[i] = dev[0].GPUUUID
 	}
 
@@ -100,10 +99,10 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	return func() {
 		server.Stop()
 		select {
-			case <-stopped:
-				return
-			case <-time.After(1 * time.Second):
-				t.Fatal("Failed waiting for gRPC server to stop")
+		case <-stopped:
+			return
+		case <-time.After(1 * time.Second):
+			t.Fatal("Failed waiting for gRPC server to stop")
 		}
 	}
 }
@@ -135,15 +134,15 @@ func (s *PodResourcesMockServer) List(ctx context.Context, req *podresourcesapi.
 
 	for i, gpu := range s.gpus {
 		podResources[i] = &podresourcesapi.PodResources{
-			Name:       fmt.Sprintf("gpu-pod-%d", i),
-			Namespace:  "default",
+			Name:      fmt.Sprintf("gpu-pod-%d", i),
+			Namespace: "default",
 			Containers: []*podresourcesapi.ContainerResources{
 				&podresourcesapi.ContainerResources{
-					Name:    "default",
+					Name: "default",
 					Devices: []*podresourcesapi.ContainerDevices{
 						&podresourcesapi.ContainerDevices{
 							ResourceName: nvidiaResourceName,
-							DeviceIds: []string{gpu},
+							DeviceIds:    []string{gpu},
 						},
 					},
 				},

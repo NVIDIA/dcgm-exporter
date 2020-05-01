@@ -17,8 +17,8 @@
 package main
 
 import (
-	"sync"
 	"net/http"
+	"sync"
 	"text/template"
 
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
@@ -30,7 +30,7 @@ var (
 	nvidiaResourceName = "nvidia.com/gpu"
 
 	// Note standard resource attributes
-	podAttribute = "pod"
+	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
 )
@@ -51,16 +51,16 @@ type MetricsPipeline struct {
 	config *Config
 
 	transformations []Transform
-	metricsFormat *template.Template
-	countersText string
+	metricsFormat   *template.Template
+	countersText    string
 
 	gpuCollector *DCGMCollector
 }
 
 type DCGMCollector struct {
-	Counters []Counter
+	Counters     []Counter
 	DeviceFields []dcgm.Short
-	Cleanups []func()
+	Cleanups     []func()
 }
 
 type Counter struct {
@@ -81,17 +81,17 @@ type Metric struct {
 }
 
 var promMetricType = map[string]bool{
-	"gauge": true,
-	"counter": true,
+	"gauge":     true,
+	"counter":   true,
 	"histogram": true,
-	"summary": true,
+	"summary":   true,
 }
 
 type MetricsServer struct {
 	sync.Mutex
 
-	server http.Server
-	metrics string
+	server      http.Server
+	metrics     string
 	metricsChan chan string
 }
 
@@ -100,7 +100,7 @@ type PodMapper struct {
 }
 
 type PodInfo struct {
-	Name   string
+	Name      string
 	Namespace string
 	Container string
 }

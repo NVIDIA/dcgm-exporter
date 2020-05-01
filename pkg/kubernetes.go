@@ -20,11 +20,11 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"time"
 	"os"
+	"time"
 
-	"google.golang.org/grpc"
 	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 )
 
@@ -32,7 +32,7 @@ var (
 	socketDir  = "/var/lib/kubelet/pod-resources"
 	socketPath = socketDir + "/kubelet.sock"
 
-	connectionTimeout   = 10 * time.Second
+	connectionTimeout = 10 * time.Second
 )
 
 func NewPodMapper(c *Config) *PodMapper {
@@ -51,7 +51,6 @@ func (p *PodMapper) Process(metrics [][]Metric) error {
 		logrus.Infof("No Kubelet socket, ignoring")
 		return nil
 	}
-
 
 	// TODO: This needs to be moved out of the critical path.
 	c, cleanup, err := connectToServer(socketPath)

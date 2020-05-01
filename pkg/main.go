@@ -18,22 +18,22 @@ package main
 
 import (
 	"os"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
-	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
 )
 
 var (
 	BuildVersion = "Filled by the build system"
 
-	CLIFieldsFile = "collectors"
-	CLIPort = "port"
+	CLIFieldsFile      = "collectors"
+	CLIPort            = "port"
 	CLICollectInterval = "collect-interval"
-	CLIKubernetes = "kubernetes"
+	CLIKubernetes      = "kubernetes"
 )
 
 func main() {
@@ -83,7 +83,7 @@ func main() {
 }
 
 func Run(c *cli.Context) error {
-	restart:
+restart:
 
 	logrus.Info("Starting dcgm-exporter")
 	config := contextToConfig(c)
@@ -122,7 +122,7 @@ func Run(c *cli.Context) error {
 		select {
 		case sig := <-sigs:
 			close(stop)
-			err := WaitWithTimeout(&wg, time.Second * 2)
+			err := WaitWithTimeout(&wg, time.Second*2)
 			if err != nil {
 				logrus.Fatal(err)
 			}
@@ -139,10 +139,10 @@ func Run(c *cli.Context) error {
 }
 
 func contextToConfig(c *cli.Context) *Config {
-	return &Config {
-		CollectorsFile: c.String(CLIFieldsFile),
-		Port: c.Int(CLIPort),
+	return &Config{
+		CollectorsFile:  c.String(CLIFieldsFile),
+		Port:            c.Int(CLIPort),
 		CollectInterval: c.Int(CLICollectInterval),
-		Kubernetes: c.Bool(CLIKubernetes),
+		Kubernetes:      c.Bool(CLIKubernetes),
 	}
 }

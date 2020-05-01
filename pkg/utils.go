@@ -18,10 +18,10 @@ package main
 
 import (
 	"fmt"
-	"sync"
-	"time"
 	"os"
 	"os/signal"
+	"sync"
+	"time"
 )
 
 func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
