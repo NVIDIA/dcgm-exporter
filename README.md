@@ -44,8 +44,8 @@ $ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tool
 $ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.0" \
                          -o "jsonpath={ .items[0].metadata.name}")
 
-$ kubectl proxy --port=8080
-$ curl http://localhost:8080/api/v1/namespaces/default/pods/$NAME:8080/proxy
+$ kubectl proxy --port=9400
+$ curl http://localhost:9400/api/v1/namespaces/default/pods/$NAME:9400/proxy
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 # HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
