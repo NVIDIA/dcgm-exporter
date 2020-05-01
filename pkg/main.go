@@ -53,7 +53,7 @@ func main() {
 		&cli.IntFlag{
 			Name:    CLIPort,
 			Aliases: []string{"p"},
-			Value:   8080,
+			Value:   9400,
 			Usage:   "Port",
 			EnvVars: []string{"DCGM_EXPORTER_PORT"},
 		},
