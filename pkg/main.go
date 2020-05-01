@@ -62,7 +62,7 @@ func main() {
 			Aliases: []string{"c"},
 			Value:   2000,
 			Usage:   "Interval of time at which point metrics are collected. Unit is milliseconds (ms).",
-			EnvVars: []string{"DCGM_EXPORTER_PORT"},
+			EnvVars: []string{"DCGM_EXPORTER_INTERVAL"},
 		},
 		&cli.BoolFlag{
 			Name:    CLIKubernetes,
