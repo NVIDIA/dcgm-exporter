@@ -38,14 +38,69 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"}
 Note: Consider using the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) rather than the DCGM exporter directly.
 To gather metrics on your GPU nodes you can deploy the daemonset:
 ```
-$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.0/daemonset.yaml
+$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/dcgm-exporter.yaml
 
 # Let's get the output of a random pod:
-$ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.0" \
+$ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.8" \
                          -o "jsonpath={ .items[0].metadata.name}")
 
-$ kubectl proxy --port=9400
-$ curl http://localhost:9400/api/v1/namespaces/default/pods/$NAME:9400/proxy
+$ kubectl proxy --port=8080
+$ curl http://localhost:8080/api/v1/namespaces/default/pods/$NAME:9400/proxy/metrics
+# HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
+# TYPE DCGM_FI_DEV_SM_CLOCK gauge
+# HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
+# TYPE DCGM_FI_DEV_MEM_CLOCK gauge
+# HELP DCGM_FI_DEV_MEMORY_TEMP Memory temperature (in C).
+# TYPE DCGM_FI_DEV_MEMORY_TEMP gauge
+...
+DCGM_FI_DEV_SM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
+DCGM_FI_DEV_MEM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
+DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
+...
+
+# If you are using the Prometheus operator
+# Note on exporters here: https://github.com/coreos/prometheus-operator/blob/release-0.38/Documentation/user-guides/running-exporters.md
+$ helm install stable/prometheus-operator --generate-name --set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
+$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/service-monitor.yaml
+
+$ NAME=$(kubectl get svc -l app=prometheus-operator-prometheus -o jsonpath='{.items[0].metadata.name}')
+$ curl "http://localhost:8080/api/v1/namespaces/default/services/$NAME:9090/proxy/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
+{
+	status: "success",
+	data: {
+		resultType: "vector",
+		result: [
+			{
+				metric: {
+					UUID: "GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",
+					__name__: "DCGM_FI_DEV_MEMORY_TEMP",
+					...
+					pod: "dcgm-exporter-fn7fm",
+					service: "dcgm-exporter"
+				},
+				value: [
+					1588399049.227,
+					"9223372036854776000"
+				]
+			},
+			...
+		]
+	}
+}
+```
+
+
+### Building From source and Running on Bare Metal
+
+The dcgm-exporter is actually fairly straightforward to build and use. Ensure you have go >= 1.14 installed.
+```
+$ git clone https://github.com/NVIDIA/gpu-monitoring-tools.git
+$ cd gpu-monitoring-tools
+$ make binary
+$ sudo make install
+...
+$ dcgm-exporter &
+$ curl localhost:8081/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 # HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
