@@ -63,11 +63,14 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"}
 # Note on exporters here:
 # https://github.com/coreos/prometheus-operator/blob/release-0.38/Documentation/user-guides/running-exporters.md
 
+$ helm repo add stable https://kubernetes-charts.storage.googleapis.com
 $ helm install stable/prometheus-operator --generate-name \
     --set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
 $ kubectl create -f \
     https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/service-monitor.yaml
 
+# Note might take ~1-2 minutes for prometheus to pickup the metrics and display them
+# You can also check in the WebUI the servce-discovery tab (in the Status category)
 $ NAME=$(kubectl get svc -l app=prometheus-operator-prometheus -o jsonpath='{.items[0].metadata.name}')
 $ curl "$BASE/services/$NAME:9090/proxy/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
 {
