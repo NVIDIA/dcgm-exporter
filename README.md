@@ -100,7 +100,12 @@ $ curl "$BASE/services/$NAME:9090/proxy/api/v1/query?query=DCGM_FI_DEV_MEMORY_TE
 
 ### Building From source and Running on Bare Metal
 
-The dcgm-exporter is actually fairly straightforward to build and use. Ensure you have go >= 1.14 installed.
+The dcgm-exporter is actually fairly straightforward to build and use.
+Ensure you have the following:
+- [Golang >= 1.14 installed](https://golang.org/)
+- [DCGM installed](https://developer.nvidia.com/dcgm)
+- On DGX, the NVIDIA Fabric Manager up and running
+
 ```
 $ git clone https://github.com/NVIDIA/gpu-monitoring-tools.git
 $ cd gpu-monitoring-tools
