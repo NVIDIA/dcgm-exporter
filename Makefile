@@ -29,6 +29,8 @@ binary:
 
 install: binary
 	install -m 557 dcgm-exporter /usr/bin/dcgm-exporter
+	install -m 557 -D ./etc/dcgm-exporter/default-counters.csv /etc/dcgm-exporter/default-counters.csv
+	install -m 557 -D ./etc/dcgm-exporter/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
 push:
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04"
