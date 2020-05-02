@@ -53,6 +53,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	httpwg.Add(1)
 	go func() {
 		defer httpwg.Done()
+		logrus.Info("Starting webserver")
 		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
 		}

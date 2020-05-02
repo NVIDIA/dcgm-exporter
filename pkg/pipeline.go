@@ -82,6 +82,8 @@ func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*M
 func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	logrus.Info("Pipeline starting")
+
 	// Note we are using a ticker so that we can stick as close as possible to the collect interval.
 	// e.g: The CollectInterval is 10s and the transformation pipeline takes 5s, the time will
 	// ensure we really collect metrics every 10s by firing an event 5s after the run function completes.

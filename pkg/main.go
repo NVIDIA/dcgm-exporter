@@ -84,6 +84,8 @@ func main() {
 
 func Run(c *cli.Context) error {
 	restart:
+
+	logrus.Info("Starting dcgm-exporter")
 	config := contextToConfig(c)
 
 	cleanup, err := dcgm.Init(dcgm.Embedded)
@@ -91,6 +93,7 @@ func Run(c *cli.Context) error {
 	if err != nil {
 		logrus.Fatal(err)
 	}
+	logrus.Info("DCGM successfully initialized!")
 
 	ch := make(chan string, 10)
 	pipeline, cleanup, err := NewMetricsPipeline(config)
