@@ -129,6 +129,32 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"}
 ...
 ```
 
+
+### Changing the Metrics
+
+With dcgm-exporter 2.0 you can configure which fields are collected by specifying a custom CSV file.
+You will find the [default CSV file here](https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.8/etc/dcgm-exporter/default-counters.csv) and on your system or container at /etc/dcgm-exporter/default-counters.csv
+
+The format of this file is pretty straightforward:
+```
+# Format,,
+# If line starts with a '#' it is considered a comment,,
+# DCGM FIELD, Prometheus metric type, help message
+
+# Clocks,,
+DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
+DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
+```
+
+A custom csv file can be specified using the `-f` option or `--collectors` as follows:
+```
+$ dcgm-exporter -f /tmp/custom-collectors.csv
+```
+
+Notes:
+- Always make sure your entries have 3 commas (',')
+- The complete list of counters that can be collected can be found on the DCGM API reference website: https://docs.nvidia.com/datacenter/dcgm/1.7/dcgm-api/group__dcgmFieldIdentifiers.html
+
 ## Issues and Contributing
 
 [Checkout the Contributing document!](CONTRIBUTING.md)
