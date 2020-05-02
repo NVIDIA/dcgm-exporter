@@ -45,7 +45,8 @@ $ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernet
                          -o "jsonpath={ .items[0].metadata.name}")
 
 $ kubectl proxy --port=8080
-$ curl http://localhost:8080/api/v1/namespaces/default/pods/$NAME:9400/proxy/metrics
+$ BASE=http://localhost:8080/api/v1/namespaces/default
+$ curl $BASE/pods/$NAME:9400/proxy/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 # HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
@@ -59,12 +60,16 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"}
 ...
 
 # If you are using the Prometheus operator
-# Note on exporters here: https://github.com/coreos/prometheus-operator/blob/release-0.38/Documentation/user-guides/running-exporters.md
-$ helm install stable/prometheus-operator --generate-name --set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
-$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/service-monitor.yaml
+# Note on exporters here:
+# https://github.com/coreos/prometheus-operator/blob/release-0.38/Documentation/user-guides/running-exporters.md
+
+$ helm install stable/prometheus-operator --generate-name \
+    --set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
+$ kubectl create -f \
+    https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/service-monitor.yaml
 
 $ NAME=$(kubectl get svc -l app=prometheus-operator-prometheus -o jsonpath='{.items[0].metadata.name}')
-$ curl "http://localhost:8080/api/v1/namespaces/default/services/$NAME:9090/proxy/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
+$ curl "$BASE/services/$NAME:9090/proxy/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
 {
 	status: "success",
 	data: {
