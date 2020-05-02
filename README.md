@@ -36,6 +36,8 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"}
 ### Quickstart on Kubernetes
 
 Note: Consider using the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) rather than the DCGM exporter directly.
+
+Ensure you have already setup your cluster with the [default runtime as NVIDIA](https://github.com/NVIDIA/nvidia-container-runtime#docker-engine-setup).
 To gather metrics on your GPU nodes you can deploy the daemonset:
 ```
 $ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/dcgm-exporter.yaml
