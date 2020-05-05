@@ -17,15 +17,14 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"strings"
-	"encoding/csv"
 
-	"github.com/sirupsen/logrus"
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
+	"github.com/sirupsen/logrus"
 )
-
 
 func ExtractCounters(filename string) ([]Counter, error) {
 	records, err := ReadCSVFile(filename)

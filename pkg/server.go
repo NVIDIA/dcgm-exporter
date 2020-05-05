@@ -17,11 +17,11 @@
 package main
 
 import (
-	"fmt"
 	"context"
-	"time"
+	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
@@ -31,13 +31,13 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
 		server: http.Server{
-			Addr:           fmt.Sprintf(":%d", c.Port),
-			Handler: router,
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
+			Addr:         fmt.Sprintf(":%d", c.Port),
+			Handler:      router,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
 		},
 		metricsChan: metrics,
-		metrics: "",
+		metrics:     "",
 	}
 
 	router.HandleFunc("/heath", serverv1.Health)
@@ -77,7 +77,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 		logrus.Fatalf("Failed to shutdown HTTP server, with err: `%v`", err)
 	}
 
-	if err := WaitWithTimeout(&httpwg, 3 * time.Second); err != nil {
+	if err := WaitWithTimeout(&httpwg, 3*time.Second); err != nil {
 		logrus.Fatalf("Failed waiting for HTTP server to shutdown, with err: `%v`", err)
 	}
 }

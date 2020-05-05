@@ -4,7 +4,7 @@ WORKDIR /go/src/github.com/NVIDIA/gpu-monitoring-tools
 
 COPY . .
 
-RUN make binary
+RUN make binary check-format
 
 FROM registry.access.redhat.com/ubi8:latest
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"

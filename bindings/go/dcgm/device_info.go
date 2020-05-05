@@ -13,8 +13,8 @@ import (
 
 type PCIInfo struct {
 	BusID     string
-	BAR1      uint // MB
-	FBTotal   uint // MB
+	BAR1      uint  // MB
+	FBTotal   uint  // MB
 	Bandwidth int64 // MB/s
 }
 

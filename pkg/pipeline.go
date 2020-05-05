@@ -17,11 +17,11 @@
 package main
 
 import (
-	"fmt"
 	"bytes"
-	"time"
-	"text/template"
+	"fmt"
 	"sync"
+	"text/template"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -50,16 +50,16 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 	}
 
 	return &MetricsPipeline{
-		config: c,
+			config: c,
 
-		metricsFormat: template.Must(template.New("metrics").Parse(metricsFormat)),
-		countersText: countersText,
+			metricsFormat: template.Must(template.New("metrics").Parse(metricsFormat)),
+			countersText:  countersText,
 
-		gpuCollector: gpuCollector,
-		transformations: transformations,
-	}, func() {
-		cleanup()
-	}, nil
+			gpuCollector:    gpuCollector,
+			transformations: transformations,
+		}, func() {
+			cleanup()
+		}, nil
 }
 
 // Primarely for testing, caller expected to cleanup the collector
@@ -73,7 +73,7 @@ func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*M
 		config: c,
 
 		metricsFormat: template.Must(template.New("metrics").Parse(metricsFormat)),
-		countersText: countersText,
+		countersText:  countersText,
 
 		gpuCollector: collector,
 	}, func() {}, nil
@@ -91,7 +91,7 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 	defer t.Stop()
 
 	for {
-		select{
+		select {
 		case <-stop:
 			return
 		case <-t.C:
@@ -123,7 +123,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	formated, err :=  FormatMetrics(m.countersText, m.metricsFormat, metrics)
+	formated, err := FormatMetrics(m.countersText, m.metricsFormat, metrics)
 	if err != nil {
 		return "", fmt.Errorf("Failed to format metrics with error: %v", err)
 	}
@@ -145,7 +145,7 @@ func (m *MetricsPipeline) run() (string, error) {
 * The expectation is that the template will be given the following
 * values: {.Fields, .Devices, .Values[Device][Field]}
 *
-*/
+ */
 
 var countersFormat = `{{- range $c := . -}}
 # HELP {{ $c.FieldName }} {{ $c.Help }}

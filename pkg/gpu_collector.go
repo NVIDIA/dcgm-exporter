@@ -23,13 +23,13 @@ import (
 
 func NewDCGMCollector(c []Counter) (*DCGMCollector, func(), error) {
 	collector := &DCGMCollector{
-		Counters: c,
+		Counters:     c,
 		DeviceFields: NewDeviceFields(c),
 	}
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields)
 	if err != nil {
-		return nil, func(){}, err
+		return nil, func() {}, err
 	}
 
 	collector.Cleanups = cleanups
@@ -73,10 +73,10 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric 
 
 	for i, val := range values {
 		metrics[i] = Metric{
-			Name: c[i].FieldName,
+			Name:  c[i].FieldName,
 			Value: ToString(val),
 
-			GPU: fmt.Sprintf("%d", d.GPU),
+			GPU:     fmt.Sprintf("%d", d.GPU),
 			GPUUUID: d.UUID,
 
 			Attributes: map[string]string{},
@@ -101,4 +101,3 @@ func ToString(value dcgm.FieldValue_v1) string {
 
 	return FailedToConvert
 }
-

@@ -26,7 +26,7 @@ import (
 func NewGroup() (dcgm.GroupHandle, func(), error) {
 	group, err := dcgm.NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 	if err != nil {
-		return dcgm.GroupHandle{}, func(){}, err
+		return dcgm.GroupHandle{}, func() {}, err
 	}
 
 	return group, func() { dcgm.DestroyGroup(group) }, nil
@@ -45,7 +45,7 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", rand.Uint64())
 	fieldGroup, err := dcgm.FieldGroupCreate(name, deviceFields)
 	if err != nil {
-		return dcgm.FieldHandle{}, func(){}, err
+		return dcgm.FieldHandle{}, func() {}, err
 	}
 
 	return fieldGroup, func() { dcgm.FieldGroupDestroy(fieldGroup) }, nil
@@ -95,4 +95,3 @@ fail:
 
 	return nil, err
 }
-

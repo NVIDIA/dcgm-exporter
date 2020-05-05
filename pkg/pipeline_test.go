@@ -24,7 +24,7 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded);
+	cleanup, err := dcgm.Init(dcgm.Embedded)
 	require.NoError(t, err)
 	defer cleanup()
 

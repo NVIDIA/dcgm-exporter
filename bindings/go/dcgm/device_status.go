@@ -61,7 +61,7 @@ type PCIStatusInfo struct {
 
 type DeviceStatus struct {
 	Power       float64 // W
-	Temperature int64    // °C
+	Temperature int64   // °C
 	Utilization UtilizationInfo
 	Memory      MemoryInfo
 	Clocks      ClockInfo
@@ -110,7 +110,6 @@ func latestValuesForDevice(gpuId uint) (status DeviceStatus, err error) {
 	deviceFields[dbe] = C.DCGM_FI_DEV_ECC_DBE_AGG_TOTAL
 	deviceFields[pstate] = C.DCGM_FI_DEV_PSTATE
 	deviceFields[fanSpeed] = C.DCGM_FI_DEV_FAN_SPEED
-
 
 	fieldsName := fmt.Sprintf("devStatusFields%d", rand.Uint64())
 	fieldsId, err := FieldGroupCreate(fieldsName, deviceFields)

@@ -21,7 +21,7 @@ GOLANG_VERSION := 1.14.2
 VERSION        := 2.0.0-rc.7
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
-.PHONY: all binary install
+.PHONY: all binary install check-format
 all: ubuntu18.04 ubi8
 
 binary:
@@ -31,6 +31,9 @@ install: binary
 	install -m 557 dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 557 -D ./etc/dcgm-exporter/default-counters.csv /etc/dcgm-exporter/default-counters.csv
 	install -m 557 -D ./etc/dcgm-exporter/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
+
+check-format:
+	test $$(gofmt -l pkg bindings | tee /dev/stderr | wc -l) -eq 0
 
 push:
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04"

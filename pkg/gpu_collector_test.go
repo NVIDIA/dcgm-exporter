@@ -29,10 +29,9 @@ var sampleCounters = []Counter{
 	{dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "gauge", "Energy help info"},
 	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
 }
- 
 
 func TestDCGMCollector(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded);
+	cleanup, err := dcgm.Init(dcgm.Embedded)
 	require.NoError(t, err)
 	defer cleanup()
 
