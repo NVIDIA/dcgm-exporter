@@ -158,6 +158,7 @@ Notes:
 ### What about a Grafana Dashboard?
 
 You can find the official NVIDIA dcgm-exporter dashboard here: https://grafana.com/grafana/dashboards/12239
+
 You will also find the json file on this repo: https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.9/grafana/dcgm-exporter-dashboard.json
 
 Pull requests are accepted!
