@@ -40,10 +40,10 @@ Note: Consider using the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-ope
 Ensure you have already setup your cluster with the [default runtime as NVIDIA](https://github.com/NVIDIA/nvidia-container-runtime#docker-engine-setup).
 To gather metrics on your GPU nodes you can deploy the daemonset:
 ```
-$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/dcgm-exporter.yaml
+$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.9/dcgm-exporter.yaml
 
 # Let's get the output of a random pod:
-$ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.8" \
+$ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.9" \
                          -o "jsonpath={ .items[0].metadata.name}")
 
 $ kubectl proxy --port=8080 &
@@ -69,7 +69,7 @@ $ helm repo add stable https://kubernetes-charts.storage.googleapis.com
 $ helm install stable/prometheus-operator --generate-name \
     --set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
 $ kubectl create -f \
-    https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.8/service-monitor.yaml
+    https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.9/service-monitor.yaml
 
 # Note might take ~1-2 minutes for prometheus to pickup the metrics and display them
 # You can also check in the WebUI the servce-discovery tab (in the Status category)
@@ -133,7 +133,7 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"}
 ### Changing the Metrics
 
 With dcgm-exporter 2.0 you can configure which fields are collected by specifying a custom CSV file.
-You will find the [default CSV file here](https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.8/etc/dcgm-exporter/default-counters.csv) and on your system or container at /etc/dcgm-exporter/default-counters.csv
+You will find the [default CSV file here](https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.9/etc/dcgm-exporter/default-counters.csv) and on your system or container at /etc/dcgm-exporter/default-counters.csv
 
 The format of this file is pretty straightforward:
 ```
@@ -154,6 +154,13 @@ $ dcgm-exporter -f /tmp/custom-collectors.csv
 Notes:
 - Always make sure your entries have 3 commas (',')
 - The complete list of counters that can be collected can be found on the DCGM API reference website: https://docs.nvidia.com/datacenter/dcgm/1.7/dcgm-api/group__dcgmFieldIdentifiers.html
+
+### What about a Grafana Dashboard?
+
+You can find the official NVIDIA dcgm-exporter dashboard here: https://grafana.com/grafana/dashboards/12239
+You will also find the json file on this repo: https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.9/grafana/dcgm-exporter-dashboard.json
+
+Pull requests are accepted!
 
 ## Issues and Contributing
 
