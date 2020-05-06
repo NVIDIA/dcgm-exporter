@@ -115,7 +115,7 @@ $ make binary
 $ sudo make install
 ...
 $ dcgm-exporter &
-$ curl localhost:8081/metrics
+$ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 # HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
