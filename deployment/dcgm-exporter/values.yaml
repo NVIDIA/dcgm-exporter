@@ -19,7 +19,8 @@ image:
   # for the image tag, e.g:
   #tag: 1.7.2
 
-serviceMonitor: false
+# For helm v2 this field might be useful
+#namespace: kube-system
 
 imagePullSecrets: []
 nameOverride: ""
@@ -56,5 +57,16 @@ resources: {}
   # requests:
   #   cpu: 100m
   #   memory: 128Mi
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  # Defaults to .Release.Namespace
+  #namespace: default
+
+mapPodsMetrics: false
+
+nodeSelector: {}
+
+tolerations: []
 
 affinity: {}
