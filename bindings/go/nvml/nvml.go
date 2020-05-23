@@ -255,6 +255,7 @@ type ProcessInfo struct {
 
 type DeviceStatus struct {
 	Power       *uint
+	FanSpeed    *uint
 	Temperature *uint
 	Utilization UtilizationInfo
 	Memory      MemoryInfo
@@ -439,6 +440,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 
 	power, err := d.deviceGetPowerUsage()
 	assert(err)
+	fanSpeed, err := d.deviceGetFanSpeed()
+	assert(err)
 	temp, err := d.deviceGetTemperature()
 	assert(err)
 	ugpu, umem, err := d.deviceGetUtilizationRates()
@@ -466,7 +469,8 @@ func (d *Device) Status() (status *DeviceStatus, err error) {
 
 	status = &DeviceStatus{
 		Power:       power,
-		Temperature: temp, // °C
+		FanSpeed:    fanSpeed, // %
+		Temperature: temp,     // °C
 		Utilization: UtilizationInfo{
 			GPU:     ugpu, // %
 			Memory:  umem, // %
