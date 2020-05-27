@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -358,10 +359,17 @@ func NewDevice(idx uint) (device *Device, err error) {
 	cccMajor, cccMinor, err := h.deviceGetCudaComputeCapability()
 	assert(err)
 
-	if minor == nil || busid == nil || uuid == nil {
-		return nil, ErrUnsupportedGPU
+	var path string
+	if runtime.GOOS == "windows" {
+		if busid == nil || uuid == nil {
+			return nil, ErrUnsupportedGPU
+		}
+	} else {
+		if minor == nil || busid == nil || uuid == nil {
+			return nil, ErrUnsupportedGPU
+		}
+		path = fmt.Sprintf("/dev/nvidia%d", *minor)
 	}
-	path := fmt.Sprintf("/dev/nvidia%d", *minor)
 	node, err := numaNode(*busid)
 	assert(err)
 

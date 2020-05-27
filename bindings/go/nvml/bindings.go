@@ -19,6 +19,7 @@ package nvml
 /*
 #cgo linux LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
 #cgo darwin LDFLAGS: -ldl -Wl,-undefined,dynamic_lookup
+#cgo windows LDFLAGS: -LC:/Program\ Files/NVIDIA\ Corporation/NVSMI -lnvml
 #include "nvml.h"
 
 #undef nvmlEventSetWait
