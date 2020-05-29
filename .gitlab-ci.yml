@@ -3,11 +3,16 @@ services:
   - docker:dind
 
 stages:
-  - build
-  - release
+  - aws_kube_setup
+  - e2e_tests
+  - aws_kube_clean
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  TF_VAR_FILE: "$CI_PROJECT_DIR/tests/variables.tfvars"
 
 build:
-  stage: build
+  stage: aws_kube_setup
   script:
     - apk add make
     - docker login -u "${CI_REGISTRY_USER}" -p "${CI_REGISTRY_PASSWORD}" "${CI_REGISTRY}"
@@ -16,9 +21,36 @@ build:
     - make REGISTRY="${CI_REGISTRY_IMAGE}" VERSION="${CI_COMMIT_SHORT_SHA}" push
     - make REGISTRY="${CI_REGISTRY_IMAGE}" VERSION="${CI_COMMIT_SHORT_SHA}" push-short
     - make REGISTRY="${CI_REGISTRY_IMAGE}" VERSION="${CI_COMMIT_SHORT_SHA}" push-latest
+    - make REGISTRY="${CI_REGISTRY_IMAGE}" VERSION="${CI_COMMIT_SHORT_SHA}" push-ci
+
+aws_kube_setup:
+  extends: .aws_kube_setup
+  only:
+    - master
+    - tags
+
+e2e:
+  stage: e2e_tests
+  only:
+    - master
+  script:
+    - source aws-kube-ci/hostname
+    - apk add --no-cache openssh-client rsync
+    - rsync -e "ssh -i aws-kube-ci/key -o StrictHostKeyChecking=no" -av --exclude="vendor/" "${CI_PROJECT_DIR}" "${instance_hostname}:~/"
+    - rc=0
+    - ssh -i aws-kube-ci/key ${instance_hostname} \
+      "export CI_COMMIT_SHORT_SHA=${CI_COMMIT_SHORT_SHA} &&
+       export CI_REGISTRY_IMAGE=${CI_REGISTRY_IMAGE} &&
+       cd ~/gpu-monitoring-tools && sudo -E ./tests/ci-run-e2e.sh"
+
+aws_kube_clean:
+  extends: .aws_kube_clean
+  only:
+    - master
+    - tags
 
 release:
-  stage: release
+  stage: aws_kube_clean
   only:
     - tags
   script:
@@ -29,3 +61,8 @@ release:
     - make VERSION="${CI_COMMIT_TAG}" push
     - make VERSION="${CI_COMMIT_TAG}" push-short
     - make VERSION="${CI_COMMIT_TAG}" push-latest
+
+include:
+  project: nvidia/container-infrastructure/aws-kube-ci
+  file: aws-kube-ci.yml
+  ref: 20.05.20

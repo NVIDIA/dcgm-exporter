@@ -10,10 +10,11 @@ The DCGM container posses three major components:
 - The Exporter Version (e.g: 2.0.0)
 - The platform of the container (e.g: ubuntu18.04)
 
-The overall version of the Vulkan container has two forms:
+The overall version of the DCGM container has four forms:
 - The long form: `${DCGM_VERSION}-${EXPORTER_VERSION}-${PLATFORM}`
 - The short form: `${DCGM_VERSION}`
 - The latest tag: `latest`
+- The commit form: `${CI_COMMIT_SHORT_SHA}` only available on the gitlab registry
 
 The long form is a unique tag that once pushed will always refer to the same container.
 This means that no updates will be made to that tag and it will always point to the same container.

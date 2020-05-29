@@ -43,6 +43,10 @@ push-short:
 	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(DCGM_VERSION)"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(DCGM_VERSION)"
 
+push-ci:
+	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(VERSION)"
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)"
+
 push-latest:
 	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
