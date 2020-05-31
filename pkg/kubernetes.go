@@ -36,6 +36,8 @@ var (
 )
 
 func NewPodMapper(c *Config) *PodMapper {
+	logrus.Infof("Kubernetes metrics collection enabled!")
+
 	return &PodMapper{
 		Config: c,
 	}
