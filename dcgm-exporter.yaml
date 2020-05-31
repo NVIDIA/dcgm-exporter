@@ -36,7 +36,7 @@ spec:
       containers:
       - image: "nvidia/dcgm-exporter:1.7.2"
         env:
-        - name: "DCGM_EXPORTER_PORT"
+        - name: "DCGM_EXPORTER_LISTEN"
           value: "9400"
         name: "dcgm-exporter"
         ports:

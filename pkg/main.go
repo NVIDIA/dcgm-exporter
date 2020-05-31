@@ -55,7 +55,7 @@ func main() {
 			Aliases: []string{"p"},
 			Value:   9400,
 			Usage:   "Port",
-			EnvVars: []string{"DCGM_EXPORTER_PORT"},
+			EnvVars: []string{"DCGM_EXPORTER_LISTEN"},
 		},
 		&cli.IntFlag{
 			Name:    CLICollectInterval,
