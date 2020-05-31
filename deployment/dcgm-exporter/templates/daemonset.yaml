@@ -53,35 +53,40 @@ spec:
           path: "/var/lib/kubelet/pod-resources"
 
       containers:
-        - name: {{ .Chart.Name }}
-          securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
-          {{- if .Values.image.tag}}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          {{- else }}
-          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
-          {{- end }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: "metrics"
-              containerPort: 9400
-          volumeMounts:
-            - name: "pod-gpu-resources"
-              readOnly: true
-              mountPath: "/var/lib/kubelet/pod-resources"
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 5
-          resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+      - name: exporter
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        {{- if .Values.image.tag}}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        {{- else }}
+        image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+        {{- end }}
+        imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+        env:
+        - name: "DCGM_EXPORTER_KUBERNETES"
+          value: "true"
+        - name: "DCGM_EXPORTER_LISTEN"
+          value: "{{ .Values.service.port }}"
+        ports:
+        - name: "metrics"
+          containerPort: {{ .Values.service.port }}
+        volumeMounts:
+        - name: "pod-gpu-resources"
+          readOnly: true
+          mountPath: "/var/lib/kubelet/pod-resources"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+          initialDelaySeconds: 5
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
 
     {{- with .Values.tolerations }}
       tolerations:

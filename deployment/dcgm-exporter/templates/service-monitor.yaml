@@ -1,3 +1,4 @@
+{{- if .Values.serviceMonitor }}
 # Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,19 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-apiVersion: v1
-kind: Service
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
 metadata:
   name: {{ include "dcgm-exporter.fullname" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
 spec:
-  type: {{ .Values.service.type }}
-  ports:
-    - name: "metrics"
-      port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.port }}
-      protocol: TCP
   selector:
-    {{- include "dcgm-exporter.selectorLabels" . | nindent 4 }}
+    matchLabels:
+      {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: "dcgm-exporter"
+  endpoints:
+  - port: "metrics"
+    path: "/metrics"
+{{- end }}

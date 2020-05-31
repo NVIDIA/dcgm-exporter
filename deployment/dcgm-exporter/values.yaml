@@ -19,6 +19,8 @@ image:
   # for the image tag, e.g:
   #tag: 1.7.2
 
+serviceMonitor: false
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
