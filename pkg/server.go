@@ -40,7 +40,7 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 		metrics:     "",
 	}
 
-	router.HandleFunc("/heath", serverv1.Health)
+	router.HandleFunc("/health", serverv1.Health)
 	router.HandleFunc("/metrics", serverv1.Metrics)
 
 	return serverv1, func() {}, nil
