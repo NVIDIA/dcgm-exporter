@@ -16,6 +16,9 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: {{ include "dcgm-exporter.fullname" . }}
+{{- if .Values.namespace }}
+  namespace: {{ .Values.namespace }}
+{{- end }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
@@ -46,7 +49,14 @@ spec:
       serviceAccountName: {{ include "dcgm-exporter.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-
+{{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
       volumes:
       - name: "pod-gpu-resources"
         hostPath:
@@ -56,7 +66,7 @@ spec:
       - name: exporter
         securityContext:
           {{- toYaml .Values.securityContext | nindent 12 }}
-        {{- if .Values.image.tag}}
+        {{- if .Values.image.tag }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         {{- else }}
         image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
