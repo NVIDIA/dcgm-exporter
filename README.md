@@ -27,9 +27,9 @@ $ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_MEMORY_TEMP Memory temperature (in C).
 # TYPE DCGM_FI_DEV_MEMORY_TEMP gauge
 ...
-DCGM_FI_DEV_SM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
-DCGM_FI_DEV_MEM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
-DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
+DCGM_FI_DEV_SM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
+DCGM_FI_DEV_MEM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
+DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
 ...
 ```
 
@@ -46,9 +46,8 @@ $ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tool
 $ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.9" \
                          -o "jsonpath={ .items[0].metadata.name}")
 
-$ kubectl proxy --port=8080 &
-$ BASE=http://localhost:8080/api/v1/namespaces/default
-$ curl $BASE/pods/$NAME:9400/proxy/metrics
+$ kubectl port-forward $NAME 8080:9400 &
+$ curl -sL http://127.0.01:8080/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 # HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
@@ -56,9 +55,9 @@ $ curl $BASE/pods/$NAME:9400/proxy/metrics
 # HELP DCGM_FI_DEV_MEMORY_TEMP Memory temperature (in C).
 # TYPE DCGM_FI_DEV_MEMORY_TEMP gauge
 ...
-DCGM_FI_DEV_SM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
-DCGM_FI_DEV_MEM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
-DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
+DCGM_FI_DEV_SM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
+DCGM_FI_DEV_MEM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
+DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
 ...
 
 # If you are using the Prometheus operator
@@ -74,7 +73,8 @@ $ kubectl create -f \
 # Note might take ~1-2 minutes for prometheus to pickup the metrics and display them
 # You can also check in the WebUI the servce-discovery tab (in the Status category)
 $ NAME=$(kubectl get svc -l app=prometheus-operator-prometheus -o jsonpath='{.items[0].metadata.name}')
-$ curl "$BASE/services/$NAME:9090/proxy/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
+$ kubectl port-forward $NAME 9090:9090 &
+$ curl -sL http://127.0.01:9090/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
 {
 	status: "success",
 	data: {
@@ -123,9 +123,9 @@ $ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_MEMORY_TEMP Memory temperature (in C).
 # TYPE DCGM_FI_DEV_MEMORY_TEMP gauge
 ...
-DCGM_FI_DEV_SM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
-DCGM_FI_DEV_MEM_CLOCK{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
-DCGM_FI_DEV_MEMORY_TEMP{gpu="0" UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
+DCGM_FI_DEV_SM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
+DCGM_FI_DEV_MEM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
+DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
 ...
 ```
 
