@@ -34,9 +34,9 @@ spec:
   namespaceSelector:
     matchNames:
 {{- if .Values.namespace }}
-      - namespace: "{{ .Values.namespace }}"
+      - "{{ .Values.namespace }}"
 {{ else }}
-      - namespace: "{{ .Release.Namespace }}"
+      - "{{ .Release.Namespace }}"
 {{- end }}
   endpoints:
     - port: "metrics"
