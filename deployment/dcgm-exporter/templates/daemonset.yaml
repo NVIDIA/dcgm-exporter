@@ -97,7 +97,10 @@ spec:
           initialDelaySeconds: 5
         resources:
           {{- toYaml .Values.resources | nindent 12 }}
-
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
     {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
