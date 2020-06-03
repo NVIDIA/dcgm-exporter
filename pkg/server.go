@@ -40,6 +40,16 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 		metrics:     "",
 	}
 
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<html>
+			<head><title>GPU Exporter</title></head>
+			<body>
+			<h1>GPU Exporter</h1>
+			<p><a href="./metrics">Metrics</a></p>
+			</body>
+			</html>`))
+	})
+
 	router.HandleFunc("/health", serverv1.Health)
 	router.HandleFunc("/metrics", serverv1.Metrics)
 
