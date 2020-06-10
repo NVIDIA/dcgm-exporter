@@ -62,11 +62,34 @@ serviceMonitor:
   interval: 15s
   # Defaults to .Release.Namespace
   #namespace: default
+  additionalLabels: {}
+    #monitoring: prometheus
 
 mapPodsMetrics: false
 
 nodeSelector: {}
+  #node: gpu
 
 tolerations: []
+#- operator: Exists
 
 affinity: {}
+  #nodeAffinity:
+  #  requiredDuringSchedulingIgnoredDuringExecution:
+  #    nodeSelectorTerms:
+  #    - matchExpressions:
+  #      - key: nvidia-gpu
+  #        operator: Exists
+
+extraHostVolumes: []
+#- name: host-binaries
+#  hostPath: /opt/bin
+
+extraVolumeMounts: []
+#- name: host-binaries
+#  mountPath: /opt/bin
+#  readOnly: true
+
+extraEnv: []
+#- name: EXTRA_VAR
+#  value: "TheStringValue"
