@@ -42,30 +42,40 @@ spec:
         {{- include "dcgm-exporter.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: "dcgm-exporter"
     spec:
-    {{- with .Values.imagePullSecrets }}
+      {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
-    {{- end }}
+      {{- end }}
       serviceAccountName: {{ include "dcgm-exporter.serviceAccountName" . }}
+      {{- if .Values.podSecurityContext }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-{{- with .Values.nodeSelector }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.nodeSelector }}
       nodeSelector:
-{{ toYaml . | indent 8 }}
-{{- end }}
-{{- with .Values.tolerations }}
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
       tolerations:
-{{ toYaml . | indent 8 }}
-{{- end }}
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
       volumes:
       - name: "pod-gpu-resources"
         hostPath:
           path: "/var/lib/kubelet/pod-resources"
-
+      {{- range .Values.extraHostVolumes }}
+      - name: {{ .name | quote }}
+        hostPath:
+          path: {{ .hostPath | quote }}
+      {{- end }}
       containers:
       - name: exporter
         securityContext:
-          {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- toYaml .Values.securityContext | nindent 10 }}
         {{- if .Values.image.tag }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         {{- else }}
@@ -77,6 +87,9 @@ spec:
           value: "true"
         - name: "DCGM_EXPORTER_LISTEN"
           value: "{{ .Values.service.port }}"
+        {{- if .Values.extraEnv }}
+        {{- toYaml .Values.extraEnv | nindent 8 }}
+        {{- end }}
         ports:
         - name: "metrics"
           containerPort: {{ .Values.service.port }}
@@ -84,6 +97,9 @@ spec:
         - name: "pod-gpu-resources"
           readOnly: true
           mountPath: "/var/lib/kubelet/pod-resources"
+        {{- if .Values.extraVolumeMounts }}
+        {{- toYaml .Values.extraVolumeMounts | nindent 8 }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /health
@@ -95,13 +111,7 @@ spec:
             path: /health
             port: {{ .Values.service.port }}
           initialDelaySeconds: 5
+        {{- if .Values.resources }}
         resources:
-          {{- toYaml .Values.resources | nindent 12 }}
-    {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-    {{- end }}
-    {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-    {{- end }}
+          {{- toYaml .Values.resources | nindent 10 }}
+        {{- end }}

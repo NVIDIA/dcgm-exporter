@@ -25,9 +25,9 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   ports:
-    - name: "metrics"
-      port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.port }}
-      protocol: TCP
+  - name: "metrics"
+    port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.port }}
+    protocol: TCP
   selector:
     {{- include "dcgm-exporter.selectorLabels" . | nindent 4 }}

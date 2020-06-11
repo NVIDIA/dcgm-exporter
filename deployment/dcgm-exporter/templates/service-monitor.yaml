@@ -23,6 +23,9 @@ metadata:
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
+    {{- if .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml .Values.serviceMonitor.additionalLabels | nindent 4 }}
+    {{- end }}
 spec:
   selector:
     matchLabels:
@@ -34,12 +37,12 @@ spec:
   namespaceSelector:
     matchNames:
 {{- if .Values.namespace }}
-      - "{{ .Values.namespace }}"
+    - "{{ .Values.namespace }}"
 {{ else }}
-      - "{{ .Release.Namespace }}"
+    - "{{ .Release.Namespace }}"
 {{- end }}
   endpoints:
-    - port: "metrics"
-      path: "/metrics"
-      interval: "{{ .Values.serviceMonitor.interval }}"
+  - port: "metrics"
+    path: "/metrics"
+    interval: "{{ .Values.serviceMonitor.interval }}"
 {{- end -}}
