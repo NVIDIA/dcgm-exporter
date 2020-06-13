@@ -31,7 +31,7 @@ var (
 	BuildVersion = "Filled by the build system"
 
 	CLIFieldsFile      = "collectors"
-	CLIPort            = "port"
+	CLIAddress         = "address"
 	CLICollectInterval = "collect-interval"
 	CLIKubernetes      = "kubernetes"
 )
@@ -50,11 +50,11 @@ func main() {
 			Value:   "/etc/dcgm-exporter/default-counters.csv",
 			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
 		},
-		&cli.IntFlag{
-			Name:    CLIPort,
-			Aliases: []string{"p"},
-			Value:   9400,
-			Usage:   "Port",
+		&cli.StringFlag{
+			Name:    CLIAddress,
+			Aliases: []string{"a"},
+			Value:   ":9400",
+			Usage:   "Address",
 			EnvVars: []string{"DCGM_EXPORTER_LISTEN"},
 		},
 		&cli.IntFlag{
@@ -141,7 +141,7 @@ restart:
 func contextToConfig(c *cli.Context) *Config {
 	return &Config{
 		CollectorsFile:  c.String(CLIFieldsFile),
-		Port:            c.Int(CLIPort),
+		Address:         c.String(CLIAddress),
 		CollectInterval: c.Int(CLICollectInterval),
 		Kubernetes:      c.Bool(CLIKubernetes),
 	}

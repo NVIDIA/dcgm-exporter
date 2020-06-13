@@ -37,7 +37,7 @@ var (
 
 type Config struct {
 	CollectorsFile  string
-	Port            int
+	Address         string
 	CollectInterval int
 	Kubernetes      bool
 }
