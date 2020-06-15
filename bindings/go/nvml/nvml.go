@@ -636,6 +636,7 @@ func (d *Device) GetMigDevices() ([]*Device, error) {
 			Model:       model,
 			Memory:      totalMem,
 			CPUAffinity: d.CPUAffinity,
+			Path:        d.Path,
 		}
 
 		devices = append(devices, device)
