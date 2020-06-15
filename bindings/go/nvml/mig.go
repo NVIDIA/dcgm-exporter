@@ -108,6 +108,20 @@ type ComputeInstanceInfo struct {
 	ProfileID   uint32
 }
 
+// type DeviceAttributes C.nvmlDeviceAttributes_t
+// Generated using `go tool cgo -godefs mig.go`
+type DeviceAttributes struct {
+	MultiprocessorCount       uint32
+	SharedCopyEngineCount     uint32
+	SharedDecoderCount        uint32
+	SharedEncoderCount        uint32
+	SharedJpegCount           uint32
+	SharedOfaCount            uint32
+	GpuInstanceSliceCount     uint32
+	ComputeInstanceSliceCount uint32
+	MemorySizeMB              uint64
+}
+
 // Device.SetMigMode()
 func (d *Device) SetMigMode(mode int) (activationStatus error, err error) {
 	ret := dl.lookupSymbol("nvmlDeviceSetMigMode")
@@ -394,4 +408,16 @@ func (d *Device) GetDeviceHandleFromMigDeviceHandle() (device *Device, err error
 	var parent C.nvmlDevice_t
 	ret = C.nvmlDeviceGetDeviceHandleFromMigDeviceHandle(d.handle.dev, &parent)
 	return &Device{handle: handle{parent}}, errorString(ret)
+}
+
+// Device.GetAttributes()
+func (d *Device) GetAttributes() (attr DeviceAttributes, err error) {
+	ret := dl.lookupSymbol("nvmlDeviceGetAttributes")
+	if ret != C.NVML_SUCCESS {
+		return DeviceAttributes{}, errorString(ret)
+	}
+
+	var a C.nvmlDeviceAttributes_t
+	ret = C.nvmlDeviceGetAttributes(d.handle.dev, &a)
+	return *(*DeviceAttributes)(unsafe.Pointer(&a)), errorString(ret)
 }
