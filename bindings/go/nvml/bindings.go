@@ -19,6 +19,7 @@ package nvml
 /*
 #cgo linux LDFLAGS: -ldl -Wl,--unresolved-symbols=ignore-in-object-files
 #cgo darwin LDFLAGS: -ldl -Wl,-undefined,dynamic_lookup
+#cgo windows LDFLAGS: -LC:/Program\ Files/NVIDIA\ Corporation/NVSMI -lnvml
 #include "nvml.h"
 
 #undef nvmlEventSetWait
@@ -417,6 +418,16 @@ func (h handle) deviceGetPowerUsage() (*uint, error) {
 		return nil, nil
 	}
 	return uintPtr(power), errorString(r)
+}
+
+func (h handle) deviceGetFanSpeed() (*uint, error) {
+	var speed C.uint
+
+	r := C.nvmlDeviceGetFanSpeed(h.dev, &speed)
+	if r == C.NVML_ERROR_NOT_SUPPORTED {
+		return nil, nil
+	}
+	return uintPtr(speed), errorString(r)
 }
 
 func (h handle) deviceGetTemperature() (*uint, error) {
