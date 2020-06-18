@@ -39,7 +39,7 @@ spec:
         - name: "DCGM_EXPORTER_LISTEN"
           value: ":9400"
         - name: "DCGM_EXPORTER_KUBERNETES"
-          value: true
+          value: "true"
         name: "dcgm-exporter"
         ports:
         - name: "metrics"
