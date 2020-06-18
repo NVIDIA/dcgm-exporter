@@ -18,7 +18,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -31,7 +30,7 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
 		server: http.Server{
-			Addr:         fmt.Sprintf(":%d", c.Port),
+			Addr:         c.Address,
 			Handler:      router,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,

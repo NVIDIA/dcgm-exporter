@@ -37,7 +37,7 @@ spec:
       - image: "nvidia/dcgm-exporter:1.7.2"
         env:
         - name: "DCGM_EXPORTER_LISTEN"
-          value: "9400"
+          value: ":9400"
         - name: "DCGM_EXPORTER_KUBERNETES"
           value: true
         name: "dcgm-exporter"

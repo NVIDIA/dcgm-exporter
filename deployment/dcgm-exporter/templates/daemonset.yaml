@@ -86,7 +86,7 @@ spec:
         - name: "DCGM_EXPORTER_KUBERNETES"
           value: "true"
         - name: "DCGM_EXPORTER_LISTEN"
-          value: "{{ .Values.service.port }}"
+          value: "{{ .Values.service.address }}"
         {{- if .Values.extraEnv }}
         {{- toYaml .Values.extraEnv | nindent 8 }}
         {{- end }}
