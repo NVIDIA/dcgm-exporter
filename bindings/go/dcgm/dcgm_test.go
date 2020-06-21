@@ -16,8 +16,9 @@ func check(err error, t *testing.T) {
 }
 
 func TestDeviceCount(t *testing.T) {
-	check(Init(Embedded), t)
-	defer func() { check(Shutdown(), t) }()
+	cleanup, err := Init(Embedded)
+	check(err, t)
+	defer cleanup()
 
 	count, err := GetAllDeviceCount()
 	check(err, t)
@@ -43,8 +44,9 @@ func BenchmarkDeviceCount1(b *testing.B) {
 }
 
 func TestDeviceInfo(t *testing.T) {
-	check(Init(Embedded), t)
-	defer func() { check(Shutdown(), t) }()
+	cleanup, err := Init(Embedded)
+	check(err, t)
+	defer cleanup()
 
 	fields := []string{
 		"driver_version",
@@ -125,8 +127,9 @@ func BenchmarkDeviceInfo1(b *testing.B) {
 }
 
 func TestDeviceStatus(t *testing.T) {
-	check(Init(Embedded), t)
-	defer func() { check(Shutdown(), t) }()
+	cleanup, err := Init(Embedded)
+	check(err, t)
+	defer cleanup()
 
 	gpus, err := GetSupportedDevices()
 	check(err, t)

@@ -52,14 +52,11 @@ var process = flag.Uint("pid", 0, "Provide pid to get this process information."
 // dcgmi stats --pid ENTERPID -v
 // sample: sudo ./processInfo -pid PID
 func main() {
-	if err := dcgm.Init(dcgm.Embedded); err != nil {
+	cleanup, err := dcgm.Init(dcgm.Embedded)
+	if err != nil {
 		log.Panicln(err)
 	}
-	defer func() {
-		if err := dcgm.Shutdown(); err != nil {
-			log.Panicln(err)
-		}
-	}()
+	defer cleanup()
 
 	// Request DCGM to start recording stats for GPU process fields
 	group, err := dcgm.WatchPidFields()

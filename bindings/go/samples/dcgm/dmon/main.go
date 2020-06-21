@@ -22,14 +22,11 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	if err := dcgm.Init(dcgm.Embedded); err != nil {
+	cleanup, err := dcgm.Init(dcgm.Embedded)
+	if err != nil {
 		log.Panicln(err)
 	}
-	defer func() {
-		if err := dcgm.Shutdown(); err != nil {
-			log.Panicln(err)
-		}
-	}()
+	defer cleanup()
 
 	gpus, err := dcgm.GetSupportedDevices()
 	if err != nil {
@@ -49,8 +46,8 @@ func main() {
 					log.Panicln(err)
 				}
 				fmt.Printf("%5d %5d %5d %5d %5d %5d %5d %5d %5d\n",
-					gpu, int64(*st.Power), *st.Temperature, *st.Utilization.GPU, *st.Utilization.Memory,
-					*st.Utilization.Encoder, *st.Utilization.Decoder, *st.Clocks.Memory, *st.Clocks.Cores)
+					gpu, int64(st.Power), st.Temperature, st.Utilization.GPU, st.Utilization.Memory,
+					st.Utilization.Encoder, st.Utilization.Decoder, st.Clocks.Memory, st.Clocks.Cores)
 			}
 
 		case <-sigs:

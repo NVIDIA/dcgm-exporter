@@ -27,14 +27,11 @@ func main() {
 	// 1. dcgm.Embedded
 	// 2. dcgm.Standalone
 	// 3. dcgm.StartHostengine
-	if err := dcgm.Init(dcgm.StartHostengine); err != nil {
+	cleanup, err := dcgm.Init(dcgm.Embedded)
+	if err != nil {
 		log.Panicln(err)
 	}
-	defer func() {
-		if err := dcgm.Shutdown(); err != nil {
-			log.Panicln(err)
-		}
-	}()
+	defer cleanup()
 
 	gpus, err := dcgm.GetSupportedDevices()
 	if err != nil {
