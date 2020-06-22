@@ -46,9 +46,11 @@ func main() {
 	// 2. dcgm.Standalone -connect "addr", -socket "isSocket"
 	// 3. dcgm.StartHostengine
 	flag.Parse()
-	if err := dcgm.Init(dcgm.Standalone, *connectAddr, *isSocket); err != nil {
+	cleanup, err := dcgm.Init(dcgm.Standalone, *connectAddr, *isSocket)
+	if err != nil {
 		log.Panicln(err)
 	}
+	defer cleanup()
 
 	defer func() {
 		if err := dcgm.Shutdown(); err != nil {

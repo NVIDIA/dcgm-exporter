@@ -10,14 +10,11 @@ import (
 // dcgmi introspect --enable
 // dcgmi introspect -s -H
 func main() {
-	if err := dcgm.Init(dcgm.Embedded); err != nil {
+	cleanup, err := dcgm.Init(dcgm.Embedded)
+	if err != nil {
 		log.Panicln(err)
 	}
-	defer func() {
-		if err := dcgm.Shutdown(); err != nil {
-			log.Panicln(err)
-		}
-	}()
+	defer cleanup()
 
 	st, err := dcgm.Introspect()
 	if err != nil {

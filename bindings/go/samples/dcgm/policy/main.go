@@ -11,14 +11,11 @@ import (
 // dcgmi policy -g GROUPID --set 0,0 -x -n -p -e -P 250 -T 100 -M 10
 // dcgmi policy -g GROUPID --reg
 func main() {
-	if err := dcgm.Init(dcgm.Embedded); err != nil {
+	cleanup, err := dcgm.Init(dcgm.Embedded)
+	if err != nil {
 		log.Panicln(err)
 	}
-	defer func() {
-		if err := dcgm.Shutdown(); err != nil {
-			log.Panicln(err)
-		}
-	}()
+	defer cleanup()
 
 	gpus, err := dcgm.GetSupportedDevices()
 	if err != nil {
