@@ -72,9 +72,13 @@ func (p *PodMapper) Process(metrics [][]Metric) error {
 	// and not the copy, we need to use the indexes
 	for i, device := range metrics {
 		for j, val := range device {
-			metrics[i][j].Attributes[podAttribute] = deviceToPod[val.GPUUUID].Name
-			metrics[i][j].Attributes[namespaceAttribute] = deviceToPod[val.GPUUUID].Namespace
-			metrics[i][j].Attributes[containerAttribute] = deviceToPod[val.GPUUUID].Container
+			GPUID, err := val.getIDOfType(p.Config.KubernetesGPUIdType)
+			if err != nil {
+				return err
+			}
+			metrics[i][j].Attributes[podAttribute] = deviceToPod[GPUID].Name
+			metrics[i][j].Attributes[namespaceAttribute] = deviceToPod[GPUID].Namespace
+			metrics[i][j].Attributes[containerAttribute] = deviceToPod[GPUID].Container
 		}
 	}
 

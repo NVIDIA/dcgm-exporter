@@ -17,6 +17,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"text/template"
@@ -35,11 +36,19 @@ var (
 	containerAttribute = "container"
 )
 
+type KubernetesGPUIDType string
+
+const (
+	GPUUID     KubernetesGPUIDType = "uid"
+	DeviceName KubernetesGPUIDType = "device-name"
+)
+
 type Config struct {
-	CollectorsFile  string
-	Address         string
-	CollectInterval int
-	Kubernetes      bool
+	CollectorsFile      string
+	Address             string
+	CollectInterval     int
+	Kubernetes          bool
+	KubernetesGPUIdType KubernetesGPUIDType
 }
 
 type Transform interface {
@@ -74,10 +83,21 @@ type Metric struct {
 	Name  string
 	Value string
 
-	GPU     string
-	GPUUUID string
+	GPU       string
+	GPUUUID   string
+	GPUDevice string
 
 	Attributes map[string]string
+}
+
+func (m Metric) getIDOfType(idType KubernetesGPUIDType) (string, error) {
+	switch idType {
+	case GPUUID:
+		return m.GPUUUID, nil
+	case DeviceName:
+		return m.GPUDevice, nil
+	}
+	return "", fmt.Errorf("unsupported KubernetesGPUIDType for MetricID %s", idType)
 }
 
 var promMetricType = map[string]bool{
