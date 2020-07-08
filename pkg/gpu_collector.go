@@ -69,18 +69,24 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 }
 
 func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric {
-	metrics := make([]Metric, len(values))
+	var metrics []Metric
 
 	for i, val := range values {
-		metrics[i] = Metric{
+		v := ToString(val)
+		// Filter out counters with no value
+		if v == "9223372036854775794" {
+			continue
+		}
+		m := Metric{
 			Name:  c[i].FieldName,
-			Value: ToString(val),
+			Value: v,
 
 			GPU:     fmt.Sprintf("%d", d.GPU),
 			GPUUUID: d.UUID,
 
 			Attributes: map[string]string{},
 		}
+		metrics = append(metrics, m)
 	}
 
 	return metrics
