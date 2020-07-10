@@ -74,7 +74,7 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric 
 	for i, val := range values {
 		v := ToString(val)
 		// Filter out counters with no value
-		if v == "9223372036854775794" {
+		if v == SkipDCGMValue {
 			continue
 		}
 		m := Metric{
@@ -94,6 +94,34 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric 
 }
 
 func ToString(value dcgm.FieldValue_v1) string {
+	switch v := value.Int64(); v {
+	case dcgm.DCGM_FT_INT32_BLANK:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT32_NOT_FOUND:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_BLANK:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_NOT_FOUND:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
+		return SkipDCGMValue
+	}
+	switch v := value.Float64(); v {
+	case dcgm.DCGM_FT_FP64_BLANK:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_FP64_NOT_FOUND:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
+		return SkipDCGMValue
+	}
 	switch v := value.FieldType; v {
 	case dcgm.DCGM_FT_STRING:
 		return value.String()

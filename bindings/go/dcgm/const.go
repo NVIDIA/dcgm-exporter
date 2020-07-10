@@ -14,11 +14,27 @@ type FieldValue_v1 struct {
 }
 
 const (
-	DCGM_FT_BINARY    = uint('b')
-	DCGM_FT_DOUBLE    = uint('d')
-	DCGM_FT_INT64     = uint('i')
-	DCGM_FT_STRING    = uint('s')
-	DCGM_FT_TIMESTAMP = uint('t')
+	DCGM_FT_BINARY                 = uint('b')
+	DCGM_FT_DOUBLE                 = uint('d')
+	DCGM_FT_INT64                  = uint('i')
+	DCGM_FT_STRING                 = uint('s')
+	DCGM_FT_TIMESTAMP              = uint('t')
+	DCGM_FT_INT32_BLANK            = int64(2147483632)
+	DCGM_FT_INT32_NOT_FOUND        = int64(DCGM_FT_INT32_BLANK + 1)
+	DCGM_FT_INT32_NOT_SUPPORTED    = int64(DCGM_FT_INT32_BLANK + 2)
+	DCGM_FT_INT32_NOT_PERMISSIONED = int64(DCGM_FT_INT32_BLANK + 3)
+	DCGM_FT_INT64_BLANK            = int64(9223372036854775792)
+	DCGM_FT_INT64_NOT_FOUND        = int64(DCGM_FT_INT64_BLANK + 1)
+	DCGM_FT_INT64_NOT_SUPPORTED    = int64(DCGM_FT_INT64_BLANK + 2)
+	DCGM_FT_INT64_NOT_PERMISSIONED = int64(DCGM_FT_INT64_BLANK + 3)
+	DCGM_FT_FP64_BLANK             = 140737488355328.0
+	DCGM_FT_FP64_NOT_FOUND         = float64(DCGM_FT_FP64_BLANK + 1.0)
+	DCGM_FT_FP64_NOT_SUPPORTED     = float64(DCGM_FT_FP64_BLANK + 2.0)
+	DCGM_FT_FP64_NOT_PERMISSIONED  = float64(DCGM_FT_FP64_BLANK + 3.0)
+	DCGM_FT_STR_BLANK              = "<<<NULL>>>"
+	DCGM_FT_STR_NOT_FOUND          = "<<<NOT_FOUND>>>"
+	DCGM_FT_STR_NOT_SUPPORTED      = "<<<NOT_SUPPORTED>>>"
+	DCGM_FT_STR_NOT_PERMISSIONED   = "<<<NOT_PERM>>>"
 
 	DCGM_FI_UNKNOWN                               = 0
 	DCGM_FI_DRIVER_VERSION                        = 1
