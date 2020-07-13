@@ -69,18 +69,24 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 }
 
 func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric {
-	metrics := make([]Metric, len(values))
+	var metrics []Metric
 
 	for i, val := range values {
-		metrics[i] = Metric{
+		v := ToString(val)
+		// Filter out counters with no value
+		if v == SkipDCGMValue {
+			continue
+		}
+		m := Metric{
 			Name:  c[i].FieldName,
-			Value: ToString(val),
+			Value: v,
 
 			GPU:     fmt.Sprintf("%d", d.GPU),
 			GPUUUID: d.UUID,
 
 			Attributes: map[string]string{},
 		}
+		metrics = append(metrics, m)
 	}
 
 	return metrics
@@ -88,6 +94,34 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric 
 }
 
 func ToString(value dcgm.FieldValue_v1) string {
+	switch v := value.Int64(); v {
+	case dcgm.DCGM_FT_INT32_BLANK:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT32_NOT_FOUND:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_BLANK:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_NOT_FOUND:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
+		return SkipDCGMValue
+	}
+	switch v := value.Float64(); v {
+	case dcgm.DCGM_FT_FP64_BLANK:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_FP64_NOT_FOUND:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
+		return SkipDCGMValue
+	case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
+		return SkipDCGMValue
+	}
 	switch v := value.FieldType; v {
 	case dcgm.DCGM_FT_STRING:
 		return value.String()

@@ -25,6 +25,7 @@ import (
 )
 
 var (
+	SkipDCGMValue   = "SKIPPING DCGM VALUE"
 	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
 
 	nvidiaResourceName = "nvidia.com/gpu"
