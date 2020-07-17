@@ -319,7 +319,7 @@ func (h handle) deviceGetNvLinkState(link uint) (*uint, error) {
 	var isActive C.nvmlEnableState_t
 
 	r := C.nvmlDeviceGetNvLinkState(h.dev, C.uint(link), &isActive)
-	if r == C.NVML_ERROR_NOT_SUPPORTED {
+	if r == C.NVML_ERROR_NOT_SUPPORTED || r == C.NVML_ERROR_INVALID_ARGUMENT {
 		return nil, nil
 	}
 
@@ -330,7 +330,7 @@ func (h handle) deviceGetNvLinkRemotePciInfo(link uint) (*string, error) {
 	var pci C.nvmlPciInfo_t
 
 	r := C.nvmlDeviceGetNvLinkRemotePciInfo(h.dev, C.uint(link), &pci)
-	if r == C.NVML_ERROR_NOT_SUPPORTED {
+	if r == C.NVML_ERROR_NOT_SUPPORTED || r == C.NVML_ERROR_INVALID_ARGUMENT {
 		return nil, nil
 	}
 
