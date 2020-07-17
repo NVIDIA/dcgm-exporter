@@ -55,9 +55,9 @@ $ curl -sL http://127.0.01:8080/metrics
 # HELP DCGM_FI_DEV_MEMORY_TEMP Memory temperature (in C).
 # TYPE DCGM_FI_DEV_MEMORY_TEMP gauge
 ...
-DCGM_FI_DEV_SM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 139
-DCGM_FI_DEV_MEM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 405
-DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"} 9223372036854775794
+DCGM_FI_DEV_SM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",container="",namespace="",pod=""} 139
+DCGM_FI_DEV_MEM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",container="",namespace="",pod=""} 405
+DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",container="",namespace="",pod=""} 9223372036854775794
 ...
 
 # If you are using the Prometheus operator
@@ -84,6 +84,9 @@ $ curl -sL http://127.0.01:9090/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
 				metric: {
 					UUID: "GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",
 					__name__: "DCGM_FI_DEV_MEMORY_TEMP",
+					__container__: "",
+					__pod__: "",
+					__namespace__: "",
 					...
 					pod: "dcgm-exporter-fn7fm",
 					service: "dcgm-exporter"
