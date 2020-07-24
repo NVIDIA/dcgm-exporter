@@ -29,13 +29,6 @@ spec:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: "dcgm-exporter"
-spec:
-  updateStrategy:
-    type: RollingUpdate
-  selector:
-    matchLabels:
-      {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: "dcgm-exporter"
   template:
     metadata:
       labels:
