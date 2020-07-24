@@ -29,9 +29,6 @@ spec:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: "dcgm-exporter"
-  endpoints:
-  - port: "metrics"
-    path: "/metrics"
   namespaceSelector:
     matchNames:
     - "{{ .Release.Namespace }}"
