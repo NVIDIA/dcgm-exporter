@@ -19,9 +19,6 @@ image:
   # for the image tag, e.g:
   #tag: 1.7.2
 
-# For helm v2 this field might be useful
-#namespace: kube-system
-
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
@@ -63,8 +60,6 @@ resources: {}
 serviceMonitor:
   enabled: true
   interval: 15s
-  # Defaults to .Release.Namespace
-  #namespace: default
   additionalLabels: {}
     #monitoring: prometheus
 
