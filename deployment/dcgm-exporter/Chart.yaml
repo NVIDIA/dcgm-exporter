@@ -3,6 +3,6 @@ name: dcgm-exporter
 description: A Helm chart for DCGM exporter
 sources:
 - https://gitlab.com/nvidia/container-toolkit/gpu-monitoring-tools
-version: "1.0.1"
+version: "1.0.2"
 appVersion: "1.7.2"
 kubeVersion: ">= 1.13.0"
