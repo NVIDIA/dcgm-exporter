@@ -16,12 +16,14 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "dcgm-exporter.fullname" . }}
-{{- if .Values.namespace }}
-  namespace: {{ .Values.namespace }}
-{{- end }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
+  {{- with .Values.service.annotations }}
+  annotations:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.service.type }}
   ports:

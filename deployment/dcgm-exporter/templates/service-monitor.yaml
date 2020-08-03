@@ -17,9 +17,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "dcgm-exporter.fullname" . }}
-{{- if .Values.serviceMonitor.namespace }}
-  namespace: {{ .Values.serviceMonitor.namespace }}
-{{- end }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
@@ -31,16 +29,9 @@ spec:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: "dcgm-exporter"
-  endpoints:
-  - port: "metrics"
-    path: "/metrics"
   namespaceSelector:
     matchNames:
-{{- if .Values.namespace }}
-    - "{{ .Values.namespace }}"
-{{ else }}
     - "{{ .Release.Namespace }}"
-{{- end }}
   endpoints:
   - port: "metrics"
     path: "/metrics"

@@ -16,19 +16,10 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: {{ include "dcgm-exporter.fullname" . }}
-{{- if .Values.namespace }}
-  namespace: {{ .Values.namespace }}
-{{- end }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
-spec:
-  updateStrategy:
-    type: RollingUpdate
-  selector:
-    matchLabels:
-      {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: "dcgm-exporter"
 spec:
   updateStrategy:
     type: RollingUpdate

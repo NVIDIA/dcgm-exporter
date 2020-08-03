@@ -19,9 +19,6 @@ image:
   # for the image tag, e.g:
   #tag: 1.7.2
 
-# For helm v2 this field might be useful
-#namespace: kube-system
-
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
@@ -50,6 +47,8 @@ service:
   type: ClusterIP
   port: 9400
   address: ":9400"
+  # Annotations to add to the service
+  annotations: {}
 
 resources: {}
   # limits:
@@ -61,8 +60,6 @@ resources: {}
 serviceMonitor:
   enabled: true
   interval: 15s
-  # Defaults to .Release.Namespace
-  #namespace: default
   additionalLabels: {}
     #monitoring: prometheus
 
