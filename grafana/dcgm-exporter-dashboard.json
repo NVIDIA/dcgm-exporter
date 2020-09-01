@@ -100,7 +100,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_GPU_TEMP",
+          "expr": "DCGM_FI_DEV_GPU_TEMP{gpu=~\"${gpu}\"}",
           "instant": true,
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
@@ -198,7 +198,7 @@
       "pluginVersion": "6.7.3",
       "targets": [
         {
-          "expr": "avg(DCGM_FI_DEV_GPU_TEMP)",
+          "expr": "avg(DCGM_FI_DEV_GPU_TEMP{gpu=~\"${gpu}\"})",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
@@ -253,7 +253,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_POWER_USAGE",
+          "expr": "DCGM_FI_DEV_POWER_USAGE{gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -370,7 +370,7 @@
       "pluginVersion": "6.7.3",
       "targets": [
         {
-          "expr": "sum(DCGM_FI_DEV_POWER_USAGE)",
+          "expr": "sum(DCGM_FI_DEV_POWER_USAGE{gpu=~\"${gpu}\"})",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
@@ -426,7 +426,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_SM_CLOCK",
+          "expr": "DCGM_FI_DEV_SM_CLOCK{gpu=~\"${gpu}\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 1,
@@ -519,7 +519,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_MEM_CLOCK",
+          "expr": "DCGM_FI_DEV_MEM_CLOCK{gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -609,7 +609,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_GPU_UTIL",
+          "expr": "DCGM_FI_DEV_GPU_UTIL{gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -699,7 +699,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL",
+          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -788,7 +788,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_FB_USED",
+          "expr": "DCGM_FI_DEV_FB_USED{gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -878,7 +878,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_FB_USED",
+          "expr": "DCGM_FI_DEV_FB_USED{gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -938,10 +938,10 @@
         "datasource": "${DS_PROMETHEUS}",
         "definition": "label_values(gpu)",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "index": -1,
         "label": null,
-        "multi": false,
+        "multi": true,
         "name": "gpu",
         "options": [],
         "query": "label_values(gpu)",
