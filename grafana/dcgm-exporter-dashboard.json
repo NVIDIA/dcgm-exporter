@@ -320,24 +320,7 @@
             "color": {
               "mode": "thresholds"
             },
-            "mappings": [
-              {
-                "id": 0,
-                "op": "=",
-                "text": "value to text",
-                "type": 1,
-                "value": "1"
-              },
-              {
-                "from": "",
-                "id": 1,
-                "operator": "",
-                "text": "range to text",
-                "to": "",
-                "type": 1,
-                "value": "2"
-              }
-            ],
+            "mappings": [],
             "max": 2400,
             "min": 0,
             "nullValueMode": "connected",
