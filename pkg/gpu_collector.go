@@ -81,8 +81,9 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric 
 			Name:  c[i].FieldName,
 			Value: v,
 
-			GPU:     fmt.Sprintf("%d", d.GPU),
-			GPUUUID: d.UUID,
+			GPU:       fmt.Sprintf("%d", d.GPU),
+			GPUUUID:   d.UUID,
+			GPUDevice: fmt.Sprintf("nvidia%d", d.GPU),
 
 			Attributes: map[string]string{},
 		}

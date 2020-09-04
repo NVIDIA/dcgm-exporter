@@ -17,6 +17,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
@@ -30,10 +31,11 @@ import (
 var (
 	BuildVersion = "Filled by the build system"
 
-	CLIFieldsFile      = "collectors"
-	CLIAddress         = "address"
-	CLICollectInterval = "collect-interval"
-	CLIKubernetes      = "kubernetes"
+	CLIFieldsFile          = "collectors"
+	CLIAddress             = "address"
+	CLICollectInterval     = "collect-interval"
+	CLIKubernetes          = "kubernetes"
+	CLIKubernetesGPUIDType = "kubernetes-gpu-id-type"
 )
 
 func main() {
@@ -70,6 +72,12 @@ func main() {
 			Value:   false,
 			Usage:   "Enable kubernetes mapping metrics to kubernetes pods",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES"},
+		},
+		&cli.StringFlag{
+			Name:    CLIKubernetesGPUIDType,
+			Value:   string(GPUUID),
+			Usage:   fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'", GPUUID, DeviceName),
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"},
 		},
 	}
 
@@ -140,9 +148,10 @@ restart:
 
 func contextToConfig(c *cli.Context) *Config {
 	return &Config{
-		CollectorsFile:  c.String(CLIFieldsFile),
-		Address:         c.String(CLIAddress),
-		CollectInterval: c.Int(CLICollectInterval),
-		Kubernetes:      c.Bool(CLIKubernetes),
+		CollectorsFile:      c.String(CLIFieldsFile),
+		Address:             c.String(CLIAddress),
+		CollectInterval:     c.Int(CLICollectInterval),
+		Kubernetes:          c.Bool(CLIKubernetes),
+		KubernetesGPUIdType: KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 	}
 }
