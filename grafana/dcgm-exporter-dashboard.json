@@ -101,7 +101,7 @@
       "targets": [
         {
           "expr": "DCGM_FI_DEV_GPU_TEMP{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
-          "instant": true,
+          "instant": false,
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
