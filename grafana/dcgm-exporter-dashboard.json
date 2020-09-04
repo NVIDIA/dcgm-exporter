@@ -100,7 +100,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_GPU_TEMP{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_GPU_TEMP{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "instant": true,
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
@@ -198,7 +198,7 @@
       "pluginVersion": "6.7.3",
       "targets": [
         {
-          "expr": "avg(DCGM_FI_DEV_GPU_TEMP{gpu=~\"${gpu}\"})",
+          "expr": "avg(DCGM_FI_DEV_GPU_TEMP{instance=~\"${instance}\", gpu=~\"${gpu}\"})",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
@@ -253,7 +253,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_POWER_USAGE{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_POWER_USAGE{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -370,7 +370,7 @@
       "pluginVersion": "6.7.3",
       "targets": [
         {
-          "expr": "sum(DCGM_FI_DEV_POWER_USAGE{gpu=~\"${gpu}\"})",
+          "expr": "sum(DCGM_FI_DEV_POWER_USAGE{instance=~\"${instance}\", gpu=~\"${gpu}\"})",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
@@ -426,7 +426,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_SM_CLOCK{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_SM_CLOCK{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 1,
@@ -519,7 +519,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_MEM_CLOCK{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_MEM_CLOCK{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -609,7 +609,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_GPU_UTIL{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_GPU_UTIL{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -699,7 +699,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -788,7 +788,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_FB_USED{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_FB_USED{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -878,7 +878,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_FB_USED{gpu=~\"${gpu}\"}",
+          "expr": "DCGM_FI_DEV_FB_USED{instance=~\"${instance}\", gpu=~\"${gpu}\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -932,6 +932,28 @@
   "tags": [],
   "templating": {
     "list": [
+      {
+        "allValue": null,
+        "current": {},
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(DCGM_FI_DEV_GPU_TEMP, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": null,
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": "label_values(DCGM_FI_DEV_GPU_TEMP, instance)",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "tagValuesQuery": "",
+        "tags": [],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      },
       {
         "allValue": null,
         "current": {},
