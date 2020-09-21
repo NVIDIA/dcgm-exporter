@@ -336,6 +336,30 @@ func NewDevice(idx uint) (device *Device, err error) {
 
 	h, err := deviceGetHandleByIndex(idx)
 	assert(err)
+
+	device, err = newDevice(h)
+	assert(err)
+
+	return device, err
+}
+
+func NewDeviceByUUID(uuid string) (device *Device, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
+	h, err := deviceGetHandleByUUID(uuid)
+	assert(err)
+
+	device, err = newDevice(h)
+	assert(err)
+
+	return device, err
+}
+
+func newDevice(h handle) (device *Device, err error) {
 	model, err := h.deviceGetName()
 	assert(err)
 	uuid, err := h.deviceGetUUID()
@@ -413,6 +437,30 @@ func NewDeviceLite(idx uint) (device *Device, err error) {
 
 	h, err := deviceGetHandleByIndex(idx)
 	assert(err)
+
+	device, err = newDeviceLite(h)
+	assert(err)
+
+	return device, err
+}
+
+func NewDeviceLiteByUUID(uuid string) (device *Device, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = r.(error)
+		}
+	}()
+
+	h, err := deviceGetHandleByUUID(uuid)
+	assert(err)
+
+	device, err = newDeviceLite(h)
+	assert(err)
+
+	return device, err
+}
+
+func newDeviceLite(h handle) (device *Device, err error) {
 	uuid, err := h.deviceGetUUID()
 	assert(err)
 	minor, err := h.deviceGetMinorNumber()
