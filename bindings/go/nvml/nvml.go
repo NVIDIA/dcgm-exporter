@@ -733,7 +733,41 @@ func (d *Device) GetMigParentDeviceLite() (*Device, error) {
 	return NewDeviceLite(*index)
 }
 
-func ParseMigDeviceUUID(mig string) (string, uint, uint, error) {
+func ParseMigDeviceUUID(uuid string) (string, uint, uint, error) {
+	migHandle, err := deviceGetHandleByUUID(uuid)
+	if err == nil {
+		return getMIGDeviceInfo(migHandle)
+	}
+	return parseMigDeviceUUID(uuid)
+}
+
+func getMIGDeviceInfo(migHandle handle) (string, uint, uint, error) {
+	parentHandle, err := migHandle.deviceGetDeviceHandleFromMigDeviceHandle()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	parentUUID, err := parentHandle.deviceGetUUID()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	migDevice := Device{handle: migHandle}
+
+	gi, err := migDevice.GetGPUInstanceId()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	ci, err := migDevice.GetComputeInstanceId()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	return *parentUUID, uint(gi), uint(ci), err
+}
+
+func parseMigDeviceUUID(mig string) (string, uint, uint, error) {
 	tokens := strings.SplitN(mig, "-", 2)
 	if len(tokens) != 2 || tokens[0] != "MIG" {
 		return "", 0, 0, fmt.Errorf("Unable to parse UUID as MIG device")
