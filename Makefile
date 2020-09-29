@@ -16,9 +16,9 @@ DOCKER   ?= docker
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 1.7.2
+DCGM_VERSION   := 2.0.10
 GOLANG_VERSION := 1.14.2
-VERSION        := 2.0.0-rc.7
+VERSION        := 2.1.0-rc.1
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 .PHONY: all binary install check-format

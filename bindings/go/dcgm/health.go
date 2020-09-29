@@ -48,8 +48,8 @@ func healthCheckByGpuId(gpuId uint) (deviceHealth DeviceHealth, err error) {
 		return
 	}
 
-	var healthResults C.dcgmHealthResponse_v1
-	healthResults.version = makeVersion1(unsafe.Sizeof(healthResults))
+	var healthResults C.dcgmHealthResponse_v4
+	healthResults.version = makeVersion2(unsafe.Sizeof(healthResults))
 
 	result := C.dcgmHealthCheck(handle.handle, groupId.handle, (*C.dcgmHealthResponse_t)(unsafe.Pointer(&healthResults)))
 
@@ -60,18 +60,15 @@ func healthCheckByGpuId(gpuId uint) (deviceHealth DeviceHealth, err error) {
 	status := healthStatus(int8(healthResults.overallHealth))
 	watches := []SystemWatch{}
 
-	// only 1 gpu
-	i := 0
-
 	// number of watches that encountred error/warning
-	incidents := uint(healthResults.gpu[i].incidentCount)
+	incidents := uint(healthResults.incidentCount)
 
 	for j := uint(0); j < incidents; j++ {
 		watch := SystemWatch{
-			Type:   systemWatch(int(healthResults.gpu[i].systems[j].system)),
-			Status: healthStatus(int8(healthResults.gpu[i].systems[j].health)),
+			Type:   systemWatch(int(healthResults.incidents[j].system)),
+			Status: healthStatus(int8(healthResults.incidents[j].health)),
 
-			Error: *stringPtr(&healthResults.gpu[i].systems[j].errorString[0]),
+			Error: *stringPtr(&healthResults.incidents[j].error.msg[0]),
 		}
 		watches = append(watches, watch)
 	}

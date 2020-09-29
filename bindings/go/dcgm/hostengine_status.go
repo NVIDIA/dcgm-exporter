@@ -24,7 +24,7 @@ func introspect() (engine DcgmStatus, err error) {
 	}
 
 	var memory C.dcgmIntrospectMemory_t
-	memory.version = makeVersion1(unsafe.Sizeof(memory))
+	memory.version = makeVersion2(unsafe.Sizeof(memory))
 	waitIfNoData := 1
 	result = C.dcgmIntrospectGetHostengineMemoryUsage(handle.handle, &memory, C.int(waitIfNoData))
 
@@ -34,7 +34,7 @@ func introspect() (engine DcgmStatus, err error) {
 
 	var cpu C.dcgmIntrospectCpuUtil_t
 
-	cpu.version = makeVersion1(unsafe.Sizeof(cpu))
+	cpu.version = makeVersion2(unsafe.Sizeof(cpu))
 	result = C.dcgmIntrospectGetHostengineCpuUtilization(handle.handle, &cpu, C.int(waitIfNoData))
 
 	if err = errorString(result); err != nil {

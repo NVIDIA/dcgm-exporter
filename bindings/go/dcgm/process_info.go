@@ -95,7 +95,7 @@ func watchPidFields(gpus ...uint) (groupId GroupHandle, err error) {
 
 func getProcessInfo(groupId GroupHandle, pid uint) (processInfo []ProcessInfo, err error) {
 	var pidInfo C.dcgmPidInfo_t
-	pidInfo.version = makeVersion1(unsafe.Sizeof(pidInfo))
+	pidInfo.version = makeVersion2(unsafe.Sizeof(pidInfo))
 	pidInfo.pid = C.uint(pid)
 
 	result := C.dcgmGetPidInfo(handle.handle, groupId.handle, &pidInfo)

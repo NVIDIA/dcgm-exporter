@@ -6,7 +6,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM registry.access.redhat.com/ubi8:latest
+FROM nvidia/cuda:11.0-base-ubi8
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 ARG DCGM_VERSION
@@ -19,9 +19,8 @@ COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter
 COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ENV NVIDIA_VISIBLE_DEVICES=all
-
-RUN useradd dcgm-exporter
-USER dcgm-exporter
+# Required for DCP metrics
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 
 ARG VERSION
 
@@ -35,4 +34,8 @@ LABEL description="See summary"
 
 COPY ./LICENSE ./licenses/LICENSE
 
-ENTRYPOINT ["/usr/bin/dcgm-exporter"]
+ENV NO_SETCAP=
+COPY docker/docker-entrypoint.sh /usr/local/dcgm/docker-entrypoint.sh
+RUN chmod +x /usr/local/dcgm/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/dcgm/docker-entrypoint.sh"]
