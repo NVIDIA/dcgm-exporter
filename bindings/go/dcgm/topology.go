@@ -97,7 +97,7 @@ func getCPUAffinity(busid string) (string, error) {
 
 func getBusid(gpuid uint) (string, error) {
 	var device C.dcgmDeviceAttributes_t
-	device.version = makeVersion1(unsafe.Sizeof(device))
+	device.version = makeVersion2(unsafe.Sizeof(device))
 
 	result := C.dcgmGetDeviceAttributes(handle.handle, C.uint(gpuid), &device)
 	if err := errorString(result); err != nil {
@@ -108,7 +108,7 @@ func getBusid(gpuid uint) (string, error) {
 
 func getDeviceTopology(gpuid uint) (links []P2PLink, err error) {
 	var topology C.dcgmDeviceTopology_t
-	topology.version = makeVersion1(unsafe.Sizeof(topology))
+	topology.version = makeVersion2(unsafe.Sizeof(topology))
 
 	result := C.dcgmGetDeviceTopology(handle.handle, C.uint(gpuid), &topology)
 	if result == C.DCGM_ST_NOT_SUPPORTED {

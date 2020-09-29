@@ -6,7 +6,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM ubuntu:18.04
+FROM nvidia/cuda:11.0-base-ubuntu18.04
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter /usr/bin/
@@ -14,6 +14,7 @@ COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ARG DCGM_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcap2-bin \
     libgomp1 \
     wget && \
     rm -rf /var/lib/apt/lists/* && \
@@ -21,9 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dpkg -i datacenter-gpu-manager_*.deb && \
     rm -f datacenter-gpu-manager_*.deb
 
+# Required for DCP metrics
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
+
 ENV NVIDIA_VISIBLE_DEVICES=all
 
-RUN useradd dcgm-exporter
-USER dcgm-exporter
+ENV NO_SETCAP=
+COPY docker/docker-entrypoint.sh /usr/local/dcgm/docker-entrypoint.sh
+RUN chmod +x /usr/local/dcgm/docker-entrypoint.sh
 
-ENTRYPOINT ["/usr/bin/dcgm-exporter"]
+ENTRYPOINT ["/usr/local/dcgm/docker-entrypoint.sh"]

@@ -57,7 +57,7 @@ var (
 
 func initDcgm(m mode, args ...string) (err error) {
 	const (
-		dcgmLib = "libdcgm.so.1"
+		dcgmLib = "libdcgm.so"
 	)
 	lib := C.CString(dcgmLib)
 	defer freeCString(lib)

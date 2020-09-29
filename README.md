@@ -4,13 +4,13 @@
 
 This Github repository contains Golang bindings for the following two libraries:
 - [NVIDIA Management Library (NVML)](https://docs.nvidia.com/deploy/nvml-api/nvml-api-reference.html#nvml-api-reference) is a C-based API for monitoring and managing NVIDIA GPU devices.
-- [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/data-center-gpu-manager-dcgm) is a set of tools for managing and monitoring NVIDIA GPUs in cluster environments. It's a low overhead tool suite that performs a variety of functions on each host system including active health monitoring, diagnostics, system validation, policies, power and clock management, group configuration and accounting.
+- [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/dcgm) is a set of tools for managing and monitoring NVIDIA GPUs in cluster environments. It's a low overhead tool suite that performs a variety of functions on each host system including active health monitoring, diagnostics, system validation, policies, power and clock management, group configuration and accounting.
 
 You will also find samples for both of these bindings in this repository.
 
 ## DCGM exporter
 
-This Github repository also contains the DCGM exporter software. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/data-center-gpu-manager-dcgm).
+This Github repository also contains the DCGM exporter software. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/dcgm).
 
 Find the installation and run instructions [here](https://github.com/NVIDIA/gpu-monitoring-tools/blob/master/exporters/prometheus-dcgm/README.md).
 
@@ -60,48 +60,9 @@ DCGM_FI_DEV_MEM_CLOCK{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",c
 DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",container="",namespace="",pod=""} 9223372036854775794
 ...
 
-# If you are using the Prometheus operator
-# Note on exporters here:
-# https://github.com/coreos/prometheus-operator/blob/release-0.38/Documentation/user-guides/running-exporters.md
-
-$ helm repo add stable https://kubernetes-charts.storage.googleapis.com
-$ helm install stable/prometheus-operator --generate-name \
-    --set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
-$ kubectl create -f \
-    https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.12/service-monitor.yaml
-
-# Note might take ~1-2 minutes for prometheus to pickup the metrics and display them
-# You can also check in the WebUI the servce-discovery tab (in the Status category)
-$ NAME=$(kubectl get svc -l app=prometheus-operator-prometheus -o jsonpath='{.items[0].metadata.name}')
-$ kubectl port-forward $NAME 9090:9090 &
-$ curl -sL http://127.0.01:9090/api/v1/query?query=DCGM_FI_DEV_MEMORY_TEMP"
-{
-	status: "success",
-	data: {
-		resultType: "vector",
-		result: [
-			{
-				metric: {
-					UUID: "GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52",
-					__name__: "DCGM_FI_DEV_MEMORY_TEMP",
-					__container__: "",
-					__pod__: "",
-					__namespace__: "",
-					...
-					pod: "dcgm-exporter-fn7fm",
-					service: "dcgm-exporter"
-				},
-				value: [
-					1588399049.227,
-					"9223372036854776000"
-				]
-			},
-			...
-		]
-	}
-}
 ```
-
+To integrate `dcgm-exporter` with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/kubernetes/dcgme2e.html#gpu-telemetry). 
+`dcgm-exporter` is deployed as part of the GPU Operator. To get started with integrating with Prometheus, check the Operator [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/getting-started.html#gpu-telemetry).
 
 ### Building From source and Running on Bare Metal
 

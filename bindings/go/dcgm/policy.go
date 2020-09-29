@@ -250,7 +250,7 @@ func ViolationRegistration(data unsafe.Pointer) int {
 
 func setPolicy(groupId GroupHandle, condition C.dcgmPolicyCondition_t, paramList []policyIndex) (err error) {
 	var policy C.dcgmPolicy_t
-	policy.version = makeVersion1(unsafe.Sizeof(policy))
+	policy.version = makeVersion2(unsafe.Sizeof(policy))
 	policy.mode = C.dcgmPolicyMode_t(C.DCGM_OPERATION_MODE_AUTO)
 	policy.action = C.DCGM_POLICY_ACTION_NONE
 	policy.isolation = C.DCGM_POLICY_ISOLATION_NONE

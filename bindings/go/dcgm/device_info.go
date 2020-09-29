@@ -120,7 +120,7 @@ func getPciBandwidth(gpuId uint) (int64, error) {
 
 func getDeviceInfo(gpuid uint) (deviceInfo Device, err error) {
 	var device C.dcgmDeviceAttributes_t
-	device.version = makeVersion1(unsafe.Sizeof(device))
+	device.version = makeVersion2(unsafe.Sizeof(device))
 
 	result := C.dcgmGetDeviceAttributes(handle.handle, C.uint(gpuid), &device)
 	if err = errorString(result); err != nil {
