@@ -73,6 +73,10 @@ spec:
         image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
         {{- end }}
         imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+        args: 
+        {{- range $.Values.arguments }} 
+        - {{ . }} 
+        {{- end }}
         env:
         - name: "DCGM_EXPORTER_KUBERNETES"
           value: "true"
