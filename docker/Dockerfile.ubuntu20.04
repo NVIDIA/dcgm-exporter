@@ -1,0 +1,34 @@
+ARG GOLANG_VERSION
+FROM golang:$GOLANG_VERSION AS builder
+WORKDIR /go/src/github.com/NVIDIA/gpu-monitoring-tools
+
+COPY . .
+
+RUN make binary check-format
+
+FROM nvidia/cuda:11.0-base-ubuntu20.04
+LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
+
+COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter /usr/bin/
+COPY etc/dcgm-exporter /etc/dcgm-exporter
+
+ARG DCGM_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcap2-bin \
+    libgomp1 \
+    wget && \
+    rm -rf /var/lib/apt/lists/* && \
+    wget --no-check-certificate https://developer.download.nvidia.com/compute/redist/dcgm/${DCGM_VERSION}/DEBS/datacenter-gpu-manager_${DCGM_VERSION}_amd64.deb && \
+    dpkg -i datacenter-gpu-manager_*.deb && \
+    rm -f datacenter-gpu-manager_*.deb
+
+# Required for DCP metrics
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
+
+ENV NVIDIA_VISIBLE_DEVICES=all
+
+ENV NO_SETCAP=
+COPY docker/docker-entrypoint.sh /usr/local/dcgm/docker-entrypoint.sh
+RUN chmod +x /usr/local/dcgm/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/dcgm/docker-entrypoint.sh"]

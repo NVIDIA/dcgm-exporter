@@ -18,11 +18,11 @@ REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.0.10
 GOLANG_VERSION := 1.14.2
-VERSION        := 2.1.0-rc.1
+VERSION        := 2.1.0-rc.2
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 .PHONY: all binary install check-format
-all: ubuntu18.04 ubi8
+all: ubuntu18.04 ubuntu20.04 ubi8
 
 binary:
 	go build -o dcgm-exporter github.com/NVIDIA/gpu-monitoring-tools/pkg
@@ -36,6 +36,7 @@ check-format:
 	test $$(gofmt -l pkg bindings | tee /dev/stderr | wc -l) -eq 0
 
 push:
+	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
 
@@ -50,6 +51,13 @@ push-ci:
 push-latest:
 	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
+
+ubuntu20.04:
+	$(DOCKER) build --pull \
+		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
+		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
+		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04" \
+		--file docker/Dockerfile.ubuntu20.04 .
 
 ubuntu18.04:
 	$(DOCKER) build --pull \
