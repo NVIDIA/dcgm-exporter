@@ -1,8 +1,17 @@
-apiVersion: v1
+apiVersion: v2
 name: dcgm-exporter
 description: A Helm chart for DCGM exporter
+version: "2.1.0"
+kubeVersion: ">= 1.13.0"
+appVersion: "2.1.0"
 sources:
 - https://gitlab.com/nvidia/container-toolkit/gpu-monitoring-tools
-version: "1.1.0"
-appVersion: "2.0.10"
-kubeVersion: ">= 1.13.0"
+home: https://github.com/nvidia/gpu-monitoring-tools/
+icon: https://assets.nvidiagrid.net/ngc/logos/DCGM.png
+keywords:
+  - gpu
+  - cuda
+  - compute
+  - monitoring
+  - telemetry
+  - tesla

@@ -1,24 +1,24 @@
 # NVIDIA GPU Monitoring Tools
 
+This repository contains Golang bindings and DCGM-Exporter for gathering GPU telemetry in Kubernetes.
+
 ## Bindings
 
-This Github repository contains Golang bindings for the following two libraries:
+Golang bindings are provided for the following two libraries:
 - [NVIDIA Management Library (NVML)](https://docs.nvidia.com/deploy/nvml-api/nvml-api-reference.html#nvml-api-reference) is a C-based API for monitoring and managing NVIDIA GPU devices.
 - [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/dcgm) is a set of tools for managing and monitoring NVIDIA GPUs in cluster environments. It's a low overhead tool suite that performs a variety of functions on each host system including active health monitoring, diagnostics, system validation, policies, power and clock management, group configuration and accounting.
 
 You will also find samples for both of these bindings in this repository.
 
-## DCGM exporter
+## DCGM-Exporter
 
-This Github repository also contains the DCGM exporter software. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/dcgm).
-
-Find the installation and run instructions [here](https://github.com/NVIDIA/gpu-monitoring-tools/blob/master/exporters/prometheus-dcgm/README.md).
+The repository also contains DCGM-Exporter. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA DCGM](https://developer.nvidia.com/dcgm).
 
 ### Quickstart
 
-To gather metrics on a GPU node, simply start the dcgm-exporter container:
+To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 ```
-$ docker run -d --gpus all --rm -p 9400:9400 nvidia/dcgm-exporter:latest
+$ docker run -d --gpus all --rm -p 9400:9400 nvidia/dcgm-exporter:2.0.13-2.1.0-ubuntu18.04
 $ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -35,15 +35,34 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 
 ### Quickstart on Kubernetes
 
-Note: Consider using the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) rather than the DCGM exporter directly.
+Note: Consider using the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-operator) rather than DCGM-Exporter directly.
 
 Ensure you have already setup your cluster with the [default runtime as NVIDIA](https://github.com/NVIDIA/nvidia-container-runtime#docker-engine-setup).
-To gather metrics on your GPU nodes you can deploy the daemonset:
+
+The recommended way to install DCGM-Exporter is to use the Helm chart: 
 ```
-$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/2.0.0-rc.12/dcgm-exporter.yaml
+$ helm repo add gpu-helm-charts \
+  https://nvidia.github.io/gpu-monitoring-tools/helm-charts
+```
+Update the repo:
+```
+$ helm repo update
+```
+And install the chart:
+```
+$ helm install \ 
+    --generate-name \ 
+    gpu-helm-charts/dcgm-exporter
+```
+
+Once the `dcgm-exporter` pod is deployed, you can use port forwarding to obtain metrics quickly:
+
+
+```
+$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/master/dcgm-exporter.yaml
 
 # Let's get the output of a random pod:
-$ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/version=2.0.0-rc.12" \
+$ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter" \
                          -o "jsonpath={ .items[0].metadata.name}")
 
 $ kubectl port-forward $NAME 8080:9400 &
@@ -61,16 +80,15 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 ...
 
 ```
-To integrate `dcgm-exporter` with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/kubernetes/dcgme2e.html#gpu-telemetry). 
+To integrate DCGM-Exporter with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/kubernetes/dcgme2e.html#gpu-telemetry). 
 `dcgm-exporter` is deployed as part of the GPU Operator. To get started with integrating with Prometheus, check the Operator [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/getting-started.html#gpu-telemetry).
 
-### Building From source and Running on Bare Metal
+### Building from Source
 
-The dcgm-exporter is actually fairly straightforward to build and use.
+`dcgm-exporter` is actually fairly straightforward to build and use.
 Ensure you have the following:
 - [Golang >= 1.14 installed](https://golang.org/)
 - [DCGM installed](https://developer.nvidia.com/dcgm)
-- On DGX, the NVIDIA Fabric Manager up and running
 
 ```
 $ git clone https://github.com/NVIDIA/gpu-monitoring-tools.git
@@ -93,11 +111,11 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 ...
 ```
 
+### Changing Metrics
 
-### Changing the Metrics
-
-With dcgm-exporter 2.0 you can configure which fields are collected by specifying a custom CSV file.
-You will find the [default CSV file here](https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.12/etc/dcgm-exporter/default-counters.csv) and on your system or container at /etc/dcgm-exporter/default-counters.csv
+With `dcgm-exporter` you can configure which fields are collected by specifying a custom CSV file.
+You will find the default CSV file under `etc/dcgm-exporter/default-counters.csv` in the repository, which is copied on your system or container at 
+`/etc/dcgm-exporter/default-counters.csv`
 
 The format of this file is pretty straightforward:
 ```
@@ -117,13 +135,13 @@ $ dcgm-exporter -f /tmp/custom-collectors.csv
 
 Notes:
 - Always make sure your entries have 3 commas (',')
-- The complete list of counters that can be collected can be found on the DCGM API reference website: https://docs.nvidia.com/datacenter/dcgm/1.7/dcgm-api/group__dcgmFieldIdentifiers.html
+- The complete list of counters that can be collected can be found on the DCGM API reference manual: https://docs.nvidia.com/datacenter/dcgm/latest/dcgm-api/group__dcgmFieldIdentifiers.html
 
 ### What about a Grafana Dashboard?
 
-You can find the official NVIDIA dcgm-exporter dashboard here: https://grafana.com/grafana/dashboards/12239
+You can find the official NVIDIA DCGM-Exporter dashboard here: https://grafana.com/grafana/dashboards/12239
 
-You will also find the json file on this repo: https://github.com/NVIDIA/gpu-monitoring-tools/blob/2.0.0-rc.12/grafana/dcgm-exporter-dashboard.json
+You will also find the `json` file on this repo under `grafana/dcgm-exporter-dashboard.json`
 
 Pull requests are accepted!
 
