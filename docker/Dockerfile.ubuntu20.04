@@ -28,7 +28,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 ENV NVIDIA_VISIBLE_DEVICES=all
 
 ENV NO_SETCAP=
-COPY docker/docker-entrypoint.sh /usr/local/dcgm/docker-entrypoint.sh
-RUN chmod +x /usr/local/dcgm/docker-entrypoint.sh
+COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
+RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 
-ENTRYPOINT ["/usr/local/dcgm/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
