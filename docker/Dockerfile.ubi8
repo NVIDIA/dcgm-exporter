@@ -19,6 +19,8 @@ COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/dcgm-exporter
 COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ENV NVIDIA_VISIBLE_DEVICES=all
+# disable all constraints on the configurations required by NVIDIA container toolkit
+ENV NVIDIA_DISABLE_REQUIRE="true"
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 
