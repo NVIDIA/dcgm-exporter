@@ -50,6 +50,7 @@ type Config struct {
 	CollectInterval     int
 	Kubernetes          bool
 	KubernetesGPUIdType KubernetesGPUIDType
+	CollectDCP          bool
 }
 
 type Transform interface {

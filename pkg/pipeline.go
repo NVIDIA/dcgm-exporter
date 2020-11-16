@@ -27,7 +27,7 @@ import (
 )
 
 func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
-	counters, err := ExtractCounters(c.CollectorsFile)
+	counters, err := ExtractCounters(c.CollectorsFile, c.CollectDCP)
 	if err != nil {
 		return nil, func() {}, err
 	}
