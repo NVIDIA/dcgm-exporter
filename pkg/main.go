@@ -103,6 +103,14 @@ restart:
 	}
 	logrus.Info("DCGM successfully initialized!")
 
+	_, err = dcgm.GetSupportedMetricGroups(0)
+	if err != nil {
+		config.CollectDCP = false
+		logrus.Info("Not collecting DCP metrics: ", err)
+	} else {
+		logrus.Info("Collecting DCP Metrics")
+	}
+
 	ch := make(chan string, 10)
 	pipeline, cleanup, err := NewMetricsPipeline(config)
 	defer cleanup()
@@ -153,5 +161,6 @@ func contextToConfig(c *cli.Context) *Config {
 		CollectInterval:     c.Int(CLICollectInterval),
 		Kubernetes:          c.Bool(CLIKubernetes),
 		KubernetesGPUIdType: KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		CollectDCP:          true,
 	}
 }
