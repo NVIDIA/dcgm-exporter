@@ -2,7 +2,7 @@ apiVersion: v2
 name: dcgm-exporter
 description: A Helm chart for DCGM exporter
 version: "2.1.0"
-kubeVersion: ">= 1.13.0"
+kubeVersion: ">= 1.13.0-0"
 appVersion: "2.1.0"
 sources:
 - https://gitlab.com/nvidia/container-toolkit/gpu-monitoring-tools
