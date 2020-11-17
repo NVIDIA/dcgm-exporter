@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 2.0.13-2.1.0-ubuntu18.04
+  tag: 2.0.13-2.1.1-ubuntu18.04
 
 # Comment the following line to stop profiling metrics from DCGM
 arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
