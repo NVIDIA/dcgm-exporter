@@ -101,3 +101,8 @@ func Policy(gpuId uint, typ ...policyCondition) (<-chan PolicyViolation, error) 
 func Introspect() (DcgmStatus, error) {
 	return introspect()
 }
+
+// Get all of the profiling metric groups for a given GPU group.
+func GetSupportedMetricGroups(grpid uint) ([]MetricGroup, error) {
+	return getSupportedMetricGroups(grpid)
+}

@@ -26,14 +26,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func ExtractCounters(filename string) ([]Counter, error) {
+func ExtractCounters(filename string, dcpAllowed bool) ([]Counter, error) {
 	records, err := ReadCSVFile(filename)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return nil, err
 	}
 
-	counters, err := extractCounters(records)
+	counters, err := extractCounters(records, dcpAllowed)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +55,7 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractCounters(records [][]string) ([]Counter, error) {
+func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 	f := make([]Counter, 0, len(records))
 
 	for i, record := range records {
@@ -79,6 +79,11 @@ func extractCounters(records [][]string) ([]Counter, error) {
 		fieldID, ok := dcgm.DCGM_FI[record[0]]
 		if !ok {
 			return nil, fmt.Errorf("Could not find DCGM field %s", record[0])
+		}
+
+		if !dcpAllowed && fieldID >= 1000 {
+			logrus.Warnf("Skipping line %d ('%s'): DCP metrics not enabled", i, record[0])
+			continue
 		}
 
 		if _, ok := promMetricType[record[1]]; !ok {
