@@ -57,6 +57,9 @@ DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink r
 DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
 DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
 
+# VGPU License status,,
+DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
+
 # DCP metrics,,
 DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active (in %).
 DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned (in %).
