@@ -1,3 +1,18 @@
+/*
+ * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #ifndef DCGM_ERRORS_H
 #define DCGM_ERRORS_H
 
@@ -7,89 +22,91 @@
  */
 typedef enum dcgmError_enum
 {
-    DCGM_FR_OK                         = 0,  //!< No error
-    DCGM_FR_UNKNOWN                    = 1,  //!< Unknown error code
-    DCGM_FR_UNRECOGNIZED               = 2,  //!< Unrecognized error code
-    DCGM_FR_PCI_REPLAY_RATE            = 3,  //!< Unacceptable rate of PCI errors
-    DCGM_FR_VOLATILE_DBE_DETECTED      = 4,  //!< Uncorrectable volatile double bit error
-    DCGM_FR_VOLATILE_SBE_DETECTED      = 5,  //!< Unacceptable rate of volatile single bit errors
-    DCGM_FR_PENDING_PAGE_RETIREMENTS   = 6,  //!< Pending page retirements detected
-    DCGM_FR_RETIRED_PAGES_LIMIT        = 7,  //!< Unacceptable total page retirements detected
-    DCGM_FR_RETIRED_PAGES_DBE_LIMIT    = 8,  //!< Unacceptable total page retirements due to uncorrectable errors
-    DCGM_FR_CORRUPT_INFOROM            = 9,  //!< Corrupt inforom found
-    DCGM_FR_CLOCK_THROTTLE_THERMAL     = 10, //!< Clocks being throttled due to overheating
-    DCGM_FR_POWER_UNREADABLE           = 11, //!< Cannot get a reading for power from NVML
-    DCGM_FR_CLOCK_THROTTLE_POWER       = 12, //!< Clock being throttled due to power restrictions
-    DCGM_FR_NVLINK_ERROR_THRESHOLD     = 13, //!< Unacceptable rate of NVLink errors
-    DCGM_FR_NVLINK_DOWN                = 14, //!< NVLink is down
-    DCGM_FR_NVSWITCH_FATAL_ERROR       = 15, //!< Fatal errors on the NVSwitch
-    DCGM_FR_NVSWITCH_NON_FATAL_ERROR   = 16, //!< Non-fatal errors on the NVSwitch
-    DCGM_FR_NVSWITCH_DOWN              = 17, //!< NVSwitch is down
-    DCGM_FR_NO_ACCESS_TO_FILE          = 18, //!< Cannot access a file
-    DCGM_FR_NVML_API                   = 19, //!< Error occurred on an NVML API
-    DCGM_FR_DEVICE_COUNT_MISMATCH      = 20, //!< Disagreement in GPU count between /dev and NVML
-    DCGM_FR_BAD_PARAMETER              = 21, //!< Bad parameter passed to API
-    DCGM_FR_CANNOT_OPEN_LIB            = 22, //!< Cannot open a library that must be accessed
-    DCGM_FR_BLACKLISTED_DRIVER         = 23, //!< A blacklisted driver (nouveau) is active
-    DCGM_FR_NVML_LIB_BAD               = 24, //!< The NVML library is missing expected functions
-    DCGM_FR_GRAPHICS_PROCESSES         = 25, //!< Graphics processes are active on this GPU
-    DCGM_FR_HOSTENGINE_CONN            = 26, //!< Unstable connection to nv-hostengine (daemonized DCGM)
-    DCGM_FR_FIELD_QUERY                = 27, //!< Error querying a field from DCGM
-    DCGM_FR_BAD_CUDA_ENV               = 28, //!< The environment has variables that hurt CUDA
-    DCGM_FR_PERSISTENCE_MODE           = 29, //!< Persistence mode is disabled
-    DCGM_FR_LOW_BANDWIDTH              = 30, //!< The bandwidth is unacceptably low
-    DCGM_FR_HIGH_LATENCY               = 31, //!< Latency is too high
-    DCGM_FR_CANNOT_GET_FIELD_TAG       = 32, //!< Cannot find a tag for a field
-    DCGM_FR_FIELD_VIOLATION            = 33, //!< The value for the specified error field is above 0
-    DCGM_FR_FIELD_THRESHOLD            = 34, //!< The value for the specified field is above the threshold
-    DCGM_FR_FIELD_VIOLATION_DBL        = 35, //!< The value for the specified error field is above 0
-    DCGM_FR_FIELD_THRESHOLD_DBL        = 36, //!< The value for the specified field is above the threshold
-    DCGM_FR_UNSUPPORTED_FIELD_TYPE     = 37, //!< Field type cannot be supported
-    DCGM_FR_FIELD_THRESHOLD_TS         = 38, //!< The value for the specified field is above the threshold
-    DCGM_FR_FIELD_THRESHOLD_TS_DBL     = 39, //!< The value for the specified field is above the threshold
-    DCGM_FR_THERMAL_VIOLATIONS         = 40, //!< Thermal violations detected
-    DCGM_FR_THERMAL_VIOLATIONS_TS      = 41, //!< Thermal violations detected with a timestamp
-    DCGM_FR_TEMP_VIOLATION             = 42, //!< Temperature is too high
-    DCGM_FR_THROTTLING_VIOLATION       = 43, //!< Non-benign clock throttling is occurring
-    DCGM_FR_INTERNAL                   = 44, //!< An internal error was detected
-    DCGM_FR_PCIE_GENERATION            = 45, //!< PCIe generation is too low
-    DCGM_FR_PCIE_WIDTH                 = 46, //!< PCIe width is too low
-    DCGM_FR_ABORTED                    = 47, //!< Test was aborted by a user signal
-    DCGM_FR_TEST_DISABLED              = 48, //!< This test is disabled for this GPU
-    DCGM_FR_CANNOT_GET_STAT            = 49, //!< Cannot get telemetry for a needed value
-    DCGM_FR_STRESS_LEVEL               = 50, //!< Stress level is too low (bad performance)
-    DCGM_FR_CUDA_API                   = 51, //!< Error calling the specified CUDA API
-    DCGM_FR_FAULTY_MEMORY              = 52, //!< Faulty memory detected on this GPU
-    DCGM_FR_CANNOT_SET_WATCHES         = 53, //!< Unable to set field watches in DCGM
-    DCGM_FR_CUDA_UNBOUND               = 54, //!< CUDA context is no longer bound
-    DCGM_FR_ECC_DISABLED               = 55, //!< ECC memory is disabled right now
-    DCGM_FR_MEMORY_ALLOC               = 56, //!< Cannot allocate memory on the GPU
-    DCGM_FR_CUDA_DBE                   = 57, //!< CUDA detected unrecovable double-bit error
-    DCGM_FR_MEMORY_MISMATCH            = 58, //!< Memory error detected
-    DCGM_FR_CUDA_DEVICE                = 59, //!< No CUDA device discoverable for existing GPU
-    DCGM_FR_ECC_UNSUPPORTED            = 60, //!< ECC memory is unsupported by this SKU
-    DCGM_FR_ECC_PENDING                = 61, //!< ECC memory is in a pending state
-    DCGM_FR_MEMORY_BANDWIDTH           = 62, //!< Memory bandwidth is too low
-    DCGM_FR_TARGET_POWER               = 63, //!< Cannot hit the target power draw
-    DCGM_FR_API_FAIL                   = 64, //!< The specified API call failed
-    DCGM_FR_API_FAIL_GPU               = 65, //!< The specified API call failed for the specified GPU
-    DCGM_FR_CUDA_CONTEXT               = 66, //!< Cannot create a CUDA context on this GPU
-    DCGM_FR_DCGM_API                   = 67, //!< DCGM API failure
-    DCGM_FR_CONCURRENT_GPUS            = 68, //!< Need multiple GPUs to run this test
-    DCGM_FR_TOO_MANY_ERRORS            = 69, //!< More errors than fit in the return struct
-    DCGM_FR_NVLINK_CRC_ERROR_THRESHOLD = 70, //!< More than 100 CRC errors are happening per second
-    DCGM_FR_NVLINK_ERROR_CRITICAL      = 71, //!< NVLink error for a field that should always be 0
-    DCGM_FR_ENFORCED_POWER_LIMIT       = 72, //!< The enforced power limit is too low to hit the target
-    DCGM_FR_MEMORY_ALLOC_HOST          = 73, //!< Cannot allocate memory on the host
-    DCGM_FR_GPU_OP_MODE                = 74, //!< Bad GPU operating mode for running plugin
-    DCGM_FR_NO_MEMORY_CLOCKS           = 75, //!< No memory clocks with the needed MHz were found
-    DCGM_FR_NO_GRAPHICS_CLOCKS         = 76, //!< No graphics clocks with the needed MHz were found
-    DCGM_FR_HAD_TO_RESTORE_STATE       = 77, //!< Note that we had to restore a GPU's state
-    DCGM_FR_L1TAG_UNSUPPORTED          = 78, //!< L1TAG test is unsupported by this SKU
-    DCGM_FR_L1TAG_MISCOMPARE           = 79, //!< L1TAG test failed on a miscompare
-    DCGM_FR_ROW_REMAP_FAILURE          = 80, //!< Row remapping failed (Ampere or newer GPUs)
-    DCGM_FR_UNCONTAINED_ERROR          = 81, //!< Uncontained error - XID 95
-    DCGM_FR_ERROR_SENTINEL             = 82, //!< MUST BE THE LAST ERROR CODE
+    DCGM_FR_OK                           = 0,  //!< No error
+    DCGM_FR_UNKNOWN                      = 1,  //!< Unknown error code
+    DCGM_FR_UNRECOGNIZED                 = 2,  //!< Unrecognized error code
+    DCGM_FR_PCI_REPLAY_RATE              = 3,  //!< Unacceptable rate of PCI errors
+    DCGM_FR_VOLATILE_DBE_DETECTED        = 4,  //!< Uncorrectable volatile double bit error
+    DCGM_FR_VOLATILE_SBE_DETECTED        = 5,  //!< Unacceptable rate of volatile single bit errors
+    DCGM_FR_PENDING_PAGE_RETIREMENTS     = 6,  //!< Pending page retirements detected
+    DCGM_FR_RETIRED_PAGES_LIMIT          = 7,  //!< Unacceptable total page retirements detected
+    DCGM_FR_RETIRED_PAGES_DBE_LIMIT      = 8,  //!< Unacceptable total page retirements due to uncorrectable errors
+    DCGM_FR_CORRUPT_INFOROM              = 9,  //!< Corrupt inforom found
+    DCGM_FR_CLOCK_THROTTLE_THERMAL       = 10, //!< Clocks being throttled due to overheating
+    DCGM_FR_POWER_UNREADABLE             = 11, //!< Cannot get a reading for power from NVML
+    DCGM_FR_CLOCK_THROTTLE_POWER         = 12, //!< Clock being throttled due to power restrictions
+    DCGM_FR_NVLINK_ERROR_THRESHOLD       = 13, //!< Unacceptable rate of NVLink errors
+    DCGM_FR_NVLINK_DOWN                  = 14, //!< NVLink is down
+    DCGM_FR_NVSWITCH_FATAL_ERROR         = 15, //!< Fatal errors on the NVSwitch
+    DCGM_FR_NVSWITCH_NON_FATAL_ERROR     = 16, //!< Non-fatal errors on the NVSwitch
+    DCGM_FR_NVSWITCH_DOWN                = 17, //!< NVSwitch is down
+    DCGM_FR_NO_ACCESS_TO_FILE            = 18, //!< Cannot access a file
+    DCGM_FR_NVML_API                     = 19, //!< Error occurred on an NVML API
+    DCGM_FR_DEVICE_COUNT_MISMATCH        = 20, //!< Disagreement in GPU count between /dev and NVML
+    DCGM_FR_BAD_PARAMETER                = 21, //!< Bad parameter passed to API
+    DCGM_FR_CANNOT_OPEN_LIB              = 22, //!< Cannot open a library that must be accessed
+    DCGM_FR_BLACKLISTED_DRIVER           = 23, //!< A blacklisted driver (nouveau) is active
+    DCGM_FR_NVML_LIB_BAD                 = 24, //!< The NVML library is missing expected functions
+    DCGM_FR_GRAPHICS_PROCESSES           = 25, //!< Graphics processes are active on this GPU
+    DCGM_FR_HOSTENGINE_CONN              = 26, //!< Unstable connection to nv-hostengine (daemonized DCGM)
+    DCGM_FR_FIELD_QUERY                  = 27, //!< Error querying a field from DCGM
+    DCGM_FR_BAD_CUDA_ENV                 = 28, //!< The environment has variables that hurt CUDA
+    DCGM_FR_PERSISTENCE_MODE             = 29, //!< Persistence mode is disabled
+    DCGM_FR_LOW_BANDWIDTH                = 30, //!< The bandwidth is unacceptably low
+    DCGM_FR_HIGH_LATENCY                 = 31, //!< Latency is too high
+    DCGM_FR_CANNOT_GET_FIELD_TAG         = 32, //!< Cannot find a tag for a field
+    DCGM_FR_FIELD_VIOLATION              = 33, //!< The value for the specified error field is above 0
+    DCGM_FR_FIELD_THRESHOLD              = 34, //!< The value for the specified field is above the threshold
+    DCGM_FR_FIELD_VIOLATION_DBL          = 35, //!< The value for the specified error field is above 0
+    DCGM_FR_FIELD_THRESHOLD_DBL          = 36, //!< The value for the specified field is above the threshold
+    DCGM_FR_UNSUPPORTED_FIELD_TYPE       = 37, //!< Field type cannot be supported
+    DCGM_FR_FIELD_THRESHOLD_TS           = 38, //!< The value for the specified field is above the threshold
+    DCGM_FR_FIELD_THRESHOLD_TS_DBL       = 39, //!< The value for the specified field is above the threshold
+    DCGM_FR_THERMAL_VIOLATIONS           = 40, //!< Thermal violations detected
+    DCGM_FR_THERMAL_VIOLATIONS_TS        = 41, //!< Thermal violations detected with a timestamp
+    DCGM_FR_TEMP_VIOLATION               = 42, //!< Temperature is too high
+    DCGM_FR_THROTTLING_VIOLATION         = 43, //!< Non-benign clock throttling is occurring
+    DCGM_FR_INTERNAL                     = 44, //!< An internal error was detected
+    DCGM_FR_PCIE_GENERATION              = 45, //!< PCIe generation is too low
+    DCGM_FR_PCIE_WIDTH                   = 46, //!< PCIe width is too low
+    DCGM_FR_ABORTED                      = 47, //!< Test was aborted by a user signal
+    DCGM_FR_TEST_DISABLED                = 48, //!< This test is disabled for this GPU
+    DCGM_FR_CANNOT_GET_STAT              = 49, //!< Cannot get telemetry for a needed value
+    DCGM_FR_STRESS_LEVEL                 = 50, //!< Stress level is too low (bad performance)
+    DCGM_FR_CUDA_API                     = 51, //!< Error calling the specified CUDA API
+    DCGM_FR_FAULTY_MEMORY                = 52, //!< Faulty memory detected on this GPU
+    DCGM_FR_CANNOT_SET_WATCHES           = 53, //!< Unable to set field watches in DCGM
+    DCGM_FR_CUDA_UNBOUND                 = 54, //!< CUDA context is no longer bound
+    DCGM_FR_ECC_DISABLED                 = 55, //!< ECC memory is disabled right now
+    DCGM_FR_MEMORY_ALLOC                 = 56, //!< Cannot allocate memory on the GPU
+    DCGM_FR_CUDA_DBE                     = 57, //!< CUDA detected unrecovable double-bit error
+    DCGM_FR_MEMORY_MISMATCH              = 58, //!< Memory error detected
+    DCGM_FR_CUDA_DEVICE                  = 59, //!< No CUDA device discoverable for existing GPU
+    DCGM_FR_ECC_UNSUPPORTED              = 60, //!< ECC memory is unsupported by this SKU
+    DCGM_FR_ECC_PENDING                  = 61, //!< ECC memory is in a pending state
+    DCGM_FR_MEMORY_BANDWIDTH             = 62, //!< Memory bandwidth is too low
+    DCGM_FR_TARGET_POWER                 = 63, //!< Cannot hit the target power draw
+    DCGM_FR_API_FAIL                     = 64, //!< The specified API call failed
+    DCGM_FR_API_FAIL_GPU                 = 65, //!< The specified API call failed for the specified GPU
+    DCGM_FR_CUDA_CONTEXT                 = 66, //!< Cannot create a CUDA context on this GPU
+    DCGM_FR_DCGM_API                     = 67, //!< DCGM API failure
+    DCGM_FR_CONCURRENT_GPUS              = 68, //!< Need multiple GPUs to run this test
+    DCGM_FR_TOO_MANY_ERRORS              = 69, //!< More errors than fit in the return struct
+    DCGM_FR_NVLINK_CRC_ERROR_THRESHOLD   = 70, //!< More than 100 CRC errors are happening per second
+    DCGM_FR_NVLINK_ERROR_CRITICAL        = 71, //!< NVLink error for a field that should always be 0
+    DCGM_FR_ENFORCED_POWER_LIMIT         = 72, //!< The enforced power limit is too low to hit the target
+    DCGM_FR_MEMORY_ALLOC_HOST            = 73, //!< Cannot allocate memory on the host
+    DCGM_FR_GPU_OP_MODE                  = 74, //!< Bad GPU operating mode for running plugin
+    DCGM_FR_NO_MEMORY_CLOCKS             = 75, //!< No memory clocks with the needed MHz were found
+    DCGM_FR_NO_GRAPHICS_CLOCKS           = 76, //!< No graphics clocks with the needed MHz were found
+    DCGM_FR_HAD_TO_RESTORE_STATE         = 77, //!< Note that we had to restore a GPU's state
+    DCGM_FR_L1TAG_UNSUPPORTED            = 78, //!< L1TAG test is unsupported by this SKU
+    DCGM_FR_L1TAG_MISCOMPARE             = 79, //!< L1TAG test failed on a miscompare
+    DCGM_FR_ROW_REMAP_FAILURE            = 80, //!< Row remapping failed (Ampere or newer GPUs)
+    DCGM_FR_UNCONTAINED_ERROR            = 81, //!< Uncontained error - XID 95
+    DCGM_FR_EMPTY_GPU_LIST               = 82, //!< No GPU information given to plugin
+    DCGM_FR_DBE_PENDING_PAGE_RETIREMENTS = 83, //!< Pending page retirements due to a DBE
+    DCGM_FR_ERROR_SENTINEL               = 84, //!< MUST BE THE LAST ERROR CODE
 } dcgmError_t;
 
 typedef enum dcgmErrorSeverity_enum
@@ -173,8 +190,8 @@ extern dcgm_error_meta_t dcgmErrorMeta[];
 #define DCGM_FR_BLACKLISTED_DRIVER_MSG "Found blacklisted driver: %s"
 // the name of the function that wasn't found
 #define DCGM_FR_NVML_LIB_BAD_MSG "Cannot get pointer to %s from libnvidia-ml.so"
-#define DCGM_FR_GRAPHICS_PROCESSES_MSG                              \
-    "NVVS has detected graphics processes running on at least one " \
+#define DCGM_FR_GRAPHICS_PROCESSES_MSG                                                 \
+    "NVVS has detected processes with graphics contexts open running on at least one " \
     "GPU. This may cause some tests to fail."
 // error message from the API call
 #define DCGM_FR_HOSTENGINE_CONN_MSG "Could not connect to the host engine: '%s'"
@@ -309,11 +326,13 @@ extern dcgm_error_meta_t dcgmErrorMeta[];
 #define DCGM_FR_NO_MEMORY_CLOCKS_MSG  "No memory clocks <= %u MHZ were found in %u supported memory clocks."
 #define DCGM_FR_NO_GRAPHICS_CLOCKS_MSG \
     "No graphics clocks <= %u MHZ were found in %u supported graphics clocks for memory clock %u MHZ."
-#define DCGM_FR_HAD_TO_RESTORE_STATE_MSG "Had to restore GPU state on NVML GPU(s): %s"
-#define DCGM_FR_L1TAG_UNSUPPORTED_MSG    "This card does not support the L1 cache test. Skipping test."
-#define DCGM_FR_L1TAG_MISCOMPARE_MSG     "Detected a miscompare failure in the L1 cache."
-#define DCGM_FR_ROW_REMAP_FAILURE_MSG    "Row remapping failed."
-#define DCGM_FR_UNCONTAINED_ERROR_MSG    "GPU had an uncontained error (XID 95)"
+#define DCGM_FR_HAD_TO_RESTORE_STATE_MSG         "Had to restore GPU state on NVML GPU(s): %s"
+#define DCGM_FR_L1TAG_UNSUPPORTED_MSG            "This card does not support the L1 cache test. Skipping test."
+#define DCGM_FR_L1TAG_MISCOMPARE_MSG             "Detected a miscompare failure in the L1 cache."
+#define DCGM_FR_ROW_REMAP_FAILURE_MSG            "Row remapping failed."
+#define DCGM_FR_UNCONTAINED_ERROR_MSG            "GPU had an uncontained error (XID 95)"
+#define DCGM_FR_EMPTY_GPU_LIST_MSG               "No valid GPUs passed to plugin"
+#define DCGM_FR_DBE_PENDING_PAGE_RETIREMENTS_MSG "Pending page retirements together with a DBE were detected on GPU %u."
 
 /*
  * Suggestions for next steps for the corresponding error message
@@ -325,12 +344,9 @@ extern dcgm_error_meta_t dcgmErrorMeta[];
     "Reconnect PCIe card. Run system side PCIE diagnostic utilities "  \
     "to verify hops off the GPU board. If issue is on the board, run " \
     "the field diagnostic."
-#define DCGM_FR_VOLATILE_DBE_DETECTED_NEXT "Drain the GPU and reset it or reboot the node."
-#define DCGM_FR_VOLATILE_SBE_DETECTED_NEXT "Monitor - this GPU can still perform workload."
-#define DCGM_FR_PENDING_PAGE_RETIREMENTS_NEXT                          \
-    "If volatile double bit errors exist, drain the GPU and reset it " \
-    "or reboot the node. Otherwise, monitor - GPU can still perform "  \
-    "workload."
+#define DCGM_FR_VOLATILE_DBE_DETECTED_NEXT    "Drain the GPU and reset it or reboot the node."
+#define DCGM_FR_VOLATILE_SBE_DETECTED_NEXT    "Monitor - this GPU can still perform workload."
+#define DCGM_FR_PENDING_PAGE_RETIREMENTS_NEXT "Monitor - this GPU can still perform workload"
 #define DCGM_FR_RETIRED_PAGES_LIMIT_NEXT      TRIAGE_RUN_FIELD_DIAG_MSG
 #define DCGM_FR_RETIRED_PAGES_DBE_LIMIT_NEXT  TRIAGE_RUN_FIELD_DIAG_MSG
 #define DCGM_FR_CORRUPT_INFOROM_NEXT          "Flash the InfoROM to clear this corruption."
@@ -435,15 +451,24 @@ extern dcgm_error_meta_t dcgmErrorMeta[];
 #define DCGM_FR_GPU_OP_MODE_NEXT                                     \
     "Fix by running nvidia-smi as root with: nvidia-smi --gom=0 -i " \
     "<gpu index>"
-#define DCGM_FR_NO_MEMORY_CLOCKS_NEXT     ""
-#define DCGM_FR_NO_GRAPHICS_CLOCKS_NEXT   ""
-#define DCGM_FR_HAD_TO_RESTORE_STATE_NEXT ""
-#define DCGM_FR_L1TAG_UNSUPPORTED_NEXT    ""
-#define DCGM_FR_L1TAG_MISCOMPARE_NEXT     TRIAGE_RUN_FIELD_DIAG_MSG
-#define DCGM_FR_ROW_REMAP_FAILURE_NEXT    DCGM_FR_VOLATILE_DBE_DETECTED_NEXT
-#define DCGM_FR_UNCONTAINED_ERROR_NEXT    DCGM_FR_VOLATILE_DBE_DETECTED_NEXT
+#define DCGM_FR_NO_MEMORY_CLOCKS_NEXT             ""
+#define DCGM_FR_NO_GRAPHICS_CLOCKS_NEXT           ""
+#define DCGM_FR_HAD_TO_RESTORE_STATE_NEXT         ""
+#define DCGM_FR_L1TAG_UNSUPPORTED_NEXT            ""
+#define DCGM_FR_L1TAG_MISCOMPARE_NEXT             TRIAGE_RUN_FIELD_DIAG_MSG
+#define DCGM_FR_ROW_REMAP_FAILURE_NEXT            DCGM_FR_VOLATILE_DBE_DETECTED_NEXT
+#define DCGM_FR_UNCONTAINED_ERROR_NEXT            DCGM_FR_VOLATILE_DBE_DETECTED_NEXT
+#define DCGM_FR_DBE_PENDING_PAGE_RETIREMENTS_NEXT "Drain the GPU and reset it or reboot the node to resolve this issue."
+#define DCGM_FR_EMPTY_GPU_LIST_NEXT               ""
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 dcgmErrorSeverity_t dcgmErrorGetPriorityByCode(unsigned int code);
 const char *dcgmErrorGetFormatMsgByCode(unsigned int code);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // DCGM_ERRORS_H

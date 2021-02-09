@@ -60,6 +60,11 @@ DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of a
 # VGPU License status,,
 DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
 
+# Remapped rows,,
+DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
+DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
+DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
+
 # DCP metrics,,
 DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active (in %).
 DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned (in %).

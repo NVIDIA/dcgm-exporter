@@ -1,12 +1,17 @@
 /*
- * Copyright 1993-2018 NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
  *
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 /*
@@ -311,6 +316,8 @@ typedef enum dcgmReturn_enum
     DCGM_ST_CHILD_NOT_KILLED            = -47, //!< Couldn't kill a child process within the retries
     DCGM_ST_3RD_PARTY_LIBRARY_ERROR     = -48, //!< Detected an error in a 3rd-party library
     DCGM_ST_INSUFFICIENT_RESOURCES      = -49, //!< Not enough resources available
+    DCGM_ST_PLUGIN_EXCEPTION            = -50, //!< Exception thrown from a diagnostic plugin
+    DCGM_ST_NVVS_ISOLATE_ERROR = -51, //!< The diagnostic returned an error that indicates the need for isolation
 } dcgmReturn_t;
 
 const char *errorString(dcgmReturn_t result);
@@ -2474,10 +2481,7 @@ typedef dcgmIntrospectCpuUtil_v1 dcgmIntrospectCpuUtil_t;
  */
 
 /*
- * Run diagnostic structure v6
- *
- * Added in DCGM 2.0.0. This Is identical to dcgmRunDiag_v5 added in 1.7.0.
- * The version number but was bumped to match dcgmDiagResponse_v6
+ * Run diagnostic structure v7
  */
 typedef struct
 {
@@ -2490,9 +2494,10 @@ typedef struct
     char testParms[DCGM_MAX_TEST_PARMS][DCGM_MAX_TEST_PARMS_LEN]; //!< Parameters to set for specified tests
                                                                   //!< in the format:
                                                                   //!< testName.parameterName=parameterValue. Optional.
-    char gpuList[DCGM_GPU_LIST_LEN];  //!< Comma-separated list of GPUs. Cannot be specified with the groupId.
-    char debugLogFile[DCGM_PATH_LEN]; //!< Alternate name for the debug log file that should be used
-    char statsPath[DCGM_PATH_LEN];    //!< Path that the plugin's statistics files should be written to
+    char fakeGpuList[DCGM_GPU_LIST_LEN]; //!< Comma-separated list of GPUs. Cannot be specified with the groupId.
+    char gpuList[DCGM_GPU_LIST_LEN];     //!< Comma-separated list of GPUs. Cannot be specified with the groupId.
+    char debugLogFile[DCGM_PATH_LEN];    //!< Alternate name for the debug log file that should be used
+    char statsPath[DCGM_PATH_LEN];       //!< Path that the plugin's statistics files should be written to
     char configFileContents[DCGM_MAX_CONFIG_FILE_LEN]; //!< Contents of nvvs config file (likely yaml)
     char throttleMask[DCGM_THROTTLE_MASK_LEN]; //!< Throttle reasons to ignore as either integer mask or csv list of
                                                //!< reasons
@@ -2502,12 +2507,12 @@ typedef struct
     unsigned int trainingTolerance;            //!< Acceptable training tolerance as a percentage of the value. (0-100)
     char goldenValuesFile[DCGM_PATH_LEN];      //!< The path where the golden values should be recorded
     unsigned int failCheckInterval;            //!< How often the fail early checks should occur when enabled.
-} dcgmRunDiag_v6;
+} dcgmRunDiag_v7;
 
 /**
- * Version 6 for \ref dcgmRunDiag_t
+ * Version 7 for \ref dcgmRunDiag_t
  */
-#define dcgmRunDiag_version6 MAKE_DCGM_VERSION(dcgmRunDiag_v6, 6)
+#define dcgmRunDiag_version7 MAKE_DCGM_VERSION(dcgmRunDiag_v7, 7)
 
 /**
  * Flags for dcgmGetEntityGroupEntities's flags parameter

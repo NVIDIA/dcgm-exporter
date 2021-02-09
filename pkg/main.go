@@ -62,7 +62,7 @@ func main() {
 		&cli.IntFlag{
 			Name:    CLICollectInterval,
 			Aliases: []string{"c"},
-			Value:   2000,
+			Value:   30000,
 			Usage:   "Interval of time at which point metrics are collected. Unit is milliseconds (ms).",
 			EnvVars: []string{"DCGM_EXPORTER_INTERVAL"},
 		},

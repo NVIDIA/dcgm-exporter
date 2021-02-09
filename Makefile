@@ -16,19 +16,19 @@ DOCKER   ?= docker
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 2.0.13
+DCGM_VERSION   := 2.1.4
 GOLANG_VERSION := 1.14.2
-VERSION        := 2.1.1
+VERSION        := 2.2.0
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 .PHONY: all binary install check-format
 all: ubuntu18.04 ubuntu20.04 ubi8
 
 binary:
-	go build -o dcgm-exporter github.com/NVIDIA/gpu-monitoring-tools/pkg
+	cd pkg; go build
 
 install: binary
-	install -m 557 dcgm-exporter /usr/bin/dcgm-exporter
+	install -m 557 pkg/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 557 -D ./etc/dcgm-exporter/default-counters.csv /etc/dcgm-exporter/default-counters.csv
 	install -m 557 -D ./etc/dcgm-exporter/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
