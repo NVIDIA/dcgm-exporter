@@ -1,12 +1,17 @@
 /*
- * Copyright 1993-2018 NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
  *
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #ifndef DCGMFIELDS_H
@@ -316,6 +321,12 @@ typedef unsigned int dcgm_field_eid_t;
  * Boolean: 0 is disabled, 1 is enabled
  */
 #define DCGM_FI_DEV_MIG_MODE 67
+
+/**
+ * The string that CUDA_VISIBLE_DEVICES should
+ * be set to for this entity (including MIG)
+ */
+#define DCGM_FI_DEV_CUDA_VISIBLE_DEVICES_STR 68
 
 /**
  * Device CPU affinity. part 1/8 = cpus 0 - 63
@@ -2184,7 +2195,7 @@ int DcgmFieldsTerm(void);
  *         - Null on error
  *
  */
-char *DcgmFieldsGetEntityGroupString(dcgm_field_entity_group_t entityGroupId);
+const char *DcgmFieldsGetEntityGroupString(dcgm_field_entity_group_t entityGroupId);
 
 /** @} */
 

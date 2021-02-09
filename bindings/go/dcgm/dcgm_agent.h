@@ -1,12 +1,17 @@
 /*
- * Copyright 1993-2018 NVIDIA Corporation.  All rights reserved.
+ * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
  *
- * NVIDIA CORPORATION and its licensors retain all intellectual property
- * and proprietary rights in and to this software, related documentation
- * and any modifications thereto.  Any use, reproduction, disclosure or
- * distribution of this software and related documentation without an express
- * license agreement from NVIDIA CORPORATION is strictly prohibited.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #ifndef DCGM_AGENT_H
@@ -1562,7 +1567,7 @@ dcgmReturn_t dcgmActionValidate(dcgmHandle_t pDcgmHandle,
  *        - \ref DCGM_ST_GROUP_INCOMPATIBLE   if \a groupId refers to a group of non-homogeneous GPUs. This is
  *                                            currently not allowed.
  */
-dcgmReturn_t dcgmActionValidate_v2(dcgmHandle_t pDcgmHandle, dcgmRunDiag_v6 *drd, dcgmDiagResponse_t *response);
+dcgmReturn_t dcgmActionValidate_v2(dcgmHandle_t pDcgmHandle, dcgmRunDiag_v7 *drd, dcgmDiagResponse_t *response);
 
 /**
  * Run a diagnostic on a group of GPUs

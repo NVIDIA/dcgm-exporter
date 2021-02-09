@@ -148,6 +148,9 @@ const (
 	DCGM_FI_DEV_ECC_DBE_AGG_REG                   = 331
 	DCGM_FI_DEV_ECC_SBE_AGG_TEX                   = 332
 	DCGM_FI_DEV_ECC_DBE_AGG_TEX                   = 333
+	DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS       = 393
+	DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS         = 394
+	DCGM_FI_DEV_ROW_REMAP_FAILURE                 = 395
 	DCGM_FI_DEV_RETIRED_SBE                       = 390
 	DCGM_FI_DEV_RETIRED_DBE                       = 391
 	DCGM_FI_DEV_RETIRED_PENDING                   = 392
@@ -494,6 +497,9 @@ var (
 		"DCGM_FI_DEV_ECC_DBE_AGG_REG":                   331,
 		"DCGM_FI_DEV_ECC_SBE_AGG_TEX":                   332,
 		"DCGM_FI_DEV_ECC_DBE_AGG_TEX":                   333,
+		"DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS":       393,
+		"DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS":         394,
+		"DCGM_FI_DEV_ROW_REMAP_FAILURE":                 395,
 		"DCGM_FI_DEV_RETIRED_SBE":                       390,
 		"DCGM_FI_DEV_RETIRED_DBE":                       391,
 		"DCGM_FI_DEV_RETIRED_PENDING":                   392,
