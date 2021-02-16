@@ -34,7 +34,7 @@ spec:
       name: "dcgm-exporter"
     spec:
       containers:
-      - image: "nvidia/dcgm-exporter:2.0.13-2.1.1-ubuntu18.04"
+      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:2.0.13-2.1.1-ubuntu18.04"
         env:
         - name: "DCGM_EXPORTER_LISTEN"
           value: ":9400"

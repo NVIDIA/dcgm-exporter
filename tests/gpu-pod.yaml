@@ -6,8 +6,8 @@ spec:
   restartPolicy: OnFailure
   containers:
     - name: nbody
-      image: "nvidia/samples:cuda10.2-ubuntu16.04-nbody"
-      command: ["/usr/local/cuda/samples/5_Simulations/nbody/nbody"]
+      image: "nvcr.io/nvidia/k8s/cuda-sample:nbody"
+      command: ["nbody"]
       args: ["-benchmark", "-i=10000000"]
       resources:
         limits:
