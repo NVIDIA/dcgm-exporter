@@ -6,7 +6,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM nvidia/cuda:11.0-base-ubi8
+FROM nvcr.io/nvidia/cuda:11.0-base-ubi8
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 ARG DCGM_VERSION

@@ -6,7 +6,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM nvidia/cuda:11.0-base-ubuntu20.04
+FROM nvcr.io/nvidia/cuda:11.0-base-ubuntu20.04
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/pkg/dcgm-exporter /usr/bin/
