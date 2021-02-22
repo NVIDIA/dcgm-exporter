@@ -163,7 +163,7 @@ dcgmReturn_t DECLDIR dcgmConnect_v2(char *ipAddress, dcgmConnectV2Params_t *conn
 /**
  * This method is used to disconnect from a stand-alone host engine process.
  *
- * @param pDcgmHandle IN: DCGM Handle that came form dcgmConnect
+ * @param pDcgmHandle IN: DCGM Handle that came from dcgmConnect
  *
  * @return
  *         - \ref DCGM_ST_OK                if we successfully disconnected from the host engine
@@ -197,9 +197,9 @@ dcgmReturn_t DECLDIR dcgmDisconnect(dcgmHandle_t pDcgmHandle);
 dcgmReturn_t DECLDIR dcgmVersionInfo(dcgmVersionInfo_t *pVersionInfo);
 
 /**
- * This method is used to return information about the build environment of the running hostengine.
+ * This method is used to return information about the build environment of the hostengine.
  *
- * @param pDcgmHandle   IN: DCGM Handle
+ * @param pDcgmHandle  IN:  DCGM Handle that came from dcgmConnect
  * @param pVersionInfo OUT: Build environment information
  *
  * @return
@@ -360,7 +360,7 @@ dcgmReturn_t DECLDIR dcgmGetEntityGroupEntities(dcgmHandle_t dcgmHandle,
  *        - \ref DCGM_ST_VER_MISMATCH      if the struct version is incorrect
  *        - \ref DCGM_ST_BADPARAM          if any parameter is invalid
  */
-dcgmReturn_t DECLDIR dcgmGetGpuInstanceHierarchy(dcgmHandle_t dcgmHandle, dcgmMigHierarchy_v1 *hierarchy);
+dcgmReturn_t DECLDIR dcgmGetGpuInstanceHierarchy(dcgmHandle_t dcgmHandle, dcgmMigHierarchy_v2 *hierarchy);
 
 /**
  * Get the NvLink link status for every NvLink in this system. This includes the NvLinks of both GPUs and

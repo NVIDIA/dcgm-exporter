@@ -28,7 +28,12 @@ func NewDCGMCollector(c []Counter, useOldNamespace bool) (*DCGMCollector, func()
 		UseOldNamespace: useOldNamespace,
 	}
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields)
+	sysInfo, err := InitializeSystemInfo()
+	if err != nil {
+		return nil, func() {}, err
+	}
+
+	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, sysInfo)
 	if err != nil {
 		return nil, func() {}, err
 	}

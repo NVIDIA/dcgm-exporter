@@ -329,6 +329,11 @@ typedef unsigned int dcgm_field_eid_t;
 #define DCGM_FI_DEV_CUDA_VISIBLE_DEVICES_STR 68
 
 /**
+ * The maximum number of MIG slices supported by this GPU
+ */
+#define DCGM_FI_DEV_MIG_MAX_SLICES 69
+
+/**
  * Device CPU affinity. part 1/8 = cpus 0 - 63
  */
 #define DCGM_FI_DEV_CPU_AFFINITY_0 70
@@ -992,32 +997,32 @@ typedef unsigned int dcgm_field_eid_t;
 #define DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL 439
 
 /*
- * NV Link Bandwidth Counter for Lane 0 - Not supported in DCGM 2.0
+ * NV Link Bandwidth Counter for Lane 0
  */
 #define DCGM_FI_DEV_NVLINK_BANDWIDTH_L0 440
 
 /*
- * NV Link Bandwidth Counter for Lane 1 - Not supported in DCGM 2.0
+ * NV Link Bandwidth Counter for Lane 1
  */
 #define DCGM_FI_DEV_NVLINK_BANDWIDTH_L1 441
 
 /*
- * NV Link Bandwidth Counter for Lane 2 - Not supported in DCGM 2.0
+ * NV Link Bandwidth Counter for Lane 2
  */
 #define DCGM_FI_DEV_NVLINK_BANDWIDTH_L2 442
 
 /*
- * NV Link Bandwidth Counter for Lane 3 - Not supported in DCGM 2.0
+ * NV Link Bandwidth Counter for Lane 3
  */
 #define DCGM_FI_DEV_NVLINK_BANDWIDTH_L3 443
 
 /*
- * NV Link Bandwidth Counter for Lane 4 - Not supported in DCGM 2.0
+ * NV Link Bandwidth Counter for Lane 4
  */
 #define DCGM_FI_DEV_NVLINK_BANDWIDTH_L4 444
 
 /*
- * NV Link Bandwidth Counter for Lane 5 - Not supported in DCGM 2.0
+ * NV Link Bandwidth Counter for Lane 5
  */
 #define DCGM_FI_DEV_NVLINK_BANDWIDTH_L5 445
 
@@ -1151,6 +1156,37 @@ typedef unsigned int dcgm_field_eid_t;
  */
 #define DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_L11 474
 
+/*
+ * NV Link Bandwidth Counter for Lane 6
+ */
+#define DCGM_FI_DEV_NVLINK_BANDWIDTH_L6 475
+
+/*
+ * NV Link Bandwidth Counter for Lane 7
+ */
+#define DCGM_FI_DEV_NVLINK_BANDWIDTH_L7 476
+
+/*
+ * NV Link Bandwidth Counter for Lane 8
+ */
+#define DCGM_FI_DEV_NVLINK_BANDWIDTH_L8 477
+
+/*
+ * NV Link Bandwidth Counter for Lane 9
+ */
+#define DCGM_FI_DEV_NVLINK_BANDWIDTH_L9 478
+
+/*
+ * NV Link Bandwidth Counter for Lane 10
+ */
+#define DCGM_FI_DEV_NVLINK_BANDWIDTH_L10 479
+
+/*
+ * NV Link Bandwidth Counter for Lane 11
+ */
+#define DCGM_FI_DEV_NVLINK_BANDWIDTH_L11 480
+
+
 /**
  * Virtualization Mode corresponding to the GPU.
  *
@@ -1256,6 +1292,11 @@ typedef unsigned int dcgm_field_eid_t;
  * Information about active frame buffer capture sessions on the vGPU instance
  */
 #define DCGM_FI_DEV_VGPU_FBC_SESSIONS_INFO 531
+
+/**
+ * License status of the vGPU host
+ */
+#define DCGM_FI_DEV_VGPU_LICENSE_INSTANCE_STATUS 532
 
 /**
  * Starting field ID of the vGPU instance
