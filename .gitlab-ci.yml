@@ -65,4 +65,4 @@ release:
 include:
   project: nvidia/container-infrastructure/aws-kube-ci
   file: aws-kube-ci.yml
-  ref: 20.05.20
+  ref: 21.02.12
