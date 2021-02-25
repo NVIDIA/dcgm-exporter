@@ -39,7 +39,7 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
-	gpuCollector, cleanup, err := NewDCGMCollector(counters)
+	gpuCollector, cleanup, err := NewDCGMCollector(counters, c.UseOldNamespace)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -165,7 +165,7 @@ func FormatCounters(c []Counter) (string, error) {
 
 var metricsFormat = `
 {{ range $dev := . }}{{ range $val := $dev }}
-{{ $val.Name }}{gpu="{{ $val.GPU }}",UUID="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}"
+{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}"
 
 {{- range $k, $v := $val.Attributes -}}
 	,{{ $k }}="{{ $v }}"

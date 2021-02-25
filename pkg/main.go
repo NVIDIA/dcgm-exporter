@@ -36,6 +36,7 @@ var (
 	CLICollectInterval     = "collect-interval"
 	CLIKubernetes          = "kubernetes"
 	CLIKubernetesGPUIDType = "kubernetes-gpu-id-type"
+	CLIUseOldNamespace     = "use-old-namespace"
 )
 
 func main() {
@@ -72,6 +73,13 @@ func main() {
 			Value:   false,
 			Usage:   "Enable kubernetes mapping metrics to kubernetes pods",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIUseOldNamespace,
+			Aliases: []string{"o"},
+			Value:   false,
+			Usage:   "Use old 1.x namespace",
+			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
 		},
 		&cli.StringFlag{
 			Name:    CLIKubernetesGPUIDType,
@@ -162,5 +170,6 @@ func contextToConfig(c *cli.Context) *Config {
 		Kubernetes:          c.Bool(CLIKubernetes),
 		KubernetesGPUIdType: KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:          true,
+		UseOldNamespace:     c.Bool(CLIUseOldNamespace),
 	}
 }

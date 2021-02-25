@@ -18,7 +18,7 @@ REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.1.4
 GOLANG_VERSION := 1.14.2
-VERSION        := 2.2.0
+VERSION        := 2.3.0
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 .PHONY: all binary install check-format

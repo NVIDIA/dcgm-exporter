@@ -35,6 +35,10 @@ var (
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
+
+	oldPodAttribute       = "pod_name"
+	oldNamespaceAttribute = "pod_namespace"
+	oldContainerAttribute = "container_name"
 )
 
 type KubernetesGPUIDType string
@@ -51,6 +55,7 @@ type Config struct {
 	Kubernetes          bool
 	KubernetesGPUIdType KubernetesGPUIDType
 	CollectDCP          bool
+	UseOldNamespace     bool
 }
 
 type Transform interface {
@@ -69,9 +74,10 @@ type MetricsPipeline struct {
 }
 
 type DCGMCollector struct {
-	Counters     []Counter
-	DeviceFields []dcgm.Short
-	Cleanups     []func()
+	Counters        []Counter
+	DeviceFields    []dcgm.Short
+	Cleanups        []func()
+	UseOldNamespace bool
 }
 
 type Counter struct {
@@ -88,6 +94,8 @@ type Metric struct {
 	GPU       string
 	GPUUUID   string
 	GPUDevice string
+
+	UUID string
 
 	Attributes map[string]string
 }

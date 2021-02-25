@@ -59,6 +59,7 @@ func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 	f := make([]Counter, 0, len(records))
 
 	for i, record := range records {
+		var useOld = false
 		if len(record) == 0 {
 			continue
 		}
@@ -77,20 +78,39 @@ func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 		}
 
 		fieldID, ok := dcgm.DCGM_FI[record[0]]
-		if !ok {
+		oldFieldID, oldOk := dcgm.OLD_DCGM_FI[record[0]]
+		if !ok && !oldOk {
 			return nil, fmt.Errorf("Could not find DCGM field %s", record[0])
 		}
 
-		if !dcpAllowed && fieldID >= 1000 {
-			logrus.Warnf("Skipping line %d ('%s'): DCP metrics not enabled", i, record[0])
-			continue
+		if !ok && oldOk {
+			useOld = true
 		}
 
-		if _, ok := promMetricType[record[1]]; !ok {
-			return nil, fmt.Errorf("Could not find Prometheus metry type %s", record[1])
-		}
+		if !useOld {
+			if !dcpAllowed && fieldID >= 1000 {
+				logrus.Warnf("Skipping line %d ('%s'): DCP metrics not enabled", i, record[0])
+				continue
+			}
 
-		f = append(f, Counter{fieldID, record[0], record[1], record[2]})
+			if _, ok := promMetricType[record[1]]; !ok {
+				return nil, fmt.Errorf("Could not find Prometheus metry type %s", record[1])
+			}
+
+			f = append(f, Counter{fieldID, record[0], record[1], record[2]})
+		} else {
+			if !dcpAllowed && oldFieldID >= 1000 {
+				logrus.Warnf("Skipping line %d ('%s'): DCP metrics not enabled", i, record[0])
+				continue
+			}
+
+			if _, ok := promMetricType[record[1]]; !ok {
+				return nil, fmt.Errorf("Could not find Prometheus metry type %s", record[1])
+			}
+
+			f = append(f, Counter{oldFieldID, record[0], record[1], record[2]})
+
+		}
 	}
 
 	return f, nil
