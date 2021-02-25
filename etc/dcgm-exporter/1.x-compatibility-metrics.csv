@@ -1,0 +1,66 @@
+# Format,,
+# If line starts with a '#' it is considered a comment,,
+# DCGM FIELD, Prometheus metric type, help message
+
+# Clocks,,
+dcgm_sm_clock,     gauge, SM clock frequency (in MHz).
+dcgm_memory_clock, gauge, Memory clock frequency (in MHz).
+
+# Temperature,,
+dcgm_memory_temp, gauge, Memory temperature (in C).
+dcgm_gpu_temp,    gauge, GPU temperature (in C).
+
+# Power,,
+dcgm_power_usage,              gauge, Power draw (in W).
+dcgm_total_energy_consumption, counter, Total energy consumption since boot (in mJ).
+
+# PCIe,,
+dcgm_pcie_tx_throughput,  counter, Total number of bytes transmitted through PCIe TX (in KB) via NVML.
+dcgm_pcie_rx_throughput,  counter, Total number of bytes received through PCIe RX (in KB) via NVML.
+dcgm_pcie_replay_counter, counter, Total number of PCIe retries.
+
+# Utilization (the sample period varies depending on the product),,
+dcgm_gpu_utilization,      gauge, GPU utilization (in %).
+dcgm_mem_copy_utilization, gauge, Memory utilization (in %).
+dcgm_enc_utilization,      gauge, Encoder utilization (in %).
+dcgm_dec_utilization,      gauge, Decoder utilization (in %).
+
+# Errors and violations,,
+dcgm_xid_errors,            gauge, Value of the last XID error encountered.
+# dcgm_power_violation,       counter, Throttling duration due to power constraints (in us).
+# dcgm_thermal_violation,     counter, Throttling duration due to thermal constraints (in us).
+# dcgm_sync_boost_violation,  counter, Throttling duration due to sync-boost constraints (in us).
+# dcgm_board_limit_violation, counter, Throttling duration due to board limit constraints (in us).
+# dcgm_low_util_violation,    counter, Throttling duration due to low utilization (in us).
+# dcgm_reliability_violation, counter, Throttling duration due to reliability constraints (in us).
+
+# Memory usage,,
+dcgm_fb_free, gauge, Framebuffer memory free (in MiB).
+dcgm_fb_used, gauge, Framebuffer memory used (in MiB).
+
+# ECC,,
+# dcgm_ecc_sbe_volatile_total,  counter, Total number of single-bit volatile ECC errors.
+# dcgm_ecc_dbe_volatile_total,  counter, Total number of double-bit volatile ECC errors.
+# dcgm_ecc_sbe_aggregate_total, counter, Total number of single-bit persistent ECC errors.
+# dcgm_ecc_dbe_aggregate_total, counter, Total number of double-bit persistent ECC errors.
+
+# Retired pages,,
+# dcgm_retired_pages_sbe,     counter, Total number of retired pages due to single-bit errors.
+# dcgm_retired_pages_dbe,     counter, Total number of retired pages due to double-bit errors.
+# dcgm_retired_pages_pending, counter, Total number of pages pending retirement.
+
+# NVLink,,
+# dcgm_nvlink_flit_crc_error_count_total, counter, Total number of NVLink flow-control CRC errors.
+# dcgm_nvlink_data_crc_error_count_total, counter, Total number of NVLink data CRC errors.
+# dcgm_nvlink_replay_error_count_total,   counter, Total number of NVLink retries.
+# dcgm_nvlink_recovery_error_count_total, counter, Total number of NVLink recovery errors.
+dcgm_nvlink_bandwidth_total,            counter, Total number of NVLink bandwidth counters for all lanes
+
+# Add DCP metrics,,
+dcgm_fi_prof_gr_engine_active,   gauge, Ratio of time the graphics engine is active (in %).
+# dcgm_fi_prof_sm_active,          gauge, The ratio of cycles an SM has at least 1 warp assigned (in %).
+# dcgm_fi_prof_sm_occupancy,       gauge, The ratio of number of warps resident on an SM (in %).
+dcgm_fi_prof_pipe_tensor_active, gauge, Ratio of cycles the tensor (HMMA) pipe is active (in %).
+dcgm_fi_prof_dram_active,        gauge, Ratio of cycles the device memory interface is active sending or receiving data (in %).
+dcgm_fi_prof_pcie_tx_bytes,      counter, The number of bytes of active pcie tx data including both header and payload.
+dcgm_fi_prof_pcie_rx_bytes,      counter, The number of bytes of active pcie rx data including both header and payload.

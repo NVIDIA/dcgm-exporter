@@ -21,10 +21,11 @@ import (
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
 )
 
-func NewDCGMCollector(c []Counter) (*DCGMCollector, func(), error) {
+func NewDCGMCollector(c []Counter, useOldNamespace bool) (*DCGMCollector, func(), error) {
 	collector := &DCGMCollector{
-		Counters:     c,
-		DeviceFields: NewDeviceFields(c),
+		Counters:        c,
+		DeviceFields:    NewDeviceFields(c),
+		UseOldNamespace: useOldNamespace,
 	}
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields)
@@ -62,13 +63,13 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 			return nil, err
 		}
 
-		metrics[i] = ToMetric(vals, c.Counters, deviceInfo)
+		metrics[i] = ToMetric(vals, c.Counters, deviceInfo, c.UseOldNamespace)
 	}
 
 	return metrics, nil
 }
 
-func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric {
+func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, useOld bool) []Metric {
 	var metrics []Metric
 
 	for i, val := range values {
@@ -77,10 +78,15 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device) []Metric 
 		if v == SkipDCGMValue {
 			continue
 		}
+		uuid := "UUID"
+		if useOld {
+			uuid = "uuid"
+		}
 		m := Metric{
 			Name:  c[i].FieldName,
 			Value: v,
 
+			UUID:      uuid,
 			GPU:       fmt.Sprintf("%d", d.GPU),
 			GPUUUID:   d.UUID,
 			GPUDevice: fmt.Sprintf("nvidia%d", d.GPU),
