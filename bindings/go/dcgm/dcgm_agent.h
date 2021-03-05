@@ -196,6 +196,19 @@ dcgmReturn_t DECLDIR dcgmDisconnect(dcgmHandle_t pDcgmHandle);
  */
 dcgmReturn_t DECLDIR dcgmVersionInfo(dcgmVersionInfo_t *pVersionInfo);
 
+/**
+ * This method is used to return information about the build environment of the running hostengine.
+ *
+ * @param pDcgmHandle   IN: DCGM Handle
+ * @param pVersionInfo OUT: Build environment information
+ *
+ * @return
+ *          - \ref DCGM_ST_OK           if build information is sucessfully obtained
+ *          - \ref DCGM_ST_BADPARAM     if pVersionInfo is null
+ *          - \ref DCGM_ST_VER_MISMATCH if the expected and provided versions of dcgmVersionInfo_t do not match
+ */
+dcgmReturn_t DECLDIR dcgmHostengineVersionInfo(dcgmHandle_t pDcgmHandle, dcgmVersionInfo_t *pVersionInfo);
+
 
 /**
  * This method is used to set the logging severity on HostEngine for the specified logger

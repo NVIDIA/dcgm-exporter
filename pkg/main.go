@@ -37,6 +37,7 @@ var (
 	CLIKubernetes          = "kubernetes"
 	CLIKubernetesGPUIDType = "kubernetes-gpu-id-type"
 	CLIUseOldNamespace     = "use-old-namespace"
+	CLIRemoteHEInfo        = "remote-hostengine-info"
 )
 
 func main() {
@@ -82,6 +83,13 @@ func main() {
 			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
 		},
 		&cli.StringFlag{
+			Name:    CLIRemoteHEInfo,
+			Aliases: []string{"r"},
+			Value:   "localhost:5555",
+			Usage:   "Connect to remote hostengine at <HOST>:<PORT>",
+			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
+		},
+		&cli.StringFlag{
 			Name:    CLIKubernetesGPUIDType,
 			Value:   string(GPUUID),
 			Usage:   fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'", GPUUID, DeviceName),
@@ -104,14 +112,23 @@ restart:
 	logrus.Info("Starting dcgm-exporter")
 	config := contextToConfig(c)
 
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	defer cleanup()
-	if err != nil {
-		logrus.Fatal(err)
+	if config.UseRemoteHE {
+		logrus.Info("Attemping to connect to remote hostengine at ", config.RemoteHEInfo)
+		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
+		defer cleanup()
+		if err != nil {
+			logrus.Fatal(err)
+		}
+	} else {
+		cleanup, err := dcgm.Init(dcgm.Embedded)
+		defer cleanup()
+		if err != nil {
+			logrus.Fatal(err)
+		}
 	}
 	logrus.Info("DCGM successfully initialized!")
 
-	_, err = dcgm.GetSupportedMetricGroups(0)
+	_, err := dcgm.GetSupportedMetricGroups(0)
 	if err != nil {
 		config.CollectDCP = false
 		logrus.Info("Not collecting DCP metrics: ", err)
@@ -171,5 +188,7 @@ func contextToConfig(c *cli.Context) *Config {
 		KubernetesGPUIdType: KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:          true,
 		UseOldNamespace:     c.Bool(CLIUseOldNamespace),
+		UseRemoteHE:         c.IsSet(CLIRemoteHEInfo),
+		RemoteHEInfo:        c.String(CLIRemoteHEInfo),
 	}
 }
