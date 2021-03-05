@@ -33,8 +33,11 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/Masterminds/semver"
 )
 
 type mode int
@@ -152,6 +155,15 @@ func connectStandalone(args ...string) (err error) {
 	}
 
 	handle = dcgmHandle{cHandle}
+
+	// This check is disabled for now
+	/*
+		err = checkHostengineVersion()
+		if err != nil {
+			return fmt.Errorf("Error connecting to remote nv-hostengine: %s", err)
+		}
+	*/
+
 	return
 }
 
@@ -228,4 +240,79 @@ func stopHostengine() (err error) {
 	log.Println("Successfully terminated nv-hostengine.")
 
 	return syscall.Kill(hostengineAsChildPid, syscall.SIGKILL)
+}
+
+func checkHostengineVersion() (err error) {
+	var hostEngineVersionInfo C.dcgmVersionInfo_t
+	hostEngineVersionInfo.version = makeVersion2(unsafe.Sizeof(hostEngineVersionInfo))
+	result := C.dcgmHostengineVersionInfo(handle.handle, &hostEngineVersionInfo)
+	if err = errorString(result); err != nil {
+		return fmt.Errorf("Could not retrieve running hostengine version: %s", err)
+	}
+
+	var versionInfo C.dcgmVersionInfo_t
+	versionInfo.version = makeVersion2(unsafe.Sizeof(versionInfo))
+	result = C.dcgmVersionInfo(&versionInfo)
+	if err = errorString(result); err != nil {
+		return fmt.Errorf("Could not retrieve dcgm version: %s", err)
+	}
+
+	/* Version string looks like: "version:2.1.2;arch:x86_64;buildtype:Debug;
+	 * buildid:;builddate:2021-03-03;commit:v2.1.1-5-gc27ab30f;branch:master;
+	 * buildplatform:Linux 5.4.0-66-generic #74~18.04.2-Ubuntu SMP Fri Feb 5
+	 * 11:17:31 UTC 2021 x86_64;;crc:bd60aadd63245021163ef008d0907ae7"
+	 */
+	heVersionStr := C.GoString(&hostEngineVersionInfo.rawBuildInfoString[0])
+	myVersionStr := C.GoString(&versionInfo.rawBuildInfoString[0])
+	var foundVersion = false
+
+	he := strings.Split(heVersionStr, ";")
+
+	// Find version pair within build information
+	for _, line := range he {
+		if strings.HasPrefix(line, "version:") {
+			heVersionStr = line
+			foundVersion = true
+		}
+	}
+
+	if foundVersion == false {
+		return fmt.Errorf("Could not determine remote version")
+	}
+
+	foundVersion = false
+	my := strings.Split(myVersionStr, ";")
+
+	for _, line := range my {
+		if strings.HasPrefix(line, "version:") {
+			myVersionStr = line
+			foundVersion = true
+		}
+	}
+
+	if foundVersion == false {
+		return fmt.Errorf("Could not determine local version")
+	}
+
+	// Parse out version and compare
+	he = strings.Split(heVersionStr, ":")
+	my = strings.Split(myVersionStr, ":")
+
+	if (len(he) != 2) && (len(my) != 2) {
+		return fmt.Errorf("Could not parse versions")
+	}
+
+	heVersion, err := semver.NewVersion(he[1])
+	if err != nil {
+		return fmt.Errorf("Could not determine remote version ", err)
+	}
+	myVersion, err := semver.NewVersion(my[1])
+	if err != nil {
+		return fmt.Errorf("Could not determine local version ", err)
+	}
+	if heVersion.Major() != myVersion.Major() {
+		return fmt.Errorf("remote %v != local %v", he[1], my[1])
+	}
+
+	return
 }

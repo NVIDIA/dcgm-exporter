@@ -56,6 +56,8 @@ type Config struct {
 	KubernetesGPUIdType KubernetesGPUIDType
 	CollectDCP          bool
 	UseOldNamespace     bool
+	UseRemoteHE         bool
+	RemoteHEInfo        string
 }
 
 type Transform interface {
