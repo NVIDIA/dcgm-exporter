@@ -18,9 +18,8 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
-
 	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
+	"math/rand"
 )
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
@@ -60,16 +59,23 @@ func WatchFieldGroup(group dcgm.GroupHandle, field dcgm.FieldHandle) error {
 	return nil
 }
 
-func SetupDcgmFieldsWatch(deviceFields []dcgm.Short) ([]func(), error) {
+func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo) ([]func(), error) {
 	var err error
 	var cleanups []func()
 	var cleanup func()
 	var group dcgm.GroupHandle
 	var fieldGroup dcgm.FieldHandle
 
-	group, cleanup, err = NewGroup()
-	if err != nil {
-		goto fail
+	if sysInfo.migEnabled == true {
+		group, cleanup, err = CreateGroupFromSystemInfo(sysInfo)
+		if err != nil {
+			goto fail
+		}
+	} else {
+		group, cleanup, err = NewGroup()
+		if err != nil {
+			goto fail
+		}
 	}
 
 	cleanups = append(cleanups, cleanup)

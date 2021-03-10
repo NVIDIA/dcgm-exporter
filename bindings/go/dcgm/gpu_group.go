@@ -48,6 +48,15 @@ func AddToGroup(groupId GroupHandle, gpuId uint) (err error) {
 	return
 }
 
+func AddEntityToGroup(groupId GroupHandle, entityGroupId Field_Entity_Group, entityId uint) (err error) {
+	result := C.dcgmGroupAddEntity(handle.handle, groupId.handle, C.dcgm_field_entity_group_t(entityGroupId), C.uint(entityId))
+	if err = errorString(result); err != nil {
+		return fmt.Errorf("Error adding entity group type %v, entity %v to group: %s", entityGroupId, entityId, err)
+	}
+
+	return
+}
+
 func DestroyGroup(groupId GroupHandle) (err error) {
 	result := C.dcgmGroupDestroy(handle.handle, groupId.handle)
 	if err = errorString(result); err != nil {

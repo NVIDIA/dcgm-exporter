@@ -542,11 +542,13 @@ typedef enum
     DcgmMigProfileGpuInstanceSlice3     = 3,  /*!< GPU instance slice 3 */
     DcgmMigProfileGpuInstanceSlice4     = 4,  /*!< GPU instance slice 4 */
     DcgmMigProfileGpuInstanceSlice7     = 5,  /*!< GPU instance slice 7 */
+    DcgmMigProfileGpuInstanceSlice8     = 6,  /*!< GPU instance slice 8 */
     DcgmMigProfileComputeInstanceSlice1 = 30, /*!< compute instance slice 1 */
     DcgmMigProfileComputeInstanceSlice2 = 31, /*!< compute instance slice 2 */
     DcgmMigProfileComputeInstanceSlice3 = 32, /*!< compute instance slice 3 */
     DcgmMigProfileComputeInstanceSlice4 = 33, /*!< compute instance slice 4*/
     DcgmMigProfileComputeInstanceSlice7 = 34, /*!< compute instance slice 7 */
+    DcgmMigProfileComputeInstanceSlice8 = 35, /*!< compute instance slice 8 */
 } dcgmMigProfile_t;
 
 /**
@@ -559,7 +561,30 @@ typedef struct
     dcgmMigProfile_t sliceProfile; //!< Entity MIG profile identifier
 } dcgmMigHierarchyInfo_t;
 
-#define DCGM_MAX_INSTANCES_PER_GPU 7
+/**
+ * Provides additional information about location of MIG entities.
+ */
+typedef struct
+{
+    char gpuUuid[128];                  /*!< GPU UUID */
+    unsigned int nvmlGpuIndex;          /*!< GPU index from NVML */
+    unsigned int nvmlInstanceId;        /*!< GPU instance index within GPU. 0 to N. -1 for GPU entities */
+    unsigned int nvmlComputeInstanceId; /*!< GPU Compute instance index within GPU instance. 0 to N. -1 for GPU
+                                         *      Instance and GPU entities */
+    unsigned int nvmlMigProfileId;      /*!< Unique profile ID for GPU or Compute instances. -1 GPU entities
+                                         *      \see nvmlComputeInstanceProfileInfo_st
+                                         *      \see nvmlGpuInstanceProfileInfo_st */
+    unsigned int nvmlProfileSlices;     /*!< Number of slices in the MIG profile */
+} dcgmMigEntityInfo_t;
+
+typedef struct
+{
+    dcgmGroupEntityPair_t entity;
+    dcgmGroupEntityPair_t parent;
+    dcgmMigEntityInfo_t info;
+} dcgmMigHierarchyInfo_v2;
+
+#define DCGM_MAX_INSTANCES_PER_GPU 8
 // There can never be more compute instances per GPU than instances per GPU because a compute instance is part
 // of an instance
 #define DCGM_MAX_COMPUTE_INSTANCES_PER_GPU DCGM_MAX_INSTANCES_PER_GPU
@@ -586,7 +611,16 @@ typedef struct
 
 #define dcgmMigHierarchy_version1 MAKE_DCGM_VERSION(dcgmMigHierarchy_v1, 1)
 
-#define dcgmMigHierarchy_version dcgmMigHiearchyVersion1
+typedef struct
+{
+    unsigned int version;
+    unsigned int count;
+    dcgmMigHierarchyInfo_v2 entityList[DCGM_MAX_HIERARCHY_INFO];
+} dcgmMigHierarchy_v2;
+
+#define dcgmMigHierarchy_version2 MAKE_DCGM_VERSION(dcgmMigHierarchy_v2, 2)
+
+#define dcgmMigHierarchy_version dcgmMigHiearchyVersion2
 
 /**
  * Maximum number of field groups that can exist
@@ -2041,16 +2075,23 @@ typedef enum dcgmPerGpuTestIndices_enum
     DCGM_MEMORY_INDEX           = 0, //!< Memory test index
     DCGM_DIAGNOSTIC_INDEX       = 1, //!< Diagnostic test index
     DCGM_PCI_INDEX              = 2, //!< PCIe test index
-    DCGM_SM_PERF_INDEX          = 3, //!< SM Stress test index
-    DCGM_TARGETED_PERF_INDEX    = 4, //!< Targeted Stress test index
+    DCGM_SM_STRESS_INDEX        = 3, //!< SM Stress test index
+    DCGM_TARGETED_STRESS_INDEX  = 4, //!< Targeted Stress test index
     DCGM_TARGETED_POWER_INDEX   = 5, //!< Targeted Power test index
     DCGM_MEMORY_BANDWIDTH_INDEX = 6, //!< Memory bandwidth test index
+    // Remaining tests are included for convenience but have different execution rules
+    // See DCGM_PER_GPU_TEST_COUNT
+    DCGM_SOFTWARE_INDEX       = 7, //!< Software test index
+    DCGM_CONTEXT_CREATE_INDEX = 8, //!< Context create test index
+    DCGM_UNKNOWN_INDEX        = 9  //!< Unknown test
 } dcgmPerGpuTestIndices_t;
 
-// This test is only run by itself, so it can use the 0 slot
-#define DCGM_CONTEXT_CREATE_INDEX 0
+// TODO: transition these to dcgm_deprecated.h
+#define DCGM_SM_PERF_INDEX       DCGM_SM_STRESS_INDEX
+#define DCGM_TARGETED_PERF_INDEX DCGM_TARGETED_PERF_INDEX
 
-// Sync with dcgmPerGpuTestIndices_enum
+// Number of diag tests
+// NOTE: does not include software and context_create which have different execution rules
 #define DCGM_PER_GPU_TEST_COUNT 7
 
 /**
