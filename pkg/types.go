@@ -68,9 +68,10 @@ type Transform interface {
 type MetricsPipeline struct {
 	config *Config
 
-	transformations []Transform
-	metricsFormat   *template.Template
-	countersText    string
+	transformations  []Transform
+	metricsFormat    *template.Template
+	migMetricsFormat *template.Template
+	countersText     string
 
 	gpuCollector *DCGMCollector
 }
@@ -80,6 +81,7 @@ type DCGMCollector struct {
 	DeviceFields    []dcgm.Short
 	Cleanups        []func()
 	UseOldNamespace bool
+	SysInfo         SystemInfo
 }
 
 type Counter struct {
@@ -98,6 +100,9 @@ type Metric struct {
 	GPUDevice string
 
 	UUID string
+
+	MigProfile    string
+	GPUInstanceID string
 
 	Attributes map[string]string
 }

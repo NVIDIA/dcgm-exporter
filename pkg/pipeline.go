@@ -52,8 +52,9 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 	return &MetricsPipeline{
 			config: c,
 
-			metricsFormat: template.Must(template.New("metrics").Parse(metricsFormat)),
-			countersText:  countersText,
+			metricsFormat:    template.Must(template.New("metrics").Parse(metricsFormat)),
+			migMetricsFormat: template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+			countersText:     countersText,
 
 			gpuCollector:    gpuCollector,
 			transformations: transformations,
@@ -72,8 +73,9 @@ func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*M
 	return &MetricsPipeline{
 		config: c,
 
-		metricsFormat: template.Must(template.New("metrics").Parse(metricsFormat)),
-		countersText:  countersText,
+		metricsFormat:    template.Must(template.New("metrics").Parse(metricsFormat)),
+		migMetricsFormat: template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+		countersText:     countersText,
 
 		gpuCollector: collector,
 	}, func() {}, nil
@@ -123,7 +125,12 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	formated, err := FormatMetrics(m.countersText, m.metricsFormat, metrics)
+	formated := ""
+	if m.gpuCollector.SysInfo.MigEnabled == true {
+		formated, err = FormatMetrics(m.countersText, m.migMetricsFormat, metrics)
+	} else {
+		formated, err = FormatMetrics(m.countersText, m.metricsFormat, metrics)
+	}
 	if err != nil {
 		return "", fmt.Errorf("Failed to format metrics with error: %v", err)
 	}
@@ -166,6 +173,18 @@ func FormatCounters(c []Counter) (string, error) {
 var metricsFormat = `
 {{ range $dev := . }}{{ range $val := $dev }}
 {{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}"
+
+{{- range $k, $v := $val.Attributes -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
+
+} {{ $val.Value }}
+{{- end }}
+{{ end }}`
+
+var migMetricsFormat = `
+{{ range $dev := . }}{{ range $val := $dev }}
+{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}",GPU_I_PROFILE="{{ $val.MigProfile }}",GPU_I_ID="{{ $val.GPUInstanceID }}"
 
 {{- range $k, $v := $val.Attributes -}}
 	,{{ $k }}="{{ $v }}"

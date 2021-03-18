@@ -57,6 +57,7 @@ type MigHierarchy_v2 struct {
 
 func GetGpuInstanceHierarchy() (hierarchy MigHierarchy_v2, err error) {
 	var c_hierarchy C.dcgmMigHierarchy_v2
+	c_hierarchy.version = C.dcgmMigHierarchy_version2
 	ptr_hierarchy := (*C.dcgmMigHierarchy_v2)(unsafe.Pointer(&c_hierarchy))
 	result := C.dcgmGetGpuInstanceHierarchy(handle.handle, ptr_hierarchy)
 
