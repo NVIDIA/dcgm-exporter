@@ -92,9 +92,9 @@ func GetLatestValuesForFields(gpu uint, fields []Short) ([]FieldValue_v1, error)
 
 func EntityGetLatestValues(entityGroup Field_Entity_Group, entityId uint, fields []Short) ([]FieldValue_v1, error) {
 	values := make([]C.dcgmFieldValue_v1, len(fields))
-	cfields := *(*[]C.ushort)(unsafe.Pointer(&fields))
+	cfields := (*C.ushort)(unsafe.Pointer(&fields[0]))
 
-	result := C.dcgmEntityGetLatestValues(handle.handle, C.dcgm_field_entity_group_t(entityGroup), C.int(entityId), &cfields[0], C.uint(len(fields)), &values[0])
+	result := C.dcgmEntityGetLatestValues(handle.handle, C.dcgm_field_entity_group_t(entityGroup), C.int(entityId), cfields, C.uint(len(fields)), &values[0])
 	if err := errorString(result); err != nil {
 		return nil, fmt.Errorf("Error getting the latest value for fields: %s", err)
 	}
@@ -104,14 +104,14 @@ func EntityGetLatestValues(entityGroup Field_Entity_Group, entityId uint, fields
 
 func EntitiesGetLatestValues(entities []GroupEntityPair, fields []Short, flags uint) ([]FieldValue_v2, error) {
 	values := make([]C.dcgmFieldValue_v2, len(fields))
-	cfields := *(*[]C.ushort)(unsafe.Pointer(&fields))
+	cfields := (*C.ushort)(unsafe.Pointer(&fields[0]))
 	cEntities := make([]C.dcgmGroupEntityPair_t, len(entities))
 	cPtrEntities := *(*[]C.dcgmGroupEntityPair_t)(unsafe.Pointer(&cEntities))
 	for i, entity := range entities {
 		cEntities[i] = C.dcgmGroupEntityPair_t{C.dcgm_field_entity_group_t(entity.EntityGroupId), C.dcgm_field_eid_t(entity.EntityId)}
 	}
 
-	result := C.dcgmEntitiesGetLatestValues(handle.handle, &cPtrEntities[0], C.uint(len(entities)), &cfields[0], C.uint(len(fields)), C.uint(flags), &values[0])
+	result := C.dcgmEntitiesGetLatestValues(handle.handle, &cPtrEntities[0], C.uint(len(entities)), cfields, C.uint(len(fields)), C.uint(flags), &values[0])
 	if err := errorString(result); err != nil {
 		return nil, fmt.Errorf("Error getting the latest value for fields: %s", err)
 	}
