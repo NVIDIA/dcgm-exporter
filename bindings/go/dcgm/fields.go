@@ -90,6 +90,35 @@ func GetLatestValuesForFields(gpu uint, fields []Short) ([]FieldValue_v1, error)
 	return toFieldValue(values), nil
 }
 
+func EntityGetLatestValues(entityGroup Field_Entity_Group, entityId uint, fields []Short) ([]FieldValue_v1, error) {
+	values := make([]C.dcgmFieldValue_v1, len(fields))
+	cfields := (*C.ushort)(unsafe.Pointer(&fields[0]))
+
+	result := C.dcgmEntityGetLatestValues(handle.handle, C.dcgm_field_entity_group_t(entityGroup), C.int(entityId), cfields, C.uint(len(fields)), &values[0])
+	if err := errorString(result); err != nil {
+		return nil, fmt.Errorf("Error getting the latest value for fields: %s", err)
+	}
+
+	return toFieldValue(values), nil
+}
+
+func EntitiesGetLatestValues(entities []GroupEntityPair, fields []Short, flags uint) ([]FieldValue_v2, error) {
+	values := make([]C.dcgmFieldValue_v2, len(fields))
+	cfields := (*C.ushort)(unsafe.Pointer(&fields[0]))
+	cEntities := make([]C.dcgmGroupEntityPair_t, len(entities))
+	cPtrEntities := *(*[]C.dcgmGroupEntityPair_t)(unsafe.Pointer(&cEntities))
+	for i, entity := range entities {
+		cEntities[i] = C.dcgmGroupEntityPair_t{C.dcgm_field_entity_group_t(entity.EntityGroupId), C.dcgm_field_eid_t(entity.EntityId)}
+	}
+
+	result := C.dcgmEntitiesGetLatestValues(handle.handle, &cPtrEntities[0], C.uint(len(entities)), cfields, C.uint(len(fields)), C.uint(flags), &values[0])
+	if err := errorString(result); err != nil {
+		return nil, fmt.Errorf("Error getting the latest value for fields: %s", err)
+	}
+
+	return toFieldValue_v2(values), nil
+}
+
 func UpdateAllFields() error {
 	waitForUpdate := C.int(1)
 	result := C.dcgmUpdateAllFields(handle.handle, waitForUpdate)
@@ -126,5 +155,39 @@ func (fv FieldValue_v1) String() string {
 }
 
 func (fv FieldValue_v1) Blob() [4096]byte {
+	return fv.Value
+}
+
+func toFieldValue_v2(cfields []C.dcgmFieldValue_v2) []FieldValue_v2 {
+	fields := make([]FieldValue_v2, len(cfields))
+	for i, f := range cfields {
+		fields[i] = FieldValue_v2{
+			Version:       uint(f.version),
+			EntityGroupId: Field_Entity_Group(f.entityGroupId),
+			EntityId:      uint(f.entityId),
+			FieldId:       uint(f.fieldId),
+			FieldType:     uint(f.fieldType),
+			Status:        int(f.status),
+			Ts:            int64(f.ts),
+			Value:         f.value,
+		}
+	}
+
+	return fields
+}
+
+func Fv2_Int64(fv FieldValue_v2) int64 {
+	return *(*int64)(unsafe.Pointer(&fv.Value[0]))
+}
+
+func Fv2_Float64(fv FieldValue_v2) float64 {
+	return *(*float64)(unsafe.Pointer(&fv.Value[0]))
+}
+
+func Fv2_String(fv FieldValue_v2) string {
+	return *(*string)(unsafe.Pointer(&fv.Value[0]))
+}
+
+func Fv2_Blob(fv FieldValue_v2) [4096]byte {
 	return fv.Value
 }

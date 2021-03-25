@@ -66,7 +66,7 @@ func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo) ([]func
 	var group dcgm.GroupHandle
 	var fieldGroup dcgm.FieldHandle
 
-	if sysInfo.migEnabled == true {
+	if sysInfo.MigEnabled == true {
 		group, cleanup, err = CreateGroupFromSystemInfo(sysInfo)
 		if err != nil {
 			goto fail

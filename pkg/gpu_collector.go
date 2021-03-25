@@ -22,15 +22,16 @@ import (
 )
 
 func NewDCGMCollector(c []Counter, useOldNamespace bool) (*DCGMCollector, func(), error) {
+	sysInfo, err := InitializeSystemInfo()
+	if err != nil {
+		return nil, func() {}, err
+	}
+
 	collector := &DCGMCollector{
 		Counters:        c,
 		DeviceFields:    NewDeviceFields(c),
 		UseOldNamespace: useOldNamespace,
-	}
-
-	sysInfo, err := InitializeSystemInfo()
-	if err != nil {
-		return nil, func() {}, err
+		SysInfo:         sysInfo,
 	}
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, sysInfo)
@@ -50,31 +51,42 @@ func (c *DCGMCollector) Cleanup() {
 }
 
 func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
-	count, err := dcgm.GetAllDeviceCount()
-	if err != nil {
-		return nil, err
+	count := uint(0)
+	if c.SysInfo.MigEnabled == true {
+		for i := uint(0); i < c.SysInfo.GpuCount; i++ {
+			count += uint(len(c.SysInfo.Gpus[i].GpuInstances))
+		}
+	} else {
+		count = c.SysInfo.GpuCount
 	}
 
 	metrics := make([][]Metric, count)
+	gpuIIndex := uint(0)
 	for i := uint(0); i < count; i++ {
-		// TODO: This call could be cached
-		deviceInfo, err := dcgm.GetDeviceInfo(i)
-		if err != nil {
-			return nil, err
-		}
+		deviceInfo := c.SysInfo.Gpus[i].DeviceInfo
 
-		vals, err := dcgm.GetLatestValuesForFields(i, c.DeviceFields)
-		if err != nil {
-			return nil, err
+		if c.SysInfo.MigEnabled == false {
+			vals, err := dcgm.GetLatestValuesForFields(i, c.DeviceFields)
+			if err != nil {
+				return nil, err
+			}
+			metrics[i] = ToMetric(vals, c.Counters, deviceInfo, nil, c.UseOldNamespace)
+		} else {
+			for _, instance := range c.SysInfo.Gpus[i].GpuInstances {
+				vals, err := dcgm.EntityGetLatestValues(dcgm.FE_GPU_I, instance.EntityId, c.DeviceFields)
+				if err != nil {
+					return nil, err
+				}
+				metrics[gpuIIndex] = ToMetric(vals, c.Counters, deviceInfo, &instance, c.UseOldNamespace)
+				gpuIIndex += 1
+			}
 		}
-
-		metrics[i] = ToMetric(vals, c.Counters, deviceInfo, c.UseOldNamespace)
 	}
 
 	return metrics, nil
 }
 
-func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, useOld bool) []Metric {
+func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GpuInstanceInfo, useOld bool) []Metric {
 	var metrics []Metric
 
 	for i, val := range values {
@@ -97,6 +109,10 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, useOld bo
 			GPUDevice: fmt.Sprintf("nvidia%d", d.GPU),
 
 			Attributes: map[string]string{},
+		}
+		if instanceInfo != nil {
+			m.MigProfile = instanceInfo.ProfileName
+			m.GPUInstanceID = fmt.Sprintf("%d", instanceInfo.Info.NvmlInstanceId)
 		}
 		metrics = append(metrics, m)
 	}

@@ -13,6 +13,17 @@ type FieldValue_v1 struct {
 	Value     [4096]byte
 }
 
+type FieldValue_v2 struct {
+	Version       uint
+	EntityGroupId Field_Entity_Group
+	EntityId      uint
+	FieldId       uint
+	FieldType     uint
+	Status        int
+	Ts            int64
+	Value         [4096]byte
+}
+
 const (
 	DCGM_FT_BINARY                 = uint('b')
 	DCGM_FT_DOUBLE                 = uint('d')
@@ -772,4 +783,8 @@ var (
 		"dcgm_fi_prof_pcie_tx_bytes":             1009,
 		"dcgm_fi_prof_pcie_rx_bytes":             1010,
 	}
+)
+
+const (
+	DCGM_FV_FLAG_LIVE_DATA = uint(0x00000001)
 )
