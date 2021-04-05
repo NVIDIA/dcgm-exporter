@@ -21,8 +21,17 @@ image:
 
 # Comment the following line to stop profiling metrics from DCGM
 arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
+# NOTE: in general, add any command line arguments to arguments above
+# and they will be passed through.
 # Use "-r", "<HOST>:<PORT>" to connect to an already running hostengine
 # Example arguments: ["-r", "host123:5555"]
+# Use "-n" to remove the hostname tag from the output.
+# Example arguments: ["-n"]
+# Use "-d" to specify the devices to monitor. -d must be followed by a string
+# in the following format: [f] or [g[:numeric_range][,]][i[:numeric_range]]
+# Where a numeric range is something like 0-4 or 0,2,4, etc.
+# Example arguments: ["-d", "g,i"] to monitor all GPUs and GPU instances or
+# ["-d", "g:0-3"] to monitor GPUs 0-3.
 
 imagePullSecrets: []
 nameOverride: ""
