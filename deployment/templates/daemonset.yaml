@@ -63,6 +63,9 @@ spec:
         hostPath:
           path: {{ .hostPath | quote }}
       {{- end }}
+      {{- with .Values.extraConfigMapVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
       containers:
       - name: exporter
         securityContext:

@@ -96,6 +96,11 @@ extraHostVolumes: []
 #- name: host-binaries
 #  hostPath: /opt/bin
 
+extraConfigMapVolumes: []
+#- name: exporter-metrics-volume
+#  configMap:
+#    name: exporter-metrics-config-map
+
 extraVolumeMounts: []
 #- name: host-binaries
 #  mountPath: /opt/bin
