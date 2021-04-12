@@ -22,6 +22,7 @@ type FieldValue_v2 struct {
 	Status        int
 	Ts            int64
 	Value         [4096]byte
+	StringValue   *string
 }
 
 const (

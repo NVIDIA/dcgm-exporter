@@ -39,7 +39,7 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
-	gpuCollector, cleanup, err := NewDCGMCollector(counters, c.UseOldNamespace)
+	gpuCollector, cleanup, err := NewDCGMCollector(counters, c.UseOldNamespace, c.Devices, c.NoHostname)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -125,12 +125,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	formated := ""
-	if m.gpuCollector.SysInfo.MigEnabled == true {
-		formated, err = FormatMetrics(m.countersText, m.migMetricsFormat, metrics)
-	} else {
-		formated, err = FormatMetrics(m.countersText, m.metricsFormat, metrics)
-	}
+	formated, err := FormatMetrics(m.countersText, m.migMetricsFormat, metrics)
 	if err != nil {
 		return "", fmt.Errorf("Failed to format metrics with error: %v", err)
 	}
@@ -184,7 +179,7 @@ var metricsFormat = `
 
 var migMetricsFormat = `
 {{ range $dev := . }}{{ range $val := $dev }}
-{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}",GPU_I_PROFILE="{{ $val.MigProfile }}",GPU_I_ID="{{ $val.GPUInstanceID }}"
+{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}{{if $val.MigProfile}}",GPU_I_PROFILE="{{ $val.MigProfile }}",GPU_I_ID="{{ $val.GPUInstanceID }}{{end}}{{if $val.Hostname }}",Hostname="{{ $val.Hostname }}"{{end}}
 
 {{- range $k, $v := $val.Attributes -}}
 	,{{ $k }}="{{ $v }}"

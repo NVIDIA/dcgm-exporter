@@ -10,8 +10,6 @@ import (
 	"unsafe"
 )
 
-type MigHandle struct{ handle C.dcgmGpuGrp_t }
-
 type Field_Entity_Group uint
 
 const (

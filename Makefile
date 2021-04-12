@@ -16,10 +16,13 @@ DOCKER   ?= docker
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 2.1.4
+DCGM_VERSION   := 2.1.8
 GOLANG_VERSION := 1.14.2
 VERSION        := 2.3.1
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
+
+NON_TEST_FILES  := pkg/dcgm.go pkg/gpu_collector.go pkg/parser.go pkg/pipeline.go pkg/server.go pkg/system_info.go pkg/types.go pkg/utils.go pkg/kubernetes.go pkg/main.go
+MAIN_TEST_FILES := pkg/system_info_test.go
 
 .PHONY: all binary install check-format
 all: ubuntu18.04 ubuntu20.04 ubi8
@@ -52,6 +55,9 @@ push-latest:
 	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
 
+test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
+	 go test pkg/system_info_test.go pkg/system_info.go pkg/types.go
+
 ubuntu20.04:
 	$(DOCKER) build --pull \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
@@ -73,3 +79,4 @@ ubi8:
 		--build-arg "VERSION=$(FULL_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8" \
 		--file docker/Dockerfile.ubi8 .
+
