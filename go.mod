@@ -3,11 +3,23 @@ module github.com/NVIDIA/gpu-monitoring-tools
 go 1.14
 
 require (
+	github.com/Masterminds/semver v1.5.0 // indirect
+	github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm v0.0.0-20210325210537-29b4f1784f18 // indirect
+	github.com/go-delve/delve v1.6.0 // indirect
 	github.com/gorilla/mux v1.7.4
-	github.com/sirupsen/logrus v1.4.2
+	github.com/mattn/go-colorable v0.1.8 // indirect
+	github.com/mattn/go-runewidth v0.0.10 // indirect
+	github.com/peterh/liner v1.2.1 // indirect
+	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/russross/blackfriday v2.0.0+incompatible // indirect
+	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/sirupsen/logrus v1.8.1
+	github.com/spf13/cobra v1.1.3 // indirect
 	github.com/stretchr/testify v1.5.1
 	github.com/urfave/cli/v2 v2.2.0
-	golang.org/x/sys v0.0.0-20200413165638-669c56c373c4 // indirect
+	go.starlark.net v0.0.0-20210312235212-74c10e2c17dc // indirect
+	golang.org/x/arch v0.0.0-20210324142154-d48d9c4a19f6 // indirect
+	golang.org/x/sys v0.0.0-20210324051608-47abb6519492 // indirect
 	google.golang.org/grpc v1.28.1
 	k8s.io/kubernetes v1.18.2
 )

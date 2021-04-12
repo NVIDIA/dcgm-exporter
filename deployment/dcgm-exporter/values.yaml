@@ -28,9 +28,9 @@ arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
 # Use "-n" to remove the hostname tag from the output.
 # Example arguments: ["-n"]
 # Use "-d" to specify the devices to monitor. -d must be followed by a string
-# in the following format: [f] or [g[:numeric_range][,]][i[:numeric_range]]
+# in the following format: [f] or [g[:numeric_range][+]][i[:numeric_range]]
 # Where a numeric range is something like 0-4 or 0,2,4, etc.
-# Example arguments: ["-d", "g,i"] to monitor all GPUs and GPU instances or
+# Example arguments: ["-d", "g+i"] to monitor all GPUs and GPU instances or
 # ["-d", "g:0-3"] to monitor GPUs 0-3.
 
 imagePullSecrets: []

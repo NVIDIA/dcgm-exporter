@@ -7,6 +7,7 @@ package dcgm
 import "C"
 import (
 	"fmt"
+	"unicode"
 	"unsafe"
 )
 
@@ -15,6 +16,16 @@ const (
 	maxKeepAge     = 300     // sec
 	maxKeepSamples = 0       // nolimit
 )
+
+type FieldMeta struct {
+	FieldId     Short
+	FieldType   byte
+	Size        byte
+	Tag         string
+	Scope       int
+	NvmlFieldId int
+	EntityLevel Field_Entity_Group
+}
 
 type FieldHandle struct{ handle C.dcgmFieldGrp_t }
 
@@ -103,7 +114,7 @@ func EntityGetLatestValues(entityGroup Field_Entity_Group, entityId uint, fields
 }
 
 func EntitiesGetLatestValues(entities []GroupEntityPair, fields []Short, flags uint) ([]FieldValue_v2, error) {
-	values := make([]C.dcgmFieldValue_v2, len(fields))
+	values := make([]C.dcgmFieldValue_v2, len(fields)*len(entities))
 	cfields := (*C.ushort)(unsafe.Pointer(&fields[0]))
 	cEntities := make([]C.dcgmGroupEntityPair_t, len(entities))
 	cPtrEntities := *(*[]C.dcgmGroupEntityPair_t)(unsafe.Pointer(&cEntities))
@@ -161,15 +172,30 @@ func (fv FieldValue_v1) Blob() [4096]byte {
 func toFieldValue_v2(cfields []C.dcgmFieldValue_v2) []FieldValue_v2 {
 	fields := make([]FieldValue_v2, len(cfields))
 	for i, f := range cfields {
-		fields[i] = FieldValue_v2{
-			Version:       uint(f.version),
-			EntityGroupId: Field_Entity_Group(f.entityGroupId),
-			EntityId:      uint(f.entityId),
-			FieldId:       uint(f.fieldId),
-			FieldType:     uint(f.fieldType),
-			Status:        int(f.status),
-			Ts:            int64(f.ts),
-			Value:         f.value,
+		if uint(f.fieldType) == DCGM_FT_STRING {
+			fields[i] = FieldValue_v2{
+				Version:       uint(f.version),
+				EntityGroupId: Field_Entity_Group(f.entityGroupId),
+				EntityId:      uint(f.entityId),
+				FieldId:       uint(f.fieldId),
+				FieldType:     uint(f.fieldType),
+				Status:        int(f.status),
+				Ts:            int64(f.ts),
+				Value:         f.value,
+				StringValue:   stringPtr((*C.char)(unsafe.Pointer(&f.value[0]))),
+			}
+		} else {
+			fields[i] = FieldValue_v2{
+				Version:       uint(f.version),
+				EntityGroupId: Field_Entity_Group(f.entityGroupId),
+				EntityId:      uint(f.entityId),
+				FieldId:       uint(f.fieldId),
+				FieldType:     uint(f.fieldType),
+				Status:        int(f.status),
+				Ts:            int64(f.ts),
+				Value:         f.value,
+				StringValue:   nil,
+			}
 		}
 	}
 
@@ -184,10 +210,48 @@ func Fv2_Float64(fv FieldValue_v2) float64 {
 	return *(*float64)(unsafe.Pointer(&fv.Value[0]))
 }
 
+func FindFirstNonAsciiIndex(value [4096]byte) int {
+	for i := 0; i < 4096; i++ {
+		if value[i] > unicode.MaxASCII || value[i] < 33 {
+			return i
+		}
+	}
+
+	return 4096
+}
+
 func Fv2_String(fv FieldValue_v2) string {
-	return *(*string)(unsafe.Pointer(&fv.Value[0]))
+	if fv.FieldType == DCGM_FT_STRING {
+		return *fv.StringValue
+	} else {
+		return string(fv.Value[:])
+	}
 }
 
 func Fv2_Blob(fv FieldValue_v2) [4096]byte {
 	return fv.Value
+}
+
+func ToFieldMeta(fieldInfo C.dcgm_field_meta_p) FieldMeta {
+	return FieldMeta{
+		FieldId:     Short(fieldInfo.fieldId),
+		FieldType:   byte(fieldInfo.fieldType),
+		Size:        byte(fieldInfo.size),
+		Tag:         *stringPtr((*C.char)(unsafe.Pointer(&fieldInfo.tag[0]))),
+		Scope:       int(fieldInfo.scope),
+		NvmlFieldId: int(fieldInfo.nvmlFieldId),
+		EntityLevel: Field_Entity_Group(fieldInfo.entityLevel),
+	}
+}
+
+func FieldGetById(fieldId Short) FieldMeta {
+	return ToFieldMeta(C.DcgmFieldGetById(C.ushort(fieldId)))
+}
+
+func FieldsInit() int {
+	return int(C.DcgmFieldsInit())
+}
+
+func FieldsTerm() int {
+	return int(C.DcgmFieldsTerm())
 }

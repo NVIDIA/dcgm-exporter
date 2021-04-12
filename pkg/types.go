@@ -48,6 +48,18 @@ const (
 	DeviceName KubernetesGPUIDType = "device-name"
 )
 
+const (
+	FlexKey        = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
+	GPUKey         = "g" // Monitor GPUs
+	GPUInstanceKey = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
+)
+
+type DeviceOptions struct {
+	Flex             bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
+	GpuRange         []int // The indices of each GPU to monitor, or -1 to monitor all
+	GpuInstanceRange []int // The indices of each GPU instance to monitor, or -1 to monitor all
+}
+
 type Config struct {
 	CollectorsFile      string
 	Address             string
@@ -58,6 +70,8 @@ type Config struct {
 	UseOldNamespace     bool
 	UseRemoteHE         bool
 	RemoteHEInfo        string
+	Devices             DeviceOptions
+	NoHostname          bool
 }
 
 type Transform interface {
@@ -82,6 +96,7 @@ type DCGMCollector struct {
 	Cleanups        []func()
 	UseOldNamespace bool
 	SysInfo         SystemInfo
+	Hostname        string
 }
 
 type Counter struct {
@@ -103,6 +118,7 @@ type Metric struct {
 
 	MigProfile    string
 	GPUInstanceID string
+	Hostname      string
 
 	Attributes map[string]string
 }
