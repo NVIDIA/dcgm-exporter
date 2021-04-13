@@ -18,7 +18,7 @@ REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.1.8
 GOLANG_VERSION := 1.14.2
-VERSION        := 2.4.0
+VERSION        := 2.4.0-rc.2
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 NON_TEST_FILES  := pkg/dcgm.go pkg/gpu_collector.go pkg/parser.go pkg/pipeline.go pkg/server.go pkg/system_info.go pkg/types.go pkg/utils.go pkg/kubernetes.go pkg/main.go
