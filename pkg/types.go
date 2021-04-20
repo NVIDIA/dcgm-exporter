@@ -130,7 +130,7 @@ func (m Metric) getIDOfType(idType KubernetesGPUIDType) (string, error) {
 	case DeviceName:
 		return m.GPUDevice, nil
 	}
-	return "", fmt.Errorf("unsupported KubernetesGPUIDType for MetricID %s", idType)
+	return "", fmt.Errorf("unsupported KubernetesGPUIDType for MetricID '%s'", idType)
 }
 
 var promMetricType = map[string]bool{

@@ -119,8 +119,3 @@ func TestVerifyDevicePresence(t *testing.T) {
 //	sysInfo := SpoofSystemInfo()
 //    SetMigProfileNames(sysInfo, values)
 //}
-
-// Dummy function for testing so I don't have to include more files
-func NewGroup() (dcgm.GroupHandle, func(), error) {
-	return dcgm.GroupHandle{}, func() {}, nil
-}

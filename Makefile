@@ -30,6 +30,9 @@ all: ubuntu18.04 ubuntu20.04 ubi8
 binary:
 	cd pkg; go build
 
+test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
+	cd pkg; go test
+
 install: binary
 	install -m 557 pkg/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 557 -D ./etc/dcgm-exporter/default-counters.csv /etc/dcgm-exporter/default-counters.csv
@@ -54,9 +57,6 @@ push-ci:
 push-latest:
 	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
-
-test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
-	 go test pkg/system_info_test.go pkg/system_info.go pkg/types.go
 
 ubuntu20.04:
 	$(DOCKER) build --pull \
