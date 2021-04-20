@@ -40,7 +40,8 @@ func TestDCGMCollector(t *testing.T) {
 }
 
 func testDCGMCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
-	c, cleanup, err := NewDCGMCollector(counters)
+	dOpt := DeviceOptions{true, []int{-1}, []int{-1}}
+	c, cleanup, err := NewDCGMCollector(counters, false, dOpt, false)
 	require.NoError(t, err)
 
 	out, err := c.GetMetrics()
