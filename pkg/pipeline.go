@@ -39,7 +39,7 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
-	gpuCollector, cleanup, err := NewDCGMCollector(counters, c.UseOldNamespace, c.Devices, c.NoHostname)
+	gpuCollector, cleanup, err := NewDCGMCollector(counters, c)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -179,7 +179,7 @@ var metricsFormat = `
 
 var migMetricsFormat = `
 {{ range $dev := . }}{{ range $val := $dev }}
-{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}{{if $val.MigProfile}}",GPU_I_PROFILE="{{ $val.MigProfile }}",GPU_I_ID="{{ $val.GPUInstanceID }}{{end}}{{if $val.Hostname }}",Hostname="{{ $val.Hostname }}"{{end}}
+{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}"{{if $val.MigProfile}},GPU_I_PROFILE="{{ $val.MigProfile }}",GPU_I_ID="{{ $val.GPUInstanceID }}"{{end}}{{if $val.Hostname }},Hostname="{{ $val.Hostname }}"{{end}}
 
 {{- range $k, $v := $val.Attributes -}}
 	,{{ $k }}="{{ $v }}"

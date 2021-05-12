@@ -42,6 +42,7 @@ var (
 	CLIRemoteHEInfo        = "remote-hostengine-info"
 	CLIDevices             = "devices"
 	CLINoHostname          = "no-hostname"
+	CLIUseFakeGpus         = "fake-gpus"
 )
 
 func main() {
@@ -121,6 +122,12 @@ func main() {
 			Value:   false,
 			Usage:   "Omit the hostname information from the output, matching older versions.",
 			EnvVars: []string{"DCGM_EXPORTER_NO_HOSTNAME"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIUseFakeGpus,
+			Value:   false,
+			Usage:   "Accept GPUs that are fake, for testing purposes only",
+			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
 		},
 	}
 
@@ -309,5 +316,6 @@ func contextToConfig(c *cli.Context) (*Config, error) {
 		RemoteHEInfo:        c.String(CLIRemoteHEInfo),
 		Devices:             dOpt,
 		NoHostname:          c.Bool(CLINoHostname),
+		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 	}, nil
 }

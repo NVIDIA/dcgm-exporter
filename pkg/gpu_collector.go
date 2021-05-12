@@ -22,14 +22,14 @@ import (
 	"os"
 )
 
-func NewDCGMCollector(c []Counter, useOldNamespace bool, dOpt DeviceOptions, noHostname bool) (*DCGMCollector, func(), error) {
-	sysInfo, err := InitializeSystemInfo(dOpt)
+func NewDCGMCollector(c []Counter, config *Config) (*DCGMCollector, func(), error) {
+	sysInfo, err := InitializeSystemInfo(config.Devices, config.UseFakeGpus)
 	if err != nil {
 		return nil, func() {}, err
 	}
 
 	hostname := ""
-	if noHostname == false {
+	if config.NoHostname == false {
 		hostname, err = os.Hostname()
 		if err != nil {
 			return nil, func() {}, err
@@ -39,7 +39,7 @@ func NewDCGMCollector(c []Counter, useOldNamespace bool, dOpt DeviceOptions, noH
 	collector := &DCGMCollector{
 		Counters:        c,
 		DeviceFields:    NewDeviceFields(c),
-		UseOldNamespace: useOldNamespace,
+		UseOldNamespace: config.UseOldNamespace,
 		SysInfo:         sysInfo,
 		Hostname:        hostname,
 	}
