@@ -250,11 +250,11 @@ func AddAllGpuInstances(sysInfo SystemInfo) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
 	for i := uint(0); i < sysInfo.GpuCount; i++ {
-		for _, instance := range sysInfo.Gpus[i].GpuInstances {
+		for j := 0; j < len(sysInfo.Gpus[i].GpuInstances); j++ {
 			mi := MonitoringInfo{
-				dcgm.GroupEntityPair{dcgm.FE_GPU_I, instance.EntityId},
+				dcgm.GroupEntityPair{dcgm.FE_GPU_I, sysInfo.Gpus[i].GpuInstances[j].EntityId},
 				sysInfo.Gpus[i].DeviceInfo,
-				&instance,
+				&sysInfo.Gpus[i].GpuInstances[j],
 			}
 			monitoring = append(monitoring, mi)
 		}
