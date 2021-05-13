@@ -72,6 +72,7 @@ type Config struct {
 	RemoteHEInfo        string
 	Devices             DeviceOptions
 	NoHostname          bool
+	UseFakeGpus         bool
 }
 
 type Transform interface {

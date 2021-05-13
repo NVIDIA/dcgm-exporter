@@ -147,7 +147,7 @@ func VerifyDevicePresence(sysInfo *SystemInfo, dOpt DeviceOptions) error {
 	return nil
 }
 
-func InitializeSystemInfo(dOpt DeviceOptions) (SystemInfo, error) {
+func InitializeSystemInfo(dOpt DeviceOptions, useFakeGpus bool) (SystemInfo, error) {
 	sysInfo := SystemInfo{}
 	gpuCount, err := dcgm.GetAllDeviceCount()
 	if err != nil {
@@ -158,7 +158,12 @@ func InitializeSystemInfo(dOpt DeviceOptions) (SystemInfo, error) {
 	for i := uint(0); i < sysInfo.GpuCount; i++ {
 		sysInfo.Gpus[i].DeviceInfo, err = dcgm.GetDeviceInfo(i)
 		if err != nil {
-			return sysInfo, err
+			if useFakeGpus {
+				sysInfo.Gpus[i].DeviceInfo.GPU = i
+				sysInfo.Gpus[i].DeviceInfo.UUID = fmt.Sprintf("fake%d", i)
+			} else {
+				return sysInfo, err
+			}
 		}
 	}
 
@@ -179,7 +184,7 @@ func InitializeSystemInfo(dOpt DeviceOptions) (SystemInfo, error) {
 		for i := uint(0); i < hierarchy.Count; i++ {
 			if hierarchy.EntityList[i].Parent.EntityGroupId == dcgm.FE_GPU {
 				// We are adding a GPU instance
-				gpuId := hierarchy.EntityList[i].Parent.EntityId
+				gpuId = hierarchy.EntityList[i].Parent.EntityId
 				entityId := hierarchy.EntityList[i].Entity.EntityId
 				instanceInfo := GpuInstanceInfo{
 					Info:        hierarchy.EntityList[i].Info,
