@@ -29,7 +29,9 @@ var (
 	SkipDCGMValue   = "SKIPPING DCGM VALUE"
 	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
 
-	nvidiaResourceName = "nvidia.com/gpu"
+	nvidiaResourceName      = "nvidia.com/gpu"
+	nvidiaMigResourcePrefix = "nvidia.com/mig-"
+	MIG_UUID_PREFIX         = "MIG-"
 
 	// Note standard resource attributes
 	podAttribute       = "pod"
@@ -76,7 +78,7 @@ type Config struct {
 }
 
 type Transform interface {
-	Process(metrics [][]Metric) error
+	Process(metrics [][]Metric, sysInfo SystemInfo) error
 	Name() string
 }
 
@@ -125,6 +127,10 @@ type Metric struct {
 }
 
 func (m Metric) getIDOfType(idType KubernetesGPUIDType) (string, error) {
+	// For MIG devices, return the MIG profile instead of
+	if m.MigProfile != "" {
+		return fmt.Sprintf("%s-%s", m.GPU, m.GPUInstanceID), nil
+	}
 	switch idType {
 	case GPUUID:
 		return m.GPUUUID, nil

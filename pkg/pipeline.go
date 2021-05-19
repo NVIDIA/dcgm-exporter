@@ -119,7 +119,7 @@ func (m *MetricsPipeline) run() (string, error) {
 	}
 
 	for _, transform := range m.transformations {
-		err := transform.Process(metrics)
+		err := transform.Process(metrics, m.gpuCollector.SysInfo)
 		if err != nil {
 			return "", fmt.Errorf("Failed to transform metrics for transorm %s: %v", err, transform.Name())
 		}
