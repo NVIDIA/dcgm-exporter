@@ -323,3 +323,14 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 
 	return monitoring
 }
+
+func GetGpuInstanceIdentifier(sysInfo SystemInfo, gpuuuid string, gpuInstanceId string) string {
+	for i := uint(0); i < sysInfo.GpuCount; i++ {
+		if sysInfo.Gpus[i].DeviceInfo.UUID == gpuuuid {
+			identifier := fmt.Sprintf("%d-%s", sysInfo.Gpus[i].DeviceInfo.GPU, gpuInstanceId)
+			return identifier
+		}
+	}
+
+	return ""
+}
