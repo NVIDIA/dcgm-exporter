@@ -54,7 +54,7 @@ func TestMonitoredEntities(t *testing.T) {
 	sysInfo.dOpt.Flex = true
 
 	monitoring := GetMonitoredEntities(sysInfo)
-	require.Equal(t, len(monitoring), 4, fmt.Sprintf("Should have 4 monitored entities but found %d", len(monitoring)))
+	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored entities but found %d", len(monitoring)))
 	instanceCount := 0
 	gpuCount := 0
 	for _, mi := range monitoring {
@@ -72,7 +72,7 @@ func TestMonitoredEntities(t *testing.T) {
 		}
 	}
 	require.Equal(t, instanceCount, 2, "Expected 2 GPU instances but found %d", instanceCount)
-	require.Equal(t, gpuCount, 2, "Expected 2 GPUs but found %d", gpuCount)
+	require.Equal(t, gpuCount, 0, "Expected 0 GPUs but found %d", gpuCount)
 
 	sysInfo.MigEnabled = false // we are now monitoring the GPUs
 	monitoring = GetMonitoredEntities(sysInfo)

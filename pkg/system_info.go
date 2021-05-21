@@ -297,13 +297,14 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
 	if sysInfo.dOpt.Flex == true {
-		monitoring = AddAllGpus(sysInfo)
 		if sysInfo.MigEnabled == true {
-			return append(monitoring, AddAllGpuInstances(sysInfo)...)
+			return AddAllGpuInstances(sysInfo)
+		} else {
+			return AddAllGpus(sysInfo)
 		}
 	} else {
 		if len(sysInfo.dOpt.GpuRange) > 0 && sysInfo.dOpt.GpuRange[0] == -1 {
-			monitoring = append(monitoring, AddAllGpus(sysInfo)...)
+			return AddAllGpus(sysInfo)
 		} else {
 			for _, gpuId := range sysInfo.dOpt.GpuRange {
 				// We've already verified that everying in the options list exists
@@ -312,7 +313,7 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 		}
 
 		if len(sysInfo.dOpt.GpuInstanceRange) > 0 && sysInfo.dOpt.GpuInstanceRange[0] == -1 {
-			monitoring = append(monitoring, AddAllGpuInstances(sysInfo)...)
+			return AddAllGpuInstances(sysInfo)
 		} else {
 			for _, gpuInstanceId := range sysInfo.dOpt.GpuInstanceRange {
 				// We've already verified that everything in the options list exists

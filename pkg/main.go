@@ -51,14 +51,14 @@ func main() {
 	c.Usage = "Generates GPU metrics in the prometheus format"
 	c.Version = BuildVersion
 
-	DeviceUsageStr := "Specify which devices dcgm-exporter monitors. Possible values: [%s] or [%s[:id1[,-id2...]+]" +
-		"%s[:id1[,-id2...].\nIf an id list is used, then devices with match IDs must exist on the " +
-		"system. For example:\n\tf (default) = monitor all GPU instances in MIG mode, all GPUs if " +
-		"MIG mode is disabled.\n\tg = Monitor all GPUs\n\ti = Monitor all GPU instances\n\tg+i = " +
-		"monitor all GPUs and GPU instances\n\tg:0,1 = monitor GPUs 0 and 1\n\ti:0,2-4 = monitor GPU " +
+	DeviceUsageStr := "Specify which devices dcgm-exporter monitors. Possible values: [%s] or [%s[:id1[,-id2...]]" +
+		".\nIf an id list is used, then devices with match IDs must exist on the system. For example:\n\tf " +
+		"(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled.\n\tg = Monitor all " +
+		"GPUs\n\ti = Monitor all GPU instances\n\tg:0,1 = monitor GPUs 0 and 1\n\ti:0,2-4 = monitor GPU " +
 		"instances 0, 2, 3, and 4.\n\n\tNOTE 1: i cannot be specified unless MIG mode is enabled.\n" +
 		"NOTE 2: Any time indices are specified, those indicies must exist on the system.\nNOTE 3: " +
-		"In in MIG mode -f and -g+i (without indices) effectively have the same result."
+		"In in MIG mode, only -f or -i with a range can be specified. GPUs are not assigned to pods " +
+		"and therefore reporting must occur at the GPU instance level."
 
 	c.Flags = []cli.Flag{
 		&cli.StringFlag{
@@ -283,16 +283,62 @@ func parseDeviceOptionsToken(token string, dOpt *DeviceOptions) error {
 func parseDeviceOptions(c *cli.Context) (DeviceOptions, error) {
 	var dOpt DeviceOptions
 	devices := c.String(CLIDevices)
-	tokens := strings.Split(devices, "+")
-	if len(tokens) > 2 {
-		return dOpt, fmt.Errorf("Invalid devices string '%s': cannot have more than 1 '+'", devices)
+
+	letterAndRange := strings.Split(devices, ":")
+	count := len(letterAndRange)
+	if count > 2 {
+		return dOpt, fmt.Errorf("Invalid ranged device option '%s': there can only be one specified range", devices)
 	}
 
-	for _, token := range tokens {
-		err := parseDeviceOptionsToken(token, &dOpt)
-		if err != nil {
-			return dOpt, err
+	letter := letterAndRange[0]
+	if letter == FlexKey {
+		dOpt.Flex = true
+		if count > 1 {
+			return dOpt, fmt.Errorf("No range can be specified with the flex option 'f'")
 		}
+	} else if letter == GPUKey || letter == GPUInstanceKey {
+		var indices []int
+		if count == 1 {
+			// No range means all present devices of the type
+			indices = append(indices, -1)
+		} else {
+			numbers := strings.Split(letterAndRange[1], ",")
+			for _, numberOrRange := range numbers {
+				rangeTokens := strings.Split(numberOrRange, "-")
+				rangeTokenCount := len(rangeTokens)
+				if rangeTokenCount > 2 {
+					return dOpt, fmt.Errorf("A range can only be '<number>-<number>', but found '%s'", numberOrRange)
+				} else if rangeTokenCount == 1 {
+					number, err := strconv.Atoi(rangeTokens[0])
+					if err != nil {
+						return dOpt, err
+					}
+					indices = append(indices, number)
+				} else {
+					start, err := strconv.Atoi(rangeTokens[0])
+					if err != nil {
+						return dOpt, err
+					}
+					end, err := strconv.Atoi(rangeTokens[1])
+					if err != nil {
+						return dOpt, err
+					}
+
+					// Add the range to the indices
+					for i := start; i <= end; i++ {
+						indices = append(indices, i)
+					}
+				}
+			}
+		}
+
+		if letter == GPUKey {
+			dOpt.GpuRange = indices
+		} else {
+			dOpt.GpuInstanceRange = indices
+		}
+	} else {
+		return dOpt, fmt.Errorf("The only valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
 	}
 
 	return dOpt, nil
