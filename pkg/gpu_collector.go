@@ -79,26 +79,13 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 	return metrics, nil
 }
 
-func ShouldIgnoreValue(fieldId dcgm.Short, isGpu bool) bool {
-	fieldMeta := dcgm.FieldGetById(fieldId)
-	if isGpu {
-		return false
-	} else {
-		if fieldMeta.EntityLevel == dcgm.FE_GPU_I || fieldMeta.EntityLevel == dcgm.FE_GPU_CI {
-			return false
-		}
-	}
-
-	return true
-}
-
 func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GpuInstanceInfo, useOld bool, hostname string) []Metric {
 	var metrics []Metric
 
 	for i, val := range values {
 		v := ToString(val)
 		// Filter out counters with no value and ignored fields for this entity
-		if v == SkipDCGMValue || ShouldIgnoreValue(dcgm.Short(val.FieldId), instanceInfo == nil) {
+		if v == SkipDCGMValue {
 			continue
 		}
 		uuid := "UUID"
