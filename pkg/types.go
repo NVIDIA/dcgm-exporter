@@ -113,9 +113,10 @@ type Metric struct {
 	Name  string
 	Value string
 
-	GPU       string
-	GPUUUID   string
-	GPUDevice string
+	GPU          string
+	GPUUUID      string
+	GPUDevice    string
+	GPUModelName string
 
 	UUID string
 
