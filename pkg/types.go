@@ -88,8 +88,8 @@ type MetricsPipeline struct {
 	transformations  []Transform
 	metricsFormat    *template.Template
 	migMetricsFormat *template.Template
-	countersText     string
 
+	counters     []Counter
 	gpuCollector *DCGMCollector
 }
 
@@ -110,8 +110,8 @@ type Counter struct {
 }
 
 type Metric struct {
-	Name  string
-	Value string
+	Counter *Counter
+	Value   string
 
 	GPU          string
 	GPUUUID      string
