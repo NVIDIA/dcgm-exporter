@@ -14,13 +14,15 @@ COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ARG DCGM_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcap2-bin \
-    libgomp1 \
-    wget && \
-    rm -rf /var/lib/apt/lists/* && \
-    wget --no-check-certificate https://developer.download.nvidia.com/compute/redist/dcgm/${DCGM_VERSION}/DEBS/datacenter-gpu-manager_${DCGM_VERSION}_amd64.deb && \
-    dpkg -i datacenter-gpu-manager_*.deb && \
-    rm -f datacenter-gpu-manager_*.deb
+    libcap2-bin gnupg2 curl ca-certificates && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub | apt-key add - && \
+    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
+    echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list && \
+    apt-get purge --autoremove -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    datacenter-gpu-manager=1:${DCGM_VERSION} && apt-get purge --autoremove -y openssl
 
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
