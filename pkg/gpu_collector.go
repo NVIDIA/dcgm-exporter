@@ -93,8 +93,8 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 			uuid = "uuid"
 		}
 		m := Metric{
-			Name:  c[i].FieldName,
-			Value: v,
+			Counter: &c[i],
+			Value:   v,
 
 			UUID:         uuid,
 			GPU:          fmt.Sprintf("%d", d.GPU),
@@ -116,7 +116,6 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 	}
 
 	return metrics
-
 }
 
 func ToString(value dcgm.FieldValue_v1) string {

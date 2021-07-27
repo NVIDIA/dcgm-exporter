@@ -32,13 +32,6 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
-	// Note this is an optimisation, we don't need to format these
-	// at every pipeline run.
-	countersText, err := FormatCounters(counters)
-	if err != nil {
-		return nil, func() {}, err
-	}
-
 	gpuCollector, cleanup, err := NewDCGMCollector(counters, c)
 	if err != nil {
 		return nil, func() {}, err
@@ -54,8 +47,8 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 
 			metricsFormat:    template.Must(template.New("metrics").Parse(metricsFormat)),
 			migMetricsFormat: template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
-			countersText:     countersText,
 
+			counters:        counters,
 			gpuCollector:    gpuCollector,
 			transformations: transformations,
 		}, func() {
@@ -65,18 +58,13 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 
 // Primarely for testing, caller expected to cleanup the collector
 func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*MetricsPipeline, func(), error) {
-	countersText, err := FormatCounters(collector.Counters)
-	if err != nil {
-		return nil, func() {}, err
-	}
-
 	return &MetricsPipeline{
 		config: c,
 
 		metricsFormat:    template.Must(template.New("metrics").Parse(metricsFormat)),
 		migMetricsFormat: template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
-		countersText:     countersText,
 
+		counters:     collector.Counters,
 		gpuCollector: collector,
 	}, func() {}, nil
 }
@@ -125,7 +113,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	formated, err := FormatMetrics(m.countersText, m.migMetricsFormat, metrics)
+	formated, err := FormatMetrics(m.migMetricsFormat, metrics)
 	if err != nil {
 		return "", fmt.Errorf("Failed to format metrics with error: %v", err)
 	}
@@ -138,64 +126,57 @@ func (m *MetricsPipeline) run() (string, error) {
 * ```
 * # HELP FIELD_ID HELP_MSG
 * # TYPE FIELD_ID PROM_TYPE
-* ...
 * FIELD_ID{gpu="GPU_INDEX_0",uuid="GPU_UUID", attr...} VALUE
-* ...
 * FIELD_ID{gpu="GPU_INDEX_N",uuid="GPU_UUID", attr...} VALUE
+* ...
 * ```
-*
-* The expectation is that the template will be given the following
-* values: {.Fields, .Devices, .Values[Device][Field]}
-*
  */
 
-var countersFormat = `{{- range $c := . -}}
-# HELP {{ $c.FieldName }} {{ $c.Help }}
-# TYPE {{ $c.FieldName }} {{ $c.PromType }}
-{{ end }}`
-
-func FormatCounters(c []Counter) (string, error) {
-	var res bytes.Buffer
-
-	t := template.Must(template.New("counters").Parse(countersFormat))
-	if err := t.Execute(&res, c); err != nil {
-		return "", err
-	}
-
-	return res.String(), nil
-}
-
 var metricsFormat = `
-{{ range $dev := . }}{{ range $val := $dev }}
-{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}",modelName="{{ $val.GPUModelName }}"
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{gpu="{{ $metric.GPU }}",{{ $metric.UUID }}="{{ $metric.GPUUUID }}",device="{{ $metric.GPUDevice }}",modelName="{{ $metric.GPUModelName }}"
 
-{{- range $k, $v := $val.Attributes -}}
+{{- range $k, $v := $metric.Attributes -}}
 	,{{ $k }}="{{ $v }}"
 {{- end -}}
 
-} {{ $val.Value }}
+} {{ $metric.Value -}}
 {{- end }}
 {{ end }}`
 
 var migMetricsFormat = `
-{{ range $dev := . }}{{ range $val := $dev }}
-{{ $val.Name }}{gpu="{{ $val.GPU }}",{{ $val.UUID }}="{{ $val.GPUUUID }}",device="{{ $val.GPUDevice }}",modelName="{{ $val.GPUModelName }}"{{if $val.MigProfile}},GPU_I_PROFILE="{{ $val.MigProfile }}",GPU_I_ID="{{ $val.GPUInstanceID }}"{{end}}{{if $val.Hostname }},Hostname="{{ $val.Hostname }}"{{end}}
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{gpu="{{ $metric.GPU }}",{{ $metric.UUID }}="{{ $metric.GPUUUID }}",device="{{ $metric.GPUDevice }}",modelName="{{ $metric.GPUModelName }}"{{if $metric.MigProfile}},GPU_I_PROFILE="{{ $metric.MigProfile }}",GPU_I_ID="{{ $metric.GPUInstanceID }}"{{end}}{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
 
-{{- range $k, $v := $val.Attributes -}}
+{{- range $k, $v := $metric.Attributes -}}
 	,{{ $k }}="{{ $v }}"
 {{- end -}}
 
-} {{ $val.Value }}
+} {{ $metric.Value -}}
 {{- end }}
 {{ end }}`
 
 // Template is passed here so that it isn't recompiled at each iteration
-func FormatMetrics(countersText string, t *template.Template, m [][]Metric) (string, error) {
-	var res bytes.Buffer
+func FormatMetrics(t *template.Template, m [][]Metric) (string, error) {
+	// Group metrics by counter instead of by device
+	groupedMetrics := make(map[*Counter][]Metric)
+	for _, deviceMetrics := range m {
+		for _, deviceMetric := range deviceMetrics {
+			groupedMetrics[deviceMetric.Counter] = append(groupedMetrics[deviceMetric.Counter], deviceMetric)
+		}
+	}
 
-	if err := t.Execute(&res, m); err != nil {
+	// Format metrics
+	var res bytes.Buffer
+	if err := t.Execute(&res, groupedMetrics); err != nil {
 		return "", err
 	}
 
-	return countersText + res.String(), nil
+	return res.String(), nil
 }
