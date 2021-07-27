@@ -2,6 +2,8 @@
 
 This repository contains Golang bindings and DCGM-Exporter for gathering GPU telemetry in Kubernetes.
 
+**July 2021 - Update #1: The DCGM Go bindings have moved to github.com/NVIDIA/go-dcgm. The DCGM bindings in this repo are no longer maintained and will eventually be removed.
+
 **June 2021 - NOTICE: Some of the tools in this repository are graduating to their own repos. In the next few weeks both the DCGM Go bindings and the DCGM Exporter will be migrating to github.com/NVIDIA. This will allow for independent versioning, issues, MRs, etc. Efforts will be made to review the existing MRs and issues before the migration occurs.**
 
 ## Bindings

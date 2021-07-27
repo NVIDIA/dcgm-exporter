@@ -10,10 +10,9 @@ FROM nvcr.io/nvidia/cuda:11.2.1-base-ubi8
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 ARG DCGM_VERSION
-RUN yum install -y wget libgomp && \
-    wget --no-check-certificate https://developer.download.nvidia.com/compute/redist/dcgm/${DCGM_VERSION}/RPMS/x86_64/datacenter-gpu-manager-${DCGM_VERSION}-1-x86_64.rpm && \
-    rpm -i ./datacenter-gpu-manager-*.rpm && \
-    rm ./datacenter-gpu-manager-*.rpm
+RUN dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo &&  \
+    dnf clean expire-cache
+RUN dnf install -y datacenter-gpu-manager-${DCGM_VERSION}
 
 COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/pkg/dcgm-exporter /usr/bin/
 COPY etc/dcgm-exporter /etc/dcgm-exporter
