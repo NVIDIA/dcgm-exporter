@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
@@ -109,7 +109,7 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 }
 
 func CreateTmpDir(t *testing.T) func() {
-	path, err := ioutil.TempDir("", "gpu-monitoring-tools")
+	path, err := ioutil.TempDir("", "dcgm-exporter")
 	require.NoError(t, err)
 
 	tmpDir = path

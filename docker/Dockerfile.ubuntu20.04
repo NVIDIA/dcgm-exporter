@@ -1,6 +1,6 @@
 ARG GOLANG_VERSION
 FROM golang:$GOLANG_VERSION AS builder
-WORKDIR /go/src/github.com/NVIDIA/gpu-monitoring-tools
+WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
 COPY . .
 
@@ -9,7 +9,7 @@ RUN make binary check-format
 FROM nvcr.io/nvidia/cuda:11.2.1-base-ubuntu20.04
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
-COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/pkg/dcgm-exporter /usr/bin/
+COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/pkg/dcgm-exporter /usr/bin/
 COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ARG DCGM_VERSION

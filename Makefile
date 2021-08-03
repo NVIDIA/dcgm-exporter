@@ -25,7 +25,7 @@ NON_TEST_FILES  := pkg/dcgm.go pkg/gpu_collector.go pkg/parser.go pkg/pipeline.g
 MAIN_TEST_FILES := pkg/system_info_test.go
 
 .PHONY: all binary install check-format
-all: ubuntu18.04 ubuntu20.04 ubi8
+all: ubuntu20.04 ubi8
 
 binary:
 	cd pkg; go build
@@ -43,20 +43,7 @@ check-format:
 
 push:
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04"
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
-
-push-short:
-	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(DCGM_VERSION)"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(DCGM_VERSION)"
-
-push-ci:
-	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:$(VERSION)"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(VERSION)"
-
-push-latest:
-	$(DOCKER) tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" "$(REGISTRY)/dcgm-exporter:latest"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:latest"
 
 ubuntu20.04:
 	$(DOCKER) build --pull \
@@ -65,13 +52,6 @@ ubuntu20.04:
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04" \
 		--file docker/Dockerfile.ubuntu20.04 .
 
-ubuntu18.04:
-	$(DOCKER) build --pull \
-		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
-		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu18.04" \
-		--file docker/Dockerfile.ubuntu18.04 .
-
 ubi8:
 	$(DOCKER) build --pull \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
@@ -79,4 +59,3 @@ ubi8:
 		--build-arg "VERSION=$(FULL_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8" \
 		--file docker/Dockerfile.ubi8 .
-

@@ -1,6 +1,6 @@
 ARG GOLANG_VERSION
 FROM golang:$GOLANG_VERSION AS builder
-WORKDIR /go/src/github.com/NVIDIA/gpu-monitoring-tools
+WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
 COPY . .
 
@@ -14,7 +14,7 @@ RUN dnf config-manager --add-repo https://developer.download.nvidia.com/compute/
     dnf clean expire-cache
 RUN dnf install -y datacenter-gpu-manager-${DCGM_VERSION}
 
-COPY --from=builder /go/src/github.com/NVIDIA/gpu-monitoring-tools/pkg/dcgm-exporter /usr/bin/
+COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/pkg/dcgm-exporter /usr/bin/
 COPY etc/dcgm-exporter /etc/dcgm-exporter
 
 ENV NVIDIA_VISIBLE_DEVICES=all

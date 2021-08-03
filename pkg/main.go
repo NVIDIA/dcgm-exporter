@@ -25,7 +25,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm"
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )

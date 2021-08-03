@@ -5,8 +5,8 @@ version: "2.4.0"
 kubeVersion: ">= 1.13.0-0"
 appVersion: "2.4.0"
 sources:
-- https://gitlab.com/nvidia/container-toolkit/gpu-monitoring-tools
-home: https://github.com/nvidia/gpu-monitoring-tools/
+- https://github.com/nvidia/dcgm-exporter
+home: https://github.com/nvidia/dcgm-exporter/
 icon: https://assets.nvidiagrid.net/ngc/logos/DCGM.png
 keywords:
   - gpu

@@ -1,6 +1,6 @@
-# Contribute to the GPU Operator Project
+# Contribute to the DCGM-Exporter Project
 
-Want to hack on the NVIDIA Container Toolkit Project? Awesome!
+Want to hack on the NVIDIA DCGM-Exporter Project? Awesome!
 We only require you to sign your work, the below section describes this!
 
 ## Sign your work

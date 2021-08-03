@@ -1,28 +1,12 @@
-# NVIDIA GPU Monitoring Tools
+# DCGM-Exporter
 
-This repository contains Golang bindings and DCGM-Exporter for gathering GPU telemetry in Kubernetes.
-
-**July 2021 - Update #1: The DCGM Go bindings have moved to github.com/NVIDIA/go-dcgm. The DCGM bindings in this repo are no longer maintained and will eventually be removed.
-
-**June 2021 - NOTICE: Some of the tools in this repository are graduating to their own repos. In the next few weeks both the DCGM Go bindings and the DCGM Exporter will be migrating to github.com/NVIDIA. This will allow for independent versioning, issues, MRs, etc. Efforts will be made to review the existing MRs and issues before the migration occurs.**
-
-## Bindings
-
-Golang bindings are provided for the following two libraries:
-- [NVIDIA Management Library (NVML)](https://docs.nvidia.com/deploy/nvml-api/nvml-api-reference.html#nvml-api-reference) is a C-based API for monitoring and managing NVIDIA GPU devices.
-- [NVIDIA Data Center GPU Manager (DCGM)](https://developer.nvidia.com/dcgm) is a set of tools for managing and monitoring NVIDIA GPUs in cluster environments. It's a low overhead tool suite that performs a variety of functions on each host system including active health monitoring, diagnostics, system validation, policies, power and clock management, group configuration and accounting.
-
-You will also find samples for both of these bindings in this repository.
-
-## DCGM-Exporter
-
-The repository also contains DCGM-Exporter. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA DCGM](https://developer.nvidia.com/dcgm).
+The repository the contains DCGM-Exporter project. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA DCGM](https://developer.nvidia.com/dcgm).
 
 ### Quickstart
 
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 ```
-$ docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:2.0.13-2.1.2-ubuntu18.04
+$ docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:2.2.9-2.4.0-ubuntu18.04
 $ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -46,7 +30,7 @@ Ensure you have already setup your cluster with the [default runtime as NVIDIA](
 The recommended way to install DCGM-Exporter is to use the Helm chart: 
 ```
 $ helm repo add gpu-helm-charts \
-  https://nvidia.github.io/gpu-monitoring-tools/helm-charts
+  https://nvidia.github.io/dcgm-exporter/helm-charts
 ```
 Update the repo:
 ```
@@ -63,7 +47,7 @@ Once the `dcgm-exporter` pod is deployed, you can use port forwarding to obtain 
 
 
 ```
-$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/gpu-monitoring-tools/master/dcgm-exporter.yaml
+$ kubectl create -f https://raw.githubusercontent.com/NVIDIA/dcgm-exporter/master/dcgm-exporter.yaml
 
 # Let's get the output of a random pod:
 $ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter" \
@@ -95,8 +79,8 @@ Ensure you have the following:
 - [DCGM installed](https://developer.nvidia.com/dcgm)
 
 ```
-$ git clone https://github.com/NVIDIA/gpu-monitoring-tools.git
-$ cd gpu-monitoring-tools
+$ git clone https://github.com/NVIDIA/dcgm-exporter.git
+$ cd dcgm-exporter
 $ make binary
 $ sudo make install
 ...
@@ -153,5 +137,5 @@ Pull requests are accepted!
 
 [Checkout the Contributing document!](CONTRIBUTING.md)
 
-* Please let us know by [filing a new issue](https://github.com/NVIDIA/gpu-monitoring-tools/issues/new)
-* You can contribute by opening a [pull request](https://gitlab.com/nvidia/container-toolkit/gpu-monitoring-tools)
+* Please let us know by [filing a new issue](https://github.com/NVIDIA/dcgm-exporter/issues/new)
+* You can contribute by opening a [pull request](https://github.com/NVIDIA/dcgm-exporter)

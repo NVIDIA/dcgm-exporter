@@ -1,7 +1,6 @@
 # Release
 
 This document, the release process as well as the versioning strategy for the DCGM exporter.
-In the future this document will also contain information about the go bindings.
 
 ## Versioning
 

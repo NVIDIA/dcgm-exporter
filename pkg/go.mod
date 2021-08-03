@@ -3,7 +3,6 @@ module dcgm-exporter
 go 1.14
 
 replace (
-	github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm => ../bindings/go/dcgm
 	k8s.io/api => k8s.io/api v0.20.2
 	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.20.2
 	k8s.io/apimachinery => k8s.io/apimachinery v0.20.2
@@ -29,7 +28,7 @@ replace (
 
 require (
 	github.com/Masterminds/semver v1.5.0 // indirect
-	github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm v0.0.0-00010101000000-000000000000
+	github.com/NVIDIA/go-dcgm v0.0.0-20210714205848-88afcd174ede // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/sirupsen/logrus v1.7.0
 	github.com/stretchr/testify v1.6.1

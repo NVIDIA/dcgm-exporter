@@ -41,7 +41,7 @@ e2e:
     - ssh -i aws-kube-ci/key ${instance_hostname} \
       "export CI_COMMIT_SHORT_SHA=${CI_COMMIT_SHORT_SHA} &&
        export CI_REGISTRY_IMAGE=${CI_REGISTRY_IMAGE} &&
-       cd ~/gpu-monitoring-tools && sudo -E ./tests/ci-run-e2e.sh"
+       cd ~/dcgm-exporter && sudo -E ./tests/ci-run-e2e.sh"
 
 aws_kube_clean:
   extends: .aws_kube_clean
