@@ -39,7 +39,7 @@ install: binary
 	install -m 557 -D ./etc/dcgm-exporter/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
 check-format:
-	test $$(gofmt -l pkg bindings | tee /dev/stderr | wc -l) -eq 0
+	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
 
 push:
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04"
