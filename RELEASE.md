@@ -1,19 +1,18 @@
 # Release
 
-This document, the release process as well as the versioning strategy for the DCGM exporter.
+This documents the release process as well as the versioning strategy for the DCGM exporter.
 
 ## Versioning
 
-The DCGM container posses three major components:
+The DCGM container has three major components:
 - The DCGM Version (e.g: 1.17.3)
 - The Exporter Version (e.g: 2.0.0)
 - The platform of the container (e.g: ubuntu18.04)
 
-The overall version of the DCGM container has four forms:
+The overall version of the DCGM container has three forms:
 - The long form: `${DCGM_VERSION}-${EXPORTER_VERSION}-${PLATFORM}`
 - The short form: `${DCGM_VERSION}`
 - The latest tag: `latest`
-- The commit form: `${CI_COMMIT_SHORT_SHA}` only available on the gitlab registry
 
 The long form is a unique tag that once pushed will always refer to the same container.
 This means that no updates will be made to that tag and it will always point to the same container.
@@ -25,8 +24,4 @@ Note: We do not maintain multiple version branches.
 
 ## Releases
 
-Release of newer versions is done on demand and does not follow DCGM's release cadence.
-Though it is very likely that when a new version of DCGM comes out a new version of the exporter will be released.
-
-All commit to the master branch generates an image on the gitlab registry.
-Tagging a version will push an image to the nvidia/dcgm-exporter repository on the Dockerhub
+Newer versions are released on demand but tend to follow DCGM's release cadence.
