@@ -36,7 +36,7 @@ install::helm() {
 }
 
 install::dcgm::exporter() {
-	helm package deployment/dcgm-exporter
+	helm package deployment
 	helm install --wait dcgm-exporter ./*.tgz --set "image.repository=${CI_REGISTRY_IMAGE}/dcgm-exporter" --set "image.tag=${CI_COMMIT_SHORT_SHA}" --set "serviceMonitor.enabled=true"
 }
 
