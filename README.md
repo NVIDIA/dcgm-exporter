@@ -2,6 +2,10 @@
 
 This repository contains the DCGM-Exporter project. It exposes GPU metrics exporter for [Prometheus](https://prometheus.io/) leveraging [NVIDIA DCGM](https://developer.nvidia.com/dcgm).
 
+### Documentation
+
+Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/dcgm-exporter.html).
+
 ### Quickstart
 
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
