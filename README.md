@@ -73,8 +73,7 @@ To integrate DCGM-Exporter with Prometheus and Grafana, see the full instruction
 
 ### Building from Source
 
-`dcgm-exporter` is actually fairly straightforward to build and use.
-Ensure you have the following:
+In order to build dcgm-exporter ensure you have the following:
 - [Golang >= 1.14 installed](https://golang.org/)
 - [DCGM installed](https://developer.nvidia.com/dcgm)
 
@@ -102,10 +101,9 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 ### Changing Metrics
 
 With `dcgm-exporter` you can configure which fields are collected by specifying a custom CSV file.
-You will find the default CSV file under `etc/dcgm-exporter/default-counters.csv` in the repository, which is copied on your system or container at 
-`/etc/dcgm-exporter/default-counters.csv`
+You will find the default CSV file under `etc/default-counters.csv` in the repository, which is copied on your system or container to `/etc/dcgm-exporter/default-counters.csv`
 
-The format of this file is pretty straightforward:
+The layout and format of this file is as follows:
 ```
 # Format,,
 # If line starts with a '#' it is considered a comment,,
@@ -122,7 +120,7 @@ $ dcgm-exporter -f /tmp/custom-collectors.csv
 ```
 
 Notes:
-- Always make sure your entries have 3 commas (',')
+- Always make sure your entries have 2 commas (',')
 - The complete list of counters that can be collected can be found on the DCGM API reference manual: https://docs.nvidia.com/datacenter/dcgm/latest/dcgm-api/group__dcgmFieldIdentifiers.html
 
 ### What about a Grafana Dashboard?
