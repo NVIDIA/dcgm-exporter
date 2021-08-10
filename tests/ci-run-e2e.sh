@@ -41,7 +41,7 @@ install::dcgm::exporter() {
 }
 
 install::prom() {
-	helm repo add stable https://kubernetes-charts.storage.googleapis.com
+	helm repo add stable https://charts.helm.sh/stable
 	helm install --wait stable/prometheus-operator --generate-name \
 		--set "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false"
 }
