@@ -35,8 +35,8 @@ test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
 
 install: binary
 	install -m 557 pkg/dcgm-exporter /usr/bin/dcgm-exporter
-	install -m 557 -D ./etc/dcgm-exporter/default-counters.csv /etc/dcgm-exporter/default-counters.csv
-	install -m 557 -D ./etc/dcgm-exporter/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
+	install -m 557 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
+	install -m 557 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
 check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
