@@ -17,12 +17,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"text/template"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -51,14 +53,27 @@ func main() {
 	c.Usage = "Generates GPU metrics in the prometheus format"
 	c.Version = BuildVersion
 
-	DeviceUsageStr := "Specify which devices dcgm-exporter monitors. Possible values: [%s] or [%s[:id1[,-id2...]]" +
-		".\nIf an id list is used, then devices with match IDs must exist on the system. For example:\n\tf " +
-		"(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled.\n\tg = Monitor all " +
-		"GPUs\n\ti = Monitor all GPU instances\n\tg:0,1 = monitor GPUs 0 and 1\n\ti:0,2-4 = monitor GPU " +
-		"instances 0, 2, 3, and 4.\n\n\tNOTE 1: i cannot be specified unless MIG mode is enabled.\n" +
-		"NOTE 2: Any time indices are specified, those indicies must exist on the system.\nNOTE 3: " +
-		"In in MIG mode, only -f or -i with a range can be specified. GPUs are not assigned to pods " +
-		"and therefore reporting must occur at the GPU instance level."
+	deviceUsageTemplate := `Specify which devices dcgm-exporter monitors.
+	Possible values: {{.FlexKey}} or 
+	                 {{.GPUKey}}[:id1[,-id2...] or 
+	                 {{.GPUInstanceKey}}[:id1[,-id2...].
+	If an id list is used, then devices with match IDs must exist on the system. For example:
+		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled.
+		{{.GPUKey}} = Monitor all GPUs
+		{{.GPUInstanceKey}} = Monitor all GPU instances
+		{{.FlexKey}} = Monitor all GPUs if MIG is disabled, or all GPU instances if MIG is enabled
+		{{.GPUKey}}:0,1 = monitor GPUs 0 and 1
+		{{.GPUInstanceKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
+	
+	NOTE 1: -i cannot be specified unless MIG mode is enabled.
+	NOTE 2: Any time indices are specified, those indices must exist on the system.	
+	NOTE 3: In MIG mode, only -f or -i with a range can be specified. GPUs are not assigned to pods
+		and therefore reporting must occur at the GPU instance level.`
+
+	var deviceUsageBuffer bytes.Buffer
+	t := template.Must(template.New("").Parse(deviceUsageTemplate))
+	_ = t.Execute(&deviceUsageBuffer, map[string]string{"FlexKey": FlexKey, "GPUKey": GPUKey, "GPUInstanceKey": GPUInstanceKey})
+	DeviceUsageStr := deviceUsageBuffer.String()
 
 	c.Flags = []cli.Flag{
 		&cli.StringFlag{
@@ -113,7 +128,7 @@ func main() {
 			Name:    CLIDevices,
 			Aliases: []string{"d"},
 			Value:   FlexKey,
-			Usage:   fmt.Sprintf(DeviceUsageStr, FlexKey, GPUKey, GPUInstanceKey),
+			Usage:   DeviceUsageStr,
 			EnvVars: []string{"DCGM_EXPORTER_DEVICES_STR"},
 		},
 		&cli.BoolFlag{
