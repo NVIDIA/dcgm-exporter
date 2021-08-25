@@ -44,7 +44,7 @@ func NewDCGMCollector(c []Counter, config *Config) (*DCGMCollector, func(), erro
 		Hostname:        hostname,
 	}
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, sysInfo)
+	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, sysInfo, int64(config.CollectInterval)*1000)
 	if err != nil {
 		return nil, func() {}, err
 	}

@@ -50,8 +50,8 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	return fieldGroup, func() { dcgm.FieldGroupDestroy(fieldGroup) }, nil
 }
 
-func WatchFieldGroup(group dcgm.GroupHandle, field dcgm.FieldHandle) error {
-	err := dcgm.WatchFieldsWithGroup(field, group)
+func WatchFieldGroup(group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32) error {
+	err := dcgm.WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func WatchFieldGroup(group dcgm.GroupHandle, field dcgm.FieldHandle) error {
 	return nil
 }
 
-func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo) ([]func(), error) {
+func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collectIntervalUsec int64) ([]func(), error) {
 	var err error
 	var cleanups []func()
 	var cleanup func()
@@ -80,7 +80,7 @@ func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo) ([]func
 
 	cleanups = append(cleanups, cleanup)
 
-	err = WatchFieldGroup(group, fieldGroup)
+	err = WatchFieldGroup(group, fieldGroup, collectIntervalUsec, 0.0, 1)
 	if err != nil {
 		goto fail
 	}

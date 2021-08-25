@@ -28,7 +28,7 @@ replace (
 
 require (
 	github.com/Masterminds/semver v1.5.0 // indirect
-	github.com/NVIDIA/go-dcgm v0.0.0-20210714205848-88afcd174ede // indirect
+	github.com/NVIDIA/go-dcgm v0.0.0-20210825154740-df776fdbfea0 // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/sirupsen/logrus v1.7.0
 	github.com/stretchr/testify v1.6.1
