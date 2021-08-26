@@ -13,6 +13,7 @@ COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/pkg/dcgm-exporter /u
 COPY etc /etc/dcgm-exporter
 
 ARG DCGM_VERSION
+RUN rm /etc/apt/sources.list.d/nvidia-ml.list && rm  /etc/apt/sources.list.d/cuda.list && apt-get clean && apt-get update
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcap2-bin gnupg2 curl ca-certificates && \
     curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub | apt-key add - && \
