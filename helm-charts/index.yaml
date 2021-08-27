@@ -2,6 +2,27 @@ apiVersion: v1
 entries:
   dcgm-exporter:
   - apiVersion: v2
+    appVersion: 2.4.1
+    created: "2021-08-27T07:55:04.197537915-06:00"
+    description: A Helm chart for DCGM exporter
+    digest: 209de8c1e9f06dfafe1506872077ee01ce0e079b65775d094813e8bf13a16c09
+    home: https://github.com/nvidia/dcgm-exporter/
+    icon: https://assets.nvidiagrid.net/ngc/logos/DCGM.png
+    keywords:
+    - gpu
+    - cuda
+    - compute
+    - monitoring
+    - telemetry
+    - tesla
+    kubeVersion: '>= 1.13.0-0'
+    name: dcgm-exporter
+    sources:
+    - https://github.com/nvidia/dcgm-exporter
+    urls:
+    - https://nvidia.github.io/dcgm-exporter/helm-charts/dcgm-exporter-2.4.1.tgz
+    version: 2.4.1
+  - apiVersion: v2
     appVersion: 2.4.0
     created: "2021-08-18T16:28:41.653140859-06:00"
     description: A Helm chart for DCGM exporter
@@ -160,4 +181,4 @@ entries:
     urls:
     - https://nvidia.github.io/dcgm-exporter/helm-charts/dcgm-exporter-1.1.0.tgz
     version: 1.1.0
-generated: "2021-08-18T16:28:41.651794471-06:00"
+generated: "2021-08-27T07:55:04.196970444-06:00"
