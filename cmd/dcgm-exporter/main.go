@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,6 +164,13 @@ func main() {
 	}
 }
 
+func newOSWatcher(sigs ...os.Signal) chan os.Signal {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, sigs...)
+
+	return sigChan
+}
+
 func Run(c *cli.Context) error {
 restart:
 
@@ -221,7 +229,7 @@ restart:
 	wg.Add(1)
 	go server.Run(stop, &wg)
 
-	sigs := dcgmexporter.NewOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	for {
 		select {
 		case sig := <-sigs:

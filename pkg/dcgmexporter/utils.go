@@ -18,8 +18,6 @@ package dcgmexporter
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 	"sync"
 	"time"
 )
@@ -36,11 +34,4 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("Timeout waiting for WaitGroup")
 	}
-}
-
-func NewOSWatcher(sigs ...os.Signal) chan os.Signal {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, sigs...)
-
-	return sigChan
 }
