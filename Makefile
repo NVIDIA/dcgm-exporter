@@ -1,4 +1,4 @@
-# Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,29 +17,30 @@ MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.2.9
-GOLANG_VERSION := 1.14.2
+GOLANG_VERSION := 1.17
 VERSION        := 2.4.1
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
-NON_TEST_FILES  := pkg/dcgm.go pkg/gpu_collector.go pkg/parser.go pkg/pipeline.go pkg/server.go pkg/system_info.go pkg/types.go pkg/utils.go pkg/kubernetes.go pkg/main.go
+NON_TEST_FILES  := pkg/dcgm.go pkg/gpu_collector.go pkg/parser.go pkg/pipeline.go pkg/server.go pkg/system_info.go pkg/types.go pkg/utils.go pkg/kubernetes.go cmd/dcgm-exporter/main.go
 MAIN_TEST_FILES := pkg/system_info_test.go
 
 .PHONY: all binary install check-format
 all: ubuntu20.04 ubi8
 
 binary:
-	cd pkg; go build
+	cd cmd/dcgm-exporter; go build
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
 	cd pkg; go test
 
 install: binary
-	install -m 557 pkg/dcgm-exporter /usr/bin/dcgm-exporter
+	install -m 557 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 557 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
 	install -m 557 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
 check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
+	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
 push:
 	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04"

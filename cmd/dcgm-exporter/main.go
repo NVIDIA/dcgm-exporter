@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"os"
 	"strconv"
 	"strings"
@@ -30,6 +31,12 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+)
+
+const (
+	FlexKey        = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
+	GPUKey         = "g" // Monitor GPUs
+	GPUInstanceKey = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
 )
 
 var (
@@ -119,9 +126,10 @@ func main() {
 			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
 		},
 		&cli.StringFlag{
-			Name:    CLIKubernetesGPUIDType,
-			Value:   string(GPUUID),
-			Usage:   fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'", GPUUID, DeviceName),
+			Name:  CLIKubernetesGPUIDType,
+			Value: string(dcgmexporter.GPUUID),
+			Usage: fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'",
+				dcgmexporter.GPUUID, dcgmexporter.DeviceName),
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"},
 		},
 		&cli.StringFlag{
@@ -192,13 +200,13 @@ restart:
 	}
 
 	ch := make(chan string, 10)
-	pipeline, cleanup, err := NewMetricsPipeline(config)
+	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config)
 	defer cleanup()
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
-	server, cleanup, err := NewMetricsServer(config, ch)
+	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -213,12 +221,12 @@ restart:
 	wg.Add(1)
 	go server.Run(stop, &wg)
 
-	sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	sigs := dcgmexporter.NewOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 	for {
 		select {
 		case sig := <-sigs:
 			close(stop)
-			err := WaitWithTimeout(&wg, time.Second*2)
+			err := dcgmexporter.WaitWithTimeout(&wg, time.Second*2)
 			if err != nil {
 				logrus.Fatal(err)
 			}
@@ -234,7 +242,7 @@ restart:
 	return nil
 }
 
-func parseDeviceOptionsToken(token string, dOpt *DeviceOptions) error {
+func parseDeviceOptionsToken(token string, dOpt *dcgmexporter.DeviceOptions) error {
 	letterAndRange := strings.Split(token, ":")
 	count := len(letterAndRange)
 	if count > 2 {
@@ -295,8 +303,8 @@ func parseDeviceOptionsToken(token string, dOpt *DeviceOptions) error {
 	return nil
 }
 
-func parseDeviceOptions(c *cli.Context) (DeviceOptions, error) {
-	var dOpt DeviceOptions
+func parseDeviceOptions(c *cli.Context) (dcgmexporter.DeviceOptions, error) {
+	var dOpt dcgmexporter.DeviceOptions
 	devices := c.String(CLIDevices)
 
 	letterAndRange := strings.Split(devices, ":")
@@ -359,18 +367,18 @@ func parseDeviceOptions(c *cli.Context) (DeviceOptions, error) {
 	return dOpt, nil
 }
 
-func contextToConfig(c *cli.Context) (*Config, error) {
+func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 	dOpt, err := parseDeviceOptions(c)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Config{
+	return &dcgmexporter.Config{
 		CollectorsFile:      c.String(CLIFieldsFile),
 		Address:             c.String(CLIAddress),
 		CollectInterval:     c.Int(CLICollectInterval),
 		Kubernetes:          c.Bool(CLIKubernetes),
-		KubernetesGPUIdType: KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		KubernetesGPUIdType: dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:          true,
 		UseOldNamespace:     c.Bool(CLIUseOldNamespace),
 		UseRemoteHE:         c.IsSet(CLIRemoteHEInfo),
