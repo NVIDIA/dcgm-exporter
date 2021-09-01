@@ -21,8 +21,11 @@ GOLANG_VERSION := 1.17
 VERSION        := 2.4.1
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
-NON_TEST_FILES  := pkg/dcgm.go pkg/gpu_collector.go pkg/parser.go pkg/pipeline.go pkg/server.go pkg/system_info.go pkg/types.go pkg/utils.go pkg/kubernetes.go cmd/dcgm-exporter/main.go
-MAIN_TEST_FILES := pkg/system_info_test.go
+NON_TEST_FILES  := pkg/dcgmexporter/dcgm.go pkg/dcgmexporter/gpu_collector.go pkg/dcgmexporter/parser.go
+NON_TEST_FILES  += pkg/dcgmexporter/pipeline.go pkg/dcgmexporter/server.go pkg/dcgmexporter/system_info.go
+NON_TEST_FILES  += pkg/dcgmexporter/types.go pkg/dcgmexporter/utils.go pkg/dcgmexporter/kubernetes.go
+NON_TEST_FILES  += cmd/dcgm-exporter/main.go
+MAIN_TEST_FILES := pkg/dcgmexporter/system_info_test.go
 
 .PHONY: all binary install check-format
 all: ubuntu20.04 ubi8
@@ -31,7 +34,7 @@ binary:
 	cd cmd/dcgm-exporter; go build
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
-	cd pkg; go test
+	go test ./...
 
 install: binary
 	install -m 557 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
