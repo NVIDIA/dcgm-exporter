@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,10 @@
  * limitations under the License.
  */
 
-package main
+package dcgmexporter
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 	"sync"
 	"time"
 )
@@ -36,11 +34,4 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("Timeout waiting for WaitGroup")
 	}
-}
-
-func newOSWatcher(sigs ...os.Signal) chan os.Signal {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, sigs...)
-
-	return sigChan
 }

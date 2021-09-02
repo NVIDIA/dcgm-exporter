@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package main
+package dcgmexporter
 
 import (
 	"fmt"
@@ -48,12 +48,6 @@ type KubernetesGPUIDType string
 const (
 	GPUUID     KubernetesGPUIDType = "uid"
 	DeviceName KubernetesGPUIDType = "device-name"
-)
-
-const (
-	FlexKey        = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
-	GPUKey         = "g" // Monitor GPUs
-	GPUInstanceKey = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
 )
 
 type DeviceOptions struct {
