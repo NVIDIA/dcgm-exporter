@@ -17,6 +17,7 @@
 package dcgmexporter
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -24,16 +25,38 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
-func ExtractCounters(filename string, dcpAllowed bool) ([]Counter, error) {
-	records, err := ReadCSVFile(filename)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return nil, err
+func ExtractCounters(c *Config) ([]Counter, error) {
+	var err error
+	var records [][]string
+
+	if c.ConfigMapData != undefinedConfigMapData {
+		var client kubernetes.Interface
+		client, err = getKubeClient()
+		if err == nil {
+			records, err = readConfigMap(client, c)
+		}
+	} else {
+		err = fmt.Errorf("No configmap data specified")
 	}
 
-	counters, err := extractCounters(records, dcpAllowed)
+	if err != nil {
+		logrus.Infof("%v, falling back to metric file %s", err, c.CollectorsFile)
+
+		records, err = ReadCSVFile(c.CollectorsFile)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return nil, err
+		}
+	}
+
+	counters, err := extractCounters(records, c.CollectDCP)
 	if err != nil {
 		return nil, err
 	}
@@ -126,4 +149,41 @@ func recordIsCommentOrEmpty(s []string) bool {
 	}
 
 	return false
+}
+
+func readConfigMap(kubeClient kubernetes.Interface, c *Config) ([][]string, error) {
+	parts := strings.Split(c.ConfigMapData, ":")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("Malformed configmap-data: %s", c.ConfigMapData)
+	}
+
+	var cm *corev1.ConfigMap
+	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(context.TODO(), parts[1], metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("Could not retrieve ConfigMap '%s': %v", c.ConfigMapData, err)
+	}
+
+	r := csv.NewReader(strings.NewReader(cm.Data["metrics"]))
+
+	records, err := r.ReadAll()
+
+	if len(records) == 0 {
+		return nil, fmt.Errorf("Malformed configmap contents. No metrics found")
+	}
+
+	return records, err
+}
+
+func getKubeClient() (kubernetes.Interface, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, err
 }

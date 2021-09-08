@@ -41,6 +41,8 @@ var (
 	oldPodAttribute       = "pod_name"
 	oldNamespaceAttribute = "pod_namespace"
 	oldContainerAttribute = "container_name"
+
+	undefinedConfigMapData = "none"
 )
 
 type KubernetesGPUIDType string
@@ -69,6 +71,7 @@ type Config struct {
 	Devices             DeviceOptions
 	NoHostname          bool
 	UseFakeGpus         bool
+	ConfigMapData       string
 }
 
 type Transform interface {

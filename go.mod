@@ -34,6 +34,10 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/urfave/cli/v2 v2.3.0
 	google.golang.org/grpc v1.35.0
+	k8s.io/api v0.20.2
+	k8s.io/apimachinery v0.20.2
+	k8s.io/cli-runtime v0.20.2
+	k8s.io/client-go v0.20.2
 	k8s.io/kubelet v0.20.2
 	k8s.io/kubernetes v0.0.0-00010101000000-000000000000
 )
