@@ -35,9 +35,10 @@ import (
 )
 
 const (
-	FlexKey        = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
-	GPUKey         = "g" // Monitor GPUs
-	GPUInstanceKey = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
+	FlexKey                = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
+	GPUKey                 = "g" // Monitor GPUs
+	GPUInstanceKey         = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
+	undefinedConfigMapData = "none"
 )
 
 var (
@@ -53,6 +54,7 @@ var (
 	CLIDevices             = "devices"
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
+	CLIConfigMapData       = "configmap-data"
 )
 
 func main() {
@@ -118,6 +120,13 @@ func main() {
 			Value:   false,
 			Usage:   "Use old 1.x namespace",
 			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
+		},
+		&cli.StringFlag{
+			Name:    CLIConfigMapData,
+			Aliases: []string{"m"},
+			Value:   undefinedConfigMapData,
+			Usage:   "ConfigMap <NAMESPACE>:<NAME> for metric data",
+			EnvVars: []string{"DCGM_EXPORTER_CONFIGMAP_DATA"},
 		},
 		&cli.StringFlag{
 			Name:    CLIRemoteHEInfo,
@@ -394,5 +403,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		Devices:             dOpt,
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
+		ConfigMapData:       c.String(CLIConfigMapData),
 	}, nil
 }

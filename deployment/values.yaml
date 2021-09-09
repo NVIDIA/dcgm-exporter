@@ -32,6 +32,9 @@ arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
 # Where a numeric range is something like 0-4 or 0,2,4, etc.
 # Example arguments: ["-d", "g+i"] to monitor all GPUs and GPU instances or
 # ["-d", "g:0-3"] to monitor GPUs 0-3.
+# Use "-m" to specify the namespace and name of a configmap containing
+# the watched exporter fields.
+# Example arguments: ["-m", "default:exporter-metrics-config-map"]
 
 imagePullSecrets: []
 nameOverride: ""
