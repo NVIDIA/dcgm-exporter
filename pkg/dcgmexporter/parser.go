@@ -51,7 +51,7 @@ func ExtractCounters(c *Config) ([]Counter, error) {
 
 		records, err = ReadCSVFile(c.CollectorsFile)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			logrus.Errorf("Could not read metrics file '%s': %v\n", c.CollectorsFile, err)
 			return nil, err
 		}
 	}
@@ -161,6 +161,10 @@ func readConfigMap(kubeClient kubernetes.Interface, c *Config) ([][]string, erro
 	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(context.TODO(), parts[1], metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("Could not retrieve ConfigMap '%s': %v", c.ConfigMapData, err)
+	}
+
+	if _, ok := cm.Data["metrics"]; !ok {
+		return nil, fmt.Errorf("Malformed ConfigMap '%s': no 'metrics' key", c.ConfigMapData)
 	}
 
 	r := csv.NewReader(strings.NewReader(cm.Data["metrics"]))

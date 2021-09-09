@@ -47,6 +47,24 @@ func TestValidConfigMap(t *testing.T) {
 	}
 }
 
+func TestInvalidConfigMapData(t *testing.T) {
+	clientset := fake.NewSimpleClientset(&v1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "configmap1",
+			Namespace: "default",
+		},
+		Data: map[string]string{"bad": "DCGM_FI_DEV_GPU_TEMP, gauge, temperature"},
+	})
+
+	c := Config{
+		ConfigMapData: "default:configmap1",
+	}
+	records, err := readConfigMap(clientset, &c)
+	if len(records) != 0 || err == nil {
+		t.Fatalf("Should have returned an error and no records")
+	}
+}
+
 func TestInvalidConfigMapName(t *testing.T) {
 	clientset := fake.NewSimpleClientset(&v1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{

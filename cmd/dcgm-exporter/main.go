@@ -54,7 +54,7 @@ var (
 	CLIDevices             = "devices"
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
-	ClIConfigMapData       = "configmap-data"
+	CLIConfigMapData       = "configmap-data"
 )
 
 func main() {
@@ -122,7 +122,7 @@ func main() {
 			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
 		},
 		&cli.StringFlag{
-			Name:    ClIConfigMapData,
+			Name:    CLIConfigMapData,
 			Aliases: []string{"m"},
 			Value:   undefinedConfigMapData,
 			Usage:   "ConfigMap <NAMESPACE>:<NAME> for metric data",
@@ -403,6 +403,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		Devices:             dOpt,
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
-		ConfigMapData:       c.String(ClIConfigMapData),
+		ConfigMapData:       c.String(CLIConfigMapData),
 	}, nil
 }
