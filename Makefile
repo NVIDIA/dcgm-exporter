@@ -18,7 +18,7 @@ REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.2.9
 GOLANG_VERSION := 1.17
-VERSION        := 2.4.1
+VERSION        := 2.5.0
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 NON_TEST_FILES  := pkg/dcgmexporter/dcgm.go pkg/dcgmexporter/gpu_collector.go pkg/dcgmexporter/parser.go
