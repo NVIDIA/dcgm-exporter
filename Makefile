@@ -31,7 +31,7 @@ MAIN_TEST_FILES := pkg/dcgmexporter/system_info_test.go
 all: ubuntu20.04 ubi8
 
 binary:
-	cd cmd/dcgm-exporter; go build
+	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
 	go test ./...
