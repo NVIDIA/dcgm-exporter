@@ -20,7 +20,7 @@ DCGM_FI_DEV_PCIE_RX_THROUGHPUT,  counter, Total number of bytes received through
 DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
 
 # Utilization (the sample period varies depending on the product),,
-# DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
+DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
 DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
 DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
 DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
