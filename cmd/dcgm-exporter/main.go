@@ -68,10 +68,13 @@ func main() {
 	                 {{.GPUKey}}[:id1[,-id2...] or 
 	                 {{.GPUInstanceKey}}[:id1[,-id2...].
 	If an id list is used, then devices with match IDs must exist on the system. For example:
-		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled.
+		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled. (See {{.FlexKey}})
 		{{.GPUKey}} = Monitor all GPUs
 		{{.GPUInstanceKey}} = Monitor all GPU instances
-		{{.FlexKey}} = Monitor all GPUs if MIG is disabled, or all GPU instances if MIG is enabled
+		{{.FlexKey}} = Monitor all GPUs if MIG is disabled, or all GPU instances if MIG is enabled.
+                       Note: this rule will be applied to each GPU. If it has GPU instances, those
+                             will be monitored. If it doesn't, then the GPU will be monitored.
+                             This is our recommended option for single or mixed MIG Strategies.
 		{{.GPUKey}}:0,1 = monitor GPUs 0 and 1
 		{{.GPUInstanceKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
 	
