@@ -30,7 +30,6 @@ const (
 func SpoofSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
 	sysInfo.GpuCount = 2
-	sysInfo.MigEnabled = true
 	sysInfo.Gpus[0].DeviceInfo.GPU = 0
 	gi := GpuInstanceInfo{
 		Info:        dcgm.MigEntityInfo{"fake", 0, 0, 0, 0, 3},
@@ -74,7 +73,8 @@ func TestMonitoredEntities(t *testing.T) {
 	require.Equal(t, instanceCount, 2, "Expected 2 GPU instances but found %d", instanceCount)
 	require.Equal(t, gpuCount, 0, "Expected 0 GPUs but found %d", gpuCount)
 
-	sysInfo.MigEnabled = false // we are now monitoring the GPUs
+	sysInfo.Gpus[0].GpuInstances = sysInfo.Gpus[0].GpuInstances[:0]
+	sysInfo.Gpus[1].GpuInstances = sysInfo.Gpus[1].GpuInstances[:0]
 	monitoring = GetMonitoredEntities(sysInfo)
 	require.Equal(t, 2, len(monitoring), fmt.Sprintf("Should have 2 monitored entities but found %d", len(monitoring)))
 	for i, mi := range monitoring {
