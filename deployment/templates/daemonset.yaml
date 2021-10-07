@@ -66,6 +66,9 @@ spec:
       - name: {{ .name | quote }}
         hostPath:
           path: {{ .hostPath | quote }}
+      - name: "exporter-metrics"
+        configMap:
+          name: "exporter-metrics-config-map"
       {{- end }}
       {{- with .Values.extraConfigMapVolumes }}
       {{- toYaml . | nindent 6 }}
@@ -99,6 +102,10 @@ spec:
         - name: "pod-gpu-resources"
           readOnly: true
           mountPath: "/var/lib/kubelet/pod-resources"
+        - name: "exporter-metrics"
+          mountPath: "/etc/dcgm-exporter/dcp-metrics-included.csv"
+          readOnly: true
+          subPath: "dcp-metrics-included.csv"
         {{- if .Values.extraVolumeMounts }}
         {{- toYaml .Values.extraVolumeMounts | nindent 8 }}
         {{- end }}
