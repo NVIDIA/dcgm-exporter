@@ -62,13 +62,13 @@ spec:
       - name: "pod-gpu-resources"
         hostPath:
           path: "/var/lib/kubelet/pod-resources"
+      - name: "exporter-metrics"
+        configMap:
+          name: "exporter-metrics-config-map"
       {{- range .Values.extraHostVolumes }}
       - name: {{ .name | quote }}
         hostPath:
           path: {{ .hostPath | quote }}
-      - name: "exporter-metrics"
-        configMap:
-          name: "exporter-metrics-config-map"
       {{- end }}
       {{- with .Values.extraConfigMapVolumes }}
       {{- toYaml . | nindent 6 }}
