@@ -60,6 +60,8 @@ github.com/NVIDIA/go-dcgm v0.0.0-20210825154740-df776fdbfea0 h1:mlF/NFgXMow3iJTx
 github.com/NVIDIA/go-dcgm v0.0.0-20210825154740-df776fdbfea0/go.mod h1:77DGpdEF+uQYYIRHxeFwfsqvHHT2ef6uVwkWE05FdVc=
 github.com/NVIDIA/go-dcgm v0.0.0-20210831205654-0acad5ffb8e8 h1:fGcb1WrjJlo4UDH+XYA4PbWU91RRwilQ2HtBJpLr7nU=
 github.com/NVIDIA/go-dcgm v0.0.0-20210831205654-0acad5ffb8e8/go.mod h1:77DGpdEF+uQYYIRHxeFwfsqvHHT2ef6uVwkWE05FdVc=
+github.com/NVIDIA/go-dcgm v0.0.0-20211026201242-896c0ef328c8 h1:nOn6U08rPRo1D71Hgr9L0KzZwmAA6JHA26uCwwDIXGM=
+github.com/NVIDIA/go-dcgm v0.0.0-20211026201242-896c0ef328c8/go.mod h1:77DGpdEF+uQYYIRHxeFwfsqvHHT2ef6uVwkWE05FdVc=
 github.com/NYTimes/gziphandler v0.0.0-20170623195520-56545f4a5d46/go.mod h1:3wb06e3pkSAbeQ52E9H9iFoQsEEwGN64994WTCIhntQ=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/OpenPeeDeeP/depguard v1.0.0/go.mod h1:7/4sitnI9YlQgTLLk734QlzXT8DuHVnAyztLplQjk+o=

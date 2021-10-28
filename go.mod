@@ -28,7 +28,7 @@ replace (
 )
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20210831205654-0acad5ffb8e8
+	github.com/NVIDIA/go-dcgm v0.0.0-20211026201242-896c0ef328c8
 	github.com/gorilla/mux v1.8.0
 	github.com/sirupsen/logrus v1.7.0
 	github.com/stretchr/testify v1.6.1
