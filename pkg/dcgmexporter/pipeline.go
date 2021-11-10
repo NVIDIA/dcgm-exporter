@@ -19,6 +19,11 @@ package dcgmexporter
 import (
 	"bytes"
 	"fmt"
+	"k8s.io/client-go/informers"
+	coreinformers "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd"
 	"sync"
 	"text/template"
 	"time"
@@ -37,9 +42,14 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
+	podInformer, err := NewPodInformer()
+	if err != nil {
+		logrus.Errorf("can not init sharedInformerFactory err:%v", err)
+	}
+
 	transformations := []Transform{}
 	if c.Kubernetes {
-		transformations = append(transformations, NewPodMapper(c))
+		transformations = append(transformations, NewPodMapper(c, podInformer))
 	}
 
 	return &MetricsPipeline{
@@ -51,9 +61,24 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 			counters:        counters,
 			gpuCollector:    gpuCollector,
 			transformations: transformations,
+			podInformer:     podInformer,
 		}, func() {
 			cleanup()
 		}, nil
+}
+
+func NewPodInformer() (coreinformers.PodInformer, error) {
+
+	kcfg, err := clientcmd.BuildConfigFromFlags("", "")
+	if err != nil {
+		return nil, err
+	}
+	client, err := kubernetes.NewForConfig(kcfg)
+	if err != nil {
+		return nil, err
+	}
+	podInformer := informers.NewSharedInformerFactory(client, 0).Core().V1().Pods()
+	return podInformer, nil
 }
 
 // Primarely for testing, caller expected to cleanup the collector
@@ -80,9 +105,19 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 	t := time.NewTicker(time.Millisecond * time.Duration(m.config.CollectInterval))
 	defer t.Stop()
 
+	//  start informer
+	stopCh := make(chan struct{})
+	if m.podInformer != nil {
+		go m.podInformer.Informer().Run(stopCh)
+		cache.WaitForCacheSync(stopCh, m.podInformer.Informer().HasSynced)
+	}
+
 	for {
 		select {
 		case <-stop:
+			if m.podInformer != nil {
+				stopCh <- struct{}{}
+			}
 			return
 		case <-t.C:
 			o, err := m.run()

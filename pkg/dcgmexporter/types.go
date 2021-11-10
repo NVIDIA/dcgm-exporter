@@ -18,11 +18,11 @@ package dcgmexporter
 
 import (
 	"fmt"
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"net/http"
 	"sync"
 	"text/template"
-
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
 var (
@@ -72,6 +72,7 @@ type Config struct {
 	NoHostname          bool
 	UseFakeGpus         bool
 	ConfigMapData       string
+	UsePodLabels        []string
 }
 
 type Transform interface {
@@ -88,6 +89,8 @@ type MetricsPipeline struct {
 
 	counters     []Counter
 	gpuCollector *DCGMCollector
+
+	podInformer	coreinformers.PodInformer
 }
 
 type DCGMCollector struct {
@@ -154,11 +157,13 @@ type MetricsServer struct {
 }
 
 type PodMapper struct {
-	Config *Config
+	PodInformer coreinformers.PodInformer
+	Config      *Config
 }
 
 type PodInfo struct {
 	Name      string
 	Namespace string
 	Container string
+	Labels    map[string]string
 }

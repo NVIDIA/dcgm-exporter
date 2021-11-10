@@ -56,7 +56,7 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup = StartMockServer(t, server, socketPath)
 	defer cleanup()
 
-	podMapper := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID})
+	podMapper := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID},nil)
 	var sysInfo SystemInfo
 	err = podMapper.Process(out, sysInfo)
 	require.NoError(t, err)

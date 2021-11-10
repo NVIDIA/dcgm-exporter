@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 )
 
@@ -34,13 +36,15 @@ var (
 	socketPath = socketDir + "/kubelet.sock"
 
 	connectionTimeout = 10 * time.Second
+
+	charReplacerRegex = regexp.MustCompile("[./-]")
 )
 
-func NewPodMapper(c *Config) *PodMapper {
+func NewPodMapper(c *Config, podInformer coreinformers.PodInformer) *PodMapper {
 	logrus.Infof("Kubernetes metrics collection enabled!")
-
 	return &PodMapper{
-		Config: c,
+		PodInformer: podInformer,
+		Config:      c,
 	}
 }
 
@@ -67,7 +71,7 @@ func (p *PodMapper) Process(metrics [][]Metric, sysInfo SystemInfo) error {
 		return err
 	}
 
-	deviceToPod := ToDeviceToPod(pods, sysInfo)
+	deviceToPod := ToDeviceToPod(pods, sysInfo, p.PodInformer, p.Config.UsePodLabels)
 
 	// Note: for loop are copies the value, if we want to change the value
 	// and not the copy, we need to use the indexes
@@ -85,6 +89,10 @@ func (p *PodMapper) Process(metrics [][]Metric, sysInfo SystemInfo) error {
 				metrics[i][j].Attributes[oldPodAttribute] = deviceToPod[deviceId].Name
 				metrics[i][j].Attributes[oldNamespaceAttribute] = deviceToPod[deviceId].Namespace
 				metrics[i][j].Attributes[oldContainerAttribute] = deviceToPod[deviceId].Container
+			}
+			// add pod label
+			for l, v := range deviceToPod[deviceId].Labels {
+				metrics[i][j].Attributes[l] = v
 			}
 		}
 	}
@@ -123,7 +131,7 @@ func ListPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodResourcesResponse,
 	return resp, nil
 }
 
-func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo) map[string]PodInfo {
+func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo, podInformer coreinformers.PodInformer, podLabels []string) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 
 	for _, pod := range devicePods.GetPodResources() {
@@ -137,13 +145,13 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 						continue
 					}
 				}
-
 				podInfo := PodInfo{
 					Name:      pod.GetName(),
 					Namespace: pod.GetNamespace(),
 					Container: container.GetName(),
+					Labels:    make(map[string]string),
 				}
-
+				addPodLabel(&podInfo, podInformer, podLabels)
 				for _, uuid := range device.GetDeviceIds() {
 					if strings.HasPrefix(uuid, MIG_UUID_PREFIX) {
 						// MIG uuid for now at least is in the format MIG-GPU-<gpu uuid>/<gpu instance index>/<compute instance index>
@@ -169,4 +177,26 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 	}
 
 	return deviceToPodMap
+}
+
+func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLabels []string) {
+	logrus.Debugf("try add label %v for pod <%v:%v>, nil == podInformer? %v", podLabels, podInfo.Namespace, podInfo.Name, nil == podInformer)
+	if podInformer == nil {
+		return
+	}
+	if len(podLabels) == 0 {
+		return
+	}
+	v1Pod, err := podInformer.Lister().Pods(podInfo.Namespace).Get(podInfo.Name)
+	if err != nil {
+		logrus.Errorf("query pod <%v/%v> err: %v", podInfo.Namespace, podInfo.Name, err)
+		return
+	}
+	for _, label := range podLabels {
+		if v, ok := v1Pod.Labels[label]; ok {
+			metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
+			podInfo.Labels[metricLabel] = v
+			logrus.Debugf("query pod <%v/%v> label %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
+		}
+	}
 }

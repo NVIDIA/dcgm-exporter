@@ -55,6 +55,7 @@ var (
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
+	CLIUsePodLabels        = "use-pod-labels"
 )
 
 func main() {
@@ -164,6 +165,12 @@ func main() {
 			Value:   false,
 			Usage:   "Accept GPUs that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
+		},
+		&cli.StringSliceFlag{
+			Name:    CLIUsePodLabels,
+			Value:   nil,
+			Usage:   "Use pod label as metric label",
+			EnvVars: []string{"DCGM_EXPORTER_USE_POD_LABELS"},
 		},
 	}
 
@@ -407,5 +414,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),
+		UsePodLabels:        c.StringSlice(CLIUsePodLabels),
 	}, nil
 }
