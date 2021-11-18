@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
@@ -36,12 +37,18 @@ var (
 	connectionTimeout = 10 * time.Second
 )
 
-func NewPodMapper(c *Config) *PodMapper {
+func NewPodMapper(c *Config) (*PodMapper, error) {
 	logrus.Infof("Kubernetes metrics collection enabled!")
+
+	ret := nvml.Init()
+
+	if ret != nil {
+		return nil, ret
+	}
 
 	return &PodMapper{
 		Config: c,
-	}
+	}, nil
 }
 
 func (p *PodMapper) Name() string {
@@ -146,17 +153,10 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 
 				for _, uuid := range device.GetDeviceIds() {
 					if strings.HasPrefix(uuid, MIG_UUID_PREFIX) {
-						// MIG uuid for now at least is in the format MIG-GPU-<gpu uuid>/<gpu instance index>/<compute instance index>
-						// Remove the prefix and suffix to get the GPU's uuid
-						gpuUuid := uuid[len(MIG_UUID_PREFIX):]
-						index := strings.Index(gpuUuid, "/")
-						if index > -1 {
-							gIIdStr := gpuUuid[index+1:]
-							index2 := strings.Index(gIIdStr, "/")
-							gIIdStr = gIIdStr[0:index2]
-							gpuUuid = gpuUuid[0:index]
+						gpuUuid, gi, _, err := nvml.ParseMigDeviceUUID(uuid)
 
-							giIdentifier := GetGpuInstanceIdentifier(sysInfo, gpuUuid, gIIdStr)
+						if err == nil {
+							giIdentifier := GetGpuInstanceIdentifier(sysInfo, gpuUuid, gi)
 							deviceToPodMap[giIdentifier] = podInfo
 						}
 						deviceToPodMap[gpuUuid] = podInfo
