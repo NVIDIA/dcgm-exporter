@@ -157,6 +157,8 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 						if err == nil {
 							giIdentifier := GetGpuInstanceIdentifier(sysInfo, gpuUuid, gi)
 							deviceToPodMap[giIdentifier] = podInfo
+						} else {
+							gpuUuid = uuid[len(MIG_UUID_PREFIX):]
 						}
 						deviceToPodMap[gpuUuid] = podInfo
 					} else {
