@@ -114,3 +114,8 @@ extraVolumeMounts: []
 extraEnv: []
 #- name: EXTRA_VAR
 #  value: "TheStringValue"
+
+metrics: {}
+  # Format,,
+  # If line starts with a '#' it is considered a comment,,
+  # DCGM FIELD, Prometheus metric type, help message
