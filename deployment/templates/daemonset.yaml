@@ -32,9 +32,9 @@ spec:
       labels:
         {{- include "dcgm-exporter.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: "dcgm-exporter"
-      {{- with .Values.podAnnotations }}
+      {{- if .Values.podAnnotations }}
       annotations:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
       {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
