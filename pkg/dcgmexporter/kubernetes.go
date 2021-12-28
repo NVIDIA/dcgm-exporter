@@ -182,7 +182,7 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 }
 
 func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLabels []string, podAnnotations []string) {
-	logrus.Debugf("try add label %v for pod <%v:%v>, nil == podInformer? %v", podLabels, podInfo.Namespace, podInfo.Name, nil == podInformer)
+	logrus.Infof("try add label %v for pod <%v:%v>, nil == podInformer? %v", podLabels, podInfo.Namespace, podInfo.Name, nil == podInformer)
 	if podInformer == nil {
 		return
 	}
