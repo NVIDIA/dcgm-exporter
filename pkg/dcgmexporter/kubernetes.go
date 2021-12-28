@@ -199,7 +199,7 @@ func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLab
 			if v, ok := v1Pod.Labels[label]; ok {
 				metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
 				podInfo.Labels[metricLabel] = v
-				logrus.Debugf("query pod <%v/%v> label %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
+				logrus.Infof("query pod <%v/%v> label %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
 			}
 		}
 	}
@@ -208,7 +208,7 @@ func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLab
 			if v, ok := v1Pod.Annotations[annotation]; ok {
 				metricLabel := charReplacerRegex.ReplaceAllString(annotation, "_")
 				podInfo.Labels[metricLabel] = v
-				logrus.Debugf("query pod <%v/%v> annotation %v==>%v value %v", podInfo.Namespace, podInfo.Name, annotation, metricLabel, v)
+				logrus.Infof("query pod <%v/%v> annotation %v==>%v value %v", podInfo.Namespace, podInfo.Name, annotation, metricLabel, v)
 			}
 		}
 	}

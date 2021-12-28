@@ -406,7 +406,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	logrus.Infof("UsePodLabels %v UsePodAnnotations %v", c.StringSlice(CLIUsePodLabels), c.StringSlice(CLIUsePodAnnotations))
 	return &dcgmexporter.Config{
 		CollectorsFile:      c.String(CLIFieldsFile),
 		Address:             c.String(CLIAddress),
