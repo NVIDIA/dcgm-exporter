@@ -186,7 +186,7 @@ func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLab
 	if podInformer == nil {
 		return
 	}
-	if len(podLabels) == 0 {
+	if len(podLabels) == 0 && len(podAnnotations) == 0 {
 		return
 	}
 	v1Pod, err := podInformer.Lister().Pods(podInfo.Namespace).Get(podInfo.Name)
@@ -194,18 +194,22 @@ func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLab
 		logrus.Errorf("query pod <%v/%v> err: %v", podInfo.Namespace, podInfo.Name, err)
 		return
 	}
-	for _, label := range podLabels {
-		if v, ok := v1Pod.Labels[label]; ok {
-			metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
-			podInfo.Labels[metricLabel] = v
-			logrus.Debugf("query pod <%v/%v> label %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
+	if len(podLabels) > 0 {
+		for _, label := range podLabels {
+			if v, ok := v1Pod.Labels[label]; ok {
+				metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
+				podInfo.Labels[metricLabel] = v
+				logrus.Debugf("query pod <%v/%v> label %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
+			}
 		}
 	}
-	for _, label := range podAnnotations {
-		if v, ok := v1Pod.Annotations[label]; ok {
-			metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
-			podInfo.Labels[metricLabel] = v
-			logrus.Debugf("query pod <%v/%v> annotation %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
+	if len(podAnnotations) > 0 {
+		for _, annotation := range podAnnotations {
+			if v, ok := v1Pod.Annotations[annotation]; ok {
+				metricLabel := charReplacerRegex.ReplaceAllString(annotation, "_")
+				podInfo.Labels[metricLabel] = v
+				logrus.Debugf("query pod <%v/%v> annotation %v==>%v value %v", podInfo.Namespace, podInfo.Name, annotation, metricLabel, v)
+			}
 		}
 	}
 }
