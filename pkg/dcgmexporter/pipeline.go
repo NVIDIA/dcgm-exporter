@@ -49,7 +49,12 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 
 	transformations := []Transform{}
 	if c.Kubernetes {
-		transformations = append(transformations, NewPodMapper(c, podInformer))
+		podMapper, err := NewPodMapper(c)
+		if err != nil {
+			logrus.Warnf("Could not enable kubernetes metric collection: %v", err)
+		} else {
+			transformations = append(transformations, podMapper)
+		}
 	}
 
 	return &MetricsPipeline{

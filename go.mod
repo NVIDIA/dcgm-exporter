@@ -29,6 +29,7 @@ replace (
 
 require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20211026201242-896c0ef328c8
+	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/gorilla/mux v1.8.0
 	github.com/sirupsen/logrus v1.7.0
 	github.com/stretchr/testify v1.6.1
