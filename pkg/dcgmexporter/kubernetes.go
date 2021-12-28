@@ -71,7 +71,7 @@ func (p *PodMapper) Process(metrics [][]Metric, sysInfo SystemInfo) error {
 		return err
 	}
 
-	deviceToPod := ToDeviceToPod(pods, sysInfo, p.PodInformer, p.Config.UsePodLabels)
+	deviceToPod := ToDeviceToPod(pods, sysInfo, p.PodInformer, p.Config.UsePodLabels, p.Config.UsePodAnnotations)
 
 	// Note: for loop are copies the value, if we want to change the value
 	// and not the copy, we need to use the indexes
@@ -131,7 +131,8 @@ func ListPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodResourcesResponse,
 	return resp, nil
 }
 
-func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo, podInformer coreinformers.PodInformer, podLabels []string) map[string]PodInfo {
+func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo,
+	podInformer coreinformers.PodInformer, podLabels []string, podAnnotations []string) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 
 	for _, pod := range devicePods.GetPodResources() {
@@ -151,7 +152,7 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 					Container: container.GetName(),
 					Labels:    make(map[string]string),
 				}
-				addPodLabel(&podInfo, podInformer, podLabels)
+				addPodLabel(&podInfo, podInformer, podLabels, podAnnotations)
 				for _, uuid := range device.GetDeviceIds() {
 					if strings.HasPrefix(uuid, MIG_UUID_PREFIX) {
 						// MIG uuid for now at least is in the format MIG-GPU-<gpu uuid>/<gpu instance index>/<compute instance index>
@@ -179,7 +180,7 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 	return deviceToPodMap
 }
 
-func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLabels []string) {
+func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLabels []string, podAnnotations []string) {
 	logrus.Debugf("try add label %v for pod <%v:%v>, nil == podInformer? %v", podLabels, podInfo.Namespace, podInfo.Name, nil == podInformer)
 	if podInformer == nil {
 		return
@@ -197,6 +198,13 @@ func addPodLabel(podInfo *PodInfo, podInformer coreinformers.PodInformer, podLab
 			metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
 			podInfo.Labels[metricLabel] = v
 			logrus.Debugf("query pod <%v/%v> label %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
+		}
+	}
+	for _, label := range podAnnotations {
+		if v, ok := v1Pod.Annotations[label]; ok {
+			metricLabel := charReplacerRegex.ReplaceAllString(label, "_")
+			podInfo.Labels[metricLabel] = v
+			logrus.Debugf("query pod <%v/%v> annotation %v==>%v value %v", podInfo.Namespace, podInfo.Name, label, metricLabel, v)
 		}
 	}
 }

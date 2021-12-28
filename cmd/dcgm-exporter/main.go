@@ -56,6 +56,7 @@ var (
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
 	CLIUsePodLabels        = "use-pod-labels"
+	CLIUsePodAnnotations   = "use-pod-annotations"
 )
 
 func main() {
@@ -171,6 +172,12 @@ func main() {
 			Value:   nil,
 			Usage:   "Use pod label as metric label",
 			EnvVars: []string{"DCGM_EXPORTER_USE_POD_LABELS"},
+		},
+		&cli.StringSliceFlag{
+			Name:    CLIUsePodAnnotations,
+			Value:   nil,
+			Usage:   "Use pod annotations as metric label",
+			EnvVars: []string{"DCGM_EXPORTER_USE_POD_ANNOTATIONS"},
 		},
 	}
 
@@ -415,5 +422,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),
 		UsePodLabels:        c.StringSlice(CLIUsePodLabels),
+		UsePodAnnotations:   c.StringSlice(CLIUsePodAnnotations),
 	}, nil
 }

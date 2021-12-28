@@ -73,6 +73,7 @@ type Config struct {
 	UseFakeGpus         bool
 	ConfigMapData       string
 	UsePodLabels        []string
+	UsePodAnnotations   []string
 }
 
 type Transform interface {
@@ -90,7 +91,7 @@ type MetricsPipeline struct {
 	counters     []Counter
 	gpuCollector *DCGMCollector
 
-	podInformer	coreinformers.PodInformer
+	podInformer coreinformers.PodInformer
 }
 
 type DCGMCollector struct {
