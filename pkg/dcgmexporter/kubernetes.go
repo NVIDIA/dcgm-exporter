@@ -41,7 +41,7 @@ var (
 	charReplacerRegex = regexp.MustCompile("[./-]")
 )
 
-func NewPodMapper(c *Config) (*PodMapper, error) {
+func NewPodMapper(c *Config, podInformer coreinformers.PodInformer) (*PodMapper, error) {
 	logrus.Infof("Kubernetes metrics collection enabled!")
 
 	ret := nvml.Init()
@@ -51,7 +51,8 @@ func NewPodMapper(c *Config) (*PodMapper, error) {
 	}
 
 	return &PodMapper{
-		Config: c,
+		PodInformer: podInformer,
+		Config:      c,
 	}, nil
 }
 
