@@ -16,9 +16,9 @@ DOCKER   ?= docker
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 2.3.1
+DCGM_VERSION   := 2.3.2
 GOLANG_VERSION := 1.17
-VERSION        := 2.6.1
+VERSION        := 2.6.2
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 
 NON_TEST_FILES  := pkg/dcgmexporter/dcgm.go pkg/dcgmexporter/gpu_collector.go pkg/dcgmexporter/parser.go
