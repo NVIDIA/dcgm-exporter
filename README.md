@@ -138,7 +138,22 @@ Pull requests are accepted!
 
 ### Building the containers
 
-This project uses [docker buildx](https://docs.docker.com/buildx/working-with-buildx/) for multi-arch image creation. Follow the instructions on that page to get a working builder instance for creating these containers.
+This project uses [docker buildx](https://docs.docker.com/buildx/working-with-buildx/) for multi-arch image creation. Follow the instructions on that page to get a working builder instance for creating these containers. Some other useful build options follow.
+
+Builds local images based on the machine architecture and makes them available in 'docker images'
+```
+make local
+```
+
+Build the ubuntu image and export to 'docker images'
+```
+make ubuntu20.04 PLATFORMS=linux/amd64 OUTPUT=type=docker
+```
+
+Build and push the images to some other 'private_registry'
+```
+make REGISTRY=<private_registry> push
+```
 
 ## Issues and Contributing
 
