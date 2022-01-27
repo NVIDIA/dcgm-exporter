@@ -18,8 +18,9 @@ REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.3.2
 GOLANG_VERSION := 1.17
-VERSION        := 2.6.2
+VERSION        := 2.6.3
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
+OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
 
 NON_TEST_FILES  := pkg/dcgmexporter/dcgm.go pkg/dcgmexporter/gpu_collector.go pkg/dcgmexporter/parser.go
 NON_TEST_FILES  += pkg/dcgmexporter/pipeline.go pkg/dcgmexporter/server.go pkg/dcgmexporter/system_info.go
@@ -46,18 +47,22 @@ check-format:
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
 push:
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
+	$(MAKE) ubuntu20.04 OUTPUT=type=registry
+	$(MAKE) ubi8 OUTPUT=type=registry
 
 ubuntu20.04:
-	$(DOCKER) build --pull \
+	$(DOCKER) buildx build --pull \
+		--output $(OUTPUT) \
+		--platform linux/amd64,linux/arm64 \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04" \
 		--file docker/Dockerfile.ubuntu20.04 .
 
 ubi8:
-	$(DOCKER) build --pull \
+	$(DOCKER) buildx build --pull \
+		--output $(OUTPUT) \
+		--platform linux/amd64,linux/arm64 \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(FULL_VERSION)" \

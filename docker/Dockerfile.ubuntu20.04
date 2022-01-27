@@ -6,7 +6,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM nvcr.io/nvidia/cuda:11.4.2-base-ubuntu20.04
+FROM nvcr.io/nvidia/cuda:11.6.0-base-ubuntu20.04
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter/dcgm-exporter /usr/bin/
@@ -14,15 +14,7 @@ COPY etc /etc/dcgm-exporter
 
 ARG DCGM_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libcap2-bin gnupg2 curl ca-certificates && \
-    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub | apt-key add - && \
-    echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/cuda.list && \
-    echo "deb https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu2004/x86_64 /" > /etc/apt/sources.list.d/nvidia-ml.list && \
-    apt-get purge --autoremove -y curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    datacenter-gpu-manager=1:${DCGM_VERSION} && apt-get purge --autoremove -y openssl
+    datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl
 
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
