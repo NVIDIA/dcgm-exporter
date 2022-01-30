@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-DOCKER   ?= docker
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.3.2
 GOLANG_VERSION := 1.17
-VERSION        := 2.6.2
+VERSION        := 2.6.3
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
+OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
+PLATFORMS      := linux/amd64,linux/arm64
+DOCKERCMD      := docker buildx build
 
 NON_TEST_FILES  := pkg/dcgmexporter/dcgm.go pkg/dcgmexporter/gpu_collector.go pkg/dcgmexporter/parser.go
 NON_TEST_FILES  += pkg/dcgmexporter/pipeline.go pkg/dcgmexporter/server.go pkg/dcgmexporter/system_info.go
@@ -27,7 +29,7 @@ NON_TEST_FILES  += pkg/dcgmexporter/types.go pkg/dcgmexporter/utils.go pkg/dcgme
 NON_TEST_FILES  += cmd/dcgm-exporter/main.go
 MAIN_TEST_FILES := pkg/dcgmexporter/system_info_test.go
 
-.PHONY: all binary install check-format
+.PHONY: all binary install check-format local
 all: ubuntu20.04 ubi8
 
 binary:
@@ -46,18 +48,29 @@ check-format:
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
 push:
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04"
-	$(DOCKER) push "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8"
+	$(MAKE) ubuntu20.04 OUTPUT=type=registry
+	$(MAKE) ubi8 OUTPUT=type=registry
+
+local:
+ifeq ($(shell uname -p),aarch64)
+	$(MAKE) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
+else
+	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
+endif
 
 ubuntu20.04:
-	$(DOCKER) build --pull \
+	$(DOCKERCMD) --pull \
+		--output $(OUTPUT) \
+		--platform $(PLATFORMS) \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu20.04" \
 		--file docker/Dockerfile.ubuntu20.04 .
 
 ubi8:
-	$(DOCKER) build --pull \
+	$(DOCKERCMD) --pull \
+		--output $(OUTPUT) \
+		--platform $(PLATFORMS) \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(FULL_VERSION)" \

@@ -10,7 +10,7 @@ Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https
 
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 ```
-$ docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:2.3.2-2.6.2-ubuntu20.04
+$ docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:2.3.2-2.6.3-ubuntu20.04
 $ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -134,6 +134,26 @@ You can find the official NVIDIA DCGM-Exporter dashboard here: https://grafana.c
 You will also find the `json` file on this repo under `grafana/dcgm-exporter-dashboard.json`
 
 Pull requests are accepted!
+
+
+### Building the containers
+
+This project uses [docker buildx](https://docs.docker.com/buildx/working-with-buildx/) for multi-arch image creation. Follow the instructions on that page to get a working builder instance for creating these containers. Some other useful build options follow.
+
+Builds local images based on the machine architecture and makes them available in 'docker images'
+```
+make local
+```
+
+Build the ubuntu image and export to 'docker images'
+```
+make ubuntu20.04 PLATFORMS=linux/amd64 OUTPUT=type=docker
+```
+
+Build and push the images to some other 'private_registry'
+```
+make REGISTRY=<private_registry> push
+```
 
 ## Issues and Contributing
 
