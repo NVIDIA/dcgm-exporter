@@ -55,6 +55,8 @@ var (
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
+	CLIUsePodLabels        = "use-pod-labels"
+	CLIUsePodAnnotations   = "use-pod-annotations"
 )
 
 func main() {
@@ -164,6 +166,18 @@ func main() {
 			Value:   false,
 			Usage:   "Accept GPUs that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
+		},
+		&cli.StringSliceFlag{
+			Name:    CLIUsePodLabels,
+			Value:   nil,
+			Usage:   "Use pod label as metric label",
+			EnvVars: []string{"DCGM_EXPORTER_USE_POD_LABELS"},
+		},
+		&cli.StringSliceFlag{
+			Name:    CLIUsePodAnnotations,
+			Value:   nil,
+			Usage:   "Use pod annotations as metric label",
+			EnvVars: []string{"DCGM_EXPORTER_USE_POD_ANNOTATIONS"},
 		},
 	}
 
@@ -392,7 +406,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	logrus.Infof("UsePodLabels %v UsePodAnnotations %v", c.StringSlice(CLIUsePodLabels), c.StringSlice(CLIUsePodAnnotations))
 	return &dcgmexporter.Config{
 		CollectorsFile:      c.String(CLIFieldsFile),
 		Address:             c.String(CLIAddress),
@@ -407,5 +421,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),
+		UsePodLabels:        c.StringSlice(CLIUsePodLabels),
+		UsePodAnnotations:   c.StringSlice(CLIUsePodAnnotations),
 	}, nil
 }
