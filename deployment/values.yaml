@@ -114,3 +114,5 @@ extraVolumeMounts: []
 extraEnv: []
 #- name: EXTRA_VAR
 #  value: "TheStringValue"
+
+kubeletPath: "/var/lib/kubelet/pod-resources"
