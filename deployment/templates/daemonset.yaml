@@ -61,7 +61,7 @@ spec:
       volumes:
       - name: "pod-gpu-resources"
         hostPath:
-          path: {{- .Values.kubeletPath }}
+          path: {{ .Values.kubeletPath }}
       {{- range .Values.extraHostVolumes }}
       - name: {{ .name | quote }}
         hostPath:
