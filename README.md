@@ -109,11 +109,11 @@ You will find the default CSV file under `etc/default-counters.csv` in the repos
 
 The layout and format of this file is as follows:
 ```
-# Format,,
-# If line starts with a '#' it is considered a comment,,
+# Format
+# If line starts with a '#' it is considered a comment
 # DCGM FIELD, Prometheus metric type, help message
 
-# Clocks,,
+# Clocks
 DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
 DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
 ```
