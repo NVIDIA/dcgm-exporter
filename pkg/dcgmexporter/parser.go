@@ -73,6 +73,7 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	defer file.Close()
 
 	r := csv.NewReader(file)
+	r.Comment = '#'
 	records, err := r.ReadAll()
 
 	return records, err
@@ -89,11 +90,6 @@ func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 
 		for j, r := range record {
 			record[j] = strings.Trim(r, " ")
-		}
-
-		if recordIsCommentOrEmpty(record) {
-			logrus.Debugf("Skipping line %d (`%v`)", i, record)
-			continue
 		}
 
 		if len(record) != 3 {
@@ -137,18 +133,6 @@ func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 	}
 
 	return f, nil
-}
-
-func recordIsCommentOrEmpty(s []string) bool {
-	if len(s) == 0 {
-		return true
-	}
-
-	if len(s[0]) < 1 || s[0][0] == '#' {
-		return true
-	}
-
-	return false
 }
 
 func readConfigMap(kubeClient kubernetes.Interface, c *Config) ([][]string, error) {
