@@ -22,7 +22,6 @@ SYSCONFDIR := $(abspath $(DESTDIR))$(sysconfdir)
 GO      ?= go
 GOFLAGS ?=
 
-MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.3.5
