@@ -19,6 +19,9 @@ sysconfdir ?= $(prefix)/etc
 BINDIR     := $(abspath $(DESTDIR))$(bindir)
 SYSCONFDIR := $(abspath $(DESTDIR))$(sysconfdir)
 
+GO      ?= go
+GOFLAGS ?=
+
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
@@ -40,10 +43,10 @@ MAIN_TEST_FILES := pkg/dcgmexporter/system_info_test.go
 all: ubuntu20.04 ubi8
 
 binary:
-	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
+	cd cmd/dcgm-exporter; $(GO) build $(GOFLAGS) -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
-	go test ./...
+	$(GO) test ./...
 
 install: binary
 	install -m 0755 -D -t $(BINDIR) cmd/dcgm-exporter/dcgm-exporter
