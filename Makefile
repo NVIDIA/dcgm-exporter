@@ -47,7 +47,7 @@ binary:
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
 	$(GO) test ./...
 
-install: binary
+install:
 	install -m 0755 -D -t $(BINDIR) cmd/dcgm-exporter/dcgm-exporter
 	install -m 0644 -D -t $(SYSCONFDIR)/dcgm-exporter/ etc/default-counters.csv etc/dcp-metrics-included.csv
 
