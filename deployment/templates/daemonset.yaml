@@ -39,6 +39,7 @@ spec:
     spec:
       {{- if .Values.hostNetwork }}
       hostNetwork: {{ .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
