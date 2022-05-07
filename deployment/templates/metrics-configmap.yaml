@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: exporter-metrics-config-map
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "dcgm-exporter.namespace" . }}
 data:
   metrics: |
       # Format
