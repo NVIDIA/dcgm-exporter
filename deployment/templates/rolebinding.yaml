@@ -2,14 +2,14 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "dcgm-exporter.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
     app.kubernetes.io/component: "dcgm-exporter"
 subjects:
 - kind: ServiceAccount
   name: {{ include "dcgm-exporter.serviceAccountName" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "dcgm-exporter.namespace" . }}
 roleRef:
   kind: Role 
   name: dcgm-exporter-read-cm
