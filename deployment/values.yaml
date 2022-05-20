@@ -51,6 +51,10 @@ serviceAccount:
   name:
 
 podAnnotations: {}
+# Using this annotation which is required for prometheus scraping
+ # prometheus.io/scrape: "true"
+ # prometheus.io/port: "9400"
+
 podSecurityContext: {}
   # fsGroup: 2000
 
