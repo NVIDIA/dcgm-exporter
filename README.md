@@ -125,7 +125,7 @@ $ dcgm-exporter -f /tmp/custom-collectors.csv
 
 Notes:
 - Always make sure your entries have 2 commas (',')
-- The complete list of counters that can be collected can be found on the DCGM API reference manual: https://docs.nvidia.com/datacenter/dcgm/latest/dcgm-api/group__dcgmFieldIdentifiers.html
+- The complete list of counters that can be collected can be found on the DCGM API reference manual: https://docs.nvidia.com/datacenter/dcgm/latest/dcgm-api/dcgm-api-field-ids.html
 
 ### What about a Grafana Dashboard?
 
