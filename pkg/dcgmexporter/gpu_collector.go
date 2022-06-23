@@ -81,6 +81,13 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 
 func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GpuInstanceInfo, useOld bool, hostname string) []Metric {
 	var metrics []Metric
+	infoLabels := map[string]string{}
+	uuid := "UUID"
+	if useOld {
+		uuid = "uuid"
+	}
+	gpu := fmt.Sprintf("%d", d.GPU)
+	gpuDevice := fmt.Sprintf("nvidia%d", d.GPU)
 
 	for i, val := range values {
 		v := ToString(val)
@@ -88,31 +95,51 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 		if v == SkipDCGMValue {
 			continue
 		}
-		uuid := "UUID"
-		if useOld {
-			uuid = "uuid"
+		if c[i].PromType == "label" {
+			infoLabels[c[i].FieldName] = v
+			continue
 		}
 		m := Metric{
 			Counter: &c[i],
 			Value:   v,
 
 			UUID:         uuid,
-			GPU:          fmt.Sprintf("%d", d.GPU),
+			GPU:          gpu,
 			GPUUUID:      d.UUID,
-			GPUDevice:    fmt.Sprintf("nvidia%d", d.GPU),
+			GPUDevice:    gpuDevice,
 			GPUModelName: d.Identifiers.Model,
 			Hostname:     hostname,
 
 			Attributes: map[string]string{},
 		}
-		if instanceInfo != nil {
-			m.MigProfile = instanceInfo.ProfileName
-			m.GPUInstanceID = fmt.Sprintf("%d", instanceInfo.Info.NvmlInstanceId)
-		} else {
-			m.MigProfile = ""
-			m.GPUInstanceID = ""
+		metrics = append(metrics, m)
+	}
+
+	if len(infoLabels) > 0 {
+		m := Metric{
+			Counter: &infoCounter,
+			Value:   "1",
+
+			UUID:         uuid,
+			GPU:          gpu,
+			GPUUUID:      d.UUID,
+			GPUDevice:    gpuDevice,
+			GPUModelName: d.Identifiers.Model,
+			Hostname:     hostname,
+
+			Attributes: infoLabels,
 		}
 		metrics = append(metrics, m)
+	}
+
+	for i, _ := range metrics {
+		if instanceInfo != nil {
+			metrics[i].MigProfile = instanceInfo.ProfileName
+			metrics[i].GPUInstanceID = fmt.Sprintf("%d", instanceInfo.Info.NvmlInstanceId)
+		} else {
+			metrics[i].MigProfile = ""
+			metrics[i].GPUInstanceID = ""
+		}
 	}
 
 	return metrics

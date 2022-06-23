@@ -43,6 +43,13 @@ var (
 	oldContainerAttribute = "container_name"
 
 	undefinedConfigMapData = "none"
+
+	infoCounter = Counter{
+		FieldID:   dcgm.DCGM_FI_UNKNOWN,
+		FieldName: "dcgm_exporter_info",
+		PromType:  "gauge",
+		Help:      "String values represented as labels",
+	}
 )
 
 type KubernetesGPUIDType string
@@ -143,6 +150,7 @@ var promMetricType = map[string]bool{
 	"counter":   true,
 	"histogram": true,
 	"summary":   true,
+	"label":     true,
 }
 
 type MetricsServer struct {

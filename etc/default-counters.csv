@@ -63,3 +63,6 @@ DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
 DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
 DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
 DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
+
+# Static configuration information. These appear as labels on a dcgm_exporter_info metric.
+DCGM_FI_DRIVER_VERSION, label, Driver Version
