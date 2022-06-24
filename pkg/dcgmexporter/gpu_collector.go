@@ -16,10 +16,12 @@
 
 package dcgmexporter
 
+import "C"
 import (
 	"fmt"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"os"
+	"unsafe"
 )
 
 func NewDCGMCollector(c []Counter, config *Config) (*DCGMCollector, func(), error) {
@@ -145,42 +147,60 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 	return metrics
 }
 
+func fieldValueString(value dcgm.FieldValue_v1) string {
+	// Workaround for https://github.com/NVIDIA/go-dcgm/issues/18
+	return C.GoString((*C.char)(unsafe.Pointer(&value.Value[0])))
+}
+
 func ToString(value dcgm.FieldValue_v1) string {
-	switch v := value.Int64(); v {
-	case dcgm.DCGM_FT_INT32_BLANK:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT32_NOT_FOUND:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT64_BLANK:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT64_NOT_FOUND:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
-		return SkipDCGMValue
-	}
-	switch v := value.Float64(); v {
-	case dcgm.DCGM_FT_FP64_BLANK:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_FP64_NOT_FOUND:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
-		return SkipDCGMValue
-	case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
-		return SkipDCGMValue
-	}
-	switch v := value.FieldType; v {
-	case dcgm.DCGM_FT_STRING:
-		return value.String()
-	case dcgm.DCGM_FT_DOUBLE:
-		return fmt.Sprintf("%f", value.Float64())
+	switch value.FieldType {
 	case dcgm.DCGM_FT_INT64:
-		return fmt.Sprintf("%d", value.Int64())
+		switch v := value.Int64(); v {
+		case dcgm.DCGM_FT_INT32_BLANK:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT32_NOT_FOUND:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT64_BLANK:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT64_NOT_FOUND:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
+			return SkipDCGMValue
+		default:
+			return fmt.Sprintf("%d", value.Int64())
+		}
+	case dcgm.DCGM_FT_DOUBLE:
+		switch v := value.Float64(); v {
+		case dcgm.DCGM_FT_FP64_BLANK:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_FP64_NOT_FOUND:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
+			return SkipDCGMValue
+		default:
+			return fmt.Sprintf("%f", value.Float64())
+		}
+	case dcgm.DCGM_FT_STRING:
+		switch v := fieldValueString(value); v {
+		case dcgm.DCGM_FT_STR_BLANK:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_STR_NOT_FOUND:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_STR_NOT_SUPPORTED:
+			return SkipDCGMValue
+		case dcgm.DCGM_FT_STR_NOT_PERMISSIONED:
+			return SkipDCGMValue
+		default:
+			return v
+		}
 	default:
 		return FailedToConvert
 	}
