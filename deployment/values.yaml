@@ -83,6 +83,7 @@ resources: {}
 serviceMonitor:
   enabled: true
   interval: 15s
+  honorLabels: false
   additionalLabels: {}
     #monitoring: prometheus
 
