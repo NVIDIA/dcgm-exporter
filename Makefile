@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-MKDIR    ?= mkdir
+prefix     ?= /usr/local
+bindir     ?= $(prefix)/bin
+sysconfdir ?= $(prefix)/etc
+
+BINDIR     := $(abspath $(DESTDIR))$(bindir)
+SYSCONFDIR := $(abspath $(DESTDIR))$(sysconfdir)
+
+GO      ?= go
+GOFLAGS ?=
+
 REGISTRY ?= nvidia
 
 DCGM_VERSION   := 2.4.6
@@ -33,15 +42,14 @@ MAIN_TEST_FILES := pkg/dcgmexporter/system_info_test.go
 all: ubuntu20.04 ubi8
 
 binary:
-	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
+	cd cmd/dcgm-exporter; $(GO) build $(GOFLAGS) -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
-	go test ./...
+	$(GO) test ./...
 
-install: binary
-	install -m 557 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
-	install -m 557 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
-	install -m 557 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
+install:
+	install -m 0755 -D -t $(BINDIR) cmd/dcgm-exporter/dcgm-exporter
+	install -m 0644 -D -t $(SYSCONFDIR)/dcgm-exporter/ etc/default-counters.csv etc/dcp-metrics-included.csv
 
 check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
