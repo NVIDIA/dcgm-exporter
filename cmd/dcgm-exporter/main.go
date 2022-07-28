@@ -211,12 +211,14 @@ restart:
 	dcgm.FieldsInit()
 	defer dcgm.FieldsTerm()
 
-	_, err = dcgm.GetSupportedMetricGroups(0)
+	var groups []dcgm.MetricGroup
+	groups, err = dcgm.GetSupportedMetricGroups(0)
 	if err != nil {
 		config.CollectDCP = false
 		logrus.Info("Not collecting DCP metrics: ", err)
 	} else {
 		logrus.Info("Collecting DCP Metrics")
+		config.MetricGroups = groups
 	}
 
 	ch := make(chan string, 10)
