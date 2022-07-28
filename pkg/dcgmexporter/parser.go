@@ -56,7 +56,7 @@ func ExtractCounters(c *Config) ([]Counter, error) {
 		}
 	}
 
-	counters, err := extractCounters(records, c.CollectDCP)
+	counters, err := extractCounters(records, c)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
+func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 	f := make([]Counter, 0, len(records))
 
 	for i, record := range records {
@@ -107,24 +107,24 @@ func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 		}
 
 		if !useOld {
-			if !dcpAllowed && fieldID >= 1000 {
-				logrus.Warnf("Skipping line %d ('%s'): DCP metrics not enabled", i, record[0])
+			if !fieldIsSupported(uint(fieldID), c) {
+				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
 				continue
 			}
 
 			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("Could not find Prometheus metry type %s", record[1])
+				return nil, fmt.Errorf("Could not find Prometheus metric type %s", record[1])
 			}
 
 			f = append(f, Counter{fieldID, record[0], record[1], record[2]})
 		} else {
-			if !dcpAllowed && oldFieldID >= 1000 {
-				logrus.Warnf("Skipping line %d ('%s'): DCP metrics not enabled", i, record[0])
+			if !fieldIsSupported(uint(oldFieldID), c) {
+				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
 				continue
 			}
 
 			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("Could not find Prometheus metry type %s", record[1])
+				return nil, fmt.Errorf("Could not find Prometheus metric type %s", record[1])
 			}
 
 			f = append(f, Counter{oldFieldID, record[0], record[1], record[2]})
@@ -133,6 +133,26 @@ func extractCounters(records [][]string, dcpAllowed bool) ([]Counter, error) {
 	}
 
 	return f, nil
+}
+
+func fieldIsSupported(fieldID uint, c *Config) bool {
+	if fieldID < 1000 {
+		return true
+	}
+
+	if !c.CollectDCP {
+		return false
+	}
+
+	for i := int(0); i < len(c.MetricGroups); i++ {
+		for j := int(0); j < len(c.MetricGroups[i].FieldIds); j++ {
+			if fieldID == c.MetricGroups[i].FieldIds[j] {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func readConfigMap(kubeClient kubernetes.Interface, c *Config) ([][]string, error) {

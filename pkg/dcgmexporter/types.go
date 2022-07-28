@@ -72,6 +72,7 @@ type Config struct {
 	NoHostname          bool
 	UseFakeGpus         bool
 	ConfigMapData       string
+	MetricGroups        []dcgm.MetricGroup
 }
 
 type Transform interface {
