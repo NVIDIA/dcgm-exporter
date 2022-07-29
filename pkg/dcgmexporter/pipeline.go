@@ -144,6 +144,9 @@ var metricsFormat = `
 {{- range $metric := $metrics }}
 {{ $counter.FieldName }}{gpu="{{ $metric.GPU }}",{{ $metric.UUID }}="{{ $metric.GPUUUID }}",device="{{ $metric.GPUDevice }}",modelName="{{ $metric.GPUModelName }}"
 
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
 {{- range $k, $v := $metric.Attributes -}}
 	,{{ $k }}="{{ $v }}"
 {{- end -}}
@@ -159,6 +162,9 @@ var migMetricsFormat = `
 {{- range $metric := $metrics }}
 {{ $counter.FieldName }}{gpu="{{ $metric.GPU }}",{{ $metric.UUID }}="{{ $metric.GPUUUID }}",device="{{ $metric.GPUDevice }}",modelName="{{ $metric.GPUModelName }}"{{if $metric.MigProfile}},GPU_I_PROFILE="{{ $metric.MigProfile }}",GPU_I_ID="{{ $metric.GPUInstanceID }}"{{end}}{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
 
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
 {{- range $k, $v := $metric.Attributes -}}
 	,{{ $k }}="{{ $v }}"
 {{- end -}}

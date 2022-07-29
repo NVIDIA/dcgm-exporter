@@ -81,11 +81,16 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 
 func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GpuInstanceInfo, useOld bool, hostname string) []Metric {
 	var metrics []Metric
+	var labels = map[string]string{}
 
 	for i, val := range values {
 		v := ToString(val)
 		// Filter out counters with no value and ignored fields for this entity
 		if v == SkipDCGMValue {
+			continue
+		}
+		if c[i].PromType == "label" {
+			labels[c[i].FieldName] = v
 			continue
 		}
 		uuid := "UUID"
@@ -103,6 +108,7 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 			GPUModelName: d.Identifiers.Model,
 			Hostname:     hostname,
 
+			Labels:     &labels,
 			Attributes: map[string]string{},
 		}
 		if instanceInfo != nil {
