@@ -31,6 +31,12 @@ var sampleCounters = []Counter{
 	{dcgm.DCGM_FI_DRIVER_VERSION, "DCGM_FI_DRIVER_VERSION", "label", "Driver version"},
 }
 
+var expectedMetrics = []string{
+	"DCGM_FI_DEV_GPU_TEMP",
+	"DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION",
+	"DCGM_FI_DEV_POWER_USAGE",
+}
+
 func TestDCGMCollector(t *testing.T) {
 	cleanup, err := dcgm.Init(dcgm.Embedded)
 	require.NoError(t, err)
@@ -54,10 +60,11 @@ func testDCGMCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()
 	out, err := c.GetMetrics()
 	require.NoError(t, err)
 	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
-	require.Len(t, out[0], len(counters))
+	require.Len(t, out[0], len(expectedMetrics))
 
 	for i, dev := range out {
-		for _, metric := range dev {
+		for j, metric := range dev {
+			require.Equal(t, metric.Counter.FieldName, expectedMetrics[j])
 			require.Equal(t, metric.GPU, fmt.Sprintf("%d", i))
 
 			require.NotEmpty(t, metric.Value)
