@@ -65,6 +65,17 @@ DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for un
 DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
 DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
 
+# Static configuration information. These appear as labels on the other metrics
+DCGM_FI_DRIVER_VERSION,        label, Driver Version
+# DCGM_FI_NVML_VERSION,          label, NVML Version
+# DCGM_FI_DEV_BRAND,             label, Device Brand
+# DCGM_FI_DEV_SERIAL,            label, Device Serial Number
+# DCGM_FI_DEV_OEM_INFOROM_VER,   label, OEM inforom version
+# DCGM_FI_DEV_ECC_INFOROM_VER,   label, ECC inforom version
+# DCGM_FI_DEV_POWER_INFOROM_VER, label, Power management object inforom version
+# DCGM_FI_DEV_INFOROM_IMAGE_VER, label, Inforom image version
+# DCGM_FI_DEV_VBIOS_VERSION,     label, VBIOS version of the device
+
 # DCP metrics
 DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active (in %).
 # DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned (in %).

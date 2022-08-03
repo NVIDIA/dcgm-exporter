@@ -28,6 +28,13 @@ var sampleCounters = []Counter{
 	{dcgm.DCGM_FI_DEV_GPU_TEMP, "DCGM_FI_DEV_GPU_TEMP", "gauge", "Temperature Help info"},
 	{dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "gauge", "Energy help info"},
 	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
+	{dcgm.DCGM_FI_DRIVER_VERSION, "DCGM_FI_DRIVER_VERSION", "label", "Driver version"},
+}
+
+var expectedMetrics = map[string]bool{
+	"DCGM_FI_DEV_GPU_TEMP":                 true,
+	"DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": true,
+	"DCGM_FI_DEV_POWER_USAGE":              true,
 }
 
 func TestDCGMCollector(t *testing.T) {
@@ -53,15 +60,18 @@ func testDCGMCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()
 	out, err := c.GetMetrics()
 	require.NoError(t, err)
 	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
-	require.Len(t, out[0], len(counters))
+	require.Len(t, out[0], len(expectedMetrics))
 
 	for i, dev := range out {
+		seenMetrics := map[string]bool{}
 		for _, metric := range dev {
+			seenMetrics[metric.Counter.FieldName] = true
 			require.Equal(t, metric.GPU, fmt.Sprintf("%d", i))
 
 			require.NotEmpty(t, metric.Value)
 			require.NotEqual(t, metric.Value, FailedToConvert)
 		}
+		require.Equal(t, seenMetrics, expectedMetrics)
 	}
 
 	return c, cleanup

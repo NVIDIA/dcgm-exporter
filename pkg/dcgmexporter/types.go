@@ -122,6 +122,7 @@ type Metric struct {
 	GPUInstanceID string
 	Hostname      string
 
+	Labels     *map[string]string
 	Attributes map[string]string
 }
 
@@ -144,6 +145,7 @@ var promMetricType = map[string]bool{
 	"counter":   true,
 	"histogram": true,
 	"summary":   true,
+	"label":     true,
 }
 
 type MetricsServer struct {
