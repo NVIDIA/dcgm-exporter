@@ -85,6 +85,6 @@ DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interf
 # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active (in %).
 # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active (in %).
 # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active (in %).
-DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus, including both protocol headers and data payloads, in bytes per second.
-DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus, including both protocol headers and data payloads, in bytes per second.
+DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
+DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
 
