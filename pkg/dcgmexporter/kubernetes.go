@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ var (
 	socketPath = socketDir + "/kubelet.sock"
 
 	connectionTimeout = 10 * time.Second
+
+	gkeMigDeviceIdRegex = regexp.MustCompile(`^nvidia(?P<gpu>[0-9]+)/gi(?P<gi>[0-9]+)$`)
 )
 
 func NewPodMapper(c *Config) (*PodMapper, error) {
@@ -151,18 +154,31 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 					Container: container.GetName(),
 				}
 
-				for _, uuid := range device.GetDeviceIds() {
-					if strings.HasPrefix(uuid, MIG_UUID_PREFIX) {
-						gpuUuid, gi, _, err := nvml.ParseMigDeviceUUID(uuid)
+				for _, deviceid := range device.GetDeviceIds() {
+					if strings.HasPrefix(deviceid, MIG_UUID_PREFIX) {
+						gpuUuid, gi, _, err := nvml.ParseMigDeviceUUID(deviceid)
 						if err == nil {
 							giIdentifier := GetGpuInstanceIdentifier(sysInfo, gpuUuid, gi)
 							deviceToPodMap[giIdentifier] = podInfo
 						} else {
-							gpuUuid = uuid[len(MIG_UUID_PREFIX):]
+							gpuUuid = deviceid[len(MIG_UUID_PREFIX):]
 						}
 						deviceToPodMap[gpuUuid] = podInfo
+					} else if gkeMigDeviceIdMatches := gkeMigDeviceIdRegex.FindStringSubmatch(deviceid); gkeMigDeviceIdMatches != nil {
+						var gpuIndex string
+						var gpuInstanceId string
+						for groupIdx, group := range gkeMigDeviceIdMatches {
+							switch groupIdx {
+							case 1:
+								gpuIndex = group
+							case 2:
+								gpuInstanceId = group
+							}
+						}
+						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceId)
+						deviceToPodMap[giIdentifier] = podInfo
 					} else {
-						deviceToPodMap[uuid] = podInfo
+						deviceToPodMap[deviceid] = podInfo
 					}
 				}
 			}
