@@ -37,7 +37,7 @@ var (
 
 	connectionTimeout = 10 * time.Second
 
-	gkeMigDeviceIdRegex = regexp.MustCompile(`^nvidia(?P<gpu>[0-9]+)/gi(?P<gi>[0-9]+)$`)
+	gkeMigDeviceIdRegex = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
 )
 
 func NewPodMapper(c *Config) (*PodMapper, error) {
