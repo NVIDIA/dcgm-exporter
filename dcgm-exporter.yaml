@@ -18,23 +18,23 @@ metadata:
   name: "dcgm-exporter"
   labels:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "2.6.10"
+    app.kubernetes.io/version: "2.6.11"
 spec:
   updateStrategy:
     type: RollingUpdate
   selector:
     matchLabels:
       app.kubernetes.io/name: "dcgm-exporter"
-      app.kubernetes.io/version: "2.6.10"
+      app.kubernetes.io/version: "2.6.11"
   template:
     metadata:
       labels:
         app.kubernetes.io/name: "dcgm-exporter"
-        app.kubernetes.io/version: "2.6.10"
+        app.kubernetes.io/version: "2.6.11"
       name: "dcgm-exporter"
     spec:
       containers:
-      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:2.4.6-2.6.10-ubuntu20.04"
+      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:2.4.7-2.6.11-ubuntu20.04"
         env:
         - name: "DCGM_EXPORTER_LISTEN"
           value: ":9400"
@@ -64,11 +64,11 @@ metadata:
   name: "dcgm-exporter"
   labels:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "2.6.10"
+    app.kubernetes.io/version: "2.6.11"
 spec:
   selector:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "2.6.10"
+    app.kubernetes.io/version: "2.6.11"
   ports:
   - name: "metrics"
     port: 9400
