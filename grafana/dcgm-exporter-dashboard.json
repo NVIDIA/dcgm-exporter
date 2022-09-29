@@ -49,7 +49,7 @@
       }
     ]
   },
-  "description": "This dashboard is to display the metrics from DCGM Exporter on a Kubernetes (1.13+) cluster",
+  "description": "This dashboard is to display the metrics from DCGM Exporter on a Kubernetes (1.19+) cluster",
   "editable": true,
   "gnetId": 12239,
   "graphTooltip": 0,

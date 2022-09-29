@@ -70,6 +70,8 @@ github.com/NVIDIA/go-dcgm v0.0.0-20220719175406-02d37f80fd94 h1:AbHbjiyjncJf4zyh
 github.com/NVIDIA/go-dcgm v0.0.0-20220719175406-02d37f80fd94/go.mod h1:atKWXstYFllLarJucBxnt9ivFIPe26Y6S4JQvzqeSr8=
 github.com/NVIDIA/go-dcgm v0.0.0-20220728130116-32999852818d h1:3TQlcJb+uuhuMrBiqVbWBimTHlSrpn6zV/ATSMgO2YQ=
 github.com/NVIDIA/go-dcgm v0.0.0-20220728130116-32999852818d/go.mod h1:atKWXstYFllLarJucBxnt9ivFIPe26Y6S4JQvzqeSr8=
+github.com/NVIDIA/go-dcgm v0.0.0-20220929160432-a45eb235ae9a h1:M5MXgKCaNuYjvZVnstPfTd05aUG1TZvOX01mtNYJJ/4=
+github.com/NVIDIA/go-dcgm v0.0.0-20220929160432-a45eb235ae9a/go.mod h1:atKWXstYFllLarJucBxnt9ivFIPe26Y6S4JQvzqeSr8=
 github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48 h1:JO/JF5CBte9mvATbhoh32swu9erf07ZdLgwFj8u21UQ=
 github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48/go.mod h1:oKPJa5eOTkWvlT4/Y4D8Nds44Fzmww5HUK+xwO+DwTA=
 github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm v0.0.0-20210325210537-29b4f1784f18/go.mod h1:8qXwltEzU3idjUcVpMOv3FNgxxbDeXZPGMLyc/khWiY=
