@@ -19,6 +19,7 @@ package dcgmexporter
 import (
 	"fmt"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/sirupsen/logrus"
 	"os"
 )
 
@@ -69,6 +70,11 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 	for i, mi := range monitoringInfo {
 		vals, err := dcgm.EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.DeviceFields)
 		if err != nil {
+			if derr, ok := err.(*dcgm.DcgmError); ok {
+				if derr.Code == dcgm.DCGM_ST_CONNECTION_NOT_VALID {
+					logrus.Fatal("Could not retrieve metrics: ", err)
+				}
+			}
 			return nil, err
 		}
 

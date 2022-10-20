@@ -93,6 +93,8 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 			o, err := m.run()
 			if err != nil {
 				logrus.Errorf("Failed to collect metrics with error: %v", err)
+				/* flush output rather than output stale data */
+				out <- ""
 				continue
 			}
 
