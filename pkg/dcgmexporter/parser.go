@@ -39,8 +39,12 @@ func ExtractCounters(c *Config) ([]Counter, error) {
 	if c.ConfigMapData != undefinedConfigMapData {
 		var client kubernetes.Interface
 		client, err = getKubeClient()
-		if err == nil {
-			records, err = readConfigMap(client, c)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+		records, err = readConfigMap(client, c)
+		if err != nil {
+			logrus.Fatal(err)
 		}
 	} else {
 		err = fmt.Errorf("No configmap data specified")
