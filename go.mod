@@ -28,7 +28,7 @@ replace (
 )
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20220929160432-a45eb235ae9a
+	github.com/NVIDIA/go-dcgm v0.0.0-20221020122955-3241b88a3175
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48 // indirect
 	github.com/gorilla/mux v1.8.0
 	github.com/sirupsen/logrus v1.7.0
