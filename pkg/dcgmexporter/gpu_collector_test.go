@@ -29,6 +29,9 @@ var sampleCounters = []Counter{
 	{dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "gauge", "Energy help info"},
 	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
 	{dcgm.DCGM_FI_DRIVER_VERSION, "DCGM_FI_DRIVER_VERSION", "label", "Driver version"},
+	/* test that switch and link metrics are filtered out automatically when devices are not detected */
+	{dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT, "DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT", "gauge", "switch temperature"},
+	{dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS, "DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS", "gauge", "per-link flit errors"},
 }
 
 var expectedMetrics = map[string]bool{
@@ -49,13 +52,18 @@ func TestDCGMCollector(t *testing.T) {
 func testDCGMCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
 	dOpt := DeviceOptions{true, []int{-1}, []int{-1}}
 	cfg := Config{
-		Devices:         dOpt,
+		GPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
 		UseFakeGpus:     false,
 	}
-	c, cleanup, err := NewDCGMCollector(counters, &cfg)
+	c, cleanup, err := NewDCGMCollector(counters, &cfg, dcgm.FE_GPU)
 	require.NoError(t, err)
+
+	/* Test for error when no switches are available to monitor.
+	   NOTE: This test will fail on a system with switches present. */
+	_, _, err = NewDCGMCollector(counters, &cfg, dcgm.FE_SWITCH)
+	require.Error(t, err)
 
 	out, err := c.GetMetrics()
 	require.NoError(t, err)

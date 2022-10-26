@@ -23,6 +23,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,9 +33,19 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
-	gpuCollector, cleanup, err := NewDCGMCollector(counters, c)
+	gpuCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_GPU)
 	if err != nil {
 		return nil, func() {}, err
+	}
+
+	switchCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_SWITCH)
+	if err != nil {
+		logrus.Info("Not collecting switch metrics: ", err)
+	}
+
+	linkCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_LINK)
+	if err != nil {
+		logrus.Info("Not collecting link metrics: ", err)
 	}
 
 	transformations := []Transform{}
@@ -50,11 +61,14 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 	return &MetricsPipeline{
 			config: c,
 
-			metricsFormat:    template.Must(template.New("metrics").Parse(metricsFormat)),
-			migMetricsFormat: template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+			migMetricsFormat:    template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+			switchMetricsFormat: template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
+			linkMetricsFormat:   template.Must(template.New("switchMetrics").Parse(linkMetricsFormat)),
 
 			counters:        counters,
 			gpuCollector:    gpuCollector,
+			switchCollector: switchCollector,
+			linkCollector:   linkCollector,
 			transformations: transformations,
 		}, func() {
 			cleanup()
@@ -66,8 +80,9 @@ func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*M
 	return &MetricsPipeline{
 		config: c,
 
-		metricsFormat:    template.Must(template.New("metrics").Parse(metricsFormat)),
-		migMetricsFormat: template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+		migMetricsFormat:    template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+		switchMetricsFormat: template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
+		linkMetricsFormat:   template.Must(template.New("switchMetrics").Parse(linkMetricsFormat)),
 
 		counters:     collector.Counters,
 		gpuCollector: collector,
@@ -107,10 +122,22 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 	}
 }
 
+func GetLinkStatMetricString(c DCGMCollector) string {
+	var linkStr string
+	for _, sw := range c.SysInfo.Switches {
+		for _, link := range sw.NvLinks {
+			linkStr = linkStr + fmt.Sprintf("DCGM_FI_DEV_NSWITCH_NVLINK_STATUS{nvlink=\"link%d\" nvswitch=\"nvswitch%d\",Hostname=\"%s\"} %d\n", link.Index, sw.EntityId, c.Hostname, link.State)
+		}
+	}
+
+	return linkStr
+}
+
 func (m *MetricsPipeline) run() (string, error) {
+	/* Collect GPU Metrics */
 	metrics, err := m.gpuCollector.GetMetrics()
 	if err != nil {
-		return "", fmt.Errorf("Failed to collect metrics with error: %v", err)
+		return "", fmt.Errorf("Failed to collect gpu metrics with error: %v", err)
 	}
 
 	for _, transform := range m.transformations {
@@ -123,6 +150,59 @@ func (m *MetricsPipeline) run() (string, error) {
 	formated, err := FormatMetrics(m.migMetricsFormat, metrics)
 	if err != nil {
 		return "", fmt.Errorf("Failed to format metrics with error: %v", err)
+	}
+
+	if m.switchCollector != nil {
+		/* Collect Switch Metrics */
+		metrics, err = m.switchCollector.GetMetrics()
+		if err != nil {
+			return "", fmt.Errorf("Failed to collect switch metrics with error: %v", err)
+		}
+
+		if len(metrics) > 0 {
+			for _, transform := range m.transformations {
+				err := transform.Process(metrics, m.switchCollector.SysInfo)
+				if err != nil {
+					return "", fmt.Errorf("Failed to transform switch metrics for transform %s: %v", err, transform.Name())
+				}
+			}
+
+			switchFormated, err := FormatMetrics(m.switchMetricsFormat, metrics)
+			if err != nil {
+				logrus.Warnf("Failed to format switch metrics with error: %v", err)
+			}
+
+			formated = formated + switchFormated
+		}
+	}
+
+	if m.linkCollector != nil {
+		/* Collect Link Metrics */
+		metrics, err = m.linkCollector.GetMetrics()
+		if err != nil {
+			return "", fmt.Errorf("Failed to collect link metrics with error: %v", err)
+		}
+
+		if len(metrics) > 0 {
+			for _, transform := range m.transformations {
+				err := transform.Process(metrics, m.linkCollector.SysInfo)
+				if err != nil {
+					return "", fmt.Errorf("Failed to transform link metrics for transform %s: %v", err, transform.Name())
+				}
+			}
+
+			switchFormated, err := FormatMetrics(m.linkMetricsFormat, metrics)
+			if err != nil {
+				logrus.Warnf("Failed to format link metrics with error: %v", err)
+			}
+
+			formated = formated + switchFormated
+		}
+
+		/* Add link state output */
+
+		linkStates := GetLinkStatMetricString(*m.linkCollector)
+		formated = formated + linkStates
 	}
 
 	return formated, nil
@@ -139,24 +219,6 @@ func (m *MetricsPipeline) run() (string, error) {
 * ```
  */
 
-var metricsFormat = `
-{{- range $counter, $metrics := . -}}
-# HELP {{ $counter.FieldName }} {{ $counter.Help }}
-# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
-{{- range $metric := $metrics }}
-{{ $counter.FieldName }}{gpu="{{ $metric.GPU }}",{{ $metric.UUID }}="{{ $metric.GPUUUID }}",device="{{ $metric.GPUDevice }}",modelName="{{ $metric.GPUModelName }}"
-
-{{- range $k, $v := $metric.Labels -}}
-	,{{ $k }}="{{ $v }}"
-{{- end -}}
-{{- range $k, $v := $metric.Attributes -}}
-	,{{ $k }}="{{ $v }}"
-{{- end -}}
-
-} {{ $metric.Value -}}
-{{- end }}
-{{ end }}`
-
 var migMetricsFormat = `
 {{- range $counter, $metrics := . -}}
 # HELP {{ $counter.FieldName }} {{ $counter.Help }}
@@ -171,6 +233,34 @@ var migMetricsFormat = `
 	,{{ $k }}="{{ $v }}"
 {{- end -}}
 
+} {{ $metric.Value -}}
+{{- end }}
+{{ end }}`
+
+var switchMetricsFormat = `
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{nvswitch="{{ $metric.GPU }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
+
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
+} {{ $metric.Value -}}
+{{- end }}
+{{ end }}`
+
+var linkMetricsFormat = `
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{nvlink="{{ $metric.GPU }}",nvswitch="{{ $metric.GPUDevice }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
+
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
 } {{ $metric.Value -}}
 {{- end }}
 {{ end }}`

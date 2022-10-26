@@ -27,6 +27,55 @@ const (
 	fakeProfileName string = "2fake.4gb"
 )
 
+func SpoofSwitchSystemInfo() SystemInfo {
+	var sysInfo SystemInfo
+	sysInfo.InfoType = dcgm.FE_SWITCH
+	sw1 := SwitchInfo{
+		EntityId: 0,
+	}
+	sw2 := SwitchInfo{
+		EntityId: 1,
+	}
+
+	l1 := dcgm.NvLinkStatus{
+		ParentId:   0,
+		ParentType: dcgm.FE_SWITCH,
+		State:      2,
+		Index:      0,
+	}
+
+	l2 := dcgm.NvLinkStatus{
+		ParentId:   0,
+		ParentType: dcgm.FE_SWITCH,
+		State:      3,
+		Index:      1,
+	}
+
+	l3 := dcgm.NvLinkStatus{
+		ParentId:   1,
+		ParentType: dcgm.FE_SWITCH,
+		State:      2,
+		Index:      0,
+	}
+
+	l4 := dcgm.NvLinkStatus{
+		ParentId:   1,
+		ParentType: dcgm.FE_SWITCH,
+		State:      3,
+		Index:      1,
+	}
+
+	sw1.NvLinks = append(sw1.NvLinks, l1)
+	sw1.NvLinks = append(sw1.NvLinks, l2)
+	sw2.NvLinks = append(sw2.NvLinks, l3)
+	sw2.NvLinks = append(sw2.NvLinks, l4)
+
+	sysInfo.Switches = append(sysInfo.Switches, sw1)
+	sysInfo.Switches = append(sysInfo.Switches, sw2)
+
+	return sysInfo
+}
+
 func SpoofSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
 	sysInfo.GpuCount = 2
@@ -50,7 +99,7 @@ func SpoofSystemInfo() SystemInfo {
 
 func TestMonitoredEntities(t *testing.T) {
 	sysInfo := SpoofSystemInfo()
-	sysInfo.dOpt.Flex = true
+	sysInfo.gOpt.Flex = true
 
 	monitoring := GetMonitoredEntities(sysInfo)
 	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored entities but found %d", len(monitoring)))
@@ -92,25 +141,25 @@ func TestVerifyDevicePresence(t *testing.T) {
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 
 	dOpt.Flex = false
-	dOpt.GpuRange = append(dOpt.GpuRange, -1)
-	dOpt.GpuInstanceRange = append(dOpt.GpuInstanceRange, -1)
+	dOpt.MajorRange = append(dOpt.MajorRange, -1)
+	dOpt.MinorRange = append(dOpt.MinorRange, -1)
 	err = VerifyDevicePresence(&sysInfo, dOpt)
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 
-	dOpt.GpuInstanceRange[0] = 10 // this GPU instance doesn't exist
+	dOpt.MinorRange[0] = 10 // this GPU instance doesn't exist
 	err = VerifyDevicePresence(&sysInfo, dOpt)
 	require.NotEqual(t, err, nil, "Expected to have an error for a non-existent GPU instance, but none found")
 
-	dOpt.GpuRange[0] = 10 // this GPU doesn't exist
-	dOpt.GpuInstanceRange[0] = -1
+	dOpt.MajorRange[0] = 10 // this GPU doesn't exist
+	dOpt.MinorRange[0] = -1
 	err = VerifyDevicePresence(&sysInfo, dOpt)
 	require.NotEqual(t, err, nil, "Expected to have an error for a non-existent GPU, but none found")
 
 	// Add GPUs and instances that exist
-	dOpt.GpuRange[0] = 0
-	dOpt.GpuRange = append(dOpt.GpuRange, 1)
-	dOpt.GpuInstanceRange[0] = 0
-	dOpt.GpuInstanceRange = append(dOpt.GpuInstanceRange, 14)
+	dOpt.MajorRange[0] = 0
+	dOpt.MajorRange = append(dOpt.MajorRange, 1)
+	dOpt.MinorRange[0] = 0
+	dOpt.MinorRange = append(dOpt.MinorRange, 14)
 	err = VerifyDevicePresence(&sysInfo, dOpt)
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 }
@@ -119,3 +168,23 @@ func TestVerifyDevicePresence(t *testing.T) {
 //	sysInfo := SpoofSystemInfo()
 //    SetMigProfileNames(sysInfo, values)
 //}
+
+func TestMonitoredSwitches(t *testing.T) {
+	sysInfo := SpoofSwitchSystemInfo()
+
+	/* test that only switches are returned */
+	monitoring := GetMonitoredEntities(sysInfo)
+	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored switches but found %d", len(monitoring)))
+	for _, mi := range monitoring {
+		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_SWITCH, fmt.Sprintf("Should have only returned switches but returned %d", mi.Entity.EntityGroupId))
+	}
+
+	/* test that only "up" links are monitored and 1 from each switch */
+	sysInfo.InfoType = dcgm.FE_LINK
+	monitoring = GetMonitoredEntities(sysInfo)
+	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored links but found %d", len(monitoring)))
+	for i, mi := range monitoring {
+		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_LINK, fmt.Sprintf("Should have only returned links but returned %d", mi.Entity.EntityGroupId))
+		require.Equal(t, mi.ParentId, uint(i), fmt.Sprint("Link should reference switch parent"))
+	}
+}

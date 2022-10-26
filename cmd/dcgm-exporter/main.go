@@ -19,7 +19,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"os"
 	"os/signal"
 	"strconv"
@@ -29,6 +28,8 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
@@ -36,8 +37,8 @@ import (
 
 const (
 	FlexKey                = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
-	GPUKey                 = "g" // Monitor GPUs
-	GPUInstanceKey         = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
+	MajorKey               = "g" // Monitor GPUs
+	MinorKey               = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
 	undefinedConfigMapData = "none"
 )
 
@@ -51,7 +52,8 @@ var (
 	CLIKubernetesGPUIDType = "kubernetes-gpu-id-type"
 	CLIUseOldNamespace     = "use-old-namespace"
 	CLIRemoteHEInfo        = "remote-hostengine-info"
-	CLIDevices             = "devices"
+	CLIGPUDevices          = "devices"
+	CLISwitchDevices       = "switch-devices"
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
@@ -65,18 +67,18 @@ func main() {
 
 	deviceUsageTemplate := `Specify which devices dcgm-exporter monitors.
 	Possible values: {{.FlexKey}} or 
-	                 {{.GPUKey}}[:id1[,-id2...] or 
-	                 {{.GPUInstanceKey}}[:id1[,-id2...].
+	                 {{.MajorKey}}[:id1[,-id2...] or 
+	                 {{.MinorKey}}[:id1[,-id2...].
 	If an id list is used, then devices with match IDs must exist on the system. For example:
 		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled. (See {{.FlexKey}})
-		{{.GPUKey}} = Monitor all GPUs
-		{{.GPUInstanceKey}} = Monitor all GPU instances
+		{{.MajorKey}} = Monitor all GPUs
+		{{.MinorKey}} = Monitor all GPU instances
 		{{.FlexKey}} = Monitor all GPUs if MIG is disabled, or all GPU instances if MIG is enabled.
                        Note: this rule will be applied to each GPU. If it has GPU instances, those
                              will be monitored. If it doesn't, then the GPU will be monitored.
                              This is our recommended option for single or mixed MIG Strategies.
-		{{.GPUKey}}:0,1 = monitor GPUs 0 and 1
-		{{.GPUInstanceKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
+		{{.MajorKey}}:0,1 = monitor GPUs 0 and 1
+		{{.MinorKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
 	
 	NOTE 1: -i cannot be specified unless MIG mode is enabled.
 	NOTE 2: Any time indices are specified, those indices must exist on the system.	
@@ -85,7 +87,7 @@ func main() {
 
 	var deviceUsageBuffer bytes.Buffer
 	t := template.Must(template.New("").Parse(deviceUsageTemplate))
-	_ = t.Execute(&deviceUsageBuffer, map[string]string{"FlexKey": FlexKey, "GPUKey": GPUKey, "GPUInstanceKey": GPUInstanceKey})
+	_ = t.Execute(&deviceUsageBuffer, map[string]string{"FlexKey": FlexKey, "MajorKey": MajorKey, "MinorKey": MinorKey})
 	DeviceUsageStr := deviceUsageBuffer.String()
 
 	c.Flags = []cli.Flag{
@@ -146,7 +148,7 @@ func main() {
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"},
 		},
 		&cli.StringFlag{
-			Name:    CLIDevices,
+			Name:    CLIGPUDevices,
 			Aliases: []string{"d"},
 			Value:   FlexKey,
 			Usage:   DeviceUsageStr,
@@ -158,6 +160,13 @@ func main() {
 			Value:   false,
 			Usage:   "Omit the hostname information from the output, matching older versions.",
 			EnvVars: []string{"DCGM_EXPORTER_NO_HOSTNAME"},
+		},
+		&cli.StringFlag{
+			Name:    CLISwitchDevices,
+			Aliases: []string{"s"},
+			Value:   FlexKey,
+			Usage:   DeviceUsageStr,
+			EnvVars: []string{"DCGM_EXPORTER_OTHER_DEVICES_STR"},
 		},
 		&cli.BoolFlag{
 			Name:    CLIUseFakeGpus,
@@ -277,7 +286,7 @@ func parseDeviceOptionsToken(token string, dOpt *dcgmexporter.DeviceOptions) err
 		if count > 1 {
 			return fmt.Errorf("No range can be specified with the flex option 'f'")
 		}
-	} else if letter == GPUKey || letter == GPUInstanceKey {
+	} else if letter == MajorKey || letter == MinorKey {
 		var indices []int
 		if count == 1 {
 			// No range means all present devices of the type
@@ -313,10 +322,10 @@ func parseDeviceOptionsToken(token string, dOpt *dcgmexporter.DeviceOptions) err
 			}
 		}
 
-		if letter == GPUKey {
-			dOpt.GpuRange = indices
+		if letter == MajorKey {
+			dOpt.MajorRange = indices
 		} else {
-			dOpt.GpuInstanceRange = indices
+			dOpt.MinorRange = indices
 		}
 	} else {
 		return fmt.Errorf("The only valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
@@ -325,9 +334,8 @@ func parseDeviceOptionsToken(token string, dOpt *dcgmexporter.DeviceOptions) err
 	return nil
 }
 
-func parseDeviceOptions(c *cli.Context) (dcgmexporter.DeviceOptions, error) {
+func parseDeviceOptions(devices string) (dcgmexporter.DeviceOptions, error) {
 	var dOpt dcgmexporter.DeviceOptions
-	devices := c.String(CLIDevices)
 
 	letterAndRange := strings.Split(devices, ":")
 	count := len(letterAndRange)
@@ -341,7 +349,7 @@ func parseDeviceOptions(c *cli.Context) (dcgmexporter.DeviceOptions, error) {
 		if count > 1 {
 			return dOpt, fmt.Errorf("No range can be specified with the flex option 'f'")
 		}
-	} else if letter == GPUKey || letter == GPUInstanceKey {
+	} else if letter == MajorKey || letter == MinorKey {
 		var indices []int
 		if count == 1 {
 			// No range means all present devices of the type
@@ -377,10 +385,10 @@ func parseDeviceOptions(c *cli.Context) (dcgmexporter.DeviceOptions, error) {
 			}
 		}
 
-		if letter == GPUKey {
-			dOpt.GpuRange = indices
+		if letter == MajorKey {
+			dOpt.MajorRange = indices
 		} else {
-			dOpt.GpuInstanceRange = indices
+			dOpt.MinorRange = indices
 		}
 	} else {
 		return dOpt, fmt.Errorf("The only valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
@@ -390,7 +398,12 @@ func parseDeviceOptions(c *cli.Context) (dcgmexporter.DeviceOptions, error) {
 }
 
 func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
-	dOpt, err := parseDeviceOptions(c)
+	gOpt, err := parseDeviceOptions(c.String(CLIGPUDevices))
+	if err != nil {
+		return nil, err
+	}
+
+	sOpt, err := parseDeviceOptions(c.String(CLISwitchDevices))
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +418,8 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		UseOldNamespace:     c.Bool(CLIUseOldNamespace),
 		UseRemoteHE:         c.IsSet(CLIRemoteHEInfo),
 		RemoteHEInfo:        c.String(CLIRemoteHEInfo),
-		Devices:             dOpt,
+		GPUDevices:          gOpt,
+		SwitchDevices:       sOpt,
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),
