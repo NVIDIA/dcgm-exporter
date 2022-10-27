@@ -18,9 +18,18 @@ package dcgmexporter
 
 import (
 	"fmt"
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"math/rand"
+
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/sirupsen/logrus"
 )
+
+const PARENT_ID_IGNORED = 0
+
+type GroupInfo struct {
+	groupHandle dcgm.GroupHandle
+	groupType   dcgm.Field_Entity_Group
+}
 
 type ComputeInstanceInfo struct {
 	InstanceInfo dcgm.MigEntityInfo
@@ -41,16 +50,25 @@ type GpuInfo struct {
 	MigEnabled   bool
 }
 
+type SwitchInfo struct {
+	EntityId uint
+	NvLinks  []dcgm.NvLinkStatus
+}
+
 type SystemInfo struct {
 	GpuCount uint
 	Gpus     [dcgm.MAX_NUM_DEVICES]GpuInfo
-	dOpt     DeviceOptions
+	gOpt     DeviceOptions
+	sOpt     DeviceOptions
+	InfoType dcgm.Field_Entity_Group
+	Switches []SwitchInfo
 }
 
 type MonitoringInfo struct {
 	Entity       dcgm.GroupEntityPair
 	DeviceInfo   dcgm.Device
 	InstanceInfo *GpuInstanceInfo
+	ParentId     uint
 }
 
 func SetGpuInstanceProfileName(sysInfo *SystemInfo, entityId uint, profileName string) bool {
@@ -111,6 +129,15 @@ func GpuIdExists(sysInfo *SystemInfo, gpuId int) bool {
 	return false
 }
 
+func SwitchIdExists(sysInfo *SystemInfo, switchId int) bool {
+	for _, sw := range sysInfo.Switches {
+		if sw.EntityId == uint(switchId) {
+			return true
+		}
+	}
+	return false
+}
+
 func GpuInstanceIdExists(sysInfo *SystemInfo, gpuInstanceId int) bool {
 	for i := uint(0); i < sysInfo.GpuCount; i++ {
 		for _, instance := range sysInfo.Gpus[i].GpuInstances {
@@ -122,22 +149,58 @@ func GpuInstanceIdExists(sysInfo *SystemInfo, gpuInstanceId int) bool {
 	return false
 }
 
-func VerifyDevicePresence(sysInfo *SystemInfo, dOpt DeviceOptions) error {
-	if dOpt.Flex {
+func LinkIdExists(sysInfo *SystemInfo, linkId int) bool {
+	for _, sw := range sysInfo.Switches {
+		for _, link := range sw.NvLinks {
+			if link.Index == uint(linkId) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
+	if sOpt.Flex {
 		return nil
 	}
 
-	if len(dOpt.GpuRange) > 0 && dOpt.GpuRange[0] != -1 {
+	if len(sOpt.MajorRange) > 0 && sOpt.MajorRange[0] != -1 {
+		// Verify we can find all the specified Switches
+		for _, swId := range sOpt.MajorRange {
+			if !SwitchIdExists(sysInfo, swId) {
+				return fmt.Errorf("couldn't find requested NvSwitch id %d", swId)
+			}
+		}
+	}
+
+	if len(sOpt.MinorRange) > 0 && sOpt.MinorRange[0] != -1 {
+		for _, linkId := range sOpt.MinorRange {
+			if !LinkIdExists(sysInfo, linkId) {
+				return fmt.Errorf("couldn't find requested NvLink %d", linkId)
+			}
+		}
+	}
+
+	return nil
+}
+
+func VerifyDevicePresence(sysInfo *SystemInfo, gOpt DeviceOptions) error {
+	if gOpt.Flex {
+		return nil
+	}
+
+	if len(gOpt.MajorRange) > 0 && gOpt.MajorRange[0] != -1 {
 		// Verify we can find all the specified GPUs
-		for _, gpuId := range dOpt.GpuRange {
+		for _, gpuId := range gOpt.MajorRange {
 			if GpuIdExists(sysInfo, gpuId) == false {
 				return fmt.Errorf("Couldn't find requested GPU id %d", gpuId)
 			}
 		}
 	}
 
-	if len(dOpt.GpuInstanceRange) > 0 && dOpt.GpuInstanceRange[0] != -1 {
-		for _, gpuInstanceId := range dOpt.GpuInstanceRange {
+	if len(gOpt.MinorRange) > 0 && gOpt.MinorRange[0] != -1 {
+		for _, gpuInstanceId := range gOpt.MinorRange {
 			if GpuInstanceIdExists(sysInfo, gpuInstanceId) == false {
 				return fmt.Errorf("Couldn't find requested GPU instance id %d", gpuInstanceId)
 			}
@@ -147,8 +210,44 @@ func VerifyDevicePresence(sysInfo *SystemInfo, dOpt DeviceOptions) error {
 	return nil
 }
 
-func InitializeSystemInfo(dOpt DeviceOptions, useFakeGpus bool) (SystemInfo, error) {
-	sysInfo := SystemInfo{}
+func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, error) {
+	switches, err := dcgm.GetEntityGroupEntities(dcgm.FE_SWITCH)
+	if err != nil {
+		return sysInfo, err
+	}
+
+	if len(switches) <= 0 {
+		return sysInfo, fmt.Errorf("no switches to monitor")
+	}
+
+	links, err := dcgm.GetNvLinkLinkStatus()
+	if err != nil {
+		return sysInfo, err
+	}
+
+	for i := 0; i < len(switches); i++ {
+		var matchingLinks []dcgm.NvLinkStatus
+		for _, link := range links {
+			if link.ParentType == dcgm.FE_SWITCH && link.ParentId == uint(switches[i]) {
+				matchingLinks = append(matchingLinks, link)
+			}
+		}
+
+		sw := SwitchInfo{
+			switches[i],
+			matchingLinks,
+		}
+
+		sysInfo.Switches = append(sysInfo.Switches, sw)
+	}
+
+	sysInfo.sOpt = sOpt
+	err = VerifySwitchDevicePresence(&sysInfo, sOpt)
+
+	return sysInfo, nil
+}
+
+func InitializeGpuInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGpus bool) (SystemInfo, error) {
 	gpuCount, err := dcgm.GetAllDeviceCount()
 	if err != nil {
 		return sysInfo, err
@@ -207,10 +306,68 @@ func InitializeSystemInfo(dOpt DeviceOptions, useFakeGpus bool) (SystemInfo, err
 		}
 	}
 
-	sysInfo.dOpt = dOpt
-	err = VerifyDevicePresence(&sysInfo, dOpt)
+	sysInfo.gOpt = gOpt
+	err = VerifyDevicePresence(&sysInfo, gOpt)
 
 	return sysInfo, nil
+}
+
+func InitializeSystemInfo(gOpt DeviceOptions, sOpt DeviceOptions, useFakeGpus bool, entityType dcgm.Field_Entity_Group) (SystemInfo, error) {
+	sysInfo := SystemInfo{}
+
+	logrus.Info("Initializing system entities of type: ", entityType)
+	switch entityType {
+	case dcgm.FE_LINK:
+		sysInfo.InfoType = dcgm.FE_LINK
+		return InitializeNvSwitchInfo(sysInfo, sOpt)
+	case dcgm.FE_SWITCH:
+		sysInfo.InfoType = dcgm.FE_SWITCH
+		return InitializeNvSwitchInfo(sysInfo, sOpt)
+	case dcgm.FE_GPU:
+		sysInfo.InfoType = dcgm.FE_GPU
+		return InitializeGpuInfo(sysInfo, gOpt, useFakeGpus)
+	}
+
+	return sysInfo, fmt.Errorf("unhandled entity type: %d", entityType)
+}
+
+func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []func(), error) {
+	var groups []dcgm.GroupHandle
+	var cleanups []func()
+
+	/* Create per-switch link groups */
+	for _, sw := range sysInfo.Switches {
+		if !IsSwitchWatched(sw.EntityId, sysInfo) {
+			continue
+		}
+
+		groupId, err := dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+		if err != nil {
+			return nil, cleanups, err
+		}
+
+		groups = append(groups, groupId)
+
+		for _, link := range sw.NvLinks {
+			if link.State != dcgm.LS_UP {
+				continue
+			}
+
+			if !IsLinkWatched(link.Index, sw.EntityId, sysInfo) {
+				continue
+			}
+
+			err = dcgm.AddLinkEntityToGroup(groupId, link.Index, link.ParentId)
+
+			if err != nil {
+				return groups, cleanups, err
+			}
+
+			cleanups = append(cleanups, func() { dcgm.DestroyGroup(groupId) })
+		}
+	}
+
+	return groups, cleanups, nil
 }
 
 func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), error) {
@@ -238,11 +395,111 @@ func AddAllGpus(sysInfo SystemInfo) []MonitoringInfo {
 			dcgm.GroupEntityPair{dcgm.FE_GPU, sysInfo.Gpus[i].DeviceInfo.GPU},
 			sysInfo.Gpus[i].DeviceInfo,
 			nil,
+			PARENT_ID_IGNORED,
 		}
 		monitoring = append(monitoring, mi)
 	}
 
 	return monitoring
+}
+
+func AddAllSwitches(sysInfo SystemInfo) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, sw := range sysInfo.Switches {
+		if !IsSwitchWatched(sw.EntityId, sysInfo) {
+			continue
+		}
+
+		mi := MonitoringInfo{
+			dcgm.GroupEntityPair{dcgm.FE_SWITCH, sw.EntityId},
+			dcgm.Device{
+				0, "", "", 0,
+				dcgm.PCIInfo{"", 0, 0, 0},
+				dcgm.DeviceIdentifiers{"", "", "", "", "", ""},
+				nil, "",
+			},
+			nil,
+			PARENT_ID_IGNORED,
+		}
+		monitoring = append(monitoring, mi)
+	}
+
+	return monitoring
+}
+
+func AddAllLinks(sysInfo SystemInfo) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, sw := range sysInfo.Switches {
+		for _, link := range sw.NvLinks {
+			if link.State != dcgm.LS_UP {
+				continue
+			}
+
+			if !IsLinkWatched(link.Index, sw.EntityId, sysInfo) {
+				continue
+			}
+
+			mi := MonitoringInfo{
+				dcgm.GroupEntityPair{dcgm.FE_LINK, link.Index},
+				dcgm.Device{
+					0, "", "", 0,
+					dcgm.PCIInfo{"", 0, 0, 0},
+					dcgm.DeviceIdentifiers{"", "", "", "", "", ""},
+					nil, "",
+				},
+				nil,
+				link.ParentId,
+			}
+			monitoring = append(monitoring, mi)
+		}
+	}
+
+	return monitoring
+}
+
+func IsSwitchWatched(switchId uint, sysInfo SystemInfo) bool {
+	if sysInfo.sOpt.Flex {
+		return true
+	}
+
+	if len(sysInfo.sOpt.MajorRange) <= 0 {
+		return true
+	}
+
+	for _, sw := range sysInfo.sOpt.MajorRange {
+		if uint(sw) == switchId {
+			return true
+		}
+
+	}
+	return false
+}
+
+func IsLinkWatched(linkId uint, switchId uint, sysInfo SystemInfo) bool {
+	if sysInfo.sOpt.Flex {
+		return true
+	}
+
+	for _, sw := range sysInfo.Switches {
+		if !IsSwitchWatched(sw.EntityId, sysInfo) {
+			return false
+		}
+
+		if len(sysInfo.sOpt.MinorRange) <= 0 {
+			return true
+		}
+
+		for _, link := range sysInfo.sOpt.MinorRange {
+			if uint(link) == linkId {
+				return true
+			}
+		}
+		return false
+	}
+
+	return false
 }
 
 func AddAllGpuInstances(sysInfo SystemInfo, addFlexibly bool) []MonitoringInfo {
@@ -254,6 +511,7 @@ func AddAllGpuInstances(sysInfo SystemInfo, addFlexibly bool) []MonitoringInfo {
 				dcgm.GroupEntityPair{dcgm.FE_GPU, sysInfo.Gpus[i].DeviceInfo.GPU},
 				sysInfo.Gpus[i].DeviceInfo,
 				nil,
+				PARENT_ID_IGNORED,
 			}
 			monitoring = append(monitoring, mi)
 		} else {
@@ -262,6 +520,7 @@ func AddAllGpuInstances(sysInfo SystemInfo, addFlexibly bool) []MonitoringInfo {
 					dcgm.GroupEntityPair{dcgm.FE_GPU_I, sysInfo.Gpus[i].GpuInstances[j].EntityId},
 					sysInfo.Gpus[i].DeviceInfo,
 					&sysInfo.Gpus[i].GpuInstances[j],
+					PARENT_ID_IGNORED,
 				}
 				monitoring = append(monitoring, mi)
 			}
@@ -278,6 +537,7 @@ func GetMonitoringInfoForGpu(sysInfo SystemInfo, gpuId int) *MonitoringInfo {
 				dcgm.GroupEntityPair{dcgm.FE_GPU, sysInfo.Gpus[i].DeviceInfo.GPU},
 				sysInfo.Gpus[i].DeviceInfo,
 				nil,
+				PARENT_ID_IGNORED,
 			}
 		}
 	}
@@ -293,6 +553,7 @@ func GetMonitoringInfoForGpuInstance(sysInfo SystemInfo, gpuInstanceId int) *Mon
 					dcgm.GroupEntityPair{dcgm.FE_GPU_I, uint(gpuInstanceId)},
 					sysInfo.Gpus[i].DeviceInfo,
 					&instance,
+					PARENT_ID_IGNORED,
 				}
 			}
 		}
@@ -304,22 +565,26 @@ func GetMonitoringInfoForGpuInstance(sysInfo SystemInfo, gpuInstanceId int) *Mon
 func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
-	if sysInfo.dOpt.Flex == true {
-		return AddAllGpuInstances(sysInfo, true)
+	if sysInfo.InfoType == dcgm.FE_SWITCH {
+		monitoring = AddAllSwitches(sysInfo)
+	} else if sysInfo.InfoType == dcgm.FE_LINK {
+		monitoring = AddAllLinks(sysInfo)
+	} else if sysInfo.gOpt.Flex == true {
+		monitoring = AddAllGpuInstances(sysInfo, true)
 	} else {
-		if len(sysInfo.dOpt.GpuRange) > 0 && sysInfo.dOpt.GpuRange[0] == -1 {
-			return AddAllGpus(sysInfo)
+		if len(sysInfo.gOpt.MajorRange) > 0 && sysInfo.gOpt.MajorRange[0] == -1 {
+			monitoring = AddAllGpus(sysInfo)
 		} else {
-			for _, gpuId := range sysInfo.dOpt.GpuRange {
-				// We've already verified that everying in the options list exists
+			for _, gpuId := range sysInfo.gOpt.MajorRange {
+				// We've already verified that everything in the options list exists
 				monitoring = append(monitoring, *GetMonitoringInfoForGpu(sysInfo, gpuId))
 			}
 		}
 
-		if len(sysInfo.dOpt.GpuInstanceRange) > 0 && sysInfo.dOpt.GpuInstanceRange[0] == -1 {
-			return AddAllGpuInstances(sysInfo, false)
+		if len(sysInfo.gOpt.MinorRange) > 0 && sysInfo.gOpt.MinorRange[0] == -1 {
+			monitoring = AddAllGpuInstances(sysInfo, false)
 		} else {
-			for _, gpuInstanceId := range sysInfo.dOpt.GpuInstanceRange {
+			for _, gpuInstanceId := range sysInfo.gOpt.MinorRange {
 				// We've already verified that everything in the options list exists
 				monitoring = append(monitoring, *GetMonitoringInfoForGpuInstance(sysInfo, gpuInstanceId))
 			}

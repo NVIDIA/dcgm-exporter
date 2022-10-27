@@ -18,13 +18,14 @@ package dcgmexporter
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
-	"os"
 )
 
-func NewDCGMCollector(c []Counter, config *Config) (*DCGMCollector, func(), error) {
-	sysInfo, err := InitializeSystemInfo(config.Devices, config.UseFakeGpus)
+func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.UseFakeGpus, entityType)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -37,9 +38,15 @@ func NewDCGMCollector(c []Counter, config *Config) (*DCGMCollector, func(), erro
 		}
 	}
 
+	var deviceFields = NewDeviceFields(c, entityType)
+
+	if len(deviceFields) <= 0 {
+		return nil, func() {}, fmt.Errorf("No fields to watch for device type: %d", entityType)
+	}
+
 	collector := &DCGMCollector{
 		Counters:        c,
-		DeviceFields:    NewDeviceFields(c),
+		DeviceFields:    deviceFields,
 		UseOldNamespace: config.UseOldNamespace,
 		SysInfo:         sysInfo,
 		Hostname:        hostname,
@@ -47,7 +54,7 @@ func NewDCGMCollector(c []Counter, config *Config) (*DCGMCollector, func(), erro
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, sysInfo, int64(config.CollectInterval)*1000)
 	if err != nil {
-		return nil, func() {}, err
+		logrus.Fatal("Failed to watch metrics: ", err)
 	}
 
 	collector.Cleanups = cleanups
@@ -68,7 +75,14 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 	metrics := make([][]Metric, count)
 
 	for i, mi := range monitoringInfo {
-		vals, err := dcgm.EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.DeviceFields)
+		var vals []dcgm.FieldValue_v1
+		var err error
+		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
+			vals, err = dcgm.LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId, c.DeviceFields)
+		} else {
+			vals, err = dcgm.EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.DeviceFields)
+		}
+
 		if err != nil {
 			if derr, ok := err.(*dcgm.DcgmError); ok {
 				if derr.Code == dcgm.DCGM_ST_CONNECTION_NOT_VALID {
@@ -79,24 +93,88 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 		}
 
 		// InstanceInfo will be nil for GPUs
-		metrics[i] = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
+		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
+			metrics[i] = ToSwitchMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+		} else {
+			metrics[i] = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
+		}
 	}
 
 	return metrics, nil
+}
+
+func FindCounterField(c []Counter, fieldId uint) (*Counter, error) {
+	for i := 0; i < len(c); i++ {
+		if uint(c[i].FieldID) == fieldId {
+			return &c[i], nil
+		}
+	}
+
+	return &c[0], fmt.Errorf("Could not find corresponding counter")
+}
+
+func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) []Metric {
+	var metrics []Metric
+	var labels = map[string]string{}
+
+	for _, val := range values {
+		v := ToString(val)
+		// Filter out counters with no value and ignored fields for this entity
+
+		counter, err := FindCounterField(c, val.FieldId)
+		if err != nil {
+			continue
+		}
+
+		if counter.PromType == "label" {
+			labels[counter.FieldName] = v
+			continue
+		}
+		uuid := "UUID"
+		if useOld {
+			uuid = "uuid"
+		}
+		var m Metric
+		if v == SkipDCGMValue {
+			continue
+		} else {
+			m = Metric{
+				Counter:      counter,
+				Value:        v,
+				UUID:         uuid,
+				GPU:          fmt.Sprintf("%d", mi.Entity.EntityId),
+				GPUUUID:      "",
+				GPUDevice:    fmt.Sprintf("nvswitch%d", mi.ParentId),
+				GPUModelName: "",
+				Hostname:     hostname,
+				Labels:       &labels,
+				Attributes:   nil,
+			}
+		}
+		metrics = append(metrics, m)
+	}
+
+	return metrics
 }
 
 func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GpuInstanceInfo, useOld bool, hostname string) []Metric {
 	var metrics []Metric
 	var labels = map[string]string{}
 
-	for i, val := range values {
+	for _, val := range values {
 		v := ToString(val)
 		// Filter out counters with no value and ignored fields for this entity
 		if v == SkipDCGMValue {
 			continue
 		}
-		if c[i].PromType == "label" {
-			labels[c[i].FieldName] = v
+
+		counter, err := FindCounterField(c, val.FieldId)
+		if err != nil {
+			continue
+		}
+
+		if counter.PromType == "label" {
+			labels[counter.FieldName] = v
 			continue
 		}
 		uuid := "UUID"
@@ -104,7 +182,7 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 			uuid = "uuid"
 		}
 		m := Metric{
-			Counter: &c[i],
+			Counter: counter,
 			Value:   v,
 
 			UUID:         uuid,

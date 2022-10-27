@@ -18,8 +18,9 @@ package dcgmexporter
 
 import (
 	"fmt"
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"math/rand"
+
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
@@ -31,10 +32,16 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 	return group, func() { dcgm.DestroyGroup(group) }, nil
 }
 
-func NewDeviceFields(counters []Counter) []dcgm.Short {
-	deviceFields := make([]dcgm.Short, len(counters))
-	for i, f := range counters {
-		deviceFields[i] = f.FieldID
+func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
+	var deviceFields []dcgm.Short
+	for _, f := range counters {
+		meta := dcgm.FieldGetById(f.FieldID)
+
+		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
+			deviceFields = append(deviceFields, f.FieldID)
+		} else if entityType == dcgm.FE_GPU && (meta.EntityLevel == dcgm.FE_GPU_CI || meta.EntityLevel == dcgm.FE_GPU_I) {
+			deviceFields = append(deviceFields, f.FieldID)
+		}
 	}
 
 	return deviceFields
@@ -63,26 +70,36 @@ func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collect
 	var err error
 	var cleanups []func()
 	var cleanup func()
-	var group dcgm.GroupHandle
+	var groups []dcgm.GroupHandle
 	var fieldGroup dcgm.FieldHandle
 
-	group, cleanup, err = CreateGroupFromSystemInfo(sysInfo)
+	if sysInfo.InfoType == dcgm.FE_LINK {
+		/* one group per-nvswitch is created for nvlinks */
+		groups, cleanups, err = CreateLinkGroupsFromSystemInfo(sysInfo)
+	} else {
+		group, cleanup, err := CreateGroupFromSystemInfo(sysInfo)
+		if err == nil {
+			groups = append(groups, group)
+			cleanups = append(cleanups, cleanup)
+		}
+	}
+
 	if err != nil {
 		goto fail
 	}
 
-	cleanups = append(cleanups, cleanup)
+	for _, gr := range groups {
+		fieldGroup, cleanup, err = NewFieldGroup(deviceFields)
+		if err != nil {
+			goto fail
+		}
 
-	fieldGroup, cleanup, err = NewFieldGroup(deviceFields)
-	if err != nil {
-		goto fail
-	}
+		cleanups = append(cleanups, cleanup)
 
-	cleanups = append(cleanups, cleanup)
-
-	err = WatchFieldGroup(group, fieldGroup, collectIntervalUsec, 0.0, 1)
-	if err != nil {
-		goto fail
+		err = WatchFieldGroup(gr, fieldGroup, collectIntervalUsec, 0.0, 1)
+		if err != nil {
+			goto fail
+		}
 	}
 
 	return cleanups, nil

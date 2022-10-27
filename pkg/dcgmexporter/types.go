@@ -53,9 +53,9 @@ const (
 )
 
 type DeviceOptions struct {
-	Flex             bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
-	GpuRange         []int // The indices of each GPU to monitor, or -1 to monitor all
-	GpuInstanceRange []int // The indices of each GPU instance to monitor, or -1 to monitor all
+	Flex       bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
+	MajorRange []int // The indices of each GPU/NvSwitch to monitor, or -1 to monitor all
+	MinorRange []int // The indices of each GPUInstance/NvLink to monitor, or -1 to monitor all
 }
 
 type Config struct {
@@ -68,7 +68,8 @@ type Config struct {
 	UseOldNamespace     bool
 	UseRemoteHE         bool
 	RemoteHEInfo        string
-	Devices             DeviceOptions
+	GPUDevices          DeviceOptions
+	SwitchDevices       DeviceOptions
 	NoHostname          bool
 	UseFakeGpus         bool
 	ConfigMapData       string
@@ -83,12 +84,15 @@ type Transform interface {
 type MetricsPipeline struct {
 	config *Config
 
-	transformations  []Transform
-	metricsFormat    *template.Template
-	migMetricsFormat *template.Template
+	transformations     []Transform
+	migMetricsFormat    *template.Template
+	switchMetricsFormat *template.Template
+	linkMetricsFormat   *template.Template
 
-	counters     []Counter
-	gpuCollector *DCGMCollector
+	counters        []Counter
+	gpuCollector    *DCGMCollector
+	switchCollector *DCGMCollector
+	linkCollector   *DCGMCollector
 }
 
 type DCGMCollector struct {
