@@ -37,8 +37,8 @@ import (
 
 const (
 	FlexKey                = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
-	MajorKey               = "g" // Monitor GPUs
-	MinorKey               = "i" // Monitor GPU instances - cannot be specified if MIG is disabled
+	MajorKey               = "g" // Monitor top-level entities: GPUs or NvSwitches
+	MinorKey               = "i" // Monitor sub-level entities: GPU instances/NvLinks - cannot be specified if MIG is disabled
 	undefinedConfigMapData = "none"
 )
 
