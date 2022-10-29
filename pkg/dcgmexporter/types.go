@@ -71,6 +71,7 @@ type Config struct {
 	GPUDevices          DeviceOptions
 	SwitchDevices       DeviceOptions
 	NoHostname          bool
+	CustomHostname      string
 	UseFakeGpus         bool
 	ConfigMapData       string
 	MetricGroups        []dcgm.MetricGroup

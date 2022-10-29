@@ -30,12 +30,9 @@ func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_
 		return nil, func() {}, err
 	}
 
-	hostname := ""
-	if config.NoHostname == false {
-		hostname, err = os.Hostname()
-		if err != nil {
-			return nil, func() {}, err
-		}
+	hostname, err := getHostname(config)
+	if err != nil {
+		return nil, func() {}, err
 	}
 
 	var deviceFields = NewDeviceFields(c, entityType)
@@ -60,6 +57,24 @@ func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_
 	collector.Cleanups = cleanups
 
 	return collector, func() { collector.Cleanup() }, nil
+}
+
+func getHostname(config *Config) (hostname string, err error) {
+	hostname = ""
+
+	if config.NoHostname {
+		return hostname, nil
+	}
+
+	if config.CustomHostname != "" {
+		hostname = config.CustomHostname
+	} else {
+		hostname, err = os.Hostname()
+		if err != nil {
+			return hostname, err
+		}
+	}
+	return hostname, nil
 }
 
 func (c *DCGMCollector) Cleanup() {

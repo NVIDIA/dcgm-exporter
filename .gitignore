@@ -4,3 +4,4 @@ dcgm-exporter
 !etc/
 !deployment/
 tags
+.vscode
