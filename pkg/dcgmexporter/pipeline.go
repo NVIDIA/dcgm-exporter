@@ -122,17 +122,6 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 	}
 }
 
-func GetLinkStatMetricString(c DCGMCollector) string {
-	var linkStr string
-	for _, sw := range c.SysInfo.Switches {
-		for _, link := range sw.NvLinks {
-			linkStr = linkStr + fmt.Sprintf("DCGM_FI_DEV_NSWITCH_NVLINK_STATUS{nvlink=\"link%d\" nvswitch=\"nvswitch%d\",Hostname=\"%s\"} %d\n", link.Index, sw.EntityId, c.Hostname, link.State)
-		}
-	}
-
-	return linkStr
-}
-
 func (m *MetricsPipeline) run() (string, error) {
 	/* Collect GPU Metrics */
 	metrics, err := m.gpuCollector.GetMetrics()
@@ -198,11 +187,6 @@ func (m *MetricsPipeline) run() (string, error) {
 
 			formated = formated + switchFormated
 		}
-
-		/* Add link state output */
-
-		linkStates := GetLinkStatMetricString(*m.linkCollector)
-		formated = formated + linkStates
 	}
 
 	return formated, nil
