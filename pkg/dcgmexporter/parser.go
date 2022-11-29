@@ -176,7 +176,7 @@ func readConfigMap(kubeClient kubernetes.Interface, c *Config) ([][]string, erro
 	}
 
 	r := csv.NewReader(strings.NewReader(cm.Data["metrics"]))
-
+	r.Comment = '#'
 	records, err := r.ReadAll()
 
 	if len(records) == 0 {
