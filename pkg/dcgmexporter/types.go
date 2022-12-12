@@ -74,6 +74,7 @@ type Config struct {
 	UseFakeGpus         bool
 	ConfigMapData       string
 	MetricGroups        []dcgm.MetricGroup
+	WebConfig           string
 }
 
 type Transform interface {
@@ -158,6 +159,7 @@ type MetricsServer struct {
 	server      http.Server
 	metrics     string
 	metricsChan chan string
+	webConfig   string
 }
 
 type PodMapper struct {

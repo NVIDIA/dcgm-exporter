@@ -57,6 +57,7 @@ var (
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
+	CLIWebConfig           = "web-config"
 )
 
 func main() {
@@ -174,6 +175,12 @@ func main() {
 			Usage:   "Accept GPUs that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
 		},
+		&cli.StringFlag{
+			Name:    CLIWebConfig,
+			Value:   "",
+			Usage:   "TLS config file following webConfig spec. Only tls_server_config implemented. All other parameters are ignored",
+			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG"},
+		},
 	}
 
 	c.Action = func(c *cli.Context) error {
@@ -269,8 +276,6 @@ restart:
 			return nil
 		}
 	}
-
-	return nil
 }
 
 func parseDeviceOptionsToken(token string, dOpt *dcgmexporter.DeviceOptions) error {
@@ -423,5 +428,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),
+		WebConfig:           c.String(CLIWebConfig),
 	}, nil
 }

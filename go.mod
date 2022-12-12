@@ -29,15 +29,16 @@ replace (
 
 require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20221107203308-b6ed78cdc8d3
-	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48 // indirect
+	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/gorilla/mux v1.8.0
+	github.com/prometheus/exporter-toolkit v0.8.2
 	github.com/sirupsen/logrus v1.7.0
-	github.com/stretchr/testify v1.6.1
+	github.com/stretchr/testify v1.8.0
 	github.com/urfave/cli/v2 v2.3.0
-	google.golang.org/grpc v1.35.0
+	google.golang.org/grpc v1.47.0
+	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.20.2
 	k8s.io/apimachinery v0.20.2
-	k8s.io/cli-runtime v0.20.2
 	k8s.io/client-go v0.20.2
 	k8s.io/kubelet v0.20.2
 	k8s.io/kubernetes v0.0.0-00010101000000-000000000000

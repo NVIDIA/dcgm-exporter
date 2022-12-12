@@ -19,11 +19,15 @@ package dcgmexporter
 import (
 	"context"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v2"
+
+	"github.com/prometheus/exporter-toolkit/web"
 )
 
 func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), error) {
@@ -35,6 +39,7 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 		},
+		webConfig:   c.WebConfig,
 		metricsChan: metrics,
 		metrics:     "",
 	}
@@ -62,10 +67,34 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	httpwg.Add(1)
 	go func() {
 		defer httpwg.Done()
-		logrus.Info("Starting webserver")
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logrus.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
+
+		if s.webConfig == "" {
+			logrus.Infof("Starting http webserver on %v", s.server.Addr)
+			if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logrus.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
+			}
+		} else {
+			f, err := os.ReadFile(s.webConfig)
+			if err != nil {
+				logrus.Fatalf("failed to load webconfig from %v. failed with error: %v", s.webConfig, err)
+			}
+			webConfig := &web.Config{}
+			err = yaml.Unmarshal(f, webConfig)
+			if err != nil {
+				logrus.Fatal("failed to parse web config: %v", err)
+			}
+
+			s.server.TLSConfig, err = web.ConfigToTLSConfig(&webConfig.TLSConfig)
+			if err != nil {
+				logrus.Fatalf("failed to transform web config to tlsconfig: %v", err)
+			}
+
+			logrus.Infof("Starting https webserver on %v", s.server.Addr)
+			if err := s.server.ListenAndServeTLS(webConfig.TLSConfig.TLSCertPath, webConfig.TLSConfig.TLSKeyPath); err != nil && err != http.ErrServerClosed {
+				logrus.Fatalf("Failed to Listen and Server HTTPS server with err: `%v`", err)
+			}
 		}
+
 	}()
 
 	httpwg.Add(1)
