@@ -437,6 +437,10 @@ func AddAllLinks(sysInfo SystemInfo) []MonitoringInfo {
 				continue
 			}
 
+			if !IsSwitchWatched(sw.EntityId, sysInfo) {
+				continue
+			}
+
 			if !IsLinkWatched(link.Index, sw.EntityId, sysInfo) {
 				continue
 			}
