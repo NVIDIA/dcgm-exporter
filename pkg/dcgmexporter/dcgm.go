@@ -39,7 +39,7 @@ func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []d
 
 		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
 			deviceFields = append(deviceFields, f.FieldID)
-		} else if entityType == dcgm.FE_GPU && (meta.EntityLevel == dcgm.FE_GPU_CI || meta.EntityLevel == dcgm.FE_GPU_I) {
+		} else if entityType == dcgm.FE_GPU && (meta.EntityLevel == dcgm.FE_GPU_CI || meta.EntityLevel == dcgm.FE_GPU_I || meta.EntityLevel == dcgm.FE_VGPU) {
 			deviceFields = append(deviceFields, f.FieldID)
 		}
 	}

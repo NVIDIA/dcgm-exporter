@@ -32,12 +32,15 @@ var sampleCounters = []Counter{
 	/* test that switch and link metrics are filtered out automatically when devices are not detected */
 	{dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT, "DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT", "gauge", "switch temperature"},
 	{dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS, "DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS", "gauge", "per-link flit errors"},
+	/* test that vgpu metrics are not filtered out */
+	{dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS, "DCGM_FI_DEV_VGPU_LICENSE_STATUS", "gauge", "vgpu license status"},
 }
 
 var expectedMetrics = map[string]bool{
 	"DCGM_FI_DEV_GPU_TEMP":                 true,
 	"DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": true,
 	"DCGM_FI_DEV_POWER_USAGE":              true,
+	"DCGM_FI_DEV_VGPU_LICENSE_STATUS":      true,
 }
 
 func TestDCGMCollector(t *testing.T) {
