@@ -32,9 +32,13 @@ func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_
 
 	hostname := ""
 	if config.NoHostname == false {
-		hostname, err = os.Hostname()
-		if err != nil {
-			return nil, func() {}, err
+		if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
+			hostname = nodeName
+		} else {
+			hostname, err = os.Hostname()
+			if err != nil {
+				return nil, func() {}, err
+			}
 		}
 	}
 
