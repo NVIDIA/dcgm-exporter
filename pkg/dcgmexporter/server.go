@@ -92,6 +92,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 }
 
 func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(s.getMetrics()))
 }
@@ -101,6 +102,7 @@ func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("KO"))
 	} else {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	}
