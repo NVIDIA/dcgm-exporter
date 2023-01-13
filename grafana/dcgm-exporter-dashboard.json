@@ -566,8 +566,9 @@
       "hiddenSeries": false,
       "id": 18,
       "legend": {
+        "alignAsTable": true,
         "avg": true,
-        "current": false,
+        "current": true,
         "max": true,
         "min": false,
         "rightSide": true,
