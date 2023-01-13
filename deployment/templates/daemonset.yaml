@@ -94,6 +94,10 @@ spec:
           value: "true"
         - name: "DCGM_EXPORTER_LISTEN"
           value: "{{ .Values.service.address }}"
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         {{- if .Values.extraEnv }}
         {{- toYaml .Values.extraEnv | nindent 8 }}
         {{- end }}
