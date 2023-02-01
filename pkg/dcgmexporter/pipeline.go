@@ -149,13 +149,6 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		if len(metrics) > 0 {
-			for _, transform := range m.transformations {
-				err := transform.Process(metrics, m.switchCollector.SysInfo)
-				if err != nil {
-					return "", fmt.Errorf("Failed to transform switch metrics for transform %s: %v", err, transform.Name())
-				}
-			}
-
 			switchFormated, err := FormatMetrics(m.switchMetricsFormat, metrics)
 			if err != nil {
 				logrus.Warnf("Failed to format switch metrics with error: %v", err)
@@ -173,13 +166,6 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		if len(metrics) > 0 {
-			for _, transform := range m.transformations {
-				err := transform.Process(metrics, m.linkCollector.SysInfo)
-				if err != nil {
-					return "", fmt.Errorf("Failed to transform link metrics for transform %s: %v", err, transform.Name())
-				}
-			}
-
 			switchFormated, err := FormatMetrics(m.linkMetricsFormat, metrics)
 			if err != nil {
 				logrus.Warnf("Failed to format link metrics with error: %v", err)
