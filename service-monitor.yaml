@@ -18,12 +18,12 @@ metadata:
   name: "dcgm-exporter"
   labels:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "3.1.2"
+    app.kubernetes.io/version: "3.1.3"
 spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: "dcgm-exporter"
-      app.kubernetes.io/version: "3.1.2"
+      app.kubernetes.io/version: "3.1.3"
   endpoints:
   - port: "metrics"
     path: "/metrics"
