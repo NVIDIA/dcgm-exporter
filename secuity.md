@@ -27,6 +27,8 @@ Please include the requested information listed below (as much as you can provid
 
 This information will help us triage your report more quickly.
 
+NVIDIA reserves the right to delete vulnerability reports until they're fixed.
+
 ## Preferred Languages
 
 We prefer all communications to be in English.
