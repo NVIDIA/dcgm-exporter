@@ -31,9 +31,10 @@ require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20221107203308-b6ed78cdc8d3
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/gorilla/mux v1.8.0
-	github.com/sirupsen/logrus v1.7.0
-	github.com/stretchr/testify v1.6.1
+	github.com/sirupsen/logrus v1.9.0
+	github.com/stretchr/testify v1.7.0
 	github.com/urfave/cli/v2 v2.3.0
+	golang.org/x/crypto v0.7.0 // indirect
 	google.golang.org/grpc v1.35.0
 	k8s.io/api v0.20.2
 	k8s.io/apimachinery v0.20.2

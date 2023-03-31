@@ -10,7 +10,7 @@ Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https
 
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 ```
-$ docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:3.1.6-3.1.3-ubuntu20.04
+$ docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:3.1.7-3.1.4-ubuntu20.04
 $ curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -161,3 +161,11 @@ make REGISTRY=<private_registry> push
 
 * Please let us know by [filing a new issue](https://github.com/NVIDIA/dcgm-exporter/issues/new)
 * You can contribute by opening a [pull request](https://github.com/NVIDIA/dcgm-exporter)
+
+### Reporting Security Issues
+
+We ask that all community members and users of DCGM Exporter follow the standard Nvidia process for reporting security vulnerabilities. This process is documented at the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) website.
+Following the process will result in any needed CVE being created as well as appropriate notifications being communicated
+to the entire DCGM Exporter community. Nvidia reserves the right to delete vulnerability reports until they're fixed.
+
+Please refer to the policies listed there to answer questions related to reporting security issues.
