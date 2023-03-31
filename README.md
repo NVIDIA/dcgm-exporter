@@ -164,8 +164,8 @@ make REGISTRY=<private_registry> push
 
 ### Reporting Security Issues
 
-We ask that all community members and users of DCGM Exporter follow the standard Nvidia process for reporting security vulnerabilities. This process is documented at the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) website.
+We ask that all community members and users of DCGM Exporter follow the standard NVIDIA process for reporting security vulnerabilities. This process is documented at the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) website.
 Following the process will result in any needed CVE being created as well as appropriate notifications being communicated
-to the entire DCGM Exporter community. Nvidia reserves the right to delete vulnerability reports until they're fixed.
+to the entire DCGM Exporter community. NVIDIA reserves the right to delete vulnerability reports until they're fixed.
 
 Please refer to the policies listed there to answer questions related to reporting security issues.
