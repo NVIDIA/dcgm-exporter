@@ -15,9 +15,9 @@
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 3.1.6
-GOLANG_VERSION := 1.17
-VERSION        := 3.1.3
+DCGM_VERSION   := 3.1.7
+GOLANG_VERSION := 1.18
+VERSION        := 3.1.4
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
 PLATFORMS      := linux/amd64,linux/arm64
