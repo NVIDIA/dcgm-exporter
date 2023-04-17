@@ -94,8 +94,6 @@ serviceMonitor:
     #   replacement: $1
     #   action: replace
 
-mapPodsMetrics: false
-
 nodeSelector: {}
   #node: gpu
 
