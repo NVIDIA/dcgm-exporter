@@ -221,7 +221,9 @@ restart:
 	defer dcgm.FieldsTerm()
 
 	var groups []dcgm.MetricGroup
-	groups, err = dcgm.GetSupportedMetricGroups(0)
+	/* default GPU group is 0 */
+	var gHandle dcgm.GroupHandle
+	groups, err = dcgm.GetSupportedMetricGroups(gHandle)
 	if err != nil {
 		config.CollectDCP = false
 		logrus.Info("Not collecting DCP metrics: ", err)
