@@ -58,7 +58,7 @@ $ NAME=$(kubectl get pods -l "app.kubernetes.io/name=dcgm-exporter" \
                          -o "jsonpath={ .items[0].metadata.name}")
 
 $ kubectl port-forward $NAME 8080:9400 &
-$ curl -sL http://127.0.01:8080/metrics
+$ curl -sL http://127.0.0.1:8080/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
 # HELP DCGM_FI_DEV_MEM_CLOCK Memory clock frequency (in MHz).
