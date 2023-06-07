@@ -40,6 +40,8 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 	}
 
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`<html>
 			<head><title>GPU Exporter</title></head>
 			<body>
@@ -99,6 +101,7 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 
 func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
 	if s.getMetrics() == "" {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("KO"))
 	} else {
