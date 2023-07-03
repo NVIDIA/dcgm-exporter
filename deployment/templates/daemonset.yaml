@@ -23,6 +23,11 @@ metadata:
 spec:
   updateStrategy:
     type: RollingUpdate
+  {{- with .Values.rollingUpdate }}
+  rollingUpdate:
+    maxUnavailable: {{ .maxUnavailable }}
+    maxSurge: {{ .maxSurge }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
@@ -85,9 +90,9 @@ spec:
         image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
         {{- end }}
         imagePullPolicy: "{{ .Values.image.pullPolicy }}"
-        args: 
-        {{- range $.Values.arguments }} 
-        - {{ . }} 
+        args:
+        {{- range $.Values.arguments }}
+        - {{ . }}
         {{- end }}
         env:
         - name: "DCGM_EXPORTER_KUBERNETES"

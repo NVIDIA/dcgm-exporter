@@ -51,6 +51,12 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name:
 
+rollingUpdate:
+  # Specifies maximum number of DaemonSet pods that can be unavailable during the update
+  maxUnavailable: 1
+  # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during during an update
+  maxSurge: 0
+
 podAnnotations: {}
 # Using this annotation which is required for prometheus scraping
  # prometheus.io/scrape: "true"
