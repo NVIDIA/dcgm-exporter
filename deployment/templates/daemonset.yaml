@@ -23,11 +23,11 @@ metadata:
 spec:
   updateStrategy:
     type: RollingUpdate
-  {{- with .Values.rollingUpdate }}
-  rollingUpdate:
-    maxUnavailable: {{ .maxUnavailable }}
-    maxSurge: {{ .maxSurge }}
-  {{- end }}
+    {{- with .Values.rollingUpdate }}
+    rollingUpdate:
+      maxUnavailable: {{ .maxUnavailable }}
+      maxSurge: {{ .maxSurge }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
