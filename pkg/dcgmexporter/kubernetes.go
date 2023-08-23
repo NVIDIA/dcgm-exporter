@@ -177,6 +177,8 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 						}
 						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceId)
 						deviceToPodMap[giIdentifier] = podInfo
+					} else if strings.Contains(deviceid, "/vgpu") {
+						deviceToPodMap[strings.Split(deviceid, "/vgpu")[0]] = podInfo
 					} else {
 						deviceToPodMap[deviceid] = podInfo
 					}
