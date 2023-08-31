@@ -180,6 +180,9 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 						deviceToPodMap[giIdentifier] = podInfo
 					} else if strings.Contains(deviceid, gkeVirtualGPUDeviceIdSeparator) {
 						deviceToPodMap[strings.Split(deviceid, gkeVirtualGPUDeviceIdSeparator)[0]] = podInfo
+					} else if strings.Contains(deviceid, "::") {
+						gpuInstanceId := strings.Split(deviceid, "::")[0]
+						deviceToPodMap[gpuInstanceId] = podInfo
 					} else {
 						deviceToPodMap[deviceid] = podInfo
 					}
