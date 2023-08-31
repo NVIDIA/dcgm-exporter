@@ -37,7 +37,8 @@ var (
 
 	connectionTimeout = 10 * time.Second
 
-	gkeMigDeviceIdRegex = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
+	gkeMigDeviceIdRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
+	gkeVirtualGPUDeviceIdSeparator = "/vgpu"
 )
 
 func NewPodMapper(c *Config) (*PodMapper, error) {
@@ -177,6 +178,8 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 						}
 						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceId)
 						deviceToPodMap[giIdentifier] = podInfo
+					} else if strings.Contains(deviceid, gkeVirtualGPUDeviceIdSeparator) {
+						deviceToPodMap[strings.Split(deviceid, gkeVirtualGPUDeviceIdSeparator)[0]] = podInfo
 					} else {
 						deviceToPodMap[deviceid] = podInfo
 					}
