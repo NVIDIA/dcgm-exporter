@@ -147,7 +147,7 @@ make local
 
 Build the ubuntu image and export to 'docker images'
 ```
-make ubuntu20.04 PLATFORMS=linux/amd64 OUTPUT=type=docker
+make ubuntu22.04 PLATFORMS=linux/amd64 OUTPUT=type=docker
 ```
 
 Build and push the images to some other 'private_registry'

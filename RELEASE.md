@@ -7,7 +7,7 @@ This documents the release process as well as the versioning strategy for the DC
 The DCGM container has three major components:
 - The DCGM Version (e.g: 1.17.3)
 - The Exporter Version (e.g: 2.0.0)
-- The platform of the container (e.g: ubuntu20.04)
+- The platform of the container (e.g: ubuntu22.04)
 
 The overall version of the DCGM container has three forms:
 - The long form: `${DCGM_VERSION}-${EXPORTER_VERSION}-${PLATFORM}`
@@ -17,7 +17,7 @@ The overall version of the DCGM container has three forms:
 The long form is a unique tag that once pushed will always refer to the same container.
 This means that no updates will be made to that tag and it will always point to the same container.
 
-The short form refers to the latest EXPORTER_VERSION with the platform fixed to ubuntu20.04.
+The short form refers to the latest EXPORTER_VERSION with the platform fixed to ubuntu22.04.
 The latest tag refers to the latest short form (i.e: latest DCGM_VERSION and EXPORTER_VERSION).
 
 Note: We do not maintain multiple version branches.

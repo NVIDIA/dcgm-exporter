@@ -27,7 +27,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 )
 
