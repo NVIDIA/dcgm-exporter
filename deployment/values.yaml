@@ -59,6 +59,8 @@ rollingUpdate:
   # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during during an update
   maxSurge: 0
 
+podLabels: {}
+
 podAnnotations: {}
 # Using this annotation which is required for prometheus scraping
  # prometheus.io/scrape: "true"
