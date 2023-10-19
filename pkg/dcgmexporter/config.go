@@ -55,4 +55,5 @@ type Config struct {
 	ClockEventsCountWindowSize int
 	EnableDCGMLog              bool
 	DCGMLogLevel               string
+	PodResourceKubeletDir      string
 }

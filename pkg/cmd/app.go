@@ -72,6 +72,7 @@ const (
 	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
 	CLIEnableDCGMLog              = "enable-dcgm-log"
 	CLIDCGMLogLevel               = "dcgm-log-level"
+	CLIPodResourcesKubeletDir     = "pod-resources-kubelet-dir"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -222,6 +223,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   dcgmexporter.DCGMDbgLvlNone,
 			Usage:   "Specify the DCGM log verbosity level. This parameter is effective only when the '--enable-dcgm-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
+		},
+		&cli.StringFlag{
+			Name:    CLIPodResourcesKubeletDir,
+			Value:   "/var/lib/kubelet/pod-resources",
+			Usage:   "Directory where kubelet pod-resources socket file is located",
+			EnvVars: []string{"DCGM_POD_RESOURCES_KUBELET_DIR"},
 		},
 	}
 
@@ -586,5 +593,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		ClockEventsCountWindowSize: c.Int(CLIClockEventsCountWindowSize),
 		EnableDCGMLog:              c.Bool(CLIEnableDCGMLog),
 		DCGMLogLevel:               dcgmLogLevel,
+		PodResourceKubeletDir:      c.String(CLIPodResourcesKubeletDir),
 	}, nil
 }

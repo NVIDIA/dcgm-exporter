@@ -55,7 +55,7 @@ func TestProcessPodMapper(t *testing.T) {
 
 	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(Counter)]
 
-	socketPath = tmpDir + "/kubelet.sock"
+	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 	gpus := GetGPUUUIDs(arbirtaryMetric)
 	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
