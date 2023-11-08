@@ -15,9 +15,9 @@
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 3.2.5
+DCGM_VERSION   := 3.3.0
 GOLANG_VERSION := 1.20
-VERSION        := 3.1.8
+VERSION        := 3.2.0
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
 PLATFORMS      := linux/amd64,linux/arm64
@@ -30,7 +30,7 @@ NON_TEST_FILES  += cmd/dcgm-exporter/main.go
 MAIN_TEST_FILES := pkg/dcgmexporter/system_info_test.go
 
 .PHONY: all binary install check-format local
-all: ubuntu22.04
+all: ubuntu22.04 ubi9
 
 binary:
 	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
@@ -49,7 +49,7 @@ check-format:
 
 push:
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
-	$(MAKE) ubi8 OUTPUT=type=registry
+	$(MAKE) ubi9 OUTPUT=type=registry
 
 local:
 ifeq ($(shell uname -p),aarch64)
@@ -66,3 +66,13 @@ ubuntu22.04:
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu22.04" \
 		--file docker/Dockerfile.ubuntu22.04 .
+
+ubi9:
+	$(DOCKERCMD) --pull \
+		--output $(OUTPUT) \
+		--platform $(PLATFORMS) \
+		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
+		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
+		--build-arg "VERSION=$(FULL_VERSION)" \
+		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi9" \
+		--file docker/Dockerfile.ubi9 .
