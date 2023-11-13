@@ -31,7 +31,7 @@ Note: Consider using the [NVIDIA GPU Operator](https://github.com/NVIDIA/gpu-ope
 
 Ensure you have already setup your cluster with the [default runtime as NVIDIA](https://github.com/NVIDIA/nvidia-container-runtime#docker-engine-setup).
 
-The recommended way to install DCGM-Exporter is to use the Helm chart: 
+The recommended way to install DCGM-Exporter is to use the Helm chart:
 ```
 $ helm repo add gpu-helm-charts \
   https://nvidia.github.io/dcgm-exporter/helm-charts
@@ -42,8 +42,8 @@ $ helm repo update
 ```
 And install the chart:
 ```
-$ helm install \ 
-    --generate-name \ 
+$ helm install \
+    --generate-name \
     gpu-helm-charts/dcgm-exporter
 ```
 
@@ -72,7 +72,7 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 ...
 
 ```
-To integrate DCGM-Exporter with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/kubernetes/dcgme2e.html#gpu-telemetry). 
+To integrate DCGM-Exporter with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/latest/).
 `dcgm-exporter` is deployed as part of the GPU Operator. To get started with integrating with Prometheus, check the Operator [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/getting-started.html#gpu-telemetry).
 
 ### Building from Source
