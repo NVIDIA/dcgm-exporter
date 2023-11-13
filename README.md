@@ -78,7 +78,7 @@ To integrate DCGM-Exporter with Prometheus and Grafana, see the full instruction
 ### Building from Source
 
 In order to build dcgm-exporter ensure you have the following:
-- [Golang >= 1.14 installed](https://golang.org/)
+- [Golang >= 1.18 installed](https://golang.org/)
 - [DCGM installed](https://developer.nvidia.com/dcgm)
 
 ```
