@@ -23,17 +23,24 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/prometheus/common/promlog"
+	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/sirupsen/logrus"
 )
 
 func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
-		server: http.Server{
+		server: &http.Server{
 			Addr:         c.Address,
 			Handler:      router,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
+		},
+		webConfig: web.FlagConfig{
+			WebListenAddresses: &[]string{c.Address},
+			WebSystemdSocket: &c.WebSystemdSocket,
+			WebConfigFile: &c.WebConfigFile,
 		},
 		metricsChan: metrics,
 		metrics:     "",
@@ -59,13 +66,15 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 
 func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	defer wg.Done()
+	promlogConfig := &promlog.Config{}
+	logger := promlog.New(promlogConfig)
 
 	var httpwg sync.WaitGroup
 	httpwg.Add(1)
 	go func() {
 		defer httpwg.Done()
 		logrus.Info("Starting webserver")
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := web.ListenAndServe(s.server, &s.webConfig, logger); err != nil && err != http.ErrServerClosed {
 			logrus.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
 		}
 	}()

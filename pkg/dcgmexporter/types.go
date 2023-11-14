@@ -23,6 +23,7 @@ import (
 	"text/template"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/prometheus/exporter-toolkit/web"
 )
 
 var (
@@ -74,6 +75,8 @@ type Config struct {
 	UseFakeGpus         bool
 	ConfigMapData       string
 	MetricGroups        []dcgm.MetricGroup
+	WebSystemdSocket    bool
+	WebConfigFile       string
 }
 
 type Transform interface {
@@ -155,7 +158,8 @@ var promMetricType = map[string]bool{
 type MetricsServer struct {
 	sync.Mutex
 
-	server      http.Server
+	server      *http.Server
+	webConfig   web.FlagConfig
 	metrics     string
 	metricsChan chan string
 }
