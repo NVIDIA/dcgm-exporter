@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -176,18 +177,21 @@ func main() {
 			Usage:   "Accept GPUs that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
 		},
-		&cli.BoolFlag{
-			Name:    CLIWebSystemdSocket,
-			Value:   false,
-			Usage:   "Use systemd socket activation listeners instead of port listeners (Linux only).",
-			EnvVars: []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
-		},
 		&cli.StringFlag{
 			Name:    CLIWebConfigFile,
 			Value:   "",
 			Usage:   "TLS config file following webConfig spec.",
 			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
 		},
+	}
+
+	if runtime.GOOS == "linux" {
+		c.Flags = append(c.Flags, &cli.BoolFlag{
+			Name:    CLIWebSystemdSocket,
+			Value:   false,
+			Usage:   "Use systemd socket activation listeners instead of port listeners (Linux only).",
+			EnvVars: []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
+		})
 	}
 
 	c.Action = func(c *cli.Context) error {
