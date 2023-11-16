@@ -39,8 +39,8 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 		},
 		webConfig: &web.FlagConfig{
 			WebListenAddresses: &[]string{c.Address},
-			WebSystemdSocket: &c.WebSystemdSocket,
-			WebConfigFile: &c.WebConfigFile,
+			WebSystemdSocket:   &c.WebSystemdSocket,
+			WebConfigFile:      &c.WebConfigFile,
 		},
 		metricsChan: metrics,
 		metrics:     "",
