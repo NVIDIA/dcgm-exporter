@@ -159,7 +159,7 @@ type MetricsServer struct {
 	sync.Mutex
 
 	server      *http.Server
-	webConfig   web.FlagConfig
+	webConfig   *web.FlagConfig
 	metrics     string
 	metricsChan chan string
 }

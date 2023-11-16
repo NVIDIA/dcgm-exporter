@@ -37,7 +37,7 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 		},
-		webConfig: web.FlagConfig{
+		webConfig: &web.FlagConfig{
 			WebListenAddresses: &[]string{c.Address},
 			WebSystemdSocket: &c.WebSystemdSocket,
 			WebConfigFile: &c.WebConfigFile,
@@ -74,7 +74,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	go func() {
 		defer httpwg.Done()
 		logrus.Info("Starting webserver")
-		if err := web.ListenAndServe(s.server, &s.webConfig, logger); err != nil && err != http.ErrServerClosed {
+		if err := web.ListenAndServe(s.server, s.webConfig, logger); err != nil && err != http.ErrServerClosed {
 			logrus.Fatalf("Failed to Listen and Server HTTP server with err: `%v`", err)
 		}
 	}()
