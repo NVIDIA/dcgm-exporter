@@ -192,6 +192,10 @@ func main() {
 			Usage:   "Use systemd socket activation listeners instead of port listeners (Linux only).",
 			EnvVars: []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
 		})
+	} else {
+		err := "dcgm-exporter is only supported on Linux."
+		logrus.Fatal(err)
+		return
 	}
 
 	c.Action = func(c *cli.Context) error {
