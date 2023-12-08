@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,6 +58,8 @@ var (
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
+	CLIWebSystemdSocket    = "web-systemd-socket"
+	CLIWebConfigFile       = "web-config-file"
 )
 
 func main() {
@@ -174,6 +177,25 @@ func main() {
 			Usage:   "Accept GPUs that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
 		},
+		&cli.StringFlag{
+			Name:    CLIWebConfigFile,
+			Value:   "",
+			Usage:   "TLS config file following webConfig spec.",
+			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
+		},
+	}
+
+	if runtime.GOOS == "linux" {
+		c.Flags = append(c.Flags, &cli.BoolFlag{
+			Name:    CLIWebSystemdSocket,
+			Value:   false,
+			Usage:   "Use systemd socket activation listeners instead of port listeners (Linux only).",
+			EnvVars: []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
+		})
+	} else {
+		err := "dcgm-exporter is only supported on Linux."
+		logrus.Fatal(err)
+		return
 	}
 
 	c.Action = func(c *cli.Context) error {
@@ -423,5 +445,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),
+		WebSystemdSocket:    c.Bool(CLIWebSystemdSocket),
+		WebConfigFile:       c.String(CLIWebConfigFile),
 	}, nil
 }
