@@ -60,6 +60,38 @@ func testDCGMCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()
 		UseOldNamespace: false,
 		UseFakeGpus:     false,
 	}
+
+	dcgmGetAllDeviceCount = func() (uint, error) {
+		return 1, nil
+	}
+
+	dcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
+		dev := dcgm.Device{
+			GPU:  0,
+			UUID: fmt.Sprintf("fake%d", gpuId),
+		}
+
+		return dev, nil
+	}
+
+	dcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
+		hierarchy := dcgm.MigHierarchy_v2{
+			Count: 0,
+		}
+		return hierarchy, nil
+	}
+
+	dcgmAddEntityToGroup = func(groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint) (err error) {
+		return nil
+	}
+
+	defer func() {
+		dcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
+		dcgmGetDeviceInfo = dcgm.GetDeviceInfo
+		dcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
+		dcgmAddEntityToGroup = dcgm.AddEntityToGroup
+	}()
+
 	c, cleanup, err := NewDCGMCollector(counters, &cfg, dcgm.FE_GPU)
 	require.NoError(t, err)
 

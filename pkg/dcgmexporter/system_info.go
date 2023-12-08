@@ -26,6 +26,14 @@ import (
 
 const PARENT_ID_IGNORED = 0
 
+var (
+	dcgmGetAllDeviceCount       = dcgm.GetAllDeviceCount
+	dcgmGetDeviceInfo           = dcgm.GetDeviceInfo
+	dcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
+	dcgmAddEntityToGroup        = dcgm.AddEntityToGroup
+	dcgmCreateGroup             = dcgm.CreateGroup
+)
+
 type GroupInfo struct {
 	groupHandle dcgm.GroupHandle
 	groupType   dcgm.Field_Entity_Group
@@ -248,7 +256,7 @@ func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo,
 }
 
 func InitializeGpuInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGpus bool) (SystemInfo, error) {
-	gpuCount, err := dcgm.GetAllDeviceCount()
+	gpuCount, err := dcgmGetAllDeviceCount()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -257,7 +265,7 @@ func InitializeGpuInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGpus bool)
 	for i := uint(0); i < sysInfo.GpuCount; i++ {
 		// Default mig enabled to false
 		sysInfo.Gpus[i].MigEnabled = false
-		sysInfo.Gpus[i].DeviceInfo, err = dcgm.GetDeviceInfo(i)
+		sysInfo.Gpus[i].DeviceInfo, err = dcgmGetDeviceInfo(i)
 		if err != nil {
 			if useFakeGpus {
 				sysInfo.Gpus[i].DeviceInfo.GPU = i
@@ -268,7 +276,7 @@ func InitializeGpuInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGpus bool)
 		}
 	}
 
-	hierarchy, err := dcgm.GetGpuInstanceHierarchy()
+	hierarchy, err := dcgmGetGpuInstanceHierarchy()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -309,7 +317,7 @@ func InitializeGpuInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGpus bool)
 	sysInfo.gOpt = gOpt
 	err = VerifyDevicePresence(&sysInfo, gOpt)
 
-	return sysInfo, nil
+	return sysInfo, err
 }
 
 func InitializeSystemInfo(gOpt DeviceOptions, sOpt DeviceOptions, useFakeGpus bool, entityType dcgm.Field_Entity_Group) (SystemInfo, error) {
@@ -341,7 +349,7 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 			continue
 		}
 
-		groupId, err := dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+		groupId, err := dcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 		if err != nil {
 			return nil, cleanups, err
 		}
@@ -372,13 +380,13 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 
 func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), error) {
 	monitoringInfo := GetMonitoredEntities(sysInfo)
-	groupId, err := dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+	groupId, err := dcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 	if err != nil {
 		return dcgm.GroupHandle{}, func() {}, err
 	}
 
 	for _, mi := range monitoringInfo {
-		err := dcgm.AddEntityToGroup(groupId, mi.Entity.EntityGroupId, mi.Entity.EntityId)
+		err := dcgmAddEntityToGroup(groupId, mi.Entity.EntityGroupId, mi.Entity.EntityId)
 		if err != nil {
 			return groupId, func() { dcgm.DestroyGroup(groupId) }, err
 		}
