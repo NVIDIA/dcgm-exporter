@@ -76,3 +76,19 @@ ubi8:
 		--build-arg "VERSION=$(FULL_VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi8" \
 		--file docker/Dockerfile.ubi8 .
+
+.PHONY: integration
+test-integration:
+	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
+	
+.PHONY: lint
+lint:
+	golangci-lint run ./...
+
+.PHONY: validate-modules
+validate-modules:
+	@echo "- Verifying that the dependencies have expected content..."
+	go mod verify
+	@echo "- Checking for any unused/missing packages in go.mod..."
+	go mod tidy
+	@git diff --exit-code -- go.sum go.mod
