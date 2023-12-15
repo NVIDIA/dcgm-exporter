@@ -1,6 +1,34 @@
+FROM nvcr.io/nvidia/cuda:12.2.2-base-ubi8 AS builder
 ARG GOLANG_VERSION
-FROM golang:$GOLANG_VERSION AS builder
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
+RUN set -eux; \
+	dnf clean expire-cache; \
+	dnf install -y go-toolset make
+RUN dnf clean all
+
+# Install Go official release
+RUN set -eux; \
+    url=; \
+    arch=$(uname -m) \
+    && if [ "${arch}" = "x86_64" ]; then arch=amd64; fi \
+    && if [ "${arch}" = "aarch64" ]; then arch=arm64; fi \
+    && echo "${arch}"
+    # case "${arch}" in \
+    # 'amd64') \
+    #     url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    #     ;; \
+    # 'arm64') \
+    #     url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    #     ;; \
+    # *) echo >&2 "error: unsupported architecture '${arch}'"; exit 1 ;; \
+    # esac; \
+    # \
+    # wget -O go.tgz "$url" --progress=dot:giga; \
+    # # https://github.com/golang/go/issues/14739#issuecomment-324767697
+    # tar -C /usr/local -xzf go.tgz; \
+    # rm -f go.tgz*; \
+    # \
+    # go version
 
 COPY . .
 
