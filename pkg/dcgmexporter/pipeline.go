@@ -33,19 +33,25 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		return nil, func() {}, err
 	}
 
+	cleanups := []func(){}
 	gpuCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_GPU)
 	if err != nil {
 		return nil, func() {}, err
 	}
+	cleanups = append(cleanups, cleanup)
 
 	switchCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_SWITCH)
 	if err != nil {
 		logrus.Info("Not collecting switch metrics: ", err)
+	} else {
+		cleanups = append(cleanups, cleanup)
 	}
 
 	linkCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_LINK)
 	if err != nil {
 		logrus.Info("Not collecting link metrics: ", err)
+	} else {
+		cleanups = append(cleanups, cleanup)
 	}
 
 	cpuCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_CPU)
@@ -85,7 +91,9 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 			cpuCollector:    cpuCollector,
 			coreCollector:   coreCollector,
 		}, func() {
-			cleanup()
+			for _, cleanup := range cleanups {
+				cleanup()
+			}
 		}, nil
 }
 
