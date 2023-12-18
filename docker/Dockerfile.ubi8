@@ -3,33 +3,39 @@ ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN set -eux; \
 	dnf clean expire-cache; \
-	dnf install -y go-toolset make
+	dnf install -y go-toolset make wget
 RUN dnf clean all
 
 # Install Go official release
 RUN set -eux; \
     url=; \
-    arch=$(uname -m) \
-    && if [ "${arch}" = "x86_64" ]; then arch=amd64; fi \
-    && if [ "${arch}" = "aarch64" ]; then arch=arm64; fi \
-    && echo "${arch}"
-    # case "${arch}" in \
-    # 'amd64') \
-    #     url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
-    #     ;; \
-    # 'arm64') \
-    #     url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
-    #     ;; \
-    # *) echo >&2 "error: unsupported architecture '${arch}'"; exit 1 ;; \
-    # esac; \
-    # \
-    # wget -O go.tgz "$url" --progress=dot:giga; \
-    # # https://github.com/golang/go/issues/14739#issuecomment-324767697
-    # tar -C /usr/local -xzf go.tgz; \
-    # rm -f go.tgz*; \
-    # \
-    # go version
-
+    arch=$(uname -m) && if [ "${arch}" = "x86_64" ]; then arch=amd64; fi && if [ "${arch}" = "aarch64" ]; then arch=arm64; fi; \
+	case "$arch" in \
+		'amd64') \
+			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+			;; \
+		'arm64') \
+			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+			;; \
+		*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
+	esac; \
+	build=; \
+	if [ -z "$url" ]; then \
+# https://github.com/golang/go/issues/38536#issuecomment-616897960
+		build=1; \
+		url="https://dl.google.com/go/go${GOLANG_VERSION}.src.tar.gz"; \
+		echo >&2; \
+		echo >&2 "warning: current architecture ($arch) does not have a compatible Go binary release; will be building from source"; \
+		echo >&2; \
+	fi; \
+    wget -O go.tgz "$url" --progress=dot:giga; \
+    tar -C /usr/local -xzf go.tgz; \
+	rm go.tgz;
+ENV GOTOOLCHAIN=local
+ENV GOPATH /go
+ENV PATH $GOPATH/bin:$PATH
+RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
+ENV PATH $PATH:/usr/local/go/bin   
 COPY . .
 
 RUN make binary check-format
@@ -39,6 +45,7 @@ LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 ARG DCGM_VERSION
 
+RUN dnf update --disablerepo=* --enablerepo=ubi-8-appstream-rpms --enablerepo=ubi-8-baseos-rpms -y && rm -rf /var/cache/yum
 RUN dnf clean expire-cache && dnf install -y datacenter-gpu-manager-${DCGM_VERSION} libcap
 
 COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter/dcgm-exporter /usr/bin/
