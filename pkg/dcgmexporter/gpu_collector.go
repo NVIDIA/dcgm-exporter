@@ -25,7 +25,7 @@ import (
 )
 
 func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGpus, entityType)
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -207,7 +207,7 @@ func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, us
 	return metrics
 }
 
-func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GpuInstanceInfo, useOld bool, hostname string) []Metric {
+func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GPUInstanceInfo, useOld bool, hostname string) []Metric {
 	var metrics []Metric
 	var labels = map[string]string{}
 

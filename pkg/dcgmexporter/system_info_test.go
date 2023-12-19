@@ -78,21 +78,21 @@ func SpoofSwitchSystemInfo() SystemInfo {
 
 func SpoofSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
-	sysInfo.GpuCount = 2
-	sysInfo.Gpus[0].DeviceInfo.GPU = 0
-	gi := GpuInstanceInfo{
+	sysInfo.GPUCount = 2
+	sysInfo.GPUs[0].DeviceInfo.GPU = 0
+	gi := GPUInstanceInfo{
 		Info:        dcgm.MigEntityInfo{"fake", 0, 0, 0, 0, 3},
 		ProfileName: fakeProfileName,
 		EntityId:    0,
 	}
-	sysInfo.Gpus[0].GpuInstances = append(sysInfo.Gpus[0].GpuInstances, gi)
-	gi2 := GpuInstanceInfo{
+	sysInfo.GPUs[0].GPUInstances = append(sysInfo.GPUs[0].GPUInstances, gi)
+	gi2 := GPUInstanceInfo{
 		Info:        dcgm.MigEntityInfo{"fake", 0, 1, 0, 0, 3},
 		ProfileName: fakeProfileName,
 		EntityId:    14,
 	}
-	sysInfo.Gpus[1].GpuInstances = append(sysInfo.Gpus[1].GpuInstances, gi2)
-	sysInfo.Gpus[1].DeviceInfo.GPU = 1
+	sysInfo.GPUs[1].GPUInstances = append(sysInfo.GPUs[1].GPUInstances, gi2)
+	sysInfo.GPUs[1].DeviceInfo.GPU = 1
 
 	return sysInfo
 }
@@ -116,20 +116,20 @@ func TestMonitoredEntities(t *testing.T) {
 			}
 		} else {
 			gpuCount = gpuCount + 1
-			require.Equal(t, mi.InstanceInfo, (*GpuInstanceInfo)(nil), "Expected InstanceInfo to be nil but it wasn't")
+			require.Equal(t, mi.InstanceInfo, (*GPUInstanceInfo)(nil), "Expected InstanceInfo to be nil but it wasn't")
 		}
 	}
 	require.Equal(t, instanceCount, 2, "Expected 2 GPU instances but found %d", instanceCount)
 	require.Equal(t, gpuCount, 0, "Expected 0 GPUs but found %d", gpuCount)
 
-	sysInfo.Gpus[0].GpuInstances = sysInfo.Gpus[0].GpuInstances[:0]
-	sysInfo.Gpus[1].GpuInstances = sysInfo.Gpus[1].GpuInstances[:0]
+	sysInfo.GPUs[0].GPUInstances = sysInfo.GPUs[0].GPUInstances[:0]
+	sysInfo.GPUs[1].GPUInstances = sysInfo.GPUs[1].GPUInstances[:0]
 	monitoring = GetMonitoredEntities(sysInfo)
 	require.Equal(t, 2, len(monitoring), fmt.Sprintf("Should have 2 monitored entities but found %d", len(monitoring)))
 	for i, mi := range monitoring {
 		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_GPU, "Expected FE_GPU but found %d", mi.Entity.EntityGroupId)
 		require.Equal(t, uint(i), mi.DeviceInfo.GPU, "Expected GPU %d but found %d", i, mi.DeviceInfo.GPU)
-		require.Equal(t, (*GpuInstanceInfo)(nil), mi.InstanceInfo, "Expected InstanceInfo not to be populated but it was")
+		require.Equal(t, (*GPUInstanceInfo)(nil), mi.InstanceInfo, "Expected InstanceInfo not to be populated but it was")
 	}
 }
 

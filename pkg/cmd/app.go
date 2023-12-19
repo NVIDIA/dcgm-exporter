@@ -57,7 +57,7 @@ var (
 	CLISwitchDevices       = "switch-devices"
 	CLICPUDevices          = "cpu-devices"
 	CLINoHostname          = "no-hostname"
-	CLIUseFakeGpus         = "fake-gpus"
+	CLIUseFakeGPUs         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
 	CLIWebSystemdSocket    = "web-systemd-socket"
 	CLIWebConfigFile       = "web-config-file"
@@ -163,7 +163,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_OTHER_DEVICES_STR"},
 		},
 		&cli.BoolFlag{
-			Name:    CLIUseFakeGpus,
+			Name:    CLIUseFakeGPUs,
 			Value:   false,
 			Usage:   "Accept GPUs that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
@@ -371,7 +371,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		SwitchDevices:       sOpt,
 		CPUDevices:          cOpt,
 		NoHostname:          c.Bool(CLINoHostname),
-		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
+		UseFakeGPUs:         c.Bool(CLIUseFakeGPUs),
 		ConfigMapData:       c.String(CLIConfigMapData),
 		WebSystemdSocket:    c.Bool(CLIWebSystemdSocket),
 		WebConfigFile:       c.String(CLIWebConfigFile),

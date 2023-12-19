@@ -159,7 +159,7 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 					if strings.HasPrefix(deviceid, MIG_UUID_PREFIX) {
 						gpuUuid, gi, _, err := nvml.ParseMigDeviceUUID(deviceid)
 						if err == nil {
-							giIdentifier := GetGpuInstanceIdentifier(sysInfo, gpuUuid, gi)
+							giIdentifier := GetGPUInstanceIdentifier(sysInfo, gpuUuid, gi)
 							deviceToPodMap[giIdentifier] = podInfo
 						} else {
 							gpuUuid = deviceid[len(MIG_UUID_PREFIX):]

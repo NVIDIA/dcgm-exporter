@@ -67,7 +67,7 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		GPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
-		UseFakeGpus:     false,
+		UseFakeGPUs:     false,
 	}
 
 	dcgmGetAllDeviceCount = func() (uint, error) {
@@ -152,7 +152,7 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		CPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
-		UseFakeGpus:     false,
+		UseFakeGPUs:     false,
 	}
 
 	dcgmGetAllDeviceCount = func() (uint, error) {
