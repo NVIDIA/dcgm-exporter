@@ -65,7 +65,7 @@ type SwitchInfo struct {
 	NvLinks  []dcgm.NvLinkStatus
 }
 
-type CpuInfo struct {
+type CPUInfo struct {
 	EntityId uint
 	Cores    []uint
 }
@@ -78,7 +78,7 @@ type SystemInfo struct {
 	cOpt     DeviceOptions
 	InfoType dcgm.Field_Entity_Group
 	Switches []SwitchInfo
-	Cpus     []CpuInfo
+	CPUs     []CPUInfo
 }
 
 type MonitoringInfo struct {
@@ -155,8 +155,8 @@ func SwitchIdExists(sysInfo *SystemInfo, switchId int) bool {
 	return false
 }
 
-func CpuIdExists(sysInfo *SystemInfo, cpuId int) bool {
-	for _, cpu := range sysInfo.Cpus {
+func CPUIdExists(sysInfo *SystemInfo, cpuId int) bool {
+	for _, cpu := range sysInfo.CPUs {
 		if cpu.EntityId == uint(cpuId) {
 			return true
 		}
@@ -186,8 +186,8 @@ func LinkIdExists(sysInfo *SystemInfo, linkId int) bool {
 	return false
 }
 
-func CpuCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
-	for _, cpu := range sysInfo.Cpus {
+func CPUCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
+	for _, cpu := range sysInfo.CPUs {
 		for _, core := range cpu.Cores {
 			if core == uint(coreId) {
 				return true
@@ -197,7 +197,7 @@ func CpuCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
 	return false
 }
 
-func VerifyCpuDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
+func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -213,7 +213,7 @@ func VerifyCpuDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
 
 	if len(sOpt.MinorRange) > 0 && sOpt.MinorRange[0] != -1 {
 		for _, coreId := range sOpt.MinorRange {
-			if !CpuCoreIdExists(sysInfo, coreId) {
+			if !CPUCoreIdExists(sysInfo, coreId) {
 				return fmt.Errorf("couldn't find requested cpu core %d", coreId)
 			}
 		}
@@ -308,16 +308,16 @@ func InitializeCPUInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, erro
 	for i := 0; i < int(hierarchy.NumCpus); i++ {
 		cores := getCoreArray([]uint64(hierarchy.Cpus[i].OwnedCores))
 
-		cpu := CpuInfo{
+		cpu := CPUInfo{
 			hierarchy.Cpus[i].CpuId,
 			cores,
 		}
 
-		sysInfo.Cpus = append(sysInfo.Cpus, cpu)
+		sysInfo.CPUs = append(sysInfo.CPUs, cpu)
 	}
 
 	sysInfo.cOpt = sOpt
-	err = VerifyCpuDevicePresence(&sysInfo, sOpt)
+	err = VerifyCPUDevicePresence(&sysInfo, sOpt)
 
 	return sysInfo, nil
 }
@@ -454,8 +454,8 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 	var cleanups []func()
 
 	/* Create per-switch link groups */
-	for _, cpu := range sysInfo.Cpus {
-		if !IsCpuWatched(cpu.EntityId, sysInfo) {
+	for _, cpu := range sysInfo.CPUs {
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
 			continue
 		}
 
@@ -660,7 +660,7 @@ func IsLinkWatched(linkId uint, switchId uint, sysInfo SystemInfo) bool {
 	return false
 }
 
-func IsCpuWatched(cpuId uint, sysInfo SystemInfo) bool {
+func IsCPUWatched(cpuId uint, sysInfo SystemInfo) bool {
 	if sysInfo.cOpt.Flex {
 		return true
 	}
@@ -683,8 +683,8 @@ func IsCoreWatched(coreId uint, cpuId uint, sysInfo SystemInfo) bool {
 		return true
 	}
 
-	for _, cpu := range sysInfo.Cpus {
-		if !IsCpuWatched(cpu.EntityId, sysInfo) {
+	for _, cpu := range sysInfo.CPUs {
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
 			return false
 		}
 
@@ -703,11 +703,11 @@ func IsCoreWatched(coreId uint, cpuId uint, sysInfo SystemInfo) bool {
 	return false
 }
 
-func AddAllCpus(sysInfo SystemInfo) []MonitoringInfo {
+func AddAllCPUs(sysInfo SystemInfo) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
-	for _, cpu := range sysInfo.Cpus {
-		if !IsCpuWatched(cpu.EntityId, sysInfo) {
+	for _, cpu := range sysInfo.CPUs {
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
 			continue
 		}
 
@@ -728,12 +728,12 @@ func AddAllCpus(sysInfo SystemInfo) []MonitoringInfo {
 	return monitoring
 }
 
-func AddAllCpuCores(sysInfo SystemInfo) []MonitoringInfo {
+func AddAllCPUCores(sysInfo SystemInfo) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
-	for _, cpu := range sysInfo.Cpus {
+	for _, cpu := range sysInfo.CPUs {
 		for _, core := range cpu.Cores {
-			if !IsCpuWatched(cpu.EntityId, sysInfo) {
+			if !IsCPUWatched(cpu.EntityId, sysInfo) {
 				continue
 			}
 
@@ -827,9 +827,9 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 	} else if sysInfo.InfoType == dcgm.FE_LINK {
 		monitoring = AddAllLinks(sysInfo)
 	} else if sysInfo.InfoType == dcgm.FE_CPU {
-		monitoring = AddAllCpus(sysInfo)
+		monitoring = AddAllCPUs(sysInfo)
 	} else if sysInfo.InfoType == dcgm.FE_CPU_CORE {
-		monitoring = AddAllCpuCores(sysInfo)
+		monitoring = AddAllCPUCores(sysInfo)
 	} else if sysInfo.gOpt.Flex == true {
 		monitoring = AddAllGpuInstances(sysInfo, true)
 	} else {

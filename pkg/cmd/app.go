@@ -55,7 +55,7 @@ var (
 	CLIRemoteHEInfo        = "remote-hostengine-info"
 	CLIGPUDevices          = "devices"
 	CLISwitchDevices       = "switch-devices"
-	CLICpuDevices          = "cpu-devices"
+	CLICPUDevices          = "cpu-devices"
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
@@ -114,7 +114,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
 		},
 		&cli.StringFlag{
-			Name:    CLICpuDevices,
+			Name:    CLICPUDevices,
 			Aliases: []string{"p"},
 			Value:   FlexKey,
 			Usage:   DeviceUsageStr,
@@ -352,7 +352,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		return nil, err
 	}
 
-	cOpt, err := parseDeviceOptions(c.String(CLICpuDevices))
+	cOpt, err := parseDeviceOptions(c.String(CLICPUDevices))
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +369,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		RemoteHEInfo:        c.String(CLIRemoteHEInfo),
 		GPUDevices:          gOpt,
 		SwitchDevices:       sOpt,
-		CpuDevices:          cOpt,
+		CPUDevices:          cOpt,
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),

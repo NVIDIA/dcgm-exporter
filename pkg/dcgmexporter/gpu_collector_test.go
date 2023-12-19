@@ -45,7 +45,7 @@ var expectedMetrics = map[string]bool{
 	"DCGM_FI_DEV_VGPU_LICENSE_STATUS":      true,
 }
 
-var expectedCpuMetrics = map[string]bool{
+var expectedCPUMetrics = map[string]bool{
 	"DCGM_FI_DEV_CPU_UTIL_TOTAL": true,
 }
 
@@ -57,7 +57,7 @@ func TestDCGMCollector(t *testing.T) {
 	_, cleanup = testDCGMGPUCollector(t, sampleCounters)
 	cleanup()
 
-	_, cleanup = testDCGMCpuCollector(t, sampleCounters)
+	_, cleanup = testDCGMCPUCollector(t, sampleCounters)
 	cleanup()
 }
 
@@ -95,14 +95,14 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}
 
 	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
-		Cpu := dcgm.CpuHierarchyCpu_v1{
+		CPU := dcgm.CpuHierarchyCpu_v1{
 			CpuId:      0,
 			OwnedCores: []uint64{0},
 		}
 		hierarchy := dcgm.CpuHierarchy_v1{
 			Version: 0,
 			NumCpus: 1,
-			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{Cpu},
+			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{CPU},
 		}
 
 		return hierarchy, nil
@@ -146,10 +146,10 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	return g, cleanup
 }
 
-func testDCGMCpuCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
+func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
 	dOpt := DeviceOptions{true, []int{-1}, []int{-1}}
 	cfg := Config{
-		CpuDevices:      dOpt,
+		CPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
 		UseFakeGpus:     false,
@@ -181,14 +181,14 @@ func testDCGMCpuCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}
 
 	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
-		Cpu := dcgm.CpuHierarchyCpu_v1{
+		CPU := dcgm.CpuHierarchyCpu_v1{
 			CpuId:      0,
 			OwnedCores: []uint64{0, 1},
 		}
 		hierarchy := dcgm.CpuHierarchy_v1{
 			Version: 0,
 			NumCpus: 1,
-			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{Cpu},
+			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{CPU},
 		}
 
 		return hierarchy, nil
@@ -218,7 +218,7 @@ func testDCGMCpuCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 			require.NotEmpty(t, metric.Value)
 			require.NotEqual(t, metric.Value, FailedToConvert)
 		}
-		require.Equal(t, seenMetrics, expectedCpuMetrics)
+		require.Equal(t, seenMetrics, expectedCPUMetrics)
 	}
 
 	return c, cleanup

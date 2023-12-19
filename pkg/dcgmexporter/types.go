@@ -71,7 +71,7 @@ type Config struct {
 	RemoteHEInfo        string
 	GPUDevices          DeviceOptions
 	SwitchDevices       DeviceOptions
-	CpuDevices          DeviceOptions
+	CPUDevices          DeviceOptions
 	NoHostname          bool
 	UseFakeGpus         bool
 	ConfigMapData       string

@@ -25,7 +25,7 @@ import (
 )
 
 func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CpuDevices, config.UseFakeGpus, entityType)
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGpus, entityType)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -100,7 +100,7 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
 			metrics[i] = ToSwitchMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
-			metrics[i] = ToCpuMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			metrics[i] = ToCPUMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
 			metrics[i] = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
 		}
@@ -163,7 +163,7 @@ func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo,
 	return metrics
 }
 
-func ToCpuMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) []Metric {
+func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) []Metric {
 	var metrics []Metric
 	var labels = map[string]string{}
 
