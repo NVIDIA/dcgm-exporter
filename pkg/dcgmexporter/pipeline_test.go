@@ -28,7 +28,7 @@ func TestRun(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	c, cleanup := testDCGMCollector(t, sampleCounters)
+	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	defer cleanup()
 
 	p, cleanup, err := NewMetricsPipelineWithGPUCollector(&Config{}, c)

@@ -21,6 +21,7 @@ import (
 	"math/rand"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/bits-and-blooms/bitset"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,6 +33,7 @@ var (
 	dcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
 	dcgmAddEntityToGroup        = dcgm.AddEntityToGroup
 	dcgmCreateGroup             = dcgm.CreateGroup
+	dcgmGetCpuHierarchy         = dcgm.GetCpuHierarchy
 )
 
 type GroupInfo struct {
@@ -63,13 +65,20 @@ type SwitchInfo struct {
 	NvLinks  []dcgm.NvLinkStatus
 }
 
+type CPUInfo struct {
+	EntityId uint
+	Cores    []uint
+}
+
 type SystemInfo struct {
 	GpuCount uint
 	Gpus     [dcgm.MAX_NUM_DEVICES]GpuInfo
 	gOpt     DeviceOptions
 	sOpt     DeviceOptions
+	cOpt     DeviceOptions
 	InfoType dcgm.Field_Entity_Group
 	Switches []SwitchInfo
+	CPUs     []CPUInfo
 }
 
 type MonitoringInfo struct {
@@ -146,6 +155,15 @@ func SwitchIdExists(sysInfo *SystemInfo, switchId int) bool {
 	return false
 }
 
+func CPUIdExists(sysInfo *SystemInfo, cpuId int) bool {
+	for _, cpu := range sysInfo.CPUs {
+		if cpu.EntityId == uint(cpuId) {
+			return true
+		}
+	}
+	return false
+}
+
 func GpuInstanceIdExists(sysInfo *SystemInfo, gpuInstanceId int) bool {
 	for i := uint(0); i < sysInfo.GpuCount; i++ {
 		for _, instance := range sysInfo.Gpus[i].GpuInstances {
@@ -166,6 +184,42 @@ func LinkIdExists(sysInfo *SystemInfo, linkId int) bool {
 		}
 	}
 	return false
+}
+
+func CPUCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
+	for _, cpu := range sysInfo.CPUs {
+		for _, core := range cpu.Cores {
+			if core == uint(coreId) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
+	if sOpt.Flex {
+		return nil
+	}
+
+	if len(sOpt.MajorRange) > 0 && sOpt.MajorRange[0] != -1 {
+		// Verify we can find all the specified Switches
+		for _, cpuId := range sOpt.MajorRange {
+			if !SwitchIdExists(sysInfo, cpuId) {
+				return fmt.Errorf("couldn't find requested cpu id %d", cpuId)
+			}
+		}
+	}
+
+	if len(sOpt.MinorRange) > 0 && sOpt.MinorRange[0] != -1 {
+		for _, coreId := range sOpt.MinorRange {
+			if !CPUCoreIdExists(sysInfo, coreId) {
+				return fmt.Errorf("couldn't find requested cpu core %d", coreId)
+			}
+		}
+	}
+
+	return nil
 }
 
 func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
@@ -216,6 +270,56 @@ func VerifyDevicePresence(sysInfo *SystemInfo, gOpt DeviceOptions) error {
 	}
 
 	return nil
+}
+
+func getCoreArray(bitmask []uint64) []uint {
+
+	var cores []uint
+	bits := make([]uint64, dcgm.MAX_CPU_CORE_BITMASK_COUNT)
+
+	for i := 0; i < len(bitmask); i++ {
+		bits[i] = uint64(bitmask[i])
+	}
+
+	b := bitset.From(bits)
+	coreString := b.String()
+
+	logrus.Info("CPU Core Bitmask ", coreString)
+
+	for i := uint(0); i < dcgm.MAX_NUM_CPU_CORES; i++ {
+		if b.Test(i) {
+			cores = append(cores, uint(i))
+		}
+	}
+
+	return cores
+}
+
+func InitializeCPUInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, error) {
+	hierarchy, err := dcgmGetCpuHierarchy()
+	if err != nil {
+		return sysInfo, err
+	}
+
+	if hierarchy.NumCpus <= 0 {
+		return sysInfo, fmt.Errorf("no cpus to monitor")
+	}
+
+	for i := 0; i < int(hierarchy.NumCpus); i++ {
+		cores := getCoreArray([]uint64(hierarchy.Cpus[i].OwnedCores))
+
+		cpu := CPUInfo{
+			hierarchy.Cpus[i].CpuId,
+			cores,
+		}
+
+		sysInfo.CPUs = append(sysInfo.CPUs, cpu)
+	}
+
+	sysInfo.cOpt = sOpt
+	err = VerifyCPUDevicePresence(&sysInfo, sOpt)
+
+	return sysInfo, nil
 }
 
 func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, error) {
@@ -320,7 +424,7 @@ func InitializeGpuInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGpus bool)
 	return sysInfo, err
 }
 
-func InitializeSystemInfo(gOpt DeviceOptions, sOpt DeviceOptions, useFakeGpus bool, entityType dcgm.Field_Entity_Group) (SystemInfo, error) {
+func InitializeSystemInfo(gOpt DeviceOptions, sOpt DeviceOptions, cOpt DeviceOptions, useFakeGpus bool, entityType dcgm.Field_Entity_Group) (SystemInfo, error) {
 	sysInfo := SystemInfo{}
 
 	logrus.Info("Initializing system entities of type: ", entityType)
@@ -334,9 +438,51 @@ func InitializeSystemInfo(gOpt DeviceOptions, sOpt DeviceOptions, useFakeGpus bo
 	case dcgm.FE_GPU:
 		sysInfo.InfoType = dcgm.FE_GPU
 		return InitializeGpuInfo(sysInfo, gOpt, useFakeGpus)
+	case dcgm.FE_CPU:
+		sysInfo.InfoType = dcgm.FE_CPU
+		return InitializeCPUInfo(sysInfo, cOpt)
+	case dcgm.FE_CPU_CORE:
+		sysInfo.InfoType = dcgm.FE_CPU_CORE
+		return InitializeCPUInfo(sysInfo, cOpt)
 	}
 
 	return sysInfo, fmt.Errorf("unhandled entity type: %d", entityType)
+}
+
+func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []func(), error) {
+	var groups []dcgm.GroupHandle
+	var cleanups []func()
+
+	/* Create per-switch link groups */
+	for _, cpu := range sysInfo.CPUs {
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
+			continue
+		}
+
+		groupId, err := dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+		if err != nil {
+			return nil, cleanups, err
+		}
+
+		groups = append(groups, groupId)
+
+		for _, core := range cpu.Cores {
+
+			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
+				continue
+			}
+
+			err = dcgm.AddEntityToGroup(groupId, dcgm.FE_CPU_CORE, core)
+
+			if err != nil {
+				return groups, cleanups, err
+			}
+
+			cleanups = append(cleanups, func() { dcgm.DestroyGroup(groupId) })
+		}
+	}
+
+	return groups, cleanups, nil
 }
 
 func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []func(), error) {
@@ -514,6 +660,105 @@ func IsLinkWatched(linkId uint, switchId uint, sysInfo SystemInfo) bool {
 	return false
 }
 
+func IsCPUWatched(cpuId uint, sysInfo SystemInfo) bool {
+	if sysInfo.cOpt.Flex {
+		return true
+	}
+
+	if len(sysInfo.cOpt.MajorRange) <= 0 {
+		return true
+	}
+
+	for _, cpu := range sysInfo.cOpt.MajorRange {
+		if uint(cpu) == cpuId {
+			return true
+		}
+
+	}
+	return false
+}
+
+func IsCoreWatched(coreId uint, cpuId uint, sysInfo SystemInfo) bool {
+	if sysInfo.cOpt.Flex {
+		return true
+	}
+
+	for _, cpu := range sysInfo.CPUs {
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
+			return false
+		}
+
+		if len(sysInfo.cOpt.MinorRange) <= 0 {
+			return true
+		}
+
+		for _, core := range sysInfo.cOpt.MinorRange {
+			if uint(core) == coreId {
+				return true
+			}
+		}
+		return false
+	}
+
+	return false
+}
+
+func AddAllCPUs(sysInfo SystemInfo) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, cpu := range sysInfo.CPUs {
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
+			continue
+		}
+
+		mi := MonitoringInfo{
+			dcgm.GroupEntityPair{dcgm.FE_CPU, cpu.EntityId},
+			dcgm.Device{
+				0, "", "", 0,
+				dcgm.PCIInfo{"", 0, 0, 0},
+				dcgm.DeviceIdentifiers{"", "", "", "", "", ""},
+				nil, "",
+			},
+			nil,
+			PARENT_ID_IGNORED,
+		}
+		monitoring = append(monitoring, mi)
+	}
+
+	return monitoring
+}
+
+func AddAllCPUCores(sysInfo SystemInfo) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, cpu := range sysInfo.CPUs {
+		for _, core := range cpu.Cores {
+			if !IsCPUWatched(cpu.EntityId, sysInfo) {
+				continue
+			}
+
+			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
+				continue
+			}
+
+			mi := MonitoringInfo{
+				dcgm.GroupEntityPair{dcgm.FE_CPU_CORE, core},
+				dcgm.Device{
+					0, "", "", 0,
+					dcgm.PCIInfo{"", 0, 0, 0},
+					dcgm.DeviceIdentifiers{"", "", "", "", "", ""},
+					nil, "",
+				},
+				nil,
+				cpu.EntityId,
+			}
+			monitoring = append(monitoring, mi)
+		}
+	}
+
+	return monitoring
+}
+
 func AddAllGpuInstances(sysInfo SystemInfo, addFlexibly bool) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
@@ -581,6 +826,10 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 		monitoring = AddAllSwitches(sysInfo)
 	} else if sysInfo.InfoType == dcgm.FE_LINK {
 		monitoring = AddAllLinks(sysInfo)
+	} else if sysInfo.InfoType == dcgm.FE_CPU {
+		monitoring = AddAllCPUs(sysInfo)
+	} else if sysInfo.InfoType == dcgm.FE_CPU_CORE {
+		monitoring = AddAllCPUCores(sysInfo)
 	} else if sysInfo.gOpt.Flex == true {
 		monitoring = AddAllGpuInstances(sysInfo, true)
 	} else {

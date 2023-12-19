@@ -41,7 +41,7 @@ func TestProcessPodMapper(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
-	c, cleanup := testDCGMCollector(t, sampleCounters)
+	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	defer cleanup()
 
 	out, err := c.GetMetrics()

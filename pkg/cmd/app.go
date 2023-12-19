@@ -21,8 +21,8 @@ import (
 
 const (
 	FlexKey                = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
-	MajorKey               = "g" // Monitor top-level entities: GPUs or NvSwitches
-	MinorKey               = "i" // Monitor sub-level entities: GPU instances/NvLinks - cannot be specified if MIG is disabled
+	MajorKey               = "g" // Monitor top-level entities: GPUs or NvSwitches or CPUs
+	MinorKey               = "i" // Monitor sub-level entities: GPU instances/NvLinks/CPUCores - GPUI cannot be specified if MIG is disabled
 	undefinedConfigMapData = "none"
 	deviceUsageTemplate    = `Specify which devices dcgm-exporter monitors.
 	Possible values: {{.FlexKey}} or 
@@ -55,6 +55,7 @@ var (
 	CLIRemoteHEInfo        = "remote-hostengine-info"
 	CLIGPUDevices          = "devices"
 	CLISwitchDevices       = "switch-devices"
+	CLICPUDevices          = "cpu-devices"
 	CLINoHostname          = "no-hostname"
 	CLIUseFakeGpus         = "fake-gpus"
 	CLIConfigMapData       = "configmap-data"
@@ -111,6 +112,13 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Use old 1.x namespace",
 			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
+		},
+		&cli.StringFlag{
+			Name:    CLICPUDevices,
+			Aliases: []string{"p"},
+			Value:   FlexKey,
+			Usage:   DeviceUsageStr,
+			EnvVars: []string{"DCGM_EXPORTER_CPU_DEVICES_STR"},
 		},
 		&cli.StringFlag{
 			Name:    CLIConfigMapData,
@@ -344,6 +352,11 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		return nil, err
 	}
 
+	cOpt, err := parseDeviceOptions(c.String(CLICPUDevices))
+	if err != nil {
+		return nil, err
+	}
+
 	return &dcgmexporter.Config{
 		CollectorsFile:      c.String(CLIFieldsFile),
 		Address:             c.String(CLIAddress),
@@ -356,6 +369,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		RemoteHEInfo:        c.String(CLIRemoteHEInfo),
 		GPUDevices:          gOpt,
 		SwitchDevices:       sOpt,
+		CPUDevices:          cOpt,
 		NoHostname:          c.Bool(CLINoHostname),
 		UseFakeGpus:         c.Bool(CLIUseFakeGpus),
 		ConfigMapData:       c.String(CLIConfigMapData),

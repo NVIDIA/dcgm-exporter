@@ -71,6 +71,7 @@ type Config struct {
 	RemoteHEInfo        string
 	GPUDevices          DeviceOptions
 	SwitchDevices       DeviceOptions
+	CPUDevices          DeviceOptions
 	NoHostname          bool
 	UseFakeGpus         bool
 	ConfigMapData       string
@@ -87,15 +88,19 @@ type Transform interface {
 type MetricsPipeline struct {
 	config *Config
 
-	transformations     []Transform
-	migMetricsFormat    *template.Template
-	switchMetricsFormat *template.Template
-	linkMetricsFormat   *template.Template
+	transformations      []Transform
+	migMetricsFormat     *template.Template
+	switchMetricsFormat  *template.Template
+	linkMetricsFormat    *template.Template
+	cpuMetricsFormat     *template.Template
+	cpuCoreMetricsFormat *template.Template
 
 	counters        []Counter
 	gpuCollector    *DCGMCollector
 	switchCollector *DCGMCollector
 	linkCollector   *DCGMCollector
+	cpuCollector    *DCGMCollector
+	coreCollector   *DCGMCollector
 }
 
 type DCGMCollector struct {

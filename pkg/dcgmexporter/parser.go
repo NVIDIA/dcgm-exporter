@@ -32,6 +32,11 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+const (
+	CPU_FIELDS_START = 1100
+	DCP_FIELDS_START = 1000
+)
+
 func ExtractCounters(c *Config) ([]Counter, error) {
 	var err error
 	var records [][]string
@@ -140,7 +145,7 @@ func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 }
 
 func fieldIsSupported(fieldID uint, c *Config) bool {
-	if fieldID < 1000 {
+	if fieldID < DCP_FIELDS_START || fieldID >= CPU_FIELDS_START {
 		return true
 	}
 
