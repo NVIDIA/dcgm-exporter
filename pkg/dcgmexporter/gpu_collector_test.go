@@ -94,16 +94,15 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return nil
 	}
 
-	dcgmGetCpuHierarchy = func () (dcgm.CpuHierarchy_v1, error) {
-
+	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
 		Cpu := dcgm.CpuHierarchyCpu_v1{
-			CpuId: 0,
+			CpuId:      0,
 			OwnedCores: []uint64{0},
 		}
 		hierarchy := dcgm.CpuHierarchy_v1{
 			Version: 0,
 			NumCpus: 1,
-			Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{Cpu},
+			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{Cpu},
 		}
 
 		return hierarchy, nil
@@ -162,9 +161,9 @@ func testDCGMCpuCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 
 	dcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
 		dev := dcgm.Device{
-			GPU:  0,
+			GPU:           0,
 			DCGMSupported: "No",
-			UUID: fmt.Sprintf("fake%d", gpuId),
+			UUID:          fmt.Sprintf("fake%d", gpuId),
 		}
 
 		return dev, nil
@@ -181,16 +180,15 @@ func testDCGMCpuCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return nil
 	}
 
-	dcgmGetCpuHierarchy = func () (dcgm.CpuHierarchy_v1, error) {
-
+	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
 		Cpu := dcgm.CpuHierarchyCpu_v1{
-			CpuId: 0,
+			CpuId:      0,
 			OwnedCores: []uint64{0, 1},
 		}
 		hierarchy := dcgm.CpuHierarchy_v1{
 			Version: 0,
 			NumCpus: 1,
-			Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{Cpu},
+			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{Cpu},
 		}
 
 		return hierarchy, nil
