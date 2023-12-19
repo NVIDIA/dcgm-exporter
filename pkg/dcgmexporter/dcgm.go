@@ -41,6 +41,8 @@ func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []d
 			deviceFields = append(deviceFields, f.FieldID)
 		} else if entityType == dcgm.FE_GPU && (meta.EntityLevel == dcgm.FE_GPU_CI || meta.EntityLevel == dcgm.FE_GPU_I || meta.EntityLevel == dcgm.FE_VGPU) {
 			deviceFields = append(deviceFields, f.FieldID)
+		} else if entityType == dcgm.FE_CPU && (meta.EntityLevel == dcgm.FE_CPU || meta.EntityLevel == dcgm.FE_CPU_CORE) {
+			deviceFields = append(deviceFields, f.FieldID)
 		}
 	}
 
@@ -76,6 +78,9 @@ func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collect
 	if sysInfo.InfoType == dcgm.FE_LINK {
 		/* one group per-nvswitch is created for nvlinks */
 		groups, cleanups, err = CreateLinkGroupsFromSystemInfo(sysInfo)
+	} else if sysInfo.InfoType == dcgm.FE_CPU_CORE {
+		/* one group per-CPU is created for cpu cores */
+		groups, cleanups, err = CreateCoreGroupsFromSystemInfo(sysInfo)
 	} else {
 		group, cleanup, err := CreateGroupFromSystemInfo(sysInfo)
 		if err == nil {

@@ -140,7 +140,7 @@ func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 }
 
 func fieldIsSupported(fieldID uint, c *Config) bool {
-	if fieldID < 1000 {
+	if fieldID < 1000 || fieldID > 1099 {
 		return true
 	}
 

@@ -48,6 +48,16 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 		logrus.Info("Not collecting link metrics: ", err)
 	}
 
+	cpuCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_CPU)
+	if err != nil {
+		logrus.Info("Not collecting cpu metrics: ", err)
+	}
+
+	coreCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_CPU_CORE)
+	if err != nil {
+		logrus.Info("Not collecting cpu core metrics: ", err)
+	}
+
 	transformations := []Transform{}
 	if c.Kubernetes {
 		podMapper, err := NewPodMapper(c)
@@ -61,15 +71,19 @@ func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
 	return &MetricsPipeline{
 			config: c,
 
-			migMetricsFormat:    template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
-			switchMetricsFormat: template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
-			linkMetricsFormat:   template.Must(template.New("switchMetrics").Parse(linkMetricsFormat)),
+			migMetricsFormat:     template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+			switchMetricsFormat:  template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
+			linkMetricsFormat:    template.Must(template.New("switchMetrics").Parse(linkMetricsFormat)),
+			cpuMetricsFormat:     template.Must(template.New("cpuMetrics").Parse(cpuMetricsFormat)),
+			cpuCoreMetricsFormat: template.Must(template.New("cpuMetrics").Parse(cpuCoreMetricsFormat)),
 
 			counters:        counters,
 			gpuCollector:    gpuCollector,
 			switchCollector: switchCollector,
 			linkCollector:   linkCollector,
 			transformations: transformations,
+			cpuCollector:    cpuCollector,
+			coreCollector:   coreCollector,
 		}, func() {
 			cleanup()
 		}, nil
@@ -80,9 +94,11 @@ func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*M
 	return &MetricsPipeline{
 		config: c,
 
-		migMetricsFormat:    template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
-		switchMetricsFormat: template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
-		linkMetricsFormat:   template.Must(template.New("switchMetrics").Parse(linkMetricsFormat)),
+		migMetricsFormat:     template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
+		switchMetricsFormat:  template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
+		linkMetricsFormat:    template.Must(template.New("switchMetrics").Parse(linkMetricsFormat)),
+		cpuMetricsFormat:     template.Must(template.New("cpuMetrics").Parse(cpuMetricsFormat)),
+		cpuCoreMetricsFormat: template.Must(template.New("cpuMetrics").Parse(cpuCoreMetricsFormat)),
 
 		counters:     collector.Counters,
 		gpuCollector: collector,
@@ -175,6 +191,40 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
+	if m.cpuCollector != nil {
+		/* Collect CPU Metrics */
+		metrics, err = m.cpuCollector.GetMetrics()
+		if err != nil {
+			return "", fmt.Errorf("Failed to collect cpu metrics with error: %v", err)
+		}
+
+		if len(metrics) > 0 {
+			cpuFormated, err := FormatMetrics(m.cpuMetricsFormat, metrics)
+			if err != nil {
+				logrus.Warnf("Failed to format cpu metrics with error: %v", err)
+			}
+
+			formated = formated + cpuFormated
+		}
+	}
+
+	if m.coreCollector != nil {
+		/* Collect cpu core Metrics */
+		metrics, err = m.coreCollector.GetMetrics()
+		if err != nil {
+			return "", fmt.Errorf("Failed to collect cpu core metrics with error: %v", err)
+		}
+
+		if len(metrics) > 0 {
+			coreFormated, err := FormatMetrics(m.cpuCoreMetricsFormat, metrics)
+			if err != nil {
+				logrus.Warnf("Failed to format cpu core metrics with error: %v", err)
+			}
+
+			formated = formated + coreFormated
+		}
+	}
+
 	return formated, nil
 }
 
@@ -227,6 +277,34 @@ var linkMetricsFormat = `
 # TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
 {{- range $metric := $metrics }}
 {{ $counter.FieldName }}{nvlink="{{ $metric.GPU }}",nvswitch="{{ $metric.GPUDevice }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
+
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
+} {{ $metric.Value -}}
+{{- end }}
+{{ end }}`
+
+var cpuMetricsFormat = `
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{cpu="{{ $metric.GPU }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
+
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
+} {{ $metric.Value -}}
+{{- end }}
+{{ end }}`
+
+var cpuCoreMetricsFormat = `
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{cpucore="{{ $metric.GPU }}",cpu="{{ $metric.GPUDevice }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
 
 {{- range $k, $v := $metric.Labels -}}
 	,{{ $k }}="{{ $v }}"

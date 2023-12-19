@@ -25,7 +25,7 @@ import (
 )
 
 func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.UseFakeGpus, entityType)
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CpuDevices, config.UseFakeGpus, entityType)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -99,6 +99,8 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 		// InstanceInfo will be nil for GPUs
 		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
 			metrics[i] = ToSwitchMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
+			metrics[i] = ToCpuMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
 			metrics[i] = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
 		}
@@ -149,6 +151,50 @@ func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo,
 				GPU:          fmt.Sprintf("%d", mi.Entity.EntityId),
 				GPUUUID:      "",
 				GPUDevice:    fmt.Sprintf("nvswitch%d", mi.ParentId),
+				GPUModelName: "",
+				Hostname:     hostname,
+				Labels:       &labels,
+				Attributes:   nil,
+			}
+		}
+		metrics = append(metrics, m)
+	}
+
+	return metrics
+}
+
+func ToCpuMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) []Metric {
+	var metrics []Metric
+	var labels = map[string]string{}
+
+	for _, val := range values {
+		v := ToString(val)
+		// Filter out counters with no value and ignored fields for this entity
+
+		counter, err := FindCounterField(c, val.FieldId)
+		if err != nil {
+			continue
+		}
+
+		if counter.PromType == "label" {
+			labels[counter.FieldName] = v
+			continue
+		}
+		uuid := "UUID"
+		if useOld {
+			uuid = "uuid"
+		}
+		var m Metric
+		if v == SkipDCGMValue {
+			continue
+		} else {
+			m = Metric{
+				Counter:      counter,
+				Value:        v,
+				UUID:         uuid,
+				GPU:          fmt.Sprintf("%d", mi.Entity.EntityId),
+				GPUUUID:      "",
+				GPUDevice:    fmt.Sprintf("%d", mi.ParentId),
 				GPUModelName: "",
 				Hostname:     hostname,
 				Labels:       &labels,
