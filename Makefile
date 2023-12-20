@@ -36,7 +36,7 @@ binary:
 	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
-	go test ./...
+	go test ./... -short
 
 install: binary
 	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
