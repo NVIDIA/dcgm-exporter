@@ -27,41 +27,45 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewMetricsPipeline(c *Config) (*MetricsPipeline, func(), error) {
+func NewMetricsPipeline(c *Config, newDCGMCollector DCGMCollectorConstructor) (*MetricsPipeline, func(), error) {
 	counters, err := ExtractCounters(c)
 	if err != nil {
 		return nil, func() {}, err
 	}
 
 	cleanups := []func(){}
-	gpuCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_GPU)
+	gpuCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_GPU)
 	if err != nil {
 		return nil, func() {}, err
 	}
 	cleanups = append(cleanups, cleanup)
 
-	switchCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_SWITCH)
+	switchCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_SWITCH)
 	if err != nil {
 		logrus.Info("Not collecting switch metrics: ", err)
 	} else {
 		cleanups = append(cleanups, cleanup)
 	}
 
-	linkCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_LINK)
+	linkCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_LINK)
 	if err != nil {
 		logrus.Info("Not collecting link metrics: ", err)
 	} else {
 		cleanups = append(cleanups, cleanup)
 	}
 
-	cpuCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_CPU)
+	cpuCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_CPU)
 	if err != nil {
 		logrus.Info("Not collecting cpu metrics: ", err)
+	} else {
+		cleanups = append(cleanups, cleanup)
 	}
 
-	coreCollector, cleanup, err := NewDCGMCollector(counters, c, dcgm.FE_CPU_CORE)
+	coreCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_CPU_CORE)
 	if err != nil {
 		logrus.Info("Not collecting cpu core metrics: ", err)
+	} else {
+		cleanups = append(cleanups, cleanup)
 	}
 
 	transformations := []Transform{}

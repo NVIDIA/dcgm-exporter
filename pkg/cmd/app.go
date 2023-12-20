@@ -38,9 +38,9 @@ const (
                              This is our recommended option for single or mixed MIG Strategies.
 		{{.MajorKey}}:0,1 = monitor GPUs 0 and 1
 		{{.MinorKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
-	
+
 	NOTE 1: -i cannot be specified unless MIG mode is enabled.
-	NOTE 2: Any time indices are specified, those indices must exist on the system.	
+	NOTE 2: Any time indices are specified, those indices must exist on the system.
 	NOTE 3: In MIG mode, only -f or -i with a range can be specified. GPUs are not assigned to pods
 		and therefore reporting must occur at the GPU instance level.`
 )
@@ -242,7 +242,7 @@ restart:
 	}
 
 	ch := make(chan string, 10)
-	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config)
+	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config, dcgmexporter.NewDCGMCollector)
 	defer cleanup()
 	if err != nil {
 		logrus.Fatal(err)
