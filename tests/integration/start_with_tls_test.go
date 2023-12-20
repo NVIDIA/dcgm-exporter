@@ -15,6 +15,9 @@ import (
 )
 
 func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
 	app := cmd.NewApp()
 	args := os.Args[0:1]
 	args = append(args, "-f=../../etc/default-counters.csv") // Append a file with default counters

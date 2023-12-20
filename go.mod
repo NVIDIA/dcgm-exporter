@@ -1,6 +1,6 @@
 module github.com/NVIDIA/dcgm-exporter
 
-go 1.18
+go 1.21
 
 replace (
 	k8s.io/api => k8s.io/api v0.20.2
@@ -31,19 +31,19 @@ require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20231211194335-fa02d3a1c15f
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/avast/retry-go/v4 v4.5.1
-	github.com/bits-and-blooms/bitset v1.2.1
-	github.com/gorilla/mux v1.8.0
+	github.com/bits-and-blooms/bitset v1.12.0
+	github.com/gorilla/mux v1.8.1
 	github.com/prometheus/common v0.45.0
-	github.com/prometheus/exporter-toolkit v0.10.0
-	github.com/sirupsen/logrus v1.9.0
+	github.com/prometheus/exporter-toolkit v0.11.0
+	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.8.4
-	github.com/urfave/cli/v2 v2.3.0
-	google.golang.org/grpc v1.56.3
+	github.com/urfave/cli/v2 v2.26.0
+	google.golang.org/grpc v1.60.0
 	k8s.io/api v0.20.2
 	k8s.io/apimachinery v0.20.2
 	k8s.io/client-go v0.20.2
 	k8s.io/kubelet v0.20.2
-	k8s.io/kubernetes v0.0.0-00010101000000-000000000000
+	k8s.io/kubernetes v1.18.20
 )
 
 require (
@@ -74,16 +74,17 @@ require (
 	github.com/prometheus/client_model v0.4.1-0.20230718164431-9a2bf3000d16 // indirect
 	github.com/prometheus/procfs v0.11.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	golang.org/x/crypto v0.14.0 // indirect
+	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
+	golang.org/x/crypto v0.16.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/oauth2 v0.12.0 // indirect
-	golang.org/x/sync v0.3.0 // indirect
-	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/term v0.13.0 // indirect
-	golang.org/x/text v0.13.0 // indirect
-	golang.org/x/time v0.1.0 // indirect
-	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
+	golang.org/x/oauth2 v0.13.0 // indirect
+	golang.org/x/sync v0.5.0 // indirect
+	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/term v0.15.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e // indirect
+	google.golang.org/appengine v1.6.8 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20231002182017-d307bd883b97 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

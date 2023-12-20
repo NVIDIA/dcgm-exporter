@@ -16,7 +16,7 @@ MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
 DCGM_VERSION   := 3.3.0
-GOLANG_VERSION := 1.18
+GOLANG_VERSION := 1.21.5
 VERSION        := 3.2.0
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
@@ -36,7 +36,7 @@ binary:
 	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: $(NON_TEST_FILES) $(MAIN_TEST_FILES)
-	go test ./...
+	go test ./... -short
 
 install: binary
 	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
