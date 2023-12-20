@@ -73,7 +73,7 @@ type Config struct {
 	SwitchDevices       DeviceOptions
 	CPUDevices          DeviceOptions
 	NoHostname          bool
-	UseFakeGpus         bool
+	UseFakeGPUs         bool
 	ConfigMapData       string
 	MetricGroups        []dcgm.MetricGroup
 	WebSystemdSocket    bool
