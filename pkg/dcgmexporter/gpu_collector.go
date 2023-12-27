@@ -24,6 +24,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type DCGMCollectorConstructor func([]Counter, *Config, dcgm.Field_Entity_Group) (*DCGMCollector, func(), error)
+
 func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
 	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
 	if err != nil {

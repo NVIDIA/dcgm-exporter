@@ -17,6 +17,8 @@
 package dcgmexporter
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -42,4 +44,91 @@ func TestRun(t *testing.T) {
 	// writting a full blown parser, always look at the results
 	// We'll be testing them more throughly in the e2e tests (e.g: by running prometheus).
 	t.Logf("Pipeline result is:\n%v", out)
+}
+
+func testNewDCGMCollector(counter *int, enabledCollector map[dcgm.Field_Entity_Group]struct{}) DCGMCollectorConstructor {
+	return func(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+		// should always create GPU Collector
+		if entityType != dcgm.FE_GPU {
+			if _, ok := enabledCollector[entityType]; !ok {
+				return nil, func() {}, fmt.Errorf("%s collector should not be created", entityType)
+			}
+		}
+
+		collector := &DCGMCollector{}
+		cleanups := []func(){
+			func() {
+				*counter++
+			},
+		}
+		collector.Cleanups = cleanups
+
+		return collector, func() { collector.Cleanup() }, nil
+	}
+}
+
+func TestCountPipelineCleanup(t *testing.T) {
+	f, err := os.CreateTemp("", "empty.*.csv")
+	require.NoError(t, err)
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	for _, c := range []struct {
+		name             string
+		enabledCollector map[dcgm.Field_Entity_Group]struct{}
+	}{{
+		name:             "only_gpu",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{},
+	}, {
+		name: "gpu_switch",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_SWITCH: struct{}{},
+		},
+	}, {
+		name: "gpu_link",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_LINK: struct{}{},
+		},
+	}, {
+		name: "gpu_cpu",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_CPU: struct{}{},
+		},
+	}, {
+		name: "gpu_core",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_CPU_CORE: struct{}{},
+		},
+	}, {
+		name: "gpu_switch_link",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_SWITCH: struct{}{},
+			dcgm.FE_LINK:   struct{}{},
+		},
+	}, {
+		name: "gpu_cpu_core",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_CPU:      struct{}{},
+			dcgm.FE_CPU_CORE: struct{}{},
+		},
+	}, {
+		name: "all",
+		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+			dcgm.FE_SWITCH:   struct{}{},
+			dcgm.FE_LINK:     struct{}{},
+			dcgm.FE_CPU:      struct{}{},
+			dcgm.FE_CPU_CORE: struct{}{},
+		},
+	}} {
+		cleanupCounter := 0
+		_, cleanup, err := NewMetricsPipeline(&Config{
+			Kubernetes:     false,
+			ConfigMapData:  undefinedConfigMapData,
+			CollectorsFile: f.Name(),
+		}, testNewDCGMCollector(&cleanupCounter, c.enabledCollector))
+		require.NoError(t, err, "case: %s failed", c.name)
+
+		cleanup()
+		require.Equal(t, len(c.enabledCollector)+1, cleanupCounter, "case: %s failed", c.name)
+	}
 }
