@@ -53,8 +53,10 @@ COPY etc /etc/dcgm-exporter
 
 ARG DCGM_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl
-
+    datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl \
+	&& apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
