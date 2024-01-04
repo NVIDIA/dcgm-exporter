@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
@@ -37,18 +37,13 @@ var (
 
 	connectionTimeout = 10 * time.Second
 
-	gkeMigDeviceIdRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
-	gkeVirtualGPUDeviceIdSeparator = "/vgpu"
+	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
+	gkeVirtualGPUDeviceIDSeparator = "/vgpu"
+	nvmlGetMIGDeviceInfoByIDHook   = nvmlprovider.GetMIGDeviceInfoByID
 )
 
 func NewPodMapper(c *Config) (*PodMapper, error) {
 	logrus.Infof("Kubernetes metrics collection enabled!")
-
-	ret := nvml.Init()
-
-	if ret != nil {
-		return nil, ret
-	}
 
 	return &PodMapper{
 		Config: c,
@@ -73,29 +68,29 @@ func (p *PodMapper) Process(metrics [][]Metric, sysInfo SystemInfo) error {
 	}
 	defer cleanup()
 
-	pods, err := ListPods(c)
+	pods, err := p.listPods(c)
 	if err != nil {
 		return err
 	}
 
-	deviceToPod := ToDeviceToPod(pods, sysInfo)
+	deviceToPod := p.toDeviceToPod(pods, sysInfo)
 
 	// Note: for loop are copies the value, if we want to change the value
 	// and not the copy, we need to use the indexes
 	for i, device := range metrics {
 		for j, val := range device {
-			deviceId, err := val.getIDOfType(p.Config.KubernetesGPUIdType)
+			deviceID, err := val.getIDOfType(p.Config.KubernetesGPUIdType)
 			if err != nil {
 				return err
 			}
 			if !p.Config.UseOldNamespace {
-				metrics[i][j].Attributes[podAttribute] = deviceToPod[deviceId].Name
-				metrics[i][j].Attributes[namespaceAttribute] = deviceToPod[deviceId].Namespace
-				metrics[i][j].Attributes[containerAttribute] = deviceToPod[deviceId].Container
+				metrics[i][j].Attributes[podAttribute] = deviceToPod[deviceID].Name
+				metrics[i][j].Attributes[namespaceAttribute] = deviceToPod[deviceID].Namespace
+				metrics[i][j].Attributes[containerAttribute] = deviceToPod[deviceID].Container
 			} else {
-				metrics[i][j].Attributes[oldPodAttribute] = deviceToPod[deviceId].Name
-				metrics[i][j].Attributes[oldNamespaceAttribute] = deviceToPod[deviceId].Namespace
-				metrics[i][j].Attributes[oldContainerAttribute] = deviceToPod[deviceId].Container
+				metrics[i][j].Attributes[oldPodAttribute] = deviceToPod[deviceID].Name
+				metrics[i][j].Attributes[oldNamespaceAttribute] = deviceToPod[deviceID].Namespace
+				metrics[i][j].Attributes[oldContainerAttribute] = deviceToPod[deviceID].Container
 			}
 		}
 	}
@@ -120,7 +115,7 @@ func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
 	return conn, func() { conn.Close() }, nil
 }
 
-func ListPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodResourcesResponse, error) {
+func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodResourcesResponse, error) {
 	client := podresourcesapi.NewPodResourcesListerClient(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
@@ -134,7 +129,7 @@ func ListPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodResourcesResponse,
 	return resp, nil
 }
 
-func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo) map[string]PodInfo {
+func (p *PodMapper) toDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 
 	for _, pod := range devicePods.GetPodResources() {
@@ -144,7 +139,7 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 				resourceName := device.GetResourceName()
 				if resourceName != nvidiaResourceName {
 					// Mig resources appear differently than GPU resources
-					if strings.HasPrefix(resourceName, nvidiaMigResourcePrefix) == false {
+					if !strings.HasPrefix(resourceName, nvidiaMigResourcePrefix) {
 						continue
 					}
 				}
@@ -155,37 +150,36 @@ func ToDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo
 					Container: container.GetName(),
 				}
 
-				for _, deviceid := range device.GetDeviceIds() {
-					if strings.HasPrefix(deviceid, MIG_UUID_PREFIX) {
-						gpuUuid, gi, _, err := nvml.ParseMigDeviceUUID(deviceid)
+				for _, deviceID := range device.GetDeviceIds() {
+					if strings.HasPrefix(deviceID, MIG_UUID_PREFIX) {
+						migDevice, err := nvmlGetMIGDeviceInfoByIDHook(deviceID)
 						if err == nil {
-							giIdentifier := GetGPUInstanceIdentifier(sysInfo, gpuUuid, gi)
+							giIdentifier := GetGPUInstanceIdentifier(sysInfo, migDevice.ParentUUID, uint(migDevice.ComputeInstanceID))
 							deviceToPodMap[giIdentifier] = podInfo
-						} else {
-							gpuUuid = deviceid[len(MIG_UUID_PREFIX):]
 						}
-						deviceToPodMap[gpuUuid] = podInfo
-					} else if gkeMigDeviceIdMatches := gkeMigDeviceIdRegex.FindStringSubmatch(deviceid); gkeMigDeviceIdMatches != nil {
+						gpuUUID := deviceID[len(MIG_UUID_PREFIX):]
+						deviceToPodMap[gpuUUID] = podInfo
+					} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
 						var gpuIndex string
-						var gpuInstanceId string
-						for groupIdx, group := range gkeMigDeviceIdMatches {
+						var gpuInstanceID string
+						for groupIdx, group := range gkeMigDeviceIDMatches {
 							switch groupIdx {
 							case 1:
 								gpuIndex = group
 							case 2:
-								gpuInstanceId = group
+								gpuInstanceID = group
 							}
 						}
-						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceId)
+						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
 						deviceToPodMap[giIdentifier] = podInfo
-					} else if strings.Contains(deviceid, gkeVirtualGPUDeviceIdSeparator) {
-						deviceToPodMap[strings.Split(deviceid, gkeVirtualGPUDeviceIdSeparator)[0]] = podInfo
-					} else if strings.Contains(deviceid, "::") {
-						gpuInstanceId := strings.Split(deviceid, "::")[0]
-						deviceToPodMap[gpuInstanceId] = podInfo
-					} else {
-						deviceToPodMap[deviceid] = podInfo
+					} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+						deviceToPodMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]] = podInfo
+					} else if strings.Contains(deviceID, "::") {
+						gpuInstanceID := strings.Split(deviceID, "::")[0]
+						deviceToPodMap[gpuInstanceID] = podInfo
 					}
+					// Default mapping between deviceID and pod information
+					deviceToPodMap[deviceID] = podInfo
 				}
 			}
 		}
