@@ -183,7 +183,7 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
 		CPU := dcgm.CpuHierarchyCpu_v1{
 			CpuId:      0,
-			OwnedCores: []uint64{0, 1},
+			OwnedCores: []uint64{0, 18446744073709551360, 65535},
 		}
 		hierarchy := dcgm.CpuHierarchy_v1{
 			Version: 0,
