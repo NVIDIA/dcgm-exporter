@@ -36,9 +36,10 @@ func NewMetricsPipeline(c *Config, newDCGMCollector DCGMCollectorConstructor) (*
 	cleanups := []func(){}
 	gpuCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_GPU)
 	if err != nil {
-		return nil, func() {}, err
+		logrus.Info("Not collecting gpu metrics: ", err)
+	} else {
+		cleanups = append(cleanups, cleanup)
 	}
-	cleanups = append(cleanups, cleanup)
 
 	switchCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_SWITCH)
 	if err != nil {
@@ -151,22 +152,28 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 }
 
 func (m *MetricsPipeline) run() (string, error) {
-	/* Collect GPU Metrics */
-	metrics, err := m.gpuCollector.GetMetrics()
-	if err != nil {
-		return "", fmt.Errorf("Failed to collect gpu metrics with error: %v", err)
-	}
+	var metrics [][]Metric
+	var err error
+	var formatted string
 
-	for _, transform := range m.transformations {
-		err := transform.Process(metrics, m.gpuCollector.SysInfo)
+	if m.gpuCollector != nil {
+		/* Collect GPU Metrics */
+		metrics, err = m.gpuCollector.GetMetrics()
 		if err != nil {
-			return "", fmt.Errorf("Failed to transform metrics for transform %s: %v", err, transform.Name())
+			return "", fmt.Errorf("Failed to collect gpu metrics with error: %v", err)
 		}
-	}
 
-	formated, err := FormatMetrics(m.migMetricsFormat, metrics)
-	if err != nil {
-		return "", fmt.Errorf("Failed to format metrics with error: %v", err)
+		for _, transform := range m.transformations {
+			err := transform.Process(metrics, m.gpuCollector.SysInfo)
+			if err != nil {
+				return "", fmt.Errorf("Failed to transform metrics for transform %s: %v", err, transform.Name())
+			}
+		}
+
+		formatted, err = FormatMetrics(m.migMetricsFormat, metrics)
+		if err != nil {
+			return "", fmt.Errorf("Failed to format metrics with error: %v", err)
+		}
 	}
 
 	if m.switchCollector != nil {
@@ -177,12 +184,12 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		if len(metrics) > 0 {
-			switchFormated, err := FormatMetrics(m.switchMetricsFormat, metrics)
+			switchFormatted, err := FormatMetrics(m.switchMetricsFormat, metrics)
 			if err != nil {
 				logrus.Warnf("Failed to format switch metrics with error: %v", err)
 			}
 
-			formated = formated + switchFormated
+			formatted = formatted + switchFormatted
 		}
 	}
 
@@ -194,12 +201,12 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		if len(metrics) > 0 {
-			switchFormated, err := FormatMetrics(m.linkMetricsFormat, metrics)
+			switchFormatted, err := FormatMetrics(m.linkMetricsFormat, metrics)
 			if err != nil {
 				logrus.Warnf("Failed to format link metrics with error: %v", err)
 			}
 
-			formated = formated + switchFormated
+			formatted = formatted + switchFormatted
 		}
 	}
 
@@ -211,12 +218,12 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		if len(metrics) > 0 {
-			cpuFormated, err := FormatMetrics(m.cpuMetricsFormat, metrics)
+			cpuFormatted, err := FormatMetrics(m.cpuMetricsFormat, metrics)
 			if err != nil {
 				logrus.Warnf("Failed to format cpu metrics with error: %v", err)
 			}
 
-			formated = formated + cpuFormated
+			formatted = formatted + cpuFormatted
 		}
 	}
 
@@ -228,16 +235,16 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		if len(metrics) > 0 {
-			coreFormated, err := FormatMetrics(m.cpuCoreMetricsFormat, metrics)
+			coreFormatted, err := FormatMetrics(m.cpuCoreMetricsFormat, metrics)
 			if err != nil {
 				logrus.Warnf("Failed to format cpu core metrics with error: %v", err)
 			}
 
-			formated = formated + coreFormated
+			formatted = formatted + coreFormatted
 		}
 	}
 
-	return formated, nil
+	return formatted, nil
 }
 
 /*

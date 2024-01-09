@@ -282,9 +282,6 @@ func getCoreArray(bitmask []uint64) []uint {
 	}
 
 	b := bitset.From(bits)
-	coreString := b.String()
-
-	logrus.Info("CPU Core Bitmask ", coreString)
 
 	for i := uint(0); i < dcgm.MAX_NUM_CPU_CORES; i++ {
 		if b.Test(i) {
@@ -452,21 +449,25 @@ func InitializeSystemInfo(gOpt DeviceOptions, sOpt DeviceOptions, cOpt DeviceOpt
 func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []func(), error) {
 	var groups []dcgm.GroupHandle
 	var cleanups []func()
+	var groupId dcgm.GroupHandle
+	var err error
 
-	/* Create per-switch link groups */
+	/* Create per-cpu core groups */
 	for _, cpu := range sysInfo.CPUs {
 		if !IsCPUWatched(cpu.EntityId, sysInfo) {
 			continue
 		}
 
-		groupId, err := dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
-		if err != nil {
-			return nil, cleanups, err
-		}
+		for i, core := range cpu.Cores {
 
-		groups = append(groups, groupId)
+			if i == 0 || i%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
+				groupId, err = dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+				if err != nil {
+					return nil, cleanups, err
+				}
 
-		for _, core := range cpu.Cores {
+				groups = append(groups, groupId)
+			}
 
 			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
 				continue

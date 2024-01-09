@@ -56,8 +56,8 @@ github.com/Masterminds/semver v1.5.0/go.mod h1:MB6lktGJrhw8PrUyiEoblNEGEQ+RzHPF0
 github.com/Microsoft/go-winio v0.4.14 h1:+hMXMk01us9KgxGb7ftKQt2Xpf5hH/yky+TDA+qxleU=
 github.com/Microsoft/go-winio v0.4.14/go.mod h1:qXqCSQ3Xa7+6tgxaGTIe4Kpcdsi+P8jBhyzoq1bpyYA=
 github.com/Microsoft/hcsshim v0.0.0-20190417211021-672e52e9209d/go.mod h1:Op3hHsoHPAvb6lceZHDtd9OkTew38wNoXnJs8iY7rUg=
-github.com/NVIDIA/go-dcgm v0.0.0-20231211194335-fa02d3a1c15f h1:N4Zcdf37V21QvS8fZlw42YW2z64wPTY6/j/gvCpPNK4=
-github.com/NVIDIA/go-dcgm v0.0.0-20231211194335-fa02d3a1c15f/go.mod h1:Q1yfjOq0H9z56InrkqooGS65lCEaZrpgyE74f5atCC8=
+github.com/NVIDIA/go-dcgm v0.0.0-20240108230649-3c233ee2a242 h1:H+Md4NKlMvN/rTNCVMFqRGXAgag0dRs2NsEEIfTRReM=
+github.com/NVIDIA/go-dcgm v0.0.0-20240108230649-3c233ee2a242/go.mod h1:eAZdHcOerdg1hyVoWwJ6jGQ+bxl95PfreT1S7ukI7mY=
 github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48 h1:JO/JF5CBte9mvATbhoh32swu9erf07ZdLgwFj8u21UQ=
 github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48/go.mod h1:oKPJa5eOTkWvlT4/Y4D8Nds44Fzmww5HUK+xwO+DwTA=
 github.com/NVIDIA/gpu-monitoring-tools/bindings/go/dcgm v0.0.0-20210325210537-29b4f1784f18/go.mod h1:8qXwltEzU3idjUcVpMOv3FNgxxbDeXZPGMLyc/khWiY=
@@ -650,11 +650,15 @@ github.com/storageos/go-api v0.0.0-20180912212459-343b3eff91fc/go.mod h1:ZrLn+e0
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=
+github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
+github.com/stretchr/objx v0.5.0/go.mod h1:Yh+to48EsGEfYuaHDzXPcE3xhTkx73EhmCGUpEOglKo=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
 github.com/stretchr/testify v1.6.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
 github.com/subosito/gotenv v1.2.0/go.mod h1:N0PQaV/YGNqwC0u51sEeR/aUtSLEXKX9iv69rRypqCw=

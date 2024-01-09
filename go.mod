@@ -28,7 +28,7 @@ replace (
 )
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20231211194335-fa02d3a1c15f
+	github.com/NVIDIA/go-dcgm v0.0.0-20240108230649-3c233ee2a242
 	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
 	github.com/avast/retry-go/v4 v4.5.1
 	github.com/bits-and-blooms/bitset v1.12.0
