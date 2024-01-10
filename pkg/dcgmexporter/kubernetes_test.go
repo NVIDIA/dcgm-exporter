@@ -168,6 +168,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 	type TestCase struct {
 		KubernetesGPUIDType KubernetesGPUIDType
+		GPUInstanceID       uint
 		MetricGPUID         string
 		MetricGPUDevice     string
 		MetricMigProfile    string
@@ -188,12 +189,14 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
+			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
+			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
@@ -240,7 +243,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				nvmlGetMIGDeviceInfoByIDHook = func(uuid string) (*nvmlprovider.MIGDeviceInfo, error) {
 					return &nvmlprovider.MIGDeviceInfo{
 						ParentUUID:        "00000000-0000-0000-0000-000000000000",
-						GPUInstanceID:     0,
+						GPUInstanceID:     3,
 						ComputeInstanceID: 0,
 					}, nil
 				}
@@ -256,9 +259,9 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					{
 						{
 							GPU:           "0",
-							GPUInstanceID: "0",
 							GPUUUID:       tc.MetricGPUID,
 							GPUDevice:     tc.MetricGPUDevice,
+							GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
 							Value:         "42",
 							MigProfile:    tc.MetricMigProfile,
 							Counter: &Counter{
@@ -276,6 +279,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 						{
 							DeviceInfo: dcgm.Device{
 								UUID: "00000000-0000-0000-0000-000000000000",
+								GPU:  0,
 							},
 							MigEnabled: true,
 						},
