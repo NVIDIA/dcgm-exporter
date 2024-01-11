@@ -29,7 +29,7 @@ replace (
 
 require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20240108230649-3c233ee2a242
-	github.com/NVIDIA/gpu-monitoring-tools v0.0.0-20211102125545-5a2c58442e48
+	github.com/NVIDIA/go-nvml v0.12.0-1.0.20231031105836-a160364ba1cc
 	github.com/avast/retry-go/v4 v4.5.1
 	github.com/bits-and-blooms/bitset v1.12.0
 	github.com/gorilla/mux v1.8.1
@@ -75,7 +75,7 @@ require (
 	github.com/prometheus/procfs v0.11.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
-	golang.org/x/crypto v0.16.0 // indirect
+	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/oauth2 v0.13.0 // indirect
 	golang.org/x/sync v0.5.0 // indirect
