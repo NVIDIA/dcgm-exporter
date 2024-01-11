@@ -56,8 +56,8 @@ github.com/Masterminds/semver v1.5.0/go.mod h1:MB6lktGJrhw8PrUyiEoblNEGEQ+RzHPF0
 github.com/Microsoft/go-winio v0.4.14 h1:+hMXMk01us9KgxGb7ftKQt2Xpf5hH/yky+TDA+qxleU=
 github.com/Microsoft/go-winio v0.4.14/go.mod h1:qXqCSQ3Xa7+6tgxaGTIe4Kpcdsi+P8jBhyzoq1bpyYA=
 github.com/Microsoft/hcsshim v0.0.0-20190417211021-672e52e9209d/go.mod h1:Op3hHsoHPAvb6lceZHDtd9OkTew38wNoXnJs8iY7rUg=
-github.com/NVIDIA/go-dcgm v0.0.0-20231211194335-fa02d3a1c15f h1:N4Zcdf37V21QvS8fZlw42YW2z64wPTY6/j/gvCpPNK4=
-github.com/NVIDIA/go-dcgm v0.0.0-20231211194335-fa02d3a1c15f/go.mod h1:Q1yfjOq0H9z56InrkqooGS65lCEaZrpgyE74f5atCC8=
+github.com/NVIDIA/go-dcgm v0.0.0-20240108230649-3c233ee2a242 h1:H+Md4NKlMvN/rTNCVMFqRGXAgag0dRs2NsEEIfTRReM=
+github.com/NVIDIA/go-dcgm v0.0.0-20240108230649-3c233ee2a242/go.mod h1:eAZdHcOerdg1hyVoWwJ6jGQ+bxl95PfreT1S7ukI7mY=
 github.com/NVIDIA/go-nvml v0.12.0-1.0.20231031105836-a160364ba1cc h1:cpPqTnfDcYPZyvc55pdf+3PnHYZRolqp95HH9ORa12o=
 github.com/NVIDIA/go-nvml v0.12.0-1.0.20231031105836-a160364ba1cc/go.mod h1:7ruy85eOM73muOc/I37euONSwEyFqZsv5ED9AogD4G0=
 github.com/NYTimes/gziphandler v0.0.0-20170623195520-56545f4a5d46/go.mod h1:3wb06e3pkSAbeQ52E9H9iFoQsEEwGN64994WTCIhntQ=
