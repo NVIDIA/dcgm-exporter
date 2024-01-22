@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -51,11 +52,14 @@ func TestProcessPodMapper(t *testing.T) {
 
 	out, err := c.GetMetrics()
 	require.NoError(t, err)
-	original := append(out[:0:0], out...)
+
+	original := out
+
+	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(Counter)]
 
 	socketPath = tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
-	gpus := GetGPUUUIDs(original)
+	gpus := GetGPUUUIDs(arbirtaryMetric)
 	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(gpus))
 
 	cleanup = StartMockServer(t, server, socketPath)
@@ -68,25 +72,22 @@ func TestProcessPodMapper(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, out, len(original))
-	for i, dev := range out {
-		for _, metric := range dev {
+	for _, metrics := range out {
+		for _, metric := range metrics {
 			require.Contains(t, metric.Attributes, podAttribute)
 			require.Contains(t, metric.Attributes, namespaceAttribute)
 			require.Contains(t, metric.Attributes, containerAttribute)
-
-			// TODO currently we rely on ordering and implicit expectations of the mock implementation
-			// This should be a table comparison
-			require.Equal(t, metric.Attributes[podAttribute], fmt.Sprintf("gpu-pod-%d", i))
+			require.Equal(t, metric.Attributes[podAttribute], fmt.Sprintf("gpu-pod-%s", metric.GPU))
 			require.Equal(t, metric.Attributes[namespaceAttribute], "default")
 			require.Equal(t, metric.Attributes[containerAttribute], "default")
 		}
 	}
 }
 
-func GetGPUUUIDs(metrics [][]Metric) []string {
+func GetGPUUUIDs(metrics []Metric) []string {
 	gpus := make([]string, len(metrics))
 	for i, dev := range metrics {
-		gpus[i] = dev[0].GPUUUID
+		gpus[i] = dev.GPUUUID
 	}
 
 	return gpus
@@ -255,24 +256,27 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
-				metrics := [][]Metric{
-					{
-						{
-							GPU:           "0",
-							GPUUUID:       tc.MetricGPUID,
-							GPUDevice:     tc.MetricGPUDevice,
-							GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
-							Value:         "42",
-							MigProfile:    tc.MetricMigProfile,
-							Counter: &Counter{
-								FieldID:   155,
-								FieldName: "DCGM_FI_DEV_POWER_USAGE",
-								PromType:  "gauge",
-							},
-							Attributes: map[string]string{},
-						},
-					},
+				metrics := map[Counter][]Metric{}
+				counter := Counter{
+					FieldID:   155,
+					FieldName: "DCGM_FI_DEV_POWER_USAGE",
+					PromType:  "gauge",
 				}
+				metrics[counter] = append(metrics[counter], Metric{
+					GPU:           "0",
+					GPUUUID:       tc.MetricGPUID,
+					GPUDevice:     tc.MetricGPUDevice,
+					GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
+					Value:         "42",
+					MigProfile:    tc.MetricMigProfile,
+					Counter: Counter{
+						FieldID:   155,
+						FieldName: "DCGM_FI_DEV_POWER_USAGE",
+						PromType:  "gauge",
+					},
+					Attributes: map[string]string{},
+				})
+
 				sysInfo := SystemInfo{
 					GPUCount: 1,
 					GPUs: [32]GPUInfo{
@@ -288,7 +292,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err = podMapper.Process(metrics, sysInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				for _, metric := range metrics[0] {
+				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)] {
 					require.Contains(t, metric.Attributes, podAttribute)
 					require.Contains(t, metric.Attributes, namespaceAttribute)
 					require.Contains(t, metric.Attributes, containerAttribute)

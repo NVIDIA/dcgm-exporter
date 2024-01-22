@@ -54,7 +54,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics [][]Metric, sysInfo SystemInfo) error {
+func (p *PodMapper) Process(metrics map[Counter][]Metric, sysInfo SystemInfo) error {
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
 		logrus.Infof("No Kubelet socket, ignoring")
@@ -77,20 +77,20 @@ func (p *PodMapper) Process(metrics [][]Metric, sysInfo SystemInfo) error {
 
 	// Note: for loop are copies the value, if we want to change the value
 	// and not the copy, we need to use the indexes
-	for i, device := range metrics {
-		for j, val := range device {
+	for counter := range metrics {
+		for j, val := range metrics[counter] {
 			deviceID, err := val.getIDOfType(p.Config.KubernetesGPUIdType)
 			if err != nil {
 				return err
 			}
 			if !p.Config.UseOldNamespace {
-				metrics[i][j].Attributes[podAttribute] = deviceToPod[deviceID].Name
-				metrics[i][j].Attributes[namespaceAttribute] = deviceToPod[deviceID].Namespace
-				metrics[i][j].Attributes[containerAttribute] = deviceToPod[deviceID].Container
+				metrics[counter][j].Attributes[podAttribute] = deviceToPod[deviceID].Name
+				metrics[counter][j].Attributes[namespaceAttribute] = deviceToPod[deviceID].Namespace
+				metrics[counter][j].Attributes[containerAttribute] = deviceToPod[deviceID].Container
 			} else {
-				metrics[i][j].Attributes[oldPodAttribute] = deviceToPod[deviceID].Name
-				metrics[i][j].Attributes[oldNamespaceAttribute] = deviceToPod[deviceID].Namespace
-				metrics[i][j].Attributes[oldContainerAttribute] = deviceToPod[deviceID].Container
+				metrics[counter][j].Attributes[oldPodAttribute] = deviceToPod[deviceID].Name
+				metrics[counter][j].Attributes[oldNamespaceAttribute] = deviceToPod[deviceID].Namespace
+				metrics[counter][j].Attributes[oldContainerAttribute] = deviceToPod[deviceID].Container
 			}
 		}
 	}

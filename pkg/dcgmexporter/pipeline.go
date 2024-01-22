@@ -27,42 +27,37 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewMetricsPipeline(c *Config, newDCGMCollector DCGMCollectorConstructor) (*MetricsPipeline, func(), error) {
-	counters, err := ExtractCounters(c)
-	if err != nil {
-		return nil, func() {}, err
-	}
-
+func NewMetricsPipeline(c *Config, counters []Counter, hostname string, newDCGMCollector DCGMCollectorConstructor) (*MetricsPipeline, func(), error) {
 	cleanups := []func(){}
-	gpuCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_GPU)
+	gpuCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_GPU)
 	if err != nil {
 		logrus.Info("Not collecting gpu metrics: ", err)
 	} else {
 		cleanups = append(cleanups, cleanup)
 	}
 
-	switchCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_SWITCH)
+	switchCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_SWITCH)
 	if err != nil {
 		logrus.Info("Not collecting switch metrics: ", err)
 	} else {
 		cleanups = append(cleanups, cleanup)
 	}
 
-	linkCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_LINK)
+	linkCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_LINK)
 	if err != nil {
 		logrus.Info("Not collecting link metrics: ", err)
 	} else {
 		cleanups = append(cleanups, cleanup)
 	}
 
-	cpuCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_CPU)
+	cpuCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_CPU)
 	if err != nil {
 		logrus.Info("Not collecting cpu metrics: ", err)
 	} else {
 		cleanups = append(cleanups, cleanup)
 	}
 
-	coreCollector, cleanup, err := newDCGMCollector(counters, c, dcgm.FE_CPU_CORE)
+	coreCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_CPU_CORE)
 	if err != nil {
 		logrus.Info("Not collecting cpu core metrics: ", err)
 	} else {
@@ -152,7 +147,7 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 }
 
 func (m *MetricsPipeline) run() (string, error) {
-	var metrics [][]Metric
+	var metrics map[Counter][]Metric
 	var err error
 	var formatted string
 
@@ -333,15 +328,7 @@ var cpuCoreMetricsFormat = `
 {{ end }}`
 
 // Template is passed here so that it isn't recompiled at each iteration
-func FormatMetrics(t *template.Template, m [][]Metric) (string, error) {
-	// Group metrics by counter instead of by device
-	groupedMetrics := make(map[*Counter][]Metric)
-	for _, deviceMetrics := range m {
-		for _, deviceMetric := range deviceMetrics {
-			groupedMetrics[deviceMetric.Counter] = append(groupedMetrics[deviceMetric.Counter], deviceMetric)
-		}
-	}
-
+func FormatMetrics(t *template.Template, groupedMetrics map[Counter][]Metric) (string, error) {
 	// Format metrics
 	var res bytes.Buffer
 	if err := t.Execute(&res, groupedMetrics); err != nil {

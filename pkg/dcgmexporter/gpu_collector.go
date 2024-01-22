@@ -24,41 +24,29 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DCGMCollectorConstructor func([]Counter, *Config, dcgm.Field_Entity_Group) (*DCGMCollector, func(), error)
+type DCGMCollectorConstructor func([]Counter, *Config, string, dcgm.Field_Entity_Group) (*DCGMCollector, func(), error)
 
-func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+func NewDCGMCollector(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
 	var deviceFields = NewDeviceFields(c, entityType)
 
 	if !ShouldMonitorDeviceType(deviceFields, entityType) {
 		return nil, func() {}, fmt.Errorf("No fields to watch for device type: %d", entityType)
 	}
 
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
+	sysInfo, err := GetSystemInfo(config, entityType)
 	if err != nil {
 		return nil, func() {}, err
-	}
-
-	hostname := ""
-	if config.NoHostname == false {
-		if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
-			hostname = nodeName
-		} else {
-			hostname, err = os.Hostname()
-			if err != nil {
-				return nil, func() {}, err
-			}
-		}
 	}
 
 	collector := &DCGMCollector{
 		Counters:        c,
 		DeviceFields:    deviceFields,
 		UseOldNamespace: config.UseOldNamespace,
-		SysInfo:         sysInfo,
+		SysInfo:         *sysInfo,
 		Hostname:        hostname,
 	}
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, sysInfo, int64(config.CollectInterval)*1000)
+	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, *sysInfo, int64(config.CollectInterval)*1000)
 	if err != nil {
 		logrus.Fatal("Failed to watch metrics: ", err)
 	}
@@ -68,19 +56,43 @@ func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_
 	return collector, func() { collector.Cleanup() }, nil
 }
 
+func GetSystemInfo(config *Config, entityType dcgm.Field_Entity_Group) (*SystemInfo, error) {
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
+	if err != nil {
+		return nil, err
+	}
+	return &sysInfo, err
+}
+
+func GetHostname(config *Config) (string, error) {
+	hostname := ""
+	var err error
+	if !config.NoHostname {
+		if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
+			hostname = nodeName
+		} else {
+			hostname, err = os.Hostname()
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	return hostname, nil
+}
+
 func (c *DCGMCollector) Cleanup() {
 	for _, c := range c.Cleanups {
 		c()
 	}
 }
 
-func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
+func (c *DCGMCollector) GetMetrics() (map[Counter][]Metric, error) {
 	monitoringInfo := GetMonitoredEntities(c.SysInfo)
 	count := len(monitoringInfo)
 
-	metrics := make([][]Metric, count)
+	metrics := make(map[Counter][]Metric, count)
 
-	for i, mi := range monitoringInfo {
+	for _, mi := range monitoringInfo {
 		var vals []dcgm.FieldValue_v1
 		var err error
 		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
@@ -100,11 +112,11 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 
 		// InstanceInfo will be nil for GPUs
 		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
-			metrics[i] = ToSwitchMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			metrics = ToSwitchMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
-			metrics[i] = ToCPUMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			metrics = ToCPUMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
-			metrics[i] = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
+			metrics = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
 		}
 	}
 
@@ -123,19 +135,19 @@ func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_G
 	return true
 }
 
-func FindCounterField(c []Counter, fieldId uint) (*Counter, error) {
+func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 	for i := 0; i < len(c); i++ {
 		if uint(c[i].FieldID) == fieldId {
-			return &c[i], nil
+			return c[i], nil
 		}
 	}
 
-	return &c[0], fmt.Errorf("Could not find corresponding counter")
+	return c[0], fmt.Errorf("Could not find corresponding counter")
 }
 
-func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) []Metric {
-	var metrics []Metric
-	var labels = map[string]string{}
+func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) map[Counter][]Metric {
+	metrics := make(map[Counter][]Metric)
+	labels := map[string]string{}
 
 	for _, val := range values {
 		v := ToString(val)
@@ -167,18 +179,19 @@ func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo,
 				GPUDevice:    fmt.Sprintf("nvswitch%d", mi.ParentId),
 				GPUModelName: "",
 				Hostname:     hostname,
-				Labels:       &labels,
+				Labels:       labels,
 				Attributes:   nil,
 			}
 		}
-		metrics = append(metrics, m)
+
+		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
 
 	return metrics
 }
 
-func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) []Metric {
-	var metrics []Metric
+func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) map[Counter][]Metric {
+	metrics := make(map[Counter][]Metric)
 	var labels = map[string]string{}
 
 	for _, val := range values {
@@ -211,18 +224,19 @@ func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, us
 				GPUDevice:    fmt.Sprintf("%d", mi.ParentId),
 				GPUModelName: "",
 				Hostname:     hostname,
-				Labels:       &labels,
+				Labels:       labels,
 				Attributes:   nil,
 			}
 		}
-		metrics = append(metrics, m)
+
+		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
 
 	return metrics
 }
 
-func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GPUInstanceInfo, useOld bool, hostname string) []Metric {
-	var metrics []Metric
+func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GPUInstanceInfo, useOld bool, hostname string) map[Counter][]Metric {
+	metrics := make(map[Counter][]Metric)
 	var labels = map[string]string{}
 
 	for _, val := range values {
@@ -256,7 +270,7 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 			GPUModelName: d.Identifiers.Model,
 			Hostname:     hostname,
 
-			Labels:     &labels,
+			Labels:     labels,
 			Attributes: map[string]string{},
 		}
 		if instanceInfo != nil {
@@ -266,7 +280,8 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 			m.MigProfile = ""
 			m.GPUInstanceID = ""
 		}
-		metrics = append(metrics, m)
+
+		metrics[m.Counter] = []Metric{m}
 	}
 
 	return metrics
@@ -321,8 +336,6 @@ func ToString(value dcgm.FieldValue_v1) string {
 		default:
 			return v
 		}
-	default:
-		return FailedToConvert
 	}
 
 	return FailedToConvert
