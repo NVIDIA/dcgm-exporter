@@ -112,7 +112,7 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 }
 
 func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_Group) bool {
-	if len(fields) <= 0 {
+	if len(fields) == 0 {
 		return false
 	}
 
