@@ -27,6 +27,12 @@ import (
 type DCGMCollectorConstructor func([]Counter, *Config, dcgm.Field_Entity_Group) (*DCGMCollector, func(), error)
 
 func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+	var deviceFields = NewDeviceFields(c, entityType)
+
+	if !ShouldMonitorDeviceType(deviceFields, entityType) {
+		return nil, func() {}, fmt.Errorf("No fields to watch for device type: %d", entityType)
+	}
+
 	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
 	if err != nil {
 		return nil, func() {}, err
@@ -42,12 +48,6 @@ func NewDCGMCollector(c []Counter, config *Config, entityType dcgm.Field_Entity_
 				return nil, func() {}, err
 			}
 		}
-	}
-
-	var deviceFields = NewDeviceFields(c, entityType)
-
-	if len(deviceFields) <= 0 {
-		return nil, func() {}, fmt.Errorf("No fields to watch for device type: %d", entityType)
 	}
 
 	collector := &DCGMCollector{
@@ -109,6 +109,18 @@ func (c *DCGMCollector) GetMetrics() ([][]Metric, error) {
 	}
 
 	return metrics, nil
+}
+
+func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_Group) bool {
+	if len(fields) == 0 {
+		return false
+	}
+
+	if len(fields) == 1 && fields[0] == dcgm.DCGM_FI_DRIVER_VERSION {
+		return false
+	}
+
+	return true
 }
 
 func FindCounterField(c []Counter, fieldId uint) (*Counter, error) {
