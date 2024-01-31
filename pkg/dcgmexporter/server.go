@@ -50,13 +50,17 @@ func NewMetricsServer(c *Config, metrics chan string, registry *Registry) (*Metr
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`<html>
+		_, err := w.Write([]byte(`<html>
 			<head><title>GPU Exporter</title></head>
 			<body>
 			<h1>GPU Exporter</h1>
 			<p><a href="./metrics">Metrics</a></p>
 			</body>
 			</html>`))
+		if err != nil {
+			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+			return
+		}
 	})
 
 	router.HandleFunc("/health", serverv1.Health)
@@ -106,10 +110,20 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(s.getMetrics()))
+	_, err := w.Write([]byte(s.getMetrics()))
+	if err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		return
+	}
 	xidMetrics, err := s.registry.Gather()
-	if err == nil {
-		encodeXIDMetrics(w, xidMetrics)
+	if err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		return
+	}
+	err = encodeXIDMetrics(w, xidMetrics)
+	if err != nil {
+		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -117,11 +131,17 @@ func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
 	if s.getMetrics() == "" {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("KO"))
+		_, err := w.Write([]byte("KO"))
+		if err != nil {
+			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		}
 	} else {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, err := w.Write([]byte("OK"))
+		if err != nil {
+			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		}
 	}
 }
 

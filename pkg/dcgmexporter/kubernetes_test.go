@@ -100,7 +100,8 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	stopped := make(chan interface{})
 
 	go func() {
-		server.Serve(l)
+		err := server.Serve(l)
+		assert.NoError(t, err)
 		close(stopped)
 	}()
 

@@ -159,8 +159,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	// Now we check the metric rendering
 	var b bytes.Buffer
-	encodeXIDMetrics(&b, metrics)
-
+	err = encodeXIDMetrics(&b, metrics)
+	require.NoError(t, err)
 	require.NotEmpty(t, b)
 
 	var parser expfmt.TextParser

@@ -80,6 +80,7 @@ type Config struct {
 	WebConfigFile            string
 	XIDCountWindowSize       int
 	ReplaceBlanksInModelName bool
+	Debug                    bool
 }
 
 type Transform interface {

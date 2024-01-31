@@ -18,9 +18,11 @@ package dcgmexporter
 
 import (
 	"fmt"
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -73,6 +75,9 @@ func SpoofSwitchSystemInfo() SystemInfo {
 	sysInfo.Switches = append(sysInfo.Switches, sw1)
 	sysInfo.Switches = append(sysInfo.Switches, sw2)
 
+	sysInfo.sOpt.MajorRange = []int{-1}
+	sysInfo.sOpt.MinorRange = []int{-1}
+
 	return sysInfo
 }
 
@@ -81,13 +86,13 @@ func SpoofSystemInfo() SystemInfo {
 	sysInfo.GPUCount = 2
 	sysInfo.GPUs[0].DeviceInfo.GPU = 0
 	gi := GPUInstanceInfo{
-		Info:        dcgm.MigEntityInfo{"fake", 0, 0, 0, 0, 3},
+		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlProfileSlices: 3},
 		ProfileName: fakeProfileName,
 		EntityId:    0,
 	}
 	sysInfo.GPUs[0].GPUInstances = append(sysInfo.GPUs[0].GPUInstances, gi)
 	gi2 := GPUInstanceInfo{
-		Info:        dcgm.MigEntityInfo{"fake", 0, 1, 0, 0, 3},
+		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlInstanceId: 1, NvmlProfileSlices: 3},
 		ProfileName: fakeProfileName,
 		EntityId:    14,
 	}
@@ -164,11 +169,6 @@ func TestVerifyDevicePresence(t *testing.T) {
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 }
 
-//func TestMigProfileNames(t *testing.T) {
-//	sysInfo := SpoofSystemInfo()
-//    SetMigProfileNames(sysInfo, values)
-//}
-
 func TestMonitoredSwitches(t *testing.T) {
 	sysInfo := SpoofSwitchSystemInfo()
 
@@ -185,6 +185,333 @@ func TestMonitoredSwitches(t *testing.T) {
 	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored links but found %d", len(monitoring)))
 	for i, mi := range monitoring {
 		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_LINK, fmt.Sprintf("Should have only returned links but returned %d", mi.Entity.EntityGroupId))
-		require.Equal(t, mi.ParentId, uint(i), fmt.Sprint("Link should reference switch parent"))
+		require.Equal(t, mi.ParentId, uint(i), "Link should reference switch parent")
+	}
+}
+
+func TestIsSwitchWatched(t *testing.T) {
+	tests := []struct {
+		name     string
+		switchID uint
+		sysInfo  SystemInfo
+		want     bool
+	}{
+		{
+			name:     "Monitor all devices",
+			switchID: 1,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					Flex: true,
+				},
+			},
+			want: true,
+		},
+		{
+			name:     "MajorRange empty",
+			switchID: 2,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{},
+				},
+			},
+			want: false,
+		},
+		{
+			name:     "MajorRange contains -1 to watch all devices",
+			switchID: 3,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{-1},
+				},
+			},
+			want: true,
+		},
+		{
+			name:     "SwitchID in MajorRange",
+			switchID: 4,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{3, 4, 5},
+				},
+			},
+			want: true,
+		},
+		{
+			name:     "SwitchID not in MajorRange",
+			switchID: 5,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{3, 4, 6},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsSwitchWatched(tt.switchID, tt.sysInfo)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsLinkWatched(t *testing.T) {
+	tests := []struct {
+		name      string
+		linkIndex uint
+		switchID  uint
+		sysInfo   SystemInfo
+		want      bool
+	}{
+		{
+			name:      "Monitor all devices",
+			linkIndex: 1,
+			sysInfo:   SystemInfo{sOpt: DeviceOptions{Flex: true}},
+			want:      true,
+		},
+		{
+			name:      "No watched devices",
+			linkIndex: 1,
+			sysInfo:   SystemInfo{},
+			want:      false,
+		},
+		{
+			name:      "Watched link with empty MinorRange",
+			linkIndex: 2,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{-1},
+				},
+				Switches: []SwitchInfo{
+					{
+						EntityId: 1,
+						NvLinks: []dcgm.NvLinkStatus{
+							{Index: 2},
+						},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name:      "MinorRange contains -1 to watch all links",
+			switchID:  1,
+			linkIndex: 3,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{-1},
+					MinorRange: []int{-1},
+				},
+				Switches: []SwitchInfo{
+					{
+						EntityId: 1,
+						NvLinks: []dcgm.NvLinkStatus{
+							{Index: 3},
+						},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name:      "The link not in the watched switch",
+			switchID:  1,
+			linkIndex: 4,
+			sysInfo: SystemInfo{
+				sOpt: DeviceOptions{
+					MajorRange: []int{-1},
+					MinorRange: []int{1, 2, 3},
+				},
+				Switches: []SwitchInfo{
+					{
+						EntityId: 1,
+						NvLinks: []dcgm.NvLinkStatus{
+							{Index: 4},
+						},
+					},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsLinkWatched(tt.linkIndex, tt.switchID, tt.sysInfo)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsCPUWatched(t *testing.T) {
+	tests := []struct {
+		name    string
+		cpuID   uint
+		sysInfo SystemInfo
+		want    bool
+	}{
+		{
+			name:  "Monitor all devices",
+			cpuID: 1,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{Flex: true},
+				CPUs: []CPUInfo{
+					{
+						EntityId: 1,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name:  "MajorRange Contains -1",
+			cpuID: 2,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{MajorRange: []int{-1}},
+				CPUs: []CPUInfo{
+					{
+						EntityId: 2,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name:  "CPU ID in MajorRange",
+			cpuID: 3,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{MajorRange: []int{1, 2, 3}},
+				CPUs: []CPUInfo{
+					{
+						EntityId: 3,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name:  "CPU ID Not in MajorRange",
+			cpuID: 4,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{MajorRange: []int{1, 2, 3}},
+				CPUs: []CPUInfo{
+					{
+						EntityId: 4,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name:  "MajorRange Empty",
+			cpuID: 5,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{MajorRange: []int{}},
+				CPUs: []CPUInfo{
+					{
+						EntityId: 5,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name:  "CPU not found",
+			cpuID: 6,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{MajorRange: []int{}},
+				CPUs: []CPUInfo{
+					{
+						EntityId: 5,
+					},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsCPUWatched(tt.cpuID, tt.sysInfo))
+		})
+	}
+}
+
+func TestIsCoreWatched(t *testing.T) {
+	tests := []struct {
+		name    string
+		coreID  uint
+		cpuID   uint
+		sysInfo SystemInfo
+		want    bool
+	}{
+		{
+			name:   "Monitor all devices",
+			coreID: 1,
+			cpuID:  1,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{Flex: true},
+			},
+			want: true,
+		},
+		{
+			name:   "Core in MinorRange",
+			coreID: 2,
+			cpuID:  1,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{
+					MinorRange: []int{1, 2, 3},
+					MajorRange: []int{-1},
+				},
+				CPUs: []CPUInfo{{EntityId: 1}},
+			},
+			want: true,
+		},
+		{
+			name:   "Core Not in MinorRange",
+			coreID: 4,
+			cpuID:  1,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{
+					MinorRange: []int{1, 2, 3},
+					MajorRange: []int{-1},
+				},
+				CPUs: []CPUInfo{{EntityId: 1}},
+			},
+			want: false,
+		},
+		{
+			name:   "MinorRange Contains -1",
+			coreID: 5,
+			cpuID:  1,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{
+					MinorRange: []int{-1},
+					MajorRange: []int{-1},
+				},
+				CPUs: []CPUInfo{{EntityId: 1}},
+			},
+			want: true,
+		},
+		{
+			name:   "CPU Not Found",
+			coreID: 1,
+			cpuID:  2,
+			sysInfo: SystemInfo{
+				cOpt: DeviceOptions{
+					MinorRange: []int{1, 2, 3},
+					MajorRange: []int{-1},
+				},
+				CPUs: []CPUInfo{{EntityId: 1}},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsCoreWatched(tt.coreID, tt.cpuID, tt.sysInfo))
+		})
 	}
 }

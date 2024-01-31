@@ -24,10 +24,14 @@ import (
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/sirupsen/logrus"
 )
 
 func NewMetricsPipeline(c *Config, counters []Counter, hostname string, newDCGMCollector DCGMCollectorConstructor) (*MetricsPipeline, func(), error) {
+
+	logrus.WithField(LoggerDumpField, spew.Sdump(counters)).Debug("Counters are initialized")
+
 	cleanups := []func(){}
 	gpuCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_GPU)
 	if err != nil {
