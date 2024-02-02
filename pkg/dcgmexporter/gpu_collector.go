@@ -19,6 +19,7 @@ package dcgmexporter
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
@@ -39,11 +40,12 @@ func NewDCGMCollector(c []Counter, config *Config, hostname string, entityType d
 	}
 
 	collector := &DCGMCollector{
-		Counters:        c,
-		DeviceFields:    deviceFields,
-		UseOldNamespace: config.UseOldNamespace,
-		SysInfo:         *sysInfo,
-		Hostname:        hostname,
+		Counters:                 c,
+		DeviceFields:             deviceFields,
+		UseOldNamespace:          config.UseOldNamespace,
+		SysInfo:                  *sysInfo,
+		Hostname:                 hostname,
+		ReplaceBlanksInModelName: config.ReplaceBlanksInModelName,
 	}
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, *sysInfo, int64(config.CollectInterval)*1000)
@@ -116,7 +118,13 @@ func (c *DCGMCollector) GetMetrics() (map[Counter][]Metric, error) {
 		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
 			metrics = ToCPUMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
-			metrics = ToMetric(vals, c.Counters, mi.DeviceInfo, mi.InstanceInfo, c.UseOldNamespace, c.Hostname)
+			metrics = ToMetric(vals,
+				c.Counters,
+				mi.DeviceInfo,
+				mi.InstanceInfo,
+				c.UseOldNamespace,
+				c.Hostname,
+				c.ReplaceBlanksInModelName)
 		}
 	}
 
@@ -235,7 +243,14 @@ func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, us
 	return metrics
 }
 
-func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceInfo *GPUInstanceInfo, useOld bool, hostname string) map[Counter][]Metric {
+func ToMetric(values []dcgm.FieldValue_v1,
+	c []Counter,
+	d dcgm.Device,
+	instanceInfo *GPUInstanceInfo,
+	useOld bool,
+	hostname string,
+	replaceBlanksInModelName bool,
+) map[Counter][]Metric {
 	metrics := make(map[Counter][]Metric)
 	var labels = map[string]string{}
 
@@ -259,6 +274,15 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 		if useOld {
 			uuid = "uuid"
 		}
+
+		gpuModel := d.Identifiers.Model
+
+		if replaceBlanksInModelName {
+			parts := strings.Fields(gpuModel)
+			gpuModel = strings.Join(parts, " ")
+			gpuModel = strings.ReplaceAll(gpuModel, " ", "-")
+		}
+
 		m := Metric{
 			Counter: counter,
 			Value:   v,
@@ -267,7 +291,7 @@ func ToMetric(values []dcgm.FieldValue_v1, c []Counter, d dcgm.Device, instanceI
 			GPU:          fmt.Sprintf("%d", d.GPU),
 			GPUUUID:      d.UUID,
 			GPUDevice:    fmt.Sprintf("nvidia%d", d.GPU),
-			GPUModelName: d.Identifiers.Model,
+			GPUModelName: gpuModel,
 			Hostname:     hostname,
 
 			Labels:     labels,

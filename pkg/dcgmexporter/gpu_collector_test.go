@@ -18,9 +18,11 @@ package dcgmexporter
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -226,4 +228,62 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}
 
 	return c, cleanup
+}
+
+func TestToMetric(t *testing.T) {
+
+	fieldValue := [4096]byte{}
+	fieldValue[0] = 42
+	values := []dcgm.FieldValue_v1{
+		{
+			FieldId:   150,
+			FieldType: dcgm.DCGM_FT_INT64,
+			Value:     fieldValue,
+		},
+	}
+
+	c := []Counter{
+		{
+			FieldID:   150,
+			FieldName: "DCGM_FI_DEV_GPU_TEMP",
+			PromType:  "gauge",
+			Help:      "Temperature Help info",
+		},
+	}
+
+	d := dcgm.Device{
+		UUID: "fake0",
+		Identifiers: dcgm.DeviceIdentifiers{
+			Model: "NVIDIA T400 4GB",
+		},
+	}
+
+	var instanceInfo *GPUInstanceInfo = nil
+
+	type testCase struct {
+		replaceBlanksInModelName bool
+		expectedGPUModelName     string
+	}
+
+	testCases := []testCase{
+		{
+			replaceBlanksInModelName: true,
+			expectedGPUModelName:     "NVIDIA-T400-4GB",
+		},
+		{
+			replaceBlanksInModelName: false,
+			expectedGPUModelName:     "NVIDIA T400 4GB",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("When replaceBlanksInModelName is %t", tc.replaceBlanksInModelName), func(t *testing.T) {
+			metrics := ToMetric(values, c, d, instanceInfo, false, "", tc.replaceBlanksInModelName)
+			assert.Len(t, metrics, 1)
+			// We get metric value with 0 index
+			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+			assert.Equal(t, "42", metricValues[0].Value)
+			assert.Equal(t, tc.expectedGPUModelName, metricValues[0].GPUModelName)
+		})
+	}
 }

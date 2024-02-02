@@ -60,25 +60,26 @@ type DeviceOptions struct {
 }
 
 type Config struct {
-	CollectorsFile      string
-	Address             string
-	CollectInterval     int
-	Kubernetes          bool
-	KubernetesGPUIdType KubernetesGPUIDType
-	CollectDCP          bool
-	UseOldNamespace     bool
-	UseRemoteHE         bool
-	RemoteHEInfo        string
-	GPUDevices          DeviceOptions
-	SwitchDevices       DeviceOptions
-	CPUDevices          DeviceOptions
-	NoHostname          bool
-	UseFakeGPUs         bool
-	ConfigMapData       string
-	MetricGroups        []dcgm.MetricGroup
-	WebSystemdSocket    bool
-	WebConfigFile       string
-	XIDCountWindowSize  int
+	CollectorsFile           string
+	Address                  string
+	CollectInterval          int
+	Kubernetes               bool
+	KubernetesGPUIdType      KubernetesGPUIDType
+	CollectDCP               bool
+	UseOldNamespace          bool
+	UseRemoteHE              bool
+	RemoteHEInfo             string
+	GPUDevices               DeviceOptions
+	SwitchDevices            DeviceOptions
+	CPUDevices               DeviceOptions
+	NoHostname               bool
+	UseFakeGPUs              bool
+	ConfigMapData            string
+	MetricGroups             []dcgm.MetricGroup
+	WebSystemdSocket         bool
+	WebConfigFile            string
+	XIDCountWindowSize       int
+	ReplaceBlanksInModelName bool
 }
 
 type Transform interface {
@@ -105,12 +106,13 @@ type MetricsPipeline struct {
 }
 
 type DCGMCollector struct {
-	Counters        []Counter
-	DeviceFields    []dcgm.Short
-	Cleanups        []func()
-	UseOldNamespace bool
-	SysInfo         SystemInfo
-	Hostname        string
+	Counters                 []Counter
+	DeviceFields             []dcgm.Short
+	Cleanups                 []func()
+	UseOldNamespace          bool
+	SysInfo                  SystemInfo
+	Hostname                 string
+	ReplaceBlanksInModelName bool
 }
 
 type Counter struct {
