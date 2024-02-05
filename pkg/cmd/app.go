@@ -46,22 +46,23 @@ const (
 )
 
 const (
-	CLIFieldsFile          = "collectors"
-	CLIAddress             = "address"
-	CLICollectInterval     = "collect-interval"
-	CLIKubernetes          = "kubernetes"
-	CLIKubernetesGPUIDType = "kubernetes-gpu-id-type"
-	CLIUseOldNamespace     = "use-old-namespace"
-	CLIRemoteHEInfo        = "remote-hostengine-info"
-	CLIGPUDevices          = "devices"
-	CLISwitchDevices       = "switch-devices"
-	CLICPUDevices          = "cpu-devices"
-	CLINoHostname          = "no-hostname"
-	CLIUseFakeGPUs         = "fake-gpus"
-	CLIConfigMapData       = "configmap-data"
-	CLIWebSystemdSocket    = "web-systemd-socket"
-	CLIWebConfigFile       = "web-config-file"
-	CLIXIDCountWindowSize  = "xid-count-window-size"
+	CLIFieldsFile               = "collectors"
+	CLIAddress                  = "address"
+	CLICollectInterval          = "collect-interval"
+	CLIKubernetes               = "kubernetes"
+	CLIKubernetesGPUIDType      = "kubernetes-gpu-id-type"
+	CLIUseOldNamespace          = "use-old-namespace"
+	CLIRemoteHEInfo             = "remote-hostengine-info"
+	CLIGPUDevices               = "devices"
+	CLISwitchDevices            = "switch-devices"
+	CLICPUDevices               = "cpu-devices"
+	CLINoHostname               = "no-hostname"
+	CLIUseFakeGPUs              = "fake-gpus"
+	CLIConfigMapData            = "configmap-data"
+	CLIWebSystemdSocket         = "web-systemd-socket"
+	CLIWebConfigFile            = "web-config-file"
+	CLIXIDCountWindowSize       = "xid-count-window-size"
+	CLIReplaceBlanksInModelName = "replace-blanks-in-model-name"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -181,6 +182,13 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   int((5 * time.Minute).Milliseconds()),
 			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in DCGM Exporter.",
 			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIReplaceBlanksInModelName,
+			Aliases: []string{"rbmn"},
+			Value:   false,
+			Usage:   "Replaces every blank space in the GPU model name with a dash, ensuring a continuous, space-free identifier.",
+			EnvVars: []string{"DCGM_EXPORTER_REPLACE_BLANKS_IN_MODEL_NAME"},
 		},
 	}
 
@@ -399,23 +407,24 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 	}
 
 	return &dcgmexporter.Config{
-		CollectorsFile:      c.String(CLIFieldsFile),
-		Address:             c.String(CLIAddress),
-		CollectInterval:     c.Int(CLICollectInterval),
-		Kubernetes:          c.Bool(CLIKubernetes),
-		KubernetesGPUIdType: dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
-		CollectDCP:          true,
-		UseOldNamespace:     c.Bool(CLIUseOldNamespace),
-		UseRemoteHE:         c.IsSet(CLIRemoteHEInfo),
-		RemoteHEInfo:        c.String(CLIRemoteHEInfo),
-		GPUDevices:          gOpt,
-		SwitchDevices:       sOpt,
-		CPUDevices:          cOpt,
-		NoHostname:          c.Bool(CLINoHostname),
-		UseFakeGPUs:         c.Bool(CLIUseFakeGPUs),
-		ConfigMapData:       c.String(CLIConfigMapData),
-		WebSystemdSocket:    c.Bool(CLIWebSystemdSocket),
-		WebConfigFile:       c.String(CLIWebConfigFile),
-		XIDCountWindowSize:  c.Int(CLIXIDCountWindowSize),
+		CollectorsFile:           c.String(CLIFieldsFile),
+		Address:                  c.String(CLIAddress),
+		CollectInterval:          c.Int(CLICollectInterval),
+		Kubernetes:               c.Bool(CLIKubernetes),
+		KubernetesGPUIdType:      dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		CollectDCP:               true,
+		UseOldNamespace:          c.Bool(CLIUseOldNamespace),
+		UseRemoteHE:              c.IsSet(CLIRemoteHEInfo),
+		RemoteHEInfo:             c.String(CLIRemoteHEInfo),
+		GPUDevices:               gOpt,
+		SwitchDevices:            sOpt,
+		CPUDevices:               cOpt,
+		NoHostname:               c.Bool(CLINoHostname),
+		UseFakeGPUs:              c.Bool(CLIUseFakeGPUs),
+		ConfigMapData:            c.String(CLIConfigMapData),
+		WebSystemdSocket:         c.Bool(CLIWebSystemdSocket),
+		WebConfigFile:            c.String(CLIWebConfigFile),
+		XIDCountWindowSize:       c.Int(CLIXIDCountWindowSize),
+		ReplaceBlanksInModelName: c.Bool(CLIReplaceBlanksInModelName),
 	}, nil
 }
