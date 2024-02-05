@@ -78,10 +78,11 @@ type Config struct {
 	MetricGroups        []dcgm.MetricGroup
 	WebSystemdSocket    bool
 	WebConfigFile       string
+	XIDCountWindowSize  int
 }
 
 type Transform interface {
-	Process(metrics [][]Metric, sysInfo SystemInfo) error
+	Process(metrics map[Counter][]Metric, sysInfo SystemInfo) error
 	Name() string
 }
 
@@ -120,7 +121,7 @@ type Counter struct {
 }
 
 type Metric struct {
-	Counter *Counter
+	Counter Counter
 	Value   string
 
 	GPU          string
@@ -134,7 +135,7 @@ type Metric struct {
 	GPUInstanceID string
 	Hostname      string
 
-	Labels     *map[string]string
+	Labels     map[string]string
 	Attributes map[string]string
 }
 
@@ -167,6 +168,7 @@ type MetricsServer struct {
 	webConfig   *web.FlagConfig
 	metrics     string
 	metricsChan chan string
+	registry    *Registry
 }
 
 type PodMapper struct {

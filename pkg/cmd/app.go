@@ -45,7 +45,7 @@ const (
 		and therefore reporting must occur at the GPU instance level.`
 )
 
-var (
+const (
 	CLIFieldsFile          = "collectors"
 	CLIAddress             = "address"
 	CLICollectInterval     = "collect-interval"
@@ -61,6 +61,7 @@ var (
 	CLIConfigMapData       = "configmap-data"
 	CLIWebSystemdSocket    = "web-systemd-socket"
 	CLIWebConfigFile       = "web-config-file"
+	CLIXIDCountWindowSize  = "xid-count-window-size"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -174,6 +175,13 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "TLS config file following webConfig spec.",
 			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
 		},
+		&cli.IntFlag{
+			Name:    CLIXIDCountWindowSize,
+			Aliases: []string{"x"},
+			Value:   int((5 * time.Minute).Milliseconds()),
+			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in DCGM Exporter.",
+			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -241,14 +249,47 @@ restart:
 		config.MetricGroups = groups
 	}
 
+	counters, exporterCounters, err := dcgmexporter.ExtractCounters(config)
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	// Copy labels from counters to exporterCounters
+	for i := range counters {
+		if counters[i].PromType == "label" {
+			exporterCounters = append(exporterCounters, counters[i])
+		}
+	}
+
+	hostname, err := dcgmexporter.GetHostname(config)
+	if err != nil {
+		return err
+	}
+
 	ch := make(chan string, 10)
-	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config, dcgmexporter.NewDCGMCollector)
+
+	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config, counters, hostname, dcgmexporter.NewDCGMCollector)
 	defer cleanup()
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
-	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch)
+	cRegistry := dcgmexporter.NewRegistry()
+
+	if dcgmexporter.IsdcgmExpXIDErrorsCountEnabled(exporterCounters) {
+		xidCollector, err := dcgmexporter.NewXIDCollector(config, exporterCounters, hostname)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+
+		defer func() {
+			xidCollector.Cleanup()
+		}()
+
+		cRegistry.Register(xidCollector)
+	}
+
+	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, cRegistry)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -375,5 +416,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		ConfigMapData:       c.String(CLIConfigMapData),
 		WebSystemdSocket:    c.Bool(CLIWebSystemdSocket),
 		WebConfigFile:       c.String(CLIWebConfigFile),
+		XIDCountWindowSize:  c.Int(CLIXIDCountWindowSize),
 	}, nil
 }

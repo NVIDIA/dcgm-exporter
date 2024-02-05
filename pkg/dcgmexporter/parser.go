@@ -37,7 +37,7 @@ const (
 	DCP_FIELDS_START = 1000
 )
 
-func ExtractCounters(c *Config) ([]Counter, error) {
+func ExtractCounters(c *Config) ([]Counter, []Counter, error) {
 	var err error
 	var records [][]string
 
@@ -61,16 +61,16 @@ func ExtractCounters(c *Config) ([]Counter, error) {
 		records, err = ReadCSVFile(c.CollectorsFile)
 		if err != nil {
 			logrus.Errorf("Could not read metrics file '%s': %v\n", c.CollectorsFile, err)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	counters, err := extractCounters(records, c)
+	counters, extraCounters, err := extractCounters(records, c)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return counters, err
+	return counters, extraCounters, err
 }
 
 func ReadCSVFile(filename string) ([][]string, error) {
@@ -88,8 +88,9 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractCounters(records [][]string, c *Config) ([]Counter, error) {
+func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error) {
 	f := make([]Counter, 0, len(records))
+	expf := make([]Counter, 0)
 
 	for i, record := range records {
 		var useOld = false
@@ -102,13 +103,20 @@ func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 		}
 
 		if len(record) != 3 {
-			return nil, fmt.Errorf("Malformed CSV record, failed to parse line %d (`%v`), expected 3 fields", i, record)
+			return nil, nil, fmt.Errorf("Malformed CSV record, failed to parse line %d (`%v`), expected 3 fields", i, record)
 		}
 
 		fieldID, ok := dcgm.DCGM_FI[record[0]]
 		oldFieldID, oldOk := dcgm.OLD_DCGM_FI[record[0]]
 		if !ok && !oldOk {
-			return nil, fmt.Errorf("Could not find DCGM field %s", record[0])
+
+			expField := mustParseDCGMExporterMetric(record[0])
+			if expField != DCGMFIUnknown {
+				expf = append(expf, Counter{dcgm.Short(expField), record[0], record[1], record[2]})
+				continue
+			} else {
+				return nil, nil, fmt.Errorf("Could not find DCGM field %s", record[0])
+			}
 		}
 
 		if !ok && oldOk {
@@ -122,7 +130,7 @@ func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 			}
 
 			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("Could not find Prometheus metric type %s", record[1])
+				return nil, nil, fmt.Errorf("Could not find Prometheus metric type %s", record[1])
 			}
 
 			f = append(f, Counter{fieldID, record[0], record[1], record[2]})
@@ -133,7 +141,7 @@ func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 			}
 
 			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("Could not find Prometheus metric type %s", record[1])
+				return nil, nil, fmt.Errorf("Could not find Prometheus metric type %s", record[1])
 			}
 
 			f = append(f, Counter{oldFieldID, record[0], record[1], record[2]})
@@ -141,7 +149,7 @@ func extractCounters(records [][]string, c *Config) ([]Counter, error) {
 		}
 	}
 
-	return f, nil
+	return f, expf, nil
 }
 
 func fieldIsSupported(fieldID uint, c *Config) bool {

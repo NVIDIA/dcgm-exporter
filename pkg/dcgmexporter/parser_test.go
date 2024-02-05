@@ -1,7 +1,6 @@
 package dcgmexporter
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -100,7 +99,7 @@ func TestInvalidConfigMapNamespace(t *testing.T) {
 }
 
 func TestExtractCounters(t *testing.T) {
-	tmpFile, err := ioutil.TempFile(os.TempDir(), "prefix-")
+	tmpFile, err := os.CreateTemp(os.TempDir(), "prefix-")
 	if err != nil {
 		t.Fatalf("Cannot create temporary file: %v", err)
 	}
@@ -122,7 +121,7 @@ func TestExtractCounters(t *testing.T) {
 		ConfigMapData:  undefinedConfigMapData,
 		CollectorsFile: tmpFile.Name(),
 	}
-	records, err := ExtractCounters(&c)
+	records, _, err := ExtractCounters(&c)
 	if len(records) != 1 || err != nil {
 		t.Fatalf("Should have succeeded: records (%d != 1) err=%v", len(records), err)
 	}

@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +35,7 @@ func TestRun(t *testing.T) {
 	defer cleanup()
 
 	p, cleanup, err := NewMetricsPipelineWithGPUCollector(&Config{}, c)
+	require.NoError(t, err)
 	defer cleanup()
 
 	out, err := p.run()
@@ -47,7 +49,7 @@ func TestRun(t *testing.T) {
 }
 
 func testNewDCGMCollector(counter *int, enabledCollector map[dcgm.Field_Entity_Group]struct{}) DCGMCollectorConstructor {
-	return func(c []Counter, config *Config, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+	return func(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
 		// should always create GPU Collector
 		if entityType != dcgm.FE_GPU {
 			if _, ok := enabledCollector[entityType]; !ok {
@@ -121,11 +123,19 @@ func TestCountPipelineCleanup(t *testing.T) {
 		},
 	}} {
 		cleanupCounter := 0
-		_, cleanup, err := NewMetricsPipeline(&Config{
+
+		config := &Config{
 			Kubernetes:     false,
 			ConfigMapData:  undefinedConfigMapData,
 			CollectorsFile: f.Name(),
-		}, testNewDCGMCollector(&cleanupCounter, c.enabledCollector))
+		}
+
+		counters, _, err := ExtractCounters(config)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+
+		_, cleanup, err := NewMetricsPipeline(config, counters, "", testNewDCGMCollector(&cleanupCounter, c.enabledCollector))
 		require.NoError(t, err, "case: %s failed", c.name)
 
 		cleanup()

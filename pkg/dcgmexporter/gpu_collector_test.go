@@ -62,7 +62,11 @@ func TestDCGMCollector(t *testing.T) {
 }
 
 func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
-	dOpt := DeviceOptions{true, []int{-1}, []int{-1}}
+	dOpt := DeviceOptions{
+		Flex:       true,
+		MajorRange: []int{-1},
+		MinorRange: []int{-1},
+	}
 	cfg := Config{
 		GPUDevices:      dOpt,
 		NoHostname:      false,
@@ -115,33 +119,33 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		dcgmAddEntityToGroup = dcgm.AddEntityToGroup
 	}()
 
-	g, cleanup, err := NewDCGMCollector(counters, &cfg, dcgm.FE_GPU)
+	g, cleanup, err := NewDCGMCollector(counters, &cfg, "", dcgm.FE_GPU)
 	require.NoError(t, err)
 
 	/* Test for error when no switches are available to monitor. */
-	_, _, err = NewDCGMCollector(counters, &cfg, dcgm.FE_SWITCH)
+	_, _, err = NewDCGMCollector(counters, &cfg, "", dcgm.FE_SWITCH)
 	require.Error(t, err)
 
 	/* Test for error when no cpus are available to monitor. */
-	_, _, err = NewDCGMCollector(counters, &cfg, dcgm.FE_CPU)
+	_, _, err = NewDCGMCollector(counters, &cfg, "", dcgm.FE_CPU)
 	require.NoError(t, err)
 
 	out, err := g.GetMetrics()
 	require.NoError(t, err)
 	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
-	require.Len(t, out[0], len(expectedMetrics))
+	require.Len(t, out, len(expectedMetrics))
 
-	for i, dev := range out {
-		seenMetrics := map[string]bool{}
-		for _, metric := range dev {
+	seenMetrics := map[string]bool{}
+	for _, metrics := range out {
+		for _, metric := range metrics {
 			seenMetrics[metric.Counter.FieldName] = true
-			require.Equal(t, metric.GPU, fmt.Sprintf("%d", i))
+			require.NotEmpty(t, metric.GPU)
 
 			require.NotEmpty(t, metric.Value)
 			require.NotEqual(t, metric.Value, FailedToConvert)
 		}
-		require.Equal(t, seenMetrics, expectedMetrics)
 	}
+	require.Equal(t, seenMetrics, expectedMetrics)
 
 	return g, cleanup
 }
@@ -202,18 +206,18 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}()
 
 	/* Test that only cpu metrics are collected for cpu entities. */
-	c, cleanup, err := NewDCGMCollector(counters, &cfg, dcgm.FE_CPU)
+	c, cleanup, err := NewDCGMCollector(counters, &cfg, "", dcgm.FE_CPU)
 	require.NoError(t, err)
 
 	out, err := c.GetMetrics()
 	require.NoError(t, err)
 	require.Greater(t, len(out), 0, "Check that the fake CPU has been registered")
 
-	for i, dev := range out {
+	for _, dev := range out {
 		seenMetrics := map[string]bool{}
 		for _, metric := range dev {
 			seenMetrics[metric.Counter.FieldName] = true
-			require.Equal(t, metric.GPU, fmt.Sprintf("%d", i))
+			require.NotEmpty(t, metric.GPU)
 
 			require.NotEmpty(t, metric.Value)
 			require.NotEqual(t, metric.Value, FailedToConvert)

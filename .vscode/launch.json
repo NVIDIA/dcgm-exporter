@@ -14,7 +14,6 @@
             "args": [
                 "-f",
                 "./etc/default-counters.csv",
-                "--web-config-file=./tests/integration/testdata/web-config.yml"
             ]
         }
     ]

@@ -28,7 +28,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), error) {
+func NewMetricsServer(c *Config, metrics chan string, registry *Registry) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
 		server: &http.Server{
@@ -44,6 +44,7 @@ func NewMetricsServer(c *Config, metrics chan string) (*MetricsServer, func(), e
 		},
 		metricsChan: metrics,
 		metrics:     "",
+		registry:    registry,
 	}
 
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +107,10 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(s.getMetrics()))
+	xidMetrics, err := s.registry.Gather()
+	if err == nil {
+		encodeXIDMetrics(w, xidMetrics)
+	}
 }
 
 func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
