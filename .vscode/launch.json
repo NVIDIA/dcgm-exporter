@@ -14,7 +14,9 @@
             "args": [
                 "-f",
                 "./etc/default-counters.csv",
-                "--debug"
+                "--debug",
+                "--enable-dcgm-log",
+                "--dcgm-log-level=INFO"
             ]
         }
     ]

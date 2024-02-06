@@ -53,4 +53,6 @@ type Config struct {
 	ReplaceBlanksInModelName   bool
 	Debug                      bool
 	ClockEventsCountWindowSize int
+	EnableDCGMLog              bool
+	DCGMLogLevel               string
 }
