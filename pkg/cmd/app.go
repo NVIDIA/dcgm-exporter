@@ -15,7 +15,6 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 )
@@ -237,9 +236,6 @@ restart:
 	}
 
 	if config.Debug {
-		spew.Config.Indent = " "
-		spew.Config.DisablePointerAddresses = true
-		spew.Config.DisableCapacities = true
 		//enable debug logging
 		logrus.SetLevel(logrus.DebugLevel)
 		logrus.Debug("Debug output is enabled")
@@ -247,7 +243,7 @@ restart:
 
 	logrus.Debugf("Command line: %s", strings.Join(os.Args, " "))
 
-	logrus.WithField(dcgmexporter.LoggerDumpField, spew.Sdump(config)).Debug("Loaded configuration")
+	logrus.WithField(dcgmexporter.LoggerDumpField, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
 
 	if config.UseRemoteHE {
 		logrus.Info("Attemping to connect to remote hostengine at ", config.RemoteHEInfo)
