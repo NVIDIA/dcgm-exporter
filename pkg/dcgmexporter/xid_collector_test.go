@@ -33,6 +33,7 @@ import (
 func TestXIDCollector_Gather_Encode(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest(t)
+	runOnlyWithLiveGPUs(t)
 
 	hostname := "local-test"
 	config := &Config{

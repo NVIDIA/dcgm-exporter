@@ -31,3 +31,12 @@ func setupTest(t *testing.T) func(t *testing.T) {
 		defer cleanup()
 	}
 }
+
+func runOnlyWithLiveGPUs(t *testing.T) {
+	t.Helper()
+	gpus, err := dcgm.GetSupportedDevices()
+	assert.NoError(t, err)
+	if len(gpus) < 1 {
+		t.Skip("Skipping test that requires live GPUs. None were found")
+	}
+}

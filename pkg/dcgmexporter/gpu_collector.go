@@ -90,9 +90,8 @@ func (c *DCGMCollector) Cleanup() {
 
 func (c *DCGMCollector) GetMetrics() (map[Counter][]Metric, error) {
 	monitoringInfo := GetMonitoredEntities(c.SysInfo)
-	count := len(monitoringInfo)
 
-	metrics := make(map[Counter][]Metric, count)
+	metrics := make(map[Counter][]Metric)
 
 	for _, mi := range monitoringInfo {
 		var vals []dcgm.FieldValue_v1
@@ -114,11 +113,12 @@ func (c *DCGMCollector) GetMetrics() (map[Counter][]Metric, error) {
 
 		// InstanceInfo will be nil for GPUs
 		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
-			metrics = ToSwitchMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			ToSwitchMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
-			metrics = ToCPUMetric(vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			ToCPUMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
-			metrics = ToMetric(vals,
+			ToMetric(metrics,
+				vals,
 				c.Counters,
 				mi.DeviceInfo,
 				mi.InstanceInfo,
@@ -153,8 +153,8 @@ func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 	return c[0], fmt.Errorf("Could not find corresponding counter")
 }
 
-func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) map[Counter][]Metric {
-	metrics := make(map[Counter][]Metric)
+func ToSwitchMetric(metrics map[Counter][]Metric,
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
 	labels := map[string]string{}
 
 	for _, val := range values {
@@ -194,12 +194,10 @@ func ToSwitchMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo,
 
 		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
-
-	return metrics
 }
 
-func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) map[Counter][]Metric {
-	metrics := make(map[Counter][]Metric)
+func ToCPUMetric(metrics map[Counter][]Metric,
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
 	var labels = map[string]string{}
 
 	for _, val := range values {
@@ -239,19 +237,18 @@ func ToCPUMetric(values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, us
 
 		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
-
-	return metrics
 }
 
-func ToMetric(values []dcgm.FieldValue_v1,
+func ToMetric(
+	metrics map[Counter][]Metric,
+	values []dcgm.FieldValue_v1,
 	c []Counter,
 	d dcgm.Device,
 	instanceInfo *GPUInstanceInfo,
 	useOld bool,
 	hostname string,
 	replaceBlanksInModelName bool,
-) map[Counter][]Metric {
-	metrics := make(map[Counter][]Metric)
+) {
 	var labels = map[string]string{}
 
 	for _, val := range values {
@@ -305,10 +302,8 @@ func ToMetric(values []dcgm.FieldValue_v1,
 			m.GPUInstanceID = ""
 		}
 
-		metrics[m.Counter] = []Metric{m}
+		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
-
-	return metrics
 }
 
 func ToString(value dcgm.FieldValue_v1) string {
