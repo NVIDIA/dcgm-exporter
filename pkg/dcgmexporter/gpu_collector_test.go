@@ -278,7 +278,8 @@ func TestToMetric(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("When replaceBlanksInModelName is %t", tc.replaceBlanksInModelName), func(t *testing.T) {
-			metrics := ToMetric(values, c, d, instanceInfo, false, "", tc.replaceBlanksInModelName)
+			metrics := make(map[Counter][]Metric)
+			ToMetric(metrics, values, c, d, instanceInfo, false, "", tc.replaceBlanksInModelName)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
@@ -286,4 +287,65 @@ func TestToMetric(t *testing.T) {
 			assert.Equal(t, tc.expectedGPUModelName, metricValues[0].GPUModelName)
 		})
 	}
+}
+
+func TestGPUCollector_GetMetrics(t *testing.T) {
+	teardownTest := setupTest(t)
+	defer teardownTest(t)
+
+	runOnlyWithLiveGPUs(t)
+	// Create fake GPU
+	numGPUs, err := dcgm.GetAllDeviceCount()
+	require.NoError(t, err)
+
+	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
+		t.Skipf("Unable to add fake GPU with more than %d gpus", dcgm.MAX_NUM_DEVICES)
+	}
+
+	entityList := []dcgm.MigHierarchyInfo{
+		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
+		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
+		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
+	}
+
+	gpuIDs, err := dcgm.CreateFakeEntities(entityList)
+	require.NoError(t, err)
+	require.NotEmpty(t, gpuIDs)
+
+	numGPUs, err = dcgm.GetAllDeviceCount()
+	require.NoError(t, err)
+
+	counters := []Counter{
+		{
+			FieldID:   100,
+			FieldName: "DCGM_FI_DEV_SM_CLOCK",
+			PromType:  "gauge",
+			Help:      "SM clock frequency (in MHz).",
+		},
+	}
+
+	dOpt := DeviceOptions{
+		Flex:       true,
+		MajorRange: []int{-1},
+		MinorRange: []int{-1},
+	}
+	cfg := Config{
+		GPUDevices:      dOpt,
+		NoHostname:      false,
+		UseOldNamespace: false,
+		UseFakeGPUs:     false,
+	}
+
+	c, cleanup, err := NewDCGMCollector(counters, &cfg, "", dcgm.FE_GPU)
+	require.NoError(t, err)
+
+	defer cleanup()
+
+	out, err := c.GetMetrics()
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+
+	values := out[counters[0]]
+
+	require.Equal(t, numGPUs, uint(len(values)))
 }
