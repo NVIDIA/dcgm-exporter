@@ -27,9 +27,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const PARENT_ID_IGNORED = 0
-const DCGM_ST_NOT_CONFIGURED = "Setting not configured"
-
 var (
 	dcgmGetAllDeviceCount       = dcgm.GetAllDeviceCount
 	dcgmGetDeviceInfo           = dcgm.GetDeviceInfo
