@@ -46,3 +46,9 @@ func mustParseDCGMExporterMetric(s string) DCGMExporterMetric {
 	}
 	return mv
 }
+
+// Constants for logging fields
+const (
+	LoggerGroupIDKey = "group_id"
+	LoggerDumpKey    = "dump"
+)

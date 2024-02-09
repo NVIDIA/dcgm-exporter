@@ -490,8 +490,8 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				err := dcgm.DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						LoggerGroupIDField: groupID,
-						LoggerErrorField:   err,
+						LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:  err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -537,8 +537,8 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				err := dcgm.DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						LoggerGroupIDField: groupID,
-						LoggerErrorField:   err,
+						LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:  err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -562,8 +562,8 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 				err := dcgm.DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						LoggerGroupIDField: groupID,
-						LoggerErrorField:   err,
+						LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:  err,
 					}).Warn("can not destroy group")
 				}
 			}, err
@@ -574,8 +574,8 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 		err := dcgm.DestroyGroup(groupID)
 		if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 			logrus.WithFields(logrus.Fields{
-				LoggerGroupIDField: groupID,
-				LoggerErrorField:   err,
+				LoggerGroupIDKey: groupID,
+				logrus.ErrorKey:  err,
 			}).Warn("can not destroy group")
 		}
 	}, nil
@@ -657,9 +657,7 @@ func IsSwitchWatched(switchID uint, sysInfo SystemInfo) bool {
 		return true
 	}
 
-	return slices.ContainsFunc(sysInfo.sOpt.MajorRange, func(id int) bool {
-		return uint(id) == switchID
-	})
+	return slices.Contains(sysInfo.sOpt.MajorRange, int(switchID))
 }
 
 func IsLinkWatched(linkIndex uint, switchID uint, sysInfo SystemInfo) bool {
@@ -669,7 +667,7 @@ func IsLinkWatched(linkIndex uint, switchID uint, sysInfo SystemInfo) bool {
 
 	// Find a switch
 	switchIdx := slices.IndexFunc(sysInfo.Switches, func(si SwitchInfo) bool {
-		return IsSwitchWatched(si.EntityId, sysInfo) && si.EntityId == switchID
+		return si.EntityId == switchID && IsSwitchWatched(si.EntityId, sysInfo)
 	})
 
 	if switchIdx > -1 {
@@ -685,19 +683,17 @@ func IsLinkWatched(linkIndex uint, switchID uint, sysInfo SystemInfo) bool {
 			return nls.Index == linkIndex
 		}) {
 			// and the link index in the Minor range
-			return slices.ContainsFunc(sysInfo.sOpt.MinorRange, func(i int) bool {
-				return uint(i) == linkIndex
-			})
+			return slices.Contains(sysInfo.sOpt.MinorRange, int(linkIndex))
 		}
 	}
 
 	return false
 }
 
-func IsCPUWatched(cpuId uint, sysInfo SystemInfo) bool {
+func IsCPUWatched(cpuID uint, sysInfo SystemInfo) bool {
 
 	if !slices.ContainsFunc(sysInfo.CPUs, func(cpu CPUInfo) bool {
-		return cpu.EntityId == cpuId
+		return cpu.EntityId == cpuID
 	}) {
 		return false
 	}
@@ -711,18 +707,18 @@ func IsCPUWatched(cpuId uint, sysInfo SystemInfo) bool {
 	}
 
 	return slices.ContainsFunc(sysInfo.cOpt.MajorRange, func(cpu int) bool {
-		return uint(cpu) == cpuId
+		return uint(cpu) == cpuID
 	})
 }
 
-func IsCoreWatched(coreId uint, cpuId uint, sysInfo SystemInfo) bool {
+func IsCoreWatched(coreID uint, cpuID uint, sysInfo SystemInfo) bool {
 	if sysInfo.cOpt.Flex {
 		return true
 	}
 
 	// Find a CPU
 	cpuIdx := slices.IndexFunc(sysInfo.CPUs, func(cpu CPUInfo) bool {
-		return IsCPUWatched(cpu.EntityId, sysInfo) && cpu.EntityId == cpuId
+		return IsCPUWatched(cpu.EntityId, sysInfo) && cpu.EntityId == cpuID
 	})
 
 	if cpuIdx > -1 {
@@ -730,9 +726,7 @@ func IsCoreWatched(coreId uint, cpuId uint, sysInfo SystemInfo) bool {
 			return true
 		}
 
-		return slices.ContainsFunc(sysInfo.cOpt.MinorRange, func(core int) bool {
-			return uint(core) == coreId
-		})
+		return slices.Contains(sysInfo.cOpt.MinorRange, int(coreID))
 	}
 
 	return false
@@ -812,9 +806,9 @@ func AddAllGPUInstances(sysInfo SystemInfo, addFlexibly bool) []MonitoringInfo {
 	return monitoring
 }
 
-func GetMonitoringInfoForGPU(sysInfo SystemInfo, gpuId int) *MonitoringInfo {
+func GetMonitoringInfoForGPU(sysInfo SystemInfo, gpuID int) *MonitoringInfo {
 	for i := uint(0); i < sysInfo.GPUCount; i++ {
-		if sysInfo.GPUs[i].DeviceInfo.GPU == uint(gpuId) {
+		if sysInfo.GPUs[i].DeviceInfo.GPU == uint(gpuID) {
 			return &MonitoringInfo{
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPUs[i].DeviceInfo.GPU},
 				sysInfo.GPUs[i].DeviceInfo,
@@ -827,12 +821,12 @@ func GetMonitoringInfoForGPU(sysInfo SystemInfo, gpuId int) *MonitoringInfo {
 	return nil
 }
 
-func GetMonitoringInfoForGPUInstance(sysInfo SystemInfo, gpuInstanceId int) *MonitoringInfo {
+func GetMonitoringInfoForGPUInstance(sysInfo SystemInfo, gpuInstanceID int) *MonitoringInfo {
 	for i := uint(0); i < sysInfo.GPUCount; i++ {
 		for _, instance := range sysInfo.GPUs[i].GPUInstances {
-			if instance.EntityId == uint(gpuInstanceId) {
+			if instance.EntityId == uint(gpuInstanceID) {
 				return &MonitoringInfo{
-					dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: uint(gpuInstanceId)},
+					dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: uint(gpuInstanceID)},
 					sysInfo.GPUs[i].DeviceInfo,
 					&instance,
 					PARENT_ID_IGNORED,
@@ -861,18 +855,18 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 		if len(sysInfo.gOpt.MajorRange) > 0 && sysInfo.gOpt.MajorRange[0] == -1 {
 			monitoring = AddAllGPUs(sysInfo)
 		} else {
-			for _, gpuId := range sysInfo.gOpt.MajorRange {
+			for _, gpuID := range sysInfo.gOpt.MajorRange {
 				// We've already verified that everything in the options list exists
-				monitoring = append(monitoring, *GetMonitoringInfoForGPU(sysInfo, gpuId))
+				monitoring = append(monitoring, *GetMonitoringInfoForGPU(sysInfo, gpuID))
 			}
 		}
 
 		if len(sysInfo.gOpt.MinorRange) > 0 && sysInfo.gOpt.MinorRange[0] == -1 {
 			monitoring = AddAllGPUInstances(sysInfo, false)
 		} else {
-			for _, gpuInstanceId := range sysInfo.gOpt.MinorRange {
+			for _, gpuInstanceID := range sysInfo.gOpt.MinorRange {
 				// We've already verified that everything in the options list exists
-				monitoring = append(monitoring, *GetMonitoringInfoForGPUInstance(sysInfo, gpuInstanceId))
+				monitoring = append(monitoring, *GetMonitoringInfoForGPUInstance(sysInfo, gpuInstanceID))
 			}
 		}
 	}
@@ -880,10 +874,10 @@ func GetMonitoredEntities(sysInfo SystemInfo) []MonitoringInfo {
 	return monitoring
 }
 
-func GetGPUInstanceIdentifier(sysInfo SystemInfo, gpuuuid string, gpuInstanceId uint) string {
+func GetGPUInstanceIdentifier(sysInfo SystemInfo, gpuuuid string, gpuInstanceID uint) string {
 	for i := uint(0); i < sysInfo.GPUCount; i++ {
 		if sysInfo.GPUs[i].DeviceInfo.UUID == gpuuuid {
-			identifier := fmt.Sprintf("%d-%d", sysInfo.GPUs[i].DeviceInfo.GPU, gpuInstanceId)
+			identifier := fmt.Sprintf("%d-%d", sysInfo.GPUs[i].DeviceInfo.GPU, gpuInstanceID)
 			return identifier
 		}
 	}

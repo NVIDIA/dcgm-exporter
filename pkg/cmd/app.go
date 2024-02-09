@@ -243,7 +243,7 @@ restart:
 
 	logrus.Debugf("Command line: %s", strings.Join(os.Args, " "))
 
-	logrus.WithField(dcgmexporter.LoggerDumpField, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
+	logrus.WithField(dcgmexporter.LoggerDumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
 
 	if config.UseRemoteHE {
 		logrus.Info("Attemping to connect to remote hostengine at ", config.RemoteHEInfo)

@@ -24,12 +24,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const (
-	LoggerErrorField   = "error"
-	LoggerGroupIDField = "group_id"
-	LoggerDumpField    = "dump"
-)
-
 func NewGroup() (dcgm.GroupHandle, func(), error) {
 	group, err := dcgm.NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 	if err != nil {
@@ -39,9 +33,7 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 	return group, func() {
 		err := dcgm.DestroyGroup(group)
 		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				LoggerErrorField: err,
-			}).Warn("can not destroy field group")
+			logrus.WithError(err).Warn("Cannot destroy field group")
 		}
 	}, nil
 }
@@ -73,9 +65,7 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	return fieldGroup, func() {
 		err := dcgm.FieldGroupDestroy(fieldGroup)
 		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				LoggerErrorField: err,
-			}).Warn("can not destroy field group")
+			logrus.WithError(err).Warn("Cannot destroy field group")
 		}
 	}, nil
 }

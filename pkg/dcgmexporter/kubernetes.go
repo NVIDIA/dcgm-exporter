@@ -55,7 +55,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics map[Counter][]Metric, sysInfo SystemInfo) error {
+func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error {
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
 		logrus.Infof("No Kubelet socket, ignoring")

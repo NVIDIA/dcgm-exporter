@@ -233,7 +233,7 @@ var getXIDMetricTemplate = sync.OnceValue(func() *template.Template {
 	return template.Must(template.New("xidMetrics").Parse(xidMetricsFormat))
 })
 
-func encodeXIDMetrics(w io.Writer, metrics map[Counter][]Metric) error {
+func encodeXIDMetrics(w io.Writer, metrics MetricsByCounter) error {
 	template := getXIDMetricTemplate()
 	return template.Execute(w, metrics)
 }

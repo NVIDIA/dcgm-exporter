@@ -84,7 +84,7 @@ type Config struct {
 }
 
 type Transform interface {
-	Process(metrics map[Counter][]Metric, sysInfo SystemInfo) error
+	Process(metrics MetricsByCounter, sysInfo SystemInfo) error
 	Name() string
 }
 
@@ -183,3 +183,6 @@ type PodInfo struct {
 	Namespace string
 	Container string
 }
+
+// MetricsByCounter represeents a map where each Counter is associated with a slice of Metric objects
+type MetricsByCounter map[Counter][]Metric
