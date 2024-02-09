@@ -21,6 +21,7 @@ import (
 	"math/rand"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/sirupsen/logrus"
 )
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
@@ -29,7 +30,12 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 		return dcgm.GroupHandle{}, func() {}, err
 	}
 
-	return group, func() { dcgm.DestroyGroup(group) }, nil
+	return group, func() {
+		err := dcgm.DestroyGroup(group)
+		if err != nil {
+			logrus.WithError(err).Warn("Cannot destroy field group")
+		}
+	}, nil
 }
 
 func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
@@ -56,7 +62,12 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 		return dcgm.FieldHandle{}, func() {}, err
 	}
 
-	return fieldGroup, func() { dcgm.FieldGroupDestroy(fieldGroup) }, nil
+	return fieldGroup, func() {
+		err := dcgm.FieldGroupDestroy(fieldGroup)
+		if err != nil {
+			logrus.WithError(err).Warn("Cannot destroy field group")
+		}
+	}, nil
 }
 
 func WatchFieldGroup(group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32) error {

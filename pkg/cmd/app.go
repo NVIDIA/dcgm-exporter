@@ -63,6 +63,7 @@ const (
 	CLIWebConfigFile            = "web-config-file"
 	CLIXIDCountWindowSize       = "xid-count-window-size"
 	CLIReplaceBlanksInModelName = "replace-blanks-in-model-name"
+	CLIDebugMode                = "debug"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -190,6 +191,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Replaces every blank space in the GPU model name with a dash, ensuring a continuous, space-free identifier.",
 			EnvVars: []string{"DCGM_EXPORTER_REPLACE_BLANKS_IN_MODEL_NAME"},
 		},
+		&cli.BoolFlag{
+			Name:    CLIDebugMode,
+			Value:   false,
+			Usage:   "Enable debug output",
+			EnvVars: []string{"DCGM_EXPORTER_DEBUG"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -227,6 +234,16 @@ restart:
 	if err != nil {
 		return err
 	}
+
+	if config.Debug {
+		//enable debug logging
+		logrus.SetLevel(logrus.DebugLevel)
+		logrus.Debug("Debug output is enabled")
+	}
+
+	logrus.Debugf("Command line: %s", strings.Join(os.Args, " "))
+
+	logrus.WithField(dcgmexporter.LoggerDumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
 
 	if config.UseRemoteHE {
 		logrus.Info("Attemping to connect to remote hostengine at ", config.RemoteHEInfo)
@@ -426,5 +443,6 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		WebConfigFile:            c.String(CLIWebConfigFile),
 		XIDCountWindowSize:       c.Int(CLIXIDCountWindowSize),
 		ReplaceBlanksInModelName: c.Bool(CLIReplaceBlanksInModelName),
+		Debug:                    c.Bool(CLIDebugMode),
 	}, nil
 }

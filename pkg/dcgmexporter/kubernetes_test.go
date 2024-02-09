@@ -100,7 +100,8 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	stopped := make(chan interface{})
 
 	go func() {
-		server.Serve(l)
+		err := server.Serve(l)
+		assert.NoError(t, err)
 		close(stopped)
 	}()
 
@@ -256,7 +257,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
-				metrics := map[Counter][]Metric{}
+				metrics := MetricsByCounter{}
 				counter := Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",

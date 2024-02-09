@@ -88,10 +88,10 @@ func (c *DCGMCollector) Cleanup() {
 	}
 }
 
-func (c *DCGMCollector) GetMetrics() (map[Counter][]Metric, error) {
+func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 	monitoringInfo := GetMonitoredEntities(c.SysInfo)
 
-	metrics := make(map[Counter][]Metric)
+	metrics := make(MetricsByCounter)
 
 	for _, mi := range monitoringInfo {
 		var vals []dcgm.FieldValue_v1
@@ -153,7 +153,7 @@ func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 	return c[0], fmt.Errorf("Could not find corresponding counter")
 }
 
-func ToSwitchMetric(metrics map[Counter][]Metric,
+func ToSwitchMetric(metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
 	labels := map[string]string{}
 
@@ -196,7 +196,7 @@ func ToSwitchMetric(metrics map[Counter][]Metric,
 	}
 }
 
-func ToCPUMetric(metrics map[Counter][]Metric,
+func ToCPUMetric(metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
 	var labels = map[string]string{}
 
@@ -240,7 +240,7 @@ func ToCPUMetric(metrics map[Counter][]Metric,
 }
 
 func ToMetric(
-	metrics map[Counter][]Metric,
+	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
 	c []Counter,
 	d dcgm.Device,

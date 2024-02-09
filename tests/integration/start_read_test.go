@@ -42,7 +42,8 @@ func TestStartAndReadMetrics(t *testing.T) {
 	args = append(args, fmt.Sprintf("-a=:%d", port))
 	ctx, cancel := context.WithCancel(context.Background())
 	go func(ctx context.Context) {
-		app.Run(args)
+		err := app.Run(args)
+		require.NoError(t, err)
 	}(ctx)
 
 	t.Log("The dcgm-exporter is running, we wait for 30 seconds to read metrics")

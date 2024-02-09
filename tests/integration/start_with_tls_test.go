@@ -26,7 +26,8 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 	args = append(args, "--web-config-file=./testdata/web-config.yml")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func(ctx context.Context) {
-		app.Run(args)
+		err := app.Run(args)
+		require.NoError(t, err)
 	}(ctx)
 
 	t.Run("server returns 400 if request uses HTTP and TLS enabled on the server",

@@ -4,7 +4,7 @@ WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN set -eux; \
 	dnf clean expire-cache; \
 	dnf install -y go-toolset make wget
-RUN dnf clean all
+RUN dnf clean all && rm -rf /usr/bin/go
 
 # Install Go official release
 RUN set -eux; \

@@ -28,6 +28,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 )
 
@@ -54,7 +55,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics map[Counter][]Metric, sysInfo SystemInfo) error {
+func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error {
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
 		logrus.Infof("No Kubelet socket, ignoring")
@@ -102,9 +103,13 @@ func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, socket, grpc.WithInsecure(), grpc.WithBlock(),
-		grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-			return net.DialTimeout("unix", addr, timeout)
+	conn, err := grpc.DialContext(ctx,
+		socket,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			d := net.Dialer{}
+			return d.DialContext(ctx, "unix", addr)
 		}),
 	)
 

@@ -37,6 +37,7 @@ func TestRun(t *testing.T) {
 	p, cleanup, err := NewMetricsPipelineWithGPUCollector(&Config{}, c)
 	require.NoError(t, err)
 	defer cleanup()
+	require.NoError(t, err)
 
 	out, err := p.run()
 	require.NoError(t, err)

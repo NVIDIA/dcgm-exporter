@@ -14,6 +14,7 @@
             "args": [
                 "-f",
                 "./etc/default-counters.csv",
+                "--debug"
             ]
         }
     ]

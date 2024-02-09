@@ -28,6 +28,9 @@ import (
 )
 
 func NewMetricsPipeline(c *Config, counters []Counter, hostname string, newDCGMCollector DCGMCollectorConstructor) (*MetricsPipeline, func(), error) {
+
+	logrus.WithField(LoggerDumpKey, fmt.Sprintf("%+v", counters)).Debug("Counters are initialized")
+
 	cleanups := []func(){}
 	gpuCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_GPU)
 	if err != nil {
@@ -328,7 +331,7 @@ var cpuCoreMetricsFormat = `
 {{ end }}`
 
 // Template is passed here so that it isn't recompiled at each iteration
-func FormatMetrics(t *template.Template, groupedMetrics map[Counter][]Metric) (string, error) {
+func FormatMetrics(t *template.Template, groupedMetrics MetricsByCounter) (string, error) {
 	// Format metrics
 	var res bytes.Buffer
 	if err := t.Execute(&res, groupedMetrics); err != nil {
