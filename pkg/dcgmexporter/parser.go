@@ -52,7 +52,7 @@ func ExtractCounters(c *Config) ([]Counter, []Counter, error) {
 			logrus.Fatal(err)
 		}
 	} else {
-		err = fmt.Errorf("No configmap data specified")
+		err = fmt.Errorf("no configmap data specified")
 	}
 
 	if err != nil {
@@ -103,19 +103,20 @@ func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error
 		}
 
 		if len(record) != 3 {
-			return nil, nil, fmt.Errorf("Malformed CSV record, failed to parse line %d (`%v`), expected 3 fields", i, record)
+			return nil, nil, fmt.Errorf("Malformed CSV record, failed to parse line %d (`%v`), expected 3 fields", i,
+				record)
 		}
 
 		fieldID, ok := dcgm.DCGM_FI[record[0]]
 		oldFieldID, oldOk := dcgm.OLD_DCGM_FI[record[0]]
 		if !ok && !oldOk {
 
-			expField := mustParseDCGMExporterMetric(record[0])
-			if expField != DCGMFIUnknown {
+			expField, err := IdentifyMetricType(record[0])
+			if err != nil {
+				return nil, nil, fmt.Errorf("could not find DCGM field; err: %v", err)
+			} else if expField != DCGMFIUnknown {
 				expf = append(expf, Counter{dcgm.Short(expField), record[0], record[1], record[2]})
 				continue
-			} else {
-				return nil, nil, fmt.Errorf("Could not find DCGM field %s", record[0])
 			}
 		}
 

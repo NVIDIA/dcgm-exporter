@@ -25,9 +25,15 @@ const (
 	DCGMXIDErrorsCount DCGMExporterMetric = iota + 9000
 )
 
+// DCGMFields maps DCGMExporterMetric String to enum
+var DCGMFields = map[string]DCGMExporterMetric{
+	DCGMXIDErrorsCount.String(): DCGMXIDErrorsCount,
+	DCGMFIUnknown.String():      DCGMFIUnknown,
+}
+
 // String method to convert the enum value to a string
-func (enm DCGMExporterMetric) String() string {
-	switch enm {
+func (d DCGMExporterMetric) String() string {
+	switch d {
 	case DCGMXIDErrorsCount:
 		return "DCGM_EXP_XID_ERRORS_COUNT"
 	default:
@@ -35,22 +41,19 @@ func (enm DCGMExporterMetric) String() string {
 	}
 }
 
-func mustParseDCGMExporterMetric(s string) DCGMExporterMetric {
-	metrics := map[string]DCGMExporterMetric{
-		DCGMXIDErrorsCount.String(): DCGMXIDErrorsCount,
-		DCGMFIUnknown.String():      DCGMFIUnknown,
-	}
-	mv, ok := metrics[s]
+func IdentifyMetricType(s string) (DCGMExporterMetric, error) {
+	mv, ok := DCGMFields[s]
 	if !ok {
-		panic(fmt.Sprintf(`cannot parse:[%s] as DCGMExporterMetric`, s))
+		return mv, fmt.Errorf("Unknown DCGMExporterMetric field '%s'", s)
 	}
-	return mv
+	return mv, nil
 }
 
 // Constants for logging fields
 const (
 	LoggerGroupIDKey = "groupID"
 	LoggerDumpKey    = "dump"
+	LoggerStackTrace = "stacktrace"
 )
 
 const (
