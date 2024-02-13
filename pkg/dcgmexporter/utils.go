@@ -32,6 +32,6 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	case <-c:
 		return nil
 	case <-time.After(timeout):
-		return fmt.Errorf("Timeout waiting for WaitGroup")
+		return fmt.Errorf("timeout waiting for WaitGroup")
 	}
 }

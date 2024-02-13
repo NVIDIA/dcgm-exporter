@@ -49,12 +49,15 @@ func TestRun(t *testing.T) {
 	t.Logf("Pipeline result is:\n%v", out)
 }
 
-func testNewDCGMCollector(counter *int, enabledCollector map[dcgm.Field_Entity_Group]struct{}) DCGMCollectorConstructor {
-	return func(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+func testNewDCGMCollector(
+	counter *int, enabledCollector map[dcgm.Field_Entity_Group]struct{},
+) DCGMCollectorConstructor {
+	return func(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector,
+		func(), error) {
 		// should always create GPU Collector
 		if entityType != dcgm.FE_GPU {
 			if _, ok := enabledCollector[entityType]; !ok {
-				return nil, func() {}, fmt.Errorf("%s collector should not be created", entityType)
+				return nil, func() {}, fmt.Errorf("collector '%s' should not be created", entityType)
 			}
 		}
 
@@ -79,50 +82,52 @@ func TestCountPipelineCleanup(t *testing.T) {
 	for _, c := range []struct {
 		name             string
 		enabledCollector map[dcgm.Field_Entity_Group]struct{}
-	}{{
-		name:             "only_gpu",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{},
-	}, {
-		name: "gpu_switch",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH: struct{}{},
+	}{
+		{
+			name:             "only_gpu",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{},
+		}, {
+			name: "gpu_switch",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_SWITCH: struct{}{},
+			},
+		}, {
+			name: "gpu_link",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_LINK: struct{}{},
+			},
+		}, {
+			name: "gpu_cpu",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_CPU: struct{}{},
+			},
+		}, {
+			name: "gpu_core",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_CPU_CORE: struct{}{},
+			},
+		}, {
+			name: "gpu_switch_link",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_SWITCH: struct{}{},
+				dcgm.FE_LINK:   struct{}{},
+			},
+		}, {
+			name: "gpu_cpu_core",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_CPU:      struct{}{},
+				dcgm.FE_CPU_CORE: struct{}{},
+			},
+		}, {
+			name: "all",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_SWITCH:   struct{}{},
+				dcgm.FE_LINK:     struct{}{},
+				dcgm.FE_CPU:      struct{}{},
+				dcgm.FE_CPU_CORE: struct{}{},
+			},
 		},
-	}, {
-		name: "gpu_link",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_LINK: struct{}{},
-		},
-	}, {
-		name: "gpu_cpu",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU: struct{}{},
-		},
-	}, {
-		name: "gpu_core",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU_CORE: struct{}{},
-		},
-	}, {
-		name: "gpu_switch_link",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH: struct{}{},
-			dcgm.FE_LINK:   struct{}{},
-		},
-	}, {
-		name: "gpu_cpu_core",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU:      struct{}{},
-			dcgm.FE_CPU_CORE: struct{}{},
-		},
-	}, {
-		name: "all",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH:   struct{}{},
-			dcgm.FE_LINK:     struct{}{},
-			dcgm.FE_CPU:      struct{}{},
-			dcgm.FE_CPU_CORE: struct{}{},
-		},
-	}} {
+	} {
 		cleanupCounter := 0
 
 		config := &Config{
@@ -136,7 +141,8 @@ func TestCountPipelineCleanup(t *testing.T) {
 			logrus.Fatal(err)
 		}
 
-		_, cleanup, err := NewMetricsPipeline(config, counters, "", testNewDCGMCollector(&cleanupCounter, c.enabledCollector))
+		_, cleanup, err := NewMetricsPipeline(config, counters, "",
+			testNewDCGMCollector(&cleanupCounter, c.enabledCollector))
 		require.NoError(t, err, "case: %s failed", c.name)
 
 		cleanup()

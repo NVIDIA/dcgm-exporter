@@ -44,7 +44,7 @@ func (d DCGMExporterMetric) String() string {
 func IdentifyMetricType(s string) (DCGMExporterMetric, error) {
 	mv, ok := DCGMFields[s]
 	if !ok {
-		return mv, fmt.Errorf("Unknown DCGMExporterMetric field '%s'", s)
+		return mv, fmt.Errorf("unknown DCGMExporterMetric field '%s'", s)
 	}
 	return mv, nil
 }

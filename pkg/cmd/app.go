@@ -236,7 +236,7 @@ restart:
 	defer func() {
 		if r := recover(); r != nil {
 			logrus.WithField(dcgmexporter.LoggerStackTrace, string(debug.Stack())).Error("Encountered a failure.")
-			err = fmt.Errorf("Encountered a failure: %v", r)
+			err = fmt.Errorf("encountered a failure; err: %v", r)
 		}
 	}()
 
@@ -361,14 +361,15 @@ func parseDeviceOptions(devices string) (dcgmexporter.DeviceOptions, error) {
 	letterAndRange := strings.Split(devices, ":")
 	count := len(letterAndRange)
 	if count > 2 {
-		return dOpt, fmt.Errorf("Invalid ranged device option '%s': there can only be one specified range", devices)
+		return dOpt, fmt.Errorf("invalid ranged device option '%s'; err: there can only be one specified range",
+			devices)
 	}
 
 	letter := letterAndRange[0]
 	if letter == FlexKey {
 		dOpt.Flex = true
 		if count > 1 {
-			return dOpt, fmt.Errorf("No range can be specified with the flex option 'f'")
+			return dOpt, fmt.Errorf("no range can be specified with the flex option 'f'")
 		}
 	} else if letter == MajorKey || letter == MinorKey {
 		var indices []int
@@ -381,7 +382,7 @@ func parseDeviceOptions(devices string) (dcgmexporter.DeviceOptions, error) {
 				rangeTokens := strings.Split(numberOrRange, "-")
 				rangeTokenCount := len(rangeTokens)
 				if rangeTokenCount > 2 {
-					return dOpt, fmt.Errorf("A range can only be '<number>-<number>', but found '%s'", numberOrRange)
+					return dOpt, fmt.Errorf("range can only be '<number>-<number>', but found '%s'", numberOrRange)
 				} else if rangeTokenCount == 1 {
 					number, err := strconv.Atoi(rangeTokens[0])
 					if err != nil {
@@ -412,7 +413,7 @@ func parseDeviceOptions(devices string) (dcgmexporter.DeviceOptions, error) {
 			dOpt.MinorRange = indices
 		}
 	} else {
-		return dOpt, fmt.Errorf("The only valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
+		return dOpt, fmt.Errorf("valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
 	}
 
 	return dOpt, nil

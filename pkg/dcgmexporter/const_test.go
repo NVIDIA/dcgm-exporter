@@ -56,7 +56,7 @@ func TestIdentifyMetricType(t *testing.T) {
 				assert.NoError(t, err, "Expected metrics to be found.")
 				assert.Equal(t, output, tt.output, "Invalid output")
 			} else {
-				assert.Errorf(t, err, "Expected metrics to be not found")
+				assert.Errorf(t, err, "Expected metrics to be not found.")
 			}
 		})
 	}

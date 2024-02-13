@@ -208,9 +208,10 @@ func NewXIDCollector(config *Config, counters []Counter, hostname string) (Colle
 
 	var deviceFields = NewDeviceFields(labelsCounters, dcgm.FE_GPU)
 
-	cleanups, err := SetupDcgmFieldsWatch([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS}, *sysInfo, int64(config.CollectInterval)*1000)
+	cleanups, err := SetupDcgmFieldsWatch([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS}, *sysInfo,
+		int64(config.CollectInterval)*1000)
 	if err != nil {
-		logrus.Fatal("Failed to watch metrics: ", err)
+		logrus.Fatalf("Failed to watch metrics; err: %v", err)
 	}
 
 	counter := counters[slices.IndexFunc(counters, func(c Counter) bool {

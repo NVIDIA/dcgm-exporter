@@ -27,7 +27,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewMetricsPipeline(c *Config, counters []Counter, hostname string, newDCGMCollector DCGMCollectorConstructor) (*MetricsPipeline, func(), error) {
+func NewMetricsPipeline(
+	c *Config, counters []Counter, hostname string, newDCGMCollector DCGMCollectorConstructor,
+) (*MetricsPipeline, func(), error) {
 
 	logrus.WithField(LoggerDumpKey, fmt.Sprintf("%+v", counters)).Debug("Counters are initialized")
 
@@ -134,14 +136,14 @@ func (m *MetricsPipeline) Run(out chan string, stop chan interface{}, wg *sync.W
 		case <-t.C:
 			o, err := m.run()
 			if err != nil {
-				logrus.Errorf("Failed to collect metrics with error: %v", err)
+				logrus.Errorf("Failed to collect metrics; err: %v", err)
 				/* flush output rather than output stale data */
 				out <- ""
 				continue
 			}
 
 			if len(out) == cap(out) {
-				logrus.Errorf("Channel is full skipping")
+				logrus.Errorf("Channel is full skipping.")
 			} else {
 				out <- o
 			}
@@ -158,19 +160,19 @@ func (m *MetricsPipeline) run() (string, error) {
 		/* Collect GPU Metrics */
 		metrics, err = m.gpuCollector.GetMetrics()
 		if err != nil {
-			return "", fmt.Errorf("Failed to collect gpu metrics with error: %v", err)
+			return "", fmt.Errorf("failed to collect gpu metrics; err: %w", err)
 		}
 
 		for _, transform := range m.transformations {
 			err := transform.Process(metrics, m.gpuCollector.SysInfo)
 			if err != nil {
-				return "", fmt.Errorf("Failed to transform metrics for transform %s: %v", err, transform.Name())
+				return "", fmt.Errorf("failed to transform metrics for transform '%s'; err: %w", transform.Name(), err)
 			}
 		}
 
 		formatted, err = FormatMetrics(m.migMetricsFormat, metrics)
 		if err != nil {
-			return "", fmt.Errorf("Failed to format metrics with error: %v", err)
+			return "", fmt.Errorf("failed to format metrics; err: %w", err)
 		}
 	}
 
@@ -178,7 +180,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		/* Collect Switch Metrics */
 		metrics, err = m.switchCollector.GetMetrics()
 		if err != nil {
-			return "", fmt.Errorf("Failed to collect switch metrics with error: %v", err)
+			return "", fmt.Errorf("failed to collect switch metrics; err: %w", err)
 		}
 
 		if len(metrics) > 0 {
@@ -195,13 +197,13 @@ func (m *MetricsPipeline) run() (string, error) {
 		/* Collect Link Metrics */
 		metrics, err = m.linkCollector.GetMetrics()
 		if err != nil {
-			return "", fmt.Errorf("Failed to collect link metrics with error: %v", err)
+			return "", fmt.Errorf("failed to collect link metrics; err: %w", err)
 		}
 
 		if len(metrics) > 0 {
 			switchFormatted, err := FormatMetrics(m.linkMetricsFormat, metrics)
 			if err != nil {
-				logrus.Warnf("Failed to format link metrics with error: %v", err)
+				logrus.Warnf("failed to format link metrics; err: %v", err)
 			}
 
 			formatted = formatted + switchFormatted
@@ -212,7 +214,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		/* Collect CPU Metrics */
 		metrics, err = m.cpuCollector.GetMetrics()
 		if err != nil {
-			return "", fmt.Errorf("Failed to collect cpu metrics with error: %v", err)
+			return "", fmt.Errorf("failed to collect CPU metrics; err: %w", err)
 		}
 
 		if len(metrics) > 0 {
@@ -229,13 +231,13 @@ func (m *MetricsPipeline) run() (string, error) {
 		/* Collect cpu core Metrics */
 		metrics, err = m.coreCollector.GetMetrics()
 		if err != nil {
-			return "", fmt.Errorf("Failed to collect cpu core metrics with error: %v", err)
+			return "", fmt.Errorf("failed to collect CPU core metrics; err: %w", err)
 		}
 
 		if len(metrics) > 0 {
 			coreFormatted, err := FormatMetrics(m.cpuCoreMetricsFormat, metrics)
 			if err != nil {
-				logrus.Warnf("Failed to format cpu core metrics with error: %v", err)
+				logrus.Warnf("failed to format cpu core metrics; err: %v", err)
 			}
 
 			formatted = formatted + coreFormatted

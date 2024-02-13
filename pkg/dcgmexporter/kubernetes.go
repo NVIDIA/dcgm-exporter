@@ -25,11 +25,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
 var (
@@ -114,7 +115,7 @@ func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
 	)
 
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("failure connecting to %s: %v", socket, err)
+		return nil, func() {}, fmt.Errorf("failure connecting to '%s'; err: %w", socket, err)
 	}
 
 	return conn, func() { conn.Close() }, nil
@@ -128,13 +129,15 @@ func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodRes
 
 	resp, err := client.List(ctx, &podresourcesapi.ListPodResourcesRequest{})
 	if err != nil {
-		return nil, fmt.Errorf("failure getting pod resources %v", err)
+		return nil, fmt.Errorf("failure getting pod resources; err: %w", err)
 	}
 
 	return resp, nil
 }
 
-func (p *PodMapper) toDeviceToPod(devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo) map[string]PodInfo {
+func (p *PodMapper) toDeviceToPod(
+	devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo,
+) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 
 	for _, pod := range devicePods.GetPodResources() {
@@ -159,7 +162,8 @@ func (p *PodMapper) toDeviceToPod(devicePods *podresourcesapi.ListPodResourcesRe
 					if strings.HasPrefix(deviceID, MIG_UUID_PREFIX) {
 						migDevice, err := nvmlGetMIGDeviceInfoByIDHook(deviceID)
 						if err == nil {
-							giIdentifier := GetGPUInstanceIdentifier(sysInfo, migDevice.ParentUUID, uint(migDevice.GPUInstanceID))
+							giIdentifier := GetGPUInstanceIdentifier(sysInfo, migDevice.ParentUUID,
+								uint(migDevice.GPUInstanceID))
 							deviceToPodMap[giIdentifier] = podInfo
 						}
 						gpuUUID := deviceID[len(MIG_UUID_PREFIX):]
