@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,10 +14,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 )
 
 const (
@@ -226,8 +228,17 @@ func newOSWatcher(sigs ...os.Signal) chan os.Signal {
 	return sigChan
 }
 
-func action(c *cli.Context) error {
+func action(c *cli.Context) (err error) {
 restart:
+
+	// The purpose of this function is to capture any panic that may occur
+	// during initialization and return an error.
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.WithField(dcgmexporter.LoggerStackTrace, string(debug.Stack())).Error("Encountered a failure.")
+			err = fmt.Errorf("Encountered a failure: %v", r)
+		}
+	}()
 
 	logrus.Info("Starting dcgm-exporter")
 	config, err := contextToConfig(c)
@@ -236,7 +247,7 @@ restart:
 	}
 
 	if config.Debug {
-		//enable debug logging
+		// enable debug logging
 		logrus.SetLevel(logrus.DebugLevel)
 		logrus.Debug("Debug output is enabled")
 	}
