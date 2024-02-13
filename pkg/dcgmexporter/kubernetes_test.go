@@ -35,13 +35,10 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
-var tmpDir string
-
 func TestProcessPodMapper(t *testing.T) {
-
 	testutils.RequireLinux(t)
 
-	cleanup := CreateTmpDir(t)
+	tmpDir, cleanup := CreateTmpDir(t)
 	defer cleanup()
 
 	cleanup, err := dcgm.Init(dcgm.Embedded)
@@ -117,14 +114,12 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	}
 }
 
-func CreateTmpDir(t *testing.T) func() {
+func CreateTmpDir(t *testing.T) (string, func()) {
 	path, err := os.MkdirTemp("", "dcgm-exporter")
 	require.NoError(t, err)
 
-	tmpDir = path
-
-	return func() {
-		require.NoError(t, os.RemoveAll(tmpDir))
+	return path, func() {
+		require.NoError(t, os.RemoveAll(path))
 	}
 }
 
@@ -230,7 +225,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			tc.MetricGPUDevice,
 		),
 			func(t *testing.T) {
-				cleanup := CreateTmpDir(t)
+				tmpDir, cleanup := CreateTmpDir(t)
 				defer cleanup()
 				socketPath = tmpDir + "/kubelet.sock"
 				server := grpc.NewServer()

@@ -50,14 +50,14 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
-	counters, extraCounters, err := extractCounters(records, config)
+	cc, err := extractCounters(records, config)
 	require.NoError(t, err)
-	require.Len(t, extraCounters, 1)
-	require.Len(t, counters, 1)
+	require.Len(t, cc.ExporterCounters, 1)
+	require.Len(t, cc.DCGMCounters, 1)
 
-	for i := range counters {
-		if counters[i].PromType == "label" {
-			extraCounters = append(extraCounters, counters[i])
+	for i := range cc.DCGMCounters {
+		if cc.DCGMCounters[i].PromType == "label" {
+			cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 		}
 	}
 
@@ -109,7 +109,20 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	}
 
-	xidCollector, err := NewXIDCollector(config, extraCounters, hostname)
+	allCounters := []Counter{
+		Counter{
+			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+		},
+	}
+
+	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	require.NoError(t, err)
+
+	item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	require.True(t, exists)
+
+	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -123,7 +136,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
-	// We expect 6 records, because we have 3 fake GPU and each GPU expirenced 2 XID errors: 42 and 46
+	// We expect 6 records, because we have 3 fake GPU and each GPU experienced 2 XID errors: 42 and 46
 	require.Len(t, metricValues, 6)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
@@ -159,7 +172,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	// Now we check the metric rendering
 	var b bytes.Buffer
-	err = encodeXIDMetrics(&b, metrics)
+	err = encodeExpMetrics(&b, metrics)
 	require.NoError(t, err)
 	require.NotEmpty(t, b)
 
@@ -198,22 +211,35 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest(t)
 
+	allCounters := []Counter{
+		Counter{
+			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+		},
+	}
+
+	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	require.NoError(t, err)
+
+	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+
 	t.Run("Should Return Error When DCGM_EXP_XID_ERRORS_COUNT is not present", func(t *testing.T) {
 		records := [][]string{
 			{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 		}
-		counters, extraCounters, err := extractCounters(records, config)
+		cc, err := extractCounters(records, config)
 		require.NoError(t, err)
-		require.Len(t, extraCounters, 0)
-		require.Len(t, counters, 1)
-		xidCollector, err := NewXIDCollector(config, counters, "")
+		require.Len(t, cc.ExporterCounters, 0)
+		require.Len(t, cc.DCGMCounters, 1)
+
+		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
 
-	t.Run("Should Return Error When Counter Param Is Empty", func(t *testing.T) {
+	t.Run("Should Return Error When Counters Param Is Empty", func(t *testing.T) {
 		counters := make([]Counter, 0)
-		xidCollector, err := NewXIDCollector(config, counters, "")
+		xidCollector, err := NewXIDCollector(counters, "", item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
@@ -225,15 +251,15 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 			{"DCGM_EXP_XID_ERRORS_COUNT", "gauge", "Count of XID Errors within user-specified time window (see xid-count-window-size param)."},
 			{"DCGM_EXP_XID_ERRORS_COUNT", "gauge", "Count of XID Errors within user-specified time window (see xid-count-window-size param)."},
 		}
-		counters, extraCounters, err := extractCounters(records, config)
+		cc, err := extractCounters(records, config)
 		require.NoError(t, err)
-		for i := range counters {
-			if counters[i].PromType == "label" {
-				extraCounters = append(extraCounters, counters[i])
+		for i := range cc.DCGMCounters {
+			if cc.DCGMCounters[i].PromType == "label" {
+				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		xidCollector, err := NewXIDCollector(config, counters, "")
-		require.Error(t, err)
-		require.Nil(t, xidCollector)
+		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", item)
+		require.NoError(t, err)
+		require.NotNil(t, xidCollector)
 	})
 }

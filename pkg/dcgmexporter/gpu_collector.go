@@ -25,43 +25,41 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DCGMCollectorConstructor func([]Counter, *Config, string, dcgm.Field_Entity_Group) (*DCGMCollector, func(), error)
+type DCGMCollectorConstructor func([]Counter, string, FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func())
 
-func NewDCGMCollector(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector,
-	func(), error) {
-	var deviceFields = NewDeviceFields(c, entityType)
-
-	if !ShouldMonitorDeviceType(deviceFields, entityType) {
-		return nil, func() {}, fmt.Errorf("no fields to watch for device type '%d'", entityType)
-	}
-
-	sysInfo, err := GetSystemInfo(config, entityType)
-	if err != nil {
-		return nil, func() {}, err
-	}
+func NewDCGMCollector(c []Counter,
+	hostname string,
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func()) {
 
 	collector := &DCGMCollector{
-		Counters:                 c,
-		DeviceFields:             deviceFields,
-		UseOldNamespace:          config.UseOldNamespace,
-		SysInfo:                  *sysInfo,
-		Hostname:                 hostname,
-		ReplaceBlanksInModelName: config.ReplaceBlanksInModelName,
+		Counters:     c,
+		DeviceFields: fieldEntityGroupTypeSystemInfo.DeviceFields,
+		SysInfo:      fieldEntityGroupTypeSystemInfo.SystemInfo,
+		Hostname:     hostname,
 	}
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields, *sysInfo, int64(config.CollectInterval)*1000)
+	if fieldEntityGroupTypeSystemInfo.Config == nil {
+		logrus.Warn("Config is empty")
+		return collector, func() { collector.Cleanup() }
+	}
+
+	collector.UseOldNamespace = fieldEntityGroupTypeSystemInfo.Config.UseOldNamespace
+	collector.ReplaceBlanksInModelName = fieldEntityGroupTypeSystemInfo.Config.ReplaceBlanksInModelName
+
+	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
+		fieldEntityGroupTypeSystemInfo.SystemInfo,
+		int64(fieldEntityGroupTypeSystemInfo.Config.CollectInterval)*1000)
 	if err != nil {
 		logrus.Fatal("Failed to watch metrics: ", err)
 	}
 
 	collector.Cleanups = cleanups
 
-	return collector, func() { collector.Cleanup() }, nil
+	return collector, func() { collector.Cleanup() }
 }
 
 func GetSystemInfo(config *Config, entityType dcgm.Field_Entity_Group) (*SystemInfo, error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs,
-		entityType)
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
 	if err != nil {
 		return nil, err
 	}
@@ -155,10 +153,8 @@ func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 	return c[0], fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldId)
 }
 
-func ToSwitchMetric(
-	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
-) {
+func ToSwitchMetric(metrics MetricsByCounter,
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
 	labels := map[string]string{}
 
 	for _, val := range values {
@@ -200,10 +196,8 @@ func ToSwitchMetric(
 	}
 }
 
-func ToCPUMetric(
-	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
-) {
+func ToCPUMetric(metrics MetricsByCounter,
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
 	var labels = map[string]string{}
 
 	for _, val := range values {

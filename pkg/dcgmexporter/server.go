@@ -117,13 +117,13 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
-	xidMetrics, err := s.registry.Gather()
+	metrics, err := s.registry.Gather()
 	if err != nil {
 		logrus.WithError(err).Error("Failed to write response.")
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
-	err = encodeXIDMetrics(w, xidMetrics)
+	err = encodeExpMetrics(w, metrics)
 	if err != nil {
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
