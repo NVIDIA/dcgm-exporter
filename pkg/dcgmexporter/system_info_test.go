@@ -25,9 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	fakeProfileName string = "2fake.4gb"
-)
+var fakeProfileName string = "2fake.4gb"
 
 func SpoofSwitchSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
@@ -114,10 +112,12 @@ func TestMonitoredEntities(t *testing.T) {
 		if mi.Entity.EntityGroupId == dcgm.FE_GPU_I {
 			instanceCount = instanceCount + 1
 			require.NotEqual(t, mi.InstanceInfo, nil, "Expected InstanceInfo to be populated but it wasn't")
-			require.Equal(t, mi.InstanceInfo.ProfileName, fakeProfileName, "Expected profile named '%s' but found '%s'", fakeProfileName, mi.InstanceInfo.ProfileName)
+			require.Equal(t, mi.InstanceInfo.ProfileName, fakeProfileName, "Expected profile named '%s' but found '%s'",
+				fakeProfileName, mi.InstanceInfo.ProfileName)
 			if mi.Entity.EntityId != uint(0) {
 				// One of these should be 0, the other should be 14
-				require.Equal(t, mi.Entity.EntityId, uint(14), "Expected 14 as EntityId but found %s", monitoring[1].Entity.EntityId)
+				require.Equal(t, mi.Entity.EntityId, uint(14), "Expected 14 as EntityId but found %s",
+					monitoring[1].Entity.EntityId)
 			}
 		} else {
 			gpuCount = gpuCount + 1
@@ -134,7 +134,8 @@ func TestMonitoredEntities(t *testing.T) {
 	for i, mi := range monitoring {
 		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_GPU, "Expected FE_GPU but found %d", mi.Entity.EntityGroupId)
 		require.Equal(t, uint(i), mi.DeviceInfo.GPU, "Expected GPU %d but found %d", i, mi.DeviceInfo.GPU)
-		require.Equal(t, (*GPUInstanceInfo)(nil), mi.InstanceInfo, "Expected InstanceInfo not to be populated but it was")
+		require.Equal(t, (*GPUInstanceInfo)(nil), mi.InstanceInfo,
+			"Expected InstanceInfo not to be populated but it was")
 	}
 }
 
@@ -176,7 +177,8 @@ func TestMonitoredSwitches(t *testing.T) {
 	monitoring := GetMonitoredEntities(sysInfo)
 	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored switches but found %d", len(monitoring)))
 	for _, mi := range monitoring {
-		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_SWITCH, fmt.Sprintf("Should have only returned switches but returned %d", mi.Entity.EntityGroupId))
+		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_SWITCH,
+			fmt.Sprintf("Should have only returned switches but returned %d", mi.Entity.EntityGroupId))
 	}
 
 	/* test that only "up" links are monitored and 1 from each switch */
@@ -184,7 +186,8 @@ func TestMonitoredSwitches(t *testing.T) {
 	monitoring = GetMonitoredEntities(sysInfo)
 	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored links but found %d", len(monitoring)))
 	for i, mi := range monitoring {
-		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_LINK, fmt.Sprintf("Should have only returned links but returned %d", mi.Entity.EntityGroupId))
+		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_LINK,
+			fmt.Sprintf("Should have only returned links but returned %d", mi.Entity.EntityGroupId))
 		require.Equal(t, mi.ParentId, uint(i), "Link should reference switch parent")
 	}
 }
@@ -512,6 +515,157 @@ func TestIsCoreWatched(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, IsCoreWatched(tt.coreID, tt.cpuID, tt.sysInfo))
+		})
+	}
+}
+
+func TestSetMigProfileNames(t *testing.T) {
+	tests := []struct {
+		name        string
+		sysInfo     SystemInfo
+		values      []dcgm.FieldValue_v2
+		valid       bool
+	}{
+		{
+			name: "MIG profile found",
+			sysInfo: SystemInfo{
+				GPUCount: 1,
+				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 1},
+						},
+					},
+				},
+			},
+			values: []dcgm.FieldValue_v2{
+				{
+					EntityId:    1,
+					FieldType:   dcgm.DCGM_FT_STRING,
+					StringValue: &fakeProfileName,
+				},
+			},
+			valid: true,
+		},
+		{
+			name: "Multiple MIG GPUs",
+			sysInfo: SystemInfo{
+				GPUCount: 3,
+				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 1},
+						},
+					},
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 2},
+						},
+					},
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 3},
+						},
+					},
+				},
+			},
+			values: []dcgm.FieldValue_v2{
+				{
+					EntityId:    2,
+					FieldType:   dcgm.DCGM_FT_STRING,
+					StringValue: &fakeProfileName,
+				},
+			},
+			valid: true,
+		},
+		{
+			name: "Multiple MIG GPUs and Values",
+			sysInfo: SystemInfo{
+				GPUCount: 3,
+				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 1},
+						},
+					},
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 2},
+						},
+					},
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 3},
+						},
+					},
+				},
+			},
+			values: []dcgm.FieldValue_v2{
+				{
+					EntityId:    2,
+					FieldType:   dcgm.DCGM_FT_STRING,
+					StringValue: &fakeProfileName,
+				},
+				{
+					EntityId:    3,
+					FieldType:   dcgm.DCGM_FT_STRING,
+					StringValue: &fakeProfileName,
+				},
+			},
+			valid: true,
+		},
+		{
+			name: "MIG profile not found",
+			sysInfo: SystemInfo{
+				GPUCount: 1,
+				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 1},
+						},
+					},
+				},
+			},
+			values: []dcgm.FieldValue_v2{
+				{
+					EntityId:    2,
+					FieldType:   dcgm.DCGM_FT_STRING,
+					StringValue: &fakeProfileName,
+				},
+			},
+			valid: false,
+		},
+		{
+			name: "MIG profile not string type",
+			sysInfo: SystemInfo{
+				GPUCount: 1,
+				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+					{
+						GPUInstances: []GPUInstanceInfo{
+							{EntityId: 1},
+						},
+					},
+				},
+			},
+			values: []dcgm.FieldValue_v2{
+				{
+					EntityId:    1,
+					FieldType:   dcgm.DCGM_FT_BINARY,
+					StringValue: &fakeProfileName,
+					Value: [4096]byte{'1','2','3'},
+				},
+			},
+			valid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.valid {
+				assert.NoError(t, SetMigProfileNames(&tt.sysInfo, tt.values), "Expected no error.")
+			} else {
+				assert.Error(t, SetMigProfileNames(&tt.sysInfo, tt.values), "Expected an error.")
+			}
 		})
 	}
 }
