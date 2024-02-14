@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var fakeProfileName string = "2fake.4gb"
+var fakeProfileName = "2fake.4gb"
 
 func SpoofSwitchSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
@@ -521,10 +521,10 @@ func TestIsCoreWatched(t *testing.T) {
 
 func TestSetMigProfileNames(t *testing.T) {
 	tests := []struct {
-		name        string
-		sysInfo     SystemInfo
-		values      []dcgm.FieldValue_v2
-		valid       bool
+		name    string
+		sysInfo SystemInfo
+		values  []dcgm.FieldValue_v2
+		valid   bool
 	}{
 		{
 			name: "MIG profile found",
@@ -652,7 +652,7 @@ func TestSetMigProfileNames(t *testing.T) {
 					EntityId:    1,
 					FieldType:   dcgm.DCGM_FT_BINARY,
 					StringValue: &fakeProfileName,
-					Value: [4096]byte{'1','2','3'},
+					Value:       [4096]byte{'1', '2', '3'},
 				},
 			},
 			valid: true,
