@@ -88,7 +88,7 @@ A sample `web-config.yaml` file can be fetched from [exporter-toolkit repository
 ### Building from Source
 
 In order to build dcgm-exporter ensure you have the following:
-- [Golang >= 1.18 installed](https://golang.org/)
+- [Golang >= 1.21 installed](https://golang.org/)
 - [DCGM installed](https://developer.nvidia.com/dcgm)
 
 ```
