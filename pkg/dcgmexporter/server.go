@@ -58,8 +58,8 @@ func NewMetricsServer(c *Config, metrics chan string, registry *Registry) (*Metr
 			</body>
 			</html>`))
 		if err != nil {
-			logrus.WithError(err).Error("Failed to write response")
-			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+			logrus.WithError(err).Error("Failed to write response.")
+			http.Error(w, "failed to write response", http.StatusInternalServerError)
 			return
 		}
 	})
@@ -81,7 +81,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 		defer httpwg.Done()
 		logrus.Info("Starting webserver")
 		if err := web.ListenAndServe(s.server, s.webConfig, logger); err != nil && err != http.ErrServerClosed {
-			logrus.WithError(err).Fatal("Failed to Listen and Server HTTP server")
+			logrus.WithError(err).Fatal("Failed to Listen and Server HTTP server.")
 		}
 	}()
 
@@ -100,11 +100,11 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 
 	<-stop
 	if err := s.server.Shutdown(context.Background()); err != nil {
-		logrus.WithError(err).Fatal("Failed to shutdown HTTP server")
+		logrus.WithError(err).Fatal("Failed to shutdown HTTP server.")
 	}
 
 	if err := WaitWithTimeout(&httpwg, 3*time.Second); err != nil {
-		logrus.WithError(err).Fatal("Failed waiting for HTTP server to shutdown")
+		logrus.WithError(err).Fatal("Failed waiting for HTTP server to shutdown.")
 	}
 }
 
@@ -113,19 +113,19 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, err := w.Write([]byte(s.getMetrics()))
 	if err != nil {
-		logrus.WithError(err).Error("Failed to write response")
-		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to write response.")
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
 	xidMetrics, err := s.registry.Gather()
 	if err != nil {
-		logrus.WithError(err).Error("Failed to write response")
-		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		logrus.WithError(err).Error("Failed to write response.")
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
 	err = encodeXIDMetrics(w, xidMetrics)
 	if err != nil {
-		http.Error(w, "Failed to write response", http.StatusInternalServerError)
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
 }
@@ -136,16 +136,16 @@ func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, err := w.Write([]byte("KO"))
 		if err != nil {
-			logrus.WithError(err).Error("Failed to write response")
-			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+			logrus.WithError(err).Error("Failed to write response.")
+			http.Error(w, "failed to write response", http.StatusInternalServerError)
 		}
 	} else {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte("OK"))
 		if err != nil {
-			logrus.WithError(err).Error("Failed to write response")
-			http.Error(w, "Failed to write response", http.StatusInternalServerError)
+			logrus.WithError(err).Error("Failed to write response.")
+			http.Error(w, "failed to write response", http.StatusInternalServerError)
 		}
 	}
 }

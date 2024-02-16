@@ -33,7 +33,7 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 	return group, func() {
 		err := dcgm.DestroyGroup(group)
 		if err != nil {
-			logrus.WithError(err).Warn("Cannot destroy field group")
+			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
 	}, nil
 }
@@ -65,12 +65,14 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	return fieldGroup, func() {
 		err := dcgm.FieldGroupDestroy(fieldGroup)
 		if err != nil {
-			logrus.WithError(err).Warn("Cannot destroy field group")
+			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
 	}, nil
 }
 
-func WatchFieldGroup(group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32) error {
+func WatchFieldGroup(
+	group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32,
+) error {
 	err := dcgm.WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
 	if err != nil {
 		return err

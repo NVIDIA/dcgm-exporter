@@ -24,14 +24,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 	"k8s.io/kubernetes/pkg/kubelet/util"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
 var tmpDir string
@@ -111,7 +112,7 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 		case <-stopped:
 			return
 		case <-time.After(1 * time.Second):
-			t.Fatal("Failed waiting for gRPC server to stop")
+			t.Fatal("Failed waiting for gRPC server to stop.")
 		}
 	}
 }
@@ -138,7 +139,9 @@ func NewPodResourcesMockServer(used []string) *PodResourcesMockServer {
 	}
 }
 
-func (s *PodResourcesMockServer) List(ctx context.Context, req *podresourcesapi.ListPodResourcesRequest) (*podresourcesapi.ListPodResourcesResponse, error) {
+func (s *PodResourcesMockServer) List(
+	ctx context.Context, req *podresourcesapi.ListPodResourcesRequest,
+) (*podresourcesapi.ListPodResourcesResponse, error) {
 	podResources := make([]*podresourcesapi.PodResources, len(s.gpus))
 
 	for i, gpu := range s.gpus {

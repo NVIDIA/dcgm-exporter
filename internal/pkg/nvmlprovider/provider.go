@@ -43,7 +43,7 @@ func GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 		ret := nvml.Init()
 		if ret != nvml.SUCCESS {
 			err = errors.New(nvml.ErrorString(ret))
-			logrus.Error("Can not init NVML library")
+			logrus.Error("Can not init NVML library.")
 		}
 	})
 	if err != nil {
@@ -88,22 +88,22 @@ func GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 
 	tokens := strings.SplitN(uuid, "-", 2)
 	if len(tokens) != 2 || tokens[0] != "MIG" {
-		return nil, fmt.Errorf("Unable to parse UUID as MIG device")
+		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
 	}
 
 	tokens = strings.SplitN(tokens[1], "/", 3)
 	if len(tokens) != 3 || !strings.HasPrefix(tokens[0], "GPU-") {
-		return nil, fmt.Errorf("Unable to parse UUID as MIG device")
+		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
 	}
 
 	gi, err := strconv.Atoi(tokens[1])
 	if err != nil {
-		return nil, fmt.Errorf("Unable to parse UUID as MIG device")
+		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
 	}
 
 	ci, err := strconv.Atoi(tokens[2])
 	if err != nil {
-		return nil, fmt.Errorf("Unable to parse UUID as MIG device")
+		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
 	}
 
 	return &MIGDeviceInfo{

@@ -27,11 +27,12 @@ import (
 
 type DCGMCollectorConstructor func([]Counter, *Config, string, dcgm.Field_Entity_Group) (*DCGMCollector, func(), error)
 
-func NewDCGMCollector(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector, func(), error) {
+func NewDCGMCollector(c []Counter, config *Config, hostname string, entityType dcgm.Field_Entity_Group) (*DCGMCollector,
+	func(), error) {
 	var deviceFields = NewDeviceFields(c, entityType)
 
 	if !ShouldMonitorDeviceType(deviceFields, entityType) {
-		return nil, func() {}, fmt.Errorf("No fields to watch for device type: %d", entityType)
+		return nil, func() {}, fmt.Errorf("no fields to watch for device type '%d'", entityType)
 	}
 
 	sysInfo, err := GetSystemInfo(config, entityType)
@@ -59,7 +60,8 @@ func NewDCGMCollector(c []Counter, config *Config, hostname string, entityType d
 }
 
 func GetSystemInfo(config *Config, entityType dcgm.Field_Entity_Group) (*SystemInfo, error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs,
+		entityType)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +152,13 @@ func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 		}
 	}
 
-	return c[0], fmt.Errorf("Could not find corresponding counter")
+	return c[0], fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldId)
 }
 
-func ToSwitchMetric(metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
+func ToSwitchMetric(
+	metrics MetricsByCounter,
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
+) {
 	labels := map[string]string{}
 
 	for _, val := range values {
@@ -196,8 +200,10 @@ func ToSwitchMetric(metrics MetricsByCounter,
 	}
 }
 
-func ToCPUMetric(metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
+func ToCPUMetric(
+	metrics MetricsByCounter,
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
+) {
 	var labels = map[string]string{}
 
 	for _, val := range values {
