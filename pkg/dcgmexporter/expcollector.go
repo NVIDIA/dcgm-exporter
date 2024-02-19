@@ -68,18 +68,18 @@ func encodeExpMetrics(w io.Writer, metrics MetricsByCounter) error {
 var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
-	sysInfo             SystemInfo
-	counter             Counter
-	hostname            string
-	config              *Config
-	labelDeviceFields   []dcgm.Short
-	counterDeviceFields []dcgm.Short
-	labelsCounters      []Counter
-	cleanups            []func()
-	fieldValueParser    func(val int64) []int64
-	labelFiller         func(map[string]string, int64)
-	windowSize          int
-	transformations     []Transform
+	sysInfo             SystemInfo                     // Hardware system info
+	counter             Counter                        // Counter that collector
+	hostname            string                         // Hostname
+	config              *Config                        // Configuration settings
+	labelDeviceFields   []dcgm.Short                   // Fields used for labels
+	counterDeviceFields []dcgm.Short                   // Fields used for the counter
+	labelsCounters      []Counter                      // Counters used for labels
+	cleanups            []func()                       // Cleanup functions
+	fieldValueParser    func(val int64) []int64        // Function to parse the field value
+	labelFiller         func(map[string]string, int64) // Function to fill labels
+	windowSize          int                            // Window size
+	transformations     []Transform                    // Transformers for metric postprocessing
 }
 
 func (c *expCollector) getMetrics() (MetricsByCounter, error) {

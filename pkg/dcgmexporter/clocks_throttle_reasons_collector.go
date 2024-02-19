@@ -36,30 +36,30 @@ type clocksThrottleReasonsCollector struct {
 	expCollector
 }
 
-type clocksThrottleReason int64
+type clocksThrottleReasonBitmask int64
 
 const (
 	// DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE Nothing is running on the GPU and the clocks are dropping to Idle state
-	DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE clocksThrottleReason = 0x0000000000000001
+	DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE clocksThrottleReasonBitmask = 0x0000000000000001
 	// DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING GPU clocks are limited by current setting of applications clocks
-	DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING clocksThrottleReason = 0x0000000000000002
+	DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING clocksThrottleReasonBitmask = 0x0000000000000002
 	// DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP SW Power Scaling algorithm is reducing the clocks below requested clocks
-	DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP clocksThrottleReason = 0x0000000000000004
+	DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP clocksThrottleReasonBitmask = 0x0000000000000004
 	// DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN HW Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
-	DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN clocksThrottleReason = 0x0000000000000008
+	DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN clocksThrottleReasonBitmask = 0x0000000000000008
 	// DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST Sync Boost
-	DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST clocksThrottleReason = 0x0000000000000010
+	DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST clocksThrottleReasonBitmask = 0x0000000000000010
 	//SW Thermal Slowdown
-	DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL clocksThrottleReason = 0x0000000000000020
+	DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL clocksThrottleReasonBitmask = 0x0000000000000020
 	// DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL HW Thermal Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
-	DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL clocksThrottleReason = 0x0000000000000040
+	DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL clocksThrottleReasonBitmask = 0x0000000000000040
 	// DCGM_CLOCKS_THROTTLE_REASON_HW_POWER_BRAKE HW Power Brake Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
-	DCGM_CLOCKS_THROTTLE_REASON_HW_POWER_BRAKE clocksThrottleReason = 0x0000000000000080
+	DCGM_CLOCKS_THROTTLE_REASON_HW_POWER_BRAKE clocksThrottleReasonBitmask = 0x0000000000000080
 	// DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS GPU clocks are limited by current setting of Display clocks
-	DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS clocksThrottleReason = 0x0000000000000100
+	DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS clocksThrottleReasonBitmask = 0x0000000000000100
 )
 
-var clocksThrottleReasonToString = map[clocksThrottleReason]string{
+var clocksThrottleReasonToString = map[clocksThrottleReasonBitmask]string{
 	// See: https://github.com/NVIDIA/DCGM/blob/6792b70c65b938d17ac9d791f59ceaadc0c7ef8a/dcgmi/CommandLineParser.cpp#L63
 	DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE:       "gpu_idle",
 	DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING: "clocks_setting",
@@ -73,7 +73,7 @@ var clocksThrottleReasonToString = map[clocksThrottleReason]string{
 }
 
 // String method to convert the enum value to a string
-func (enm clocksThrottleReason) String() string {
+func (enm clocksThrottleReasonBitmask) String() string {
 	return clocksThrottleReasonToString[enm]
 }
 
@@ -100,7 +100,7 @@ func NewClocksThrottleReasonsCollector(counters []Counter, hostname string, fiel
 	})]
 
 	collector.labelFiller = func(metricValueLabels map[string]string, entityValue int64) {
-		metricValueLabels["throttle_reason"] = clocksThrottleReason(entityValue).String()
+		metricValueLabels["throttle_reason"] = clocksThrottleReasonBitmask(entityValue).String()
 	}
 
 	collector.windowSize = fieldEntityGroupTypeSystemInfo.Config.ClockThrottleReasonsCountWindowSize
@@ -108,10 +108,12 @@ func NewClocksThrottleReasonsCollector(counters []Counter, hostname string, fiel
 	collector.fieldValueParser = func(value int64) []int64 {
 		var reasons []int64
 
-		reason := clocksThrottleReason(value)
+		// The int64 value may represent multiple reasons.
+		// To extract a specific reason, we need to perform an XOR operation with a bitmask.
+		reasonBitmask := clocksThrottleReasonBitmask(value)
 
 		for tr := range clocksThrottleReasonToString {
-			if reason&tr != 0 {
+			if reasonBitmask&tr != 0 {
 				reasons = append(reasons, int64(tr))
 			}
 		}
