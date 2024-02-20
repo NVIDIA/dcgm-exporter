@@ -32,14 +32,21 @@ func (c *xidCollector) GetMetrics() (MetricsByCounter, error) {
 	return c.expCollector.getMetrics()
 }
 
-func NewXIDCollector(counters []Counter, hostname string, fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (Collector, error) {
+func NewXIDCollector(counters []Counter,
+	hostname string,
+	config *Config,
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (Collector, error) {
 	if !IsDCGMExpXIDErrorsCountEnabled(counters) {
 		logrus.Error(dcgmExpXIDErrorsCount + " collector is disabled")
 		return nil, fmt.Errorf(dcgmExpXIDErrorsCount + " collector is disabled")
 	}
 
 	collector := xidCollector{}
-	collector.expCollector = newExpCollector(counters, hostname, []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS}, fieldEntityGroupTypeSystemInfo)
+	collector.expCollector = newExpCollector(counters,
+		hostname,
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		config,
+		fieldEntityGroupTypeSystemInfo)
 
 	collector.counter = counters[slices.IndexFunc(counters, func(c Counter) bool {
 		return c.FieldName == dcgmExpXIDErrorsCount
@@ -49,7 +56,7 @@ func NewXIDCollector(counters []Counter, hostname string, fieldEntityGroupTypeSy
 		metricValueLabels["xid"] = fmt.Sprint(entityValue)
 	}
 
-	collector.windowSize = fieldEntityGroupTypeSystemInfo.Config.XIDCountWindowSize
+	collector.windowSize = config.XIDCountWindowSize
 
 	return &collector, nil
 }

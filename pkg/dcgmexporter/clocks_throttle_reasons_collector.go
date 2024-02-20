@@ -81,7 +81,10 @@ func (c *clocksThrottleReasonsCollector) GetMetrics() (MetricsByCounter, error) 
 	return c.expCollector.getMetrics()
 }
 
-func NewClocksThrottleReasonsCollector(counters []Counter, hostname string, fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (Collector, error) {
+func NewClocksThrottleReasonsCollector(counters []Counter,
+	hostname string,
+	config *Config,
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (Collector, error) {
 	if !IsDCGMExpClockThrottleReasonsEnabledCount(counters) {
 		logrus.Error(dcgmExpClockThrottleReasonsCount + " collector is disabled")
 		return nil, fmt.Errorf(dcgmExpClockThrottleReasonsCount + " collector is disabled")
@@ -92,6 +95,7 @@ func NewClocksThrottleReasonsCollector(counters []Counter, hostname string, fiel
 		counters,
 		hostname,
 		[]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS},
+		config,
 		fieldEntityGroupTypeSystemInfo,
 	)
 
@@ -103,7 +107,7 @@ func NewClocksThrottleReasonsCollector(counters []Counter, hostname string, fiel
 		metricValueLabels["throttle_reason"] = clocksThrottleReasonBitmask(entityValue).String()
 	}
 
-	collector.windowSize = fieldEntityGroupTypeSystemInfo.Config.ClockThrottleReasonsCountWindowSize
+	collector.windowSize = config.ClockThrottleReasonsCountWindowSize
 
 	collector.fieldValueParser = func(value int64) []int64 {
 		var reasons []int64

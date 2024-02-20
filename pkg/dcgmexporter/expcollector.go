@@ -161,6 +161,9 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 
 				metricValueLabels := maps.Clone(labels)
 				c.labelFiller(metricValueLabels, entityValue)
+
+				gpuModel := getGPUModel(mi.DeviceInfo, c.config.ReplaceBlanksInModelName)
+
 				m := Metric{
 					Counter:      c.counter,
 					Value:        fmt.Sprint(val),
@@ -168,7 +171,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 					GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
 					GPUUUID:      mi.DeviceInfo.UUID,
 					GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
-					GPUModelName: mi.DeviceInfo.Identifiers.Model,
+					GPUModelName: gpuModel,
 					Hostname:     c.hostname,
 
 					Labels:     metricValueLabels,
@@ -190,7 +193,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	for _, transform := range c.transformations {
 		err := transform.Process(metrics, c.sysInfo)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to transform metrics for transform %s: %v", err, transform.Name())
+			return nil, fmt.Errorf("failed to transform metrics for transform '%s'; err: %v", transform.Name(), err)
 		}
 	}
 
@@ -208,6 +211,7 @@ func newExpCollector(
 	counters []Counter,
 	hostname string,
 	counterDeviceFields []dcgm.Short,
+	config *Config,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
 ) expCollector {
 	var labelsCounters []Counter
@@ -220,11 +224,11 @@ func newExpCollector(
 
 	labelDeviceFields := NewDeviceFields(labelsCounters, dcgm.FE_GPU)
 
-	transformations := getTransformations(fieldEntityGroupTypeSystemInfo.Config)
+	transformations := getTransformations(config)
 
 	collector := expCollector{
 		hostname:            hostname,
-		config:              fieldEntityGroupTypeSystemInfo.Config,
+		config:              config,
 		labelDeviceFields:   labelDeviceFields,
 		labelsCounters:      labelsCounters,
 		counterDeviceFields: counterDeviceFields,
@@ -241,7 +245,7 @@ func newExpCollector(
 
 	collector.cleanups, err = SetupDcgmFieldsWatch(collector.counterDeviceFields,
 		collector.sysInfo,
-		int64(fieldEntityGroupTypeSystemInfo.Config.CollectInterval)*1000)
+		int64(config.CollectInterval)*1000)
 	if err != nil {
 		logrus.Fatal("Failed to watch metrics: ", err)
 	}

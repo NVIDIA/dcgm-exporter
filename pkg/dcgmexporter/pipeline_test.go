@@ -17,7 +17,9 @@
 package dcgmexporter
 
 import (
+	"errors"
 	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
 
@@ -54,12 +56,13 @@ func testNewDCGMCollector(t *testing.T,
 	t.Helper()
 	return func(c []Counter,
 		hostname string,
-		fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func()) {
+		config *Config,
+		fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
 		// should always create GPU Collector
 		if fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType != dcgm.FE_GPU {
 			if _, ok := enabledCollector[fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType]; !ok {
 				t.Errorf("collector '%s' should not be created", fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType)
-				return nil, func() {}
+				return nil, func() {}, nil
 			}
 		}
 
@@ -71,7 +74,7 @@ func testNewDCGMCollector(t *testing.T,
 		}
 		collector.Cleanups = cleanups
 
-		return collector, func() { collector.Cleanup() }
+		return collector, func() { collector.Cleanup() }, nil
 	}
 }
 
@@ -153,7 +156,6 @@ func TestCountPipelineCleanup(t *testing.T) {
 					SystemInfo: SystemInfo{
 						InfoType: egt,
 					},
-					Config: config,
 				}
 			}
 
@@ -168,4 +170,39 @@ func TestCountPipelineCleanup(t *testing.T) {
 			require.Equal(t, len(c.enabledCollector), cleanupCounter, "case: %s failed", c.name)
 		})
 	}
+}
+
+func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *testing.T) {
+	cleanup, err := dcgm.Init(dcgm.Embedded)
+	require.NoError(t, err)
+	defer cleanup()
+
+	config := &Config{}
+
+	fieldEntityGroupTypeSystemInfo := &FieldEntityGroupTypeSystemInfo{
+		items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
+			dcgm.FE_GPU:      FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_SWITCH:   FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_LINK:     FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_CPU:      FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_CPU_CORE: FieldEntityGroupTypeSystemInfoItem{},
+		},
+	}
+
+	p, cleanup, err := NewMetricsPipeline(config,
+		sampleCounters,
+		"",
+		func(_ []Counter, _ string, _ *Config, item FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
+			assert.True(t, item.isEmpty())
+			return nil, func() {}, errors.New("empty")
+		},
+		fieldEntityGroupTypeSystemInfo,
+	)
+	require.NoError(t, err)
+	defer cleanup()
+	require.NoError(t, err)
+
+	out, err := p.run()
+	require.NoError(t, err)
+	require.Empty(t, out)
 }

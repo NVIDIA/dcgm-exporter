@@ -17,6 +17,7 @@
 package dcgmexporter
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -25,11 +26,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DCGMCollectorConstructor func([]Counter, string, FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func())
+type DCGMCollectorConstructor func([]Counter, string, *Config, FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error)
 
 func NewDCGMCollector(c []Counter,
 	hostname string,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func()) {
+	config *Config,
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
+
+	if fieldEntityGroupTypeSystemInfo.isEmpty() {
+		return nil, func() {}, errors.New("fieldEntityGroupTypeSystemInfo is empty")
+	}
 
 	collector := &DCGMCollector{
 		Counters:     c,
@@ -38,28 +44,31 @@ func NewDCGMCollector(c []Counter,
 		Hostname:     hostname,
 	}
 
-	if fieldEntityGroupTypeSystemInfo.Config == nil {
+	if config == nil {
 		logrus.Warn("Config is empty")
-		return collector, func() { collector.Cleanup() }
+		return collector, func() { collector.Cleanup() }, nil
 	}
 
-	collector.UseOldNamespace = fieldEntityGroupTypeSystemInfo.Config.UseOldNamespace
-	collector.ReplaceBlanksInModelName = fieldEntityGroupTypeSystemInfo.Config.ReplaceBlanksInModelName
+	collector.UseOldNamespace = config.UseOldNamespace
+	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
 		fieldEntityGroupTypeSystemInfo.SystemInfo,
-		int64(fieldEntityGroupTypeSystemInfo.Config.CollectInterval)*1000)
+		int64(config.CollectInterval)*1000)
 	if err != nil {
 		logrus.Fatal("Failed to watch metrics: ", err)
 	}
 
 	collector.Cleanups = cleanups
 
-	return collector, func() { collector.Cleanup() }
+	return collector, func() { collector.Cleanup() }, nil
 }
 
 func GetSystemInfo(config *Config, entityType dcgm.Field_Entity_Group) (*SystemInfo, error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices, config.SwitchDevices, config.CPUDevices, config.UseFakeGPUs, entityType)
+	sysInfo, err := InitializeSystemInfo(config.GPUDevices,
+		config.SwitchDevices,
+		config.CPUDevices,
+		config.UseFakeGPUs, entityType)
 	if err != nil {
 		return nil, err
 	}
@@ -272,13 +281,7 @@ func ToMetric(
 			uuid = "uuid"
 		}
 
-		gpuModel := d.Identifiers.Model
-
-		if replaceBlanksInModelName {
-			parts := strings.Fields(gpuModel)
-			gpuModel = strings.Join(parts, " ")
-			gpuModel = strings.ReplaceAll(gpuModel, " ", "-")
-		}
+		gpuModel := getGPUModel(d, replaceBlanksInModelName)
 
 		m := Metric{
 			Counter: counter,
@@ -304,6 +307,17 @@ func ToMetric(
 
 		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
+}
+
+func getGPUModel(d dcgm.Device, replaceBlanksInModelName bool) string {
+	gpuModel := d.Identifiers.Model
+
+	if replaceBlanksInModelName {
+		parts := strings.Fields(gpuModel)
+		gpuModel = strings.Join(parts, " ")
+		gpuModel = strings.ReplaceAll(gpuModel, " ", "-")
+	}
+	return gpuModel
 }
 
 func ToString(value dcgm.FieldValue_v1) string {

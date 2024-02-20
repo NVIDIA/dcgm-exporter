@@ -27,7 +27,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewMetricsPipeline(c *Config,
+func NewMetricsPipeline(config *Config,
 	counters []Counter,
 	hostname string,
 	newDCGMCollector DCGMCollectorConstructor,
@@ -44,42 +44,58 @@ func NewMetricsPipeline(c *Config,
 		linkCollector   *DCGMCollector
 		cpuCollector    *DCGMCollector
 		coreCollector   *DCGMCollector
+		err             error
 	)
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU); exists {
 		var cleanup func()
-		gpuCollector, cleanup = newDCGMCollector(counters, hostname, item)
+		gpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_GPU")
+		}
 		cleanups = append(cleanups, cleanup)
 	}
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH); exists {
 		var cleanup func()
-		switchCollector, cleanup = newDCGMCollector(counters, hostname, item)
+		switchCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_SWITCH")
+		}
 		cleanups = append(cleanups, cleanup)
 	}
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_LINK); exists {
 		var cleanup func()
-		linkCollector, cleanup = newDCGMCollector(counters, hostname, item)
+		linkCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_LINK")
+		}
 		cleanups = append(cleanups, cleanup)
 	}
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU); exists {
 		var cleanup func()
-		cpuCollector, cleanup = newDCGMCollector(counters, hostname, item)
+		cpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_CPU")
+		}
 		cleanups = append(cleanups, cleanup)
 	}
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU_CORE); exists {
 		var cleanup func()
-		coreCollector, cleanup = newDCGMCollector(counters, hostname, item)
+		coreCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_CPU_CORE")
+		}
 		cleanups = append(cleanups, cleanup)
 	}
 
-	transformations := getTransformations(c)
+	transformations := getTransformations(config)
 
 	return &MetricsPipeline{
-			config: c,
+			config: config,
 
 			migMetricsFormat:     template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
 			switchMetricsFormat:  template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),

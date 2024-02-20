@@ -122,7 +122,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, item)
+	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -232,14 +232,14 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
 
-		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", item)
+		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
 
 	t.Run("Should Return Error When Counters Param Is Empty", func(t *testing.T) {
 		counters := make([]Counter, 0)
-		xidCollector, err := NewXIDCollector(counters, "", item)
+		xidCollector, err := NewXIDCollector(counters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
@@ -258,7 +258,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", item)
+		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", config, item)
 		require.NoError(t, err)
 		require.NotNil(t, xidCollector)
 	})

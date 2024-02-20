@@ -34,22 +34,31 @@ var FieldEntityGroupTypeToMonitor = []dcgm.Field_Entity_Group{
 type FieldEntityGroupTypeSystemInfoItem struct {
 	SystemInfo   SystemInfo
 	DeviceFields []dcgm.Short
-	Config       *Config
+}
+
+func (f FieldEntityGroupTypeSystemInfoItem) isEmpty() bool {
+	return len(f.DeviceFields) == 0
 }
 
 // FieldEntityGroupTypeSystemInfo represents a mapping between FieldEntityGroupType and SystemInfo
 type FieldEntityGroupTypeSystemInfo struct {
-	items    map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem
-	counters []Counter
-	config   *Config
+	items         map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem
+	counters      []Counter
+	gpuDevices    DeviceOptions
+	switchDevices DeviceOptions
+	cpuDevices    DeviceOptions
+	useFakeGPUs   bool
 }
 
 // NewEntityGroupTypeSystemInfo creates a new instance of the FieldEntityGroupTypeSystemInfo
 func NewEntityGroupTypeSystemInfo(c []Counter, config *Config) *FieldEntityGroupTypeSystemInfo {
 	return &FieldEntityGroupTypeSystemInfo{
-		items:    make(map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem),
-		counters: c,
-		config:   config,
+		items:         make(map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem),
+		counters:      c,
+		gpuDevices:    config.GPUDevices,
+		switchDevices: config.SwitchDevices,
+		cpuDevices:    config.CPUDevices,
+		useFakeGPUs:   config.UseFakeGPUs,
 	}
 }
 
@@ -58,16 +67,22 @@ func (e *FieldEntityGroupTypeSystemInfo) Load(entityType dcgm.Field_Entity_Group
 	var deviceFields = NewDeviceFields(e.counters, entityType)
 
 	if !ShouldMonitorDeviceType(deviceFields, entityType) {
-		return fmt.Errorf("No fields to watch for device type: %d", entityType)
+		return fmt.Errorf("no fields to watch for device type: %d", entityType)
 	}
 
-	sysInfo, err := GetSystemInfo(e.config, entityType)
-	if err == nil {
-		e.items[entityType] = FieldEntityGroupTypeSystemInfoItem{
-			SystemInfo:   *sysInfo,
-			DeviceFields: deviceFields,
-			Config:       e.config,
-		}
+	sysInfo, err := GetSystemInfo(&Config{
+		GPUDevices:    e.gpuDevices,
+		SwitchDevices: e.switchDevices,
+		CPUDevices:    e.cpuDevices,
+		UseFakeGPUs:   e.useFakeGPUs,
+	}, entityType)
+	if err != nil {
+		return err
+	}
+
+	e.items[entityType] = FieldEntityGroupTypeSystemInfoItem{
+		SystemInfo:   *sysInfo,
+		DeviceFields: deviceFields,
 	}
 
 	return err

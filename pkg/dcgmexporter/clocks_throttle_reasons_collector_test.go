@@ -147,7 +147,7 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, hostname, item)
+	collector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -217,14 +217,14 @@ func TestClocksThrottleReasonsCollector_NewClocksThrottleReasonsCollector(t *tes
 		require.NoError(t, err)
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
-		collector, err := NewClocksThrottleReasonsCollector(cc.DCGMCounters, "", item)
+		collector, err := NewClocksThrottleReasonsCollector(cc.DCGMCounters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
 
 	t.Run("Should Return Error When Counter Param Is Empty", func(t *testing.T) {
 		counters := make([]Counter, 0)
-		collector, err := NewClocksThrottleReasonsCollector(counters, "", item)
+		collector, err := NewClocksThrottleReasonsCollector(counters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
@@ -243,7 +243,7 @@ func TestClocksThrottleReasonsCollector_NewClocksThrottleReasonsCollector(t *tes
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		xidCollector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, "", item)
+		xidCollector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, "", config, item)
 		require.NoError(t, err)
 		require.NotNil(t, xidCollector)
 	})
@@ -344,7 +344,7 @@ func TestClocksThrottleReasonsCollector_Gather_AllTheThings(t *testing.T) {
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, hostname, item)
+	collector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {

@@ -352,7 +352,7 @@ restart:
 			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMXIDErrorsCount.String())
 		}
 
-		xidCollector, err := dcgmexporter.NewXIDCollector(cs.ExporterCounters, hostname, item)
+		xidCollector, err := dcgmexporter.NewXIDCollector(cs.ExporterCounters, hostname, config, item)
 		if err != nil {
 			logrus.Fatal(err)
 		}
@@ -368,7 +368,7 @@ restart:
 			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMClockThrottleReasonsCount.String())
 		}
 		clocksThrottleReasonsCollector, err := dcgmexporter.NewClocksThrottleReasonsCollector(
-			cs.ExporterCounters, hostname, item)
+			cs.ExporterCounters, hostname, config, item)
 		if err != nil {
 			logrus.Fatal(err)
 		}
