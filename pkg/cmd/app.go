@@ -327,7 +327,7 @@ restart:
 	for _, egt := range dcgmexporter.FieldEntityGroupTypeToMonitor {
 		err := fieldEntityGroupTypeSystemInfo.Load(egt)
 		if err != nil {
-			logrus.Infof("Not collecting %s metrics", egt.String())
+			logrus.Infof("Not collecting %s metrics; %s", egt.String(), err)
 		}
 	}
 
