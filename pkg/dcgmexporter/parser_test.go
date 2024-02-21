@@ -148,13 +148,12 @@ func extractCountersHelper(t *testing.T, input string, valid bool) {
 		ConfigMapData:  undefinedConfigMapData,
 		CollectorsFile: tmpFile.Name(),
 	}
-	records, extraCounters, err := ExtractCounters(&c)
+	cc, err := GetCounterSet(&c)
 	if valid {
 		assert.NoError(t, err, "Expected no error.")
-		assert.Equal(t, 1, len(records), "Expected 1 record counters.")
+		assert.Equal(t, 1, len(cc.DCGMCounters), "Expected 1 record counters.")
 	} else {
 		assert.Error(t, err, "Expected error.")
-		assert.Equal(t, 0, len(records), "Expected no counters.")
-		assert.Equal(t, 0, len(extraCounters), "Expected no extra counters.")
+		assert.Nil(t, cc, "Expected no counters.")
 	}
 }

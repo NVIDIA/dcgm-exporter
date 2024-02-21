@@ -16,39 +16,6 @@
 
 package dcgmexporter
 
-import "fmt"
-
-type DCGMExporterMetric uint16
-
-const (
-	DCGMFIUnknown      DCGMExporterMetric = 0
-	DCGMXIDErrorsCount DCGMExporterMetric = iota + 9000
-)
-
-// DCGMFields maps DCGMExporterMetric String to enum
-var DCGMFields = map[string]DCGMExporterMetric{
-	DCGMXIDErrorsCount.String(): DCGMXIDErrorsCount,
-	DCGMFIUnknown.String():      DCGMFIUnknown,
-}
-
-// String method to convert the enum value to a string
-func (d DCGMExporterMetric) String() string {
-	switch d {
-	case DCGMXIDErrorsCount:
-		return "DCGM_EXP_XID_ERRORS_COUNT"
-	default:
-		return "DCGM_FI_UNKNOWN"
-	}
-}
-
-func IdentifyMetricType(s string) (DCGMExporterMetric, error) {
-	mv, ok := DCGMFields[s]
-	if !ok {
-		return mv, fmt.Errorf("unknown DCGMExporterMetric field '%s'", s)
-	}
-	return mv, nil
-}
-
 // Constants for logging fields
 const (
 	LoggerGroupIDKey = "groupID"
@@ -59,4 +26,8 @@ const (
 const (
 	PARENT_ID_IGNORED      = 0
 	DCGM_ST_NOT_CONFIGURED = "Setting not configured"
+)
+
+const (
+	windowSizeInMSLabel = "window_size_in_ms"
 )

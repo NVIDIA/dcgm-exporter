@@ -46,43 +46,6 @@ var (
 	undefinedConfigMapData = "none"
 )
 
-type KubernetesGPUIDType string
-
-const (
-	GPUUID     KubernetesGPUIDType = "uid"
-	DeviceName KubernetesGPUIDType = "device-name"
-)
-
-type DeviceOptions struct {
-	Flex       bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
-	MajorRange []int // The indices of each GPU/NvSwitch to monitor, or -1 to monitor all
-	MinorRange []int // The indices of each GPUInstance/NvLink to monitor, or -1 to monitor all
-}
-
-type Config struct {
-	CollectorsFile           string
-	Address                  string
-	CollectInterval          int
-	Kubernetes               bool
-	KubernetesGPUIdType      KubernetesGPUIDType
-	CollectDCP               bool
-	UseOldNamespace          bool
-	UseRemoteHE              bool
-	RemoteHEInfo             string
-	GPUDevices               DeviceOptions
-	SwitchDevices            DeviceOptions
-	CPUDevices               DeviceOptions
-	NoHostname               bool
-	UseFakeGPUs              bool
-	ConfigMapData            string
-	MetricGroups             []dcgm.MetricGroup
-	WebSystemdSocket         bool
-	WebConfigFile            string
-	XIDCountWindowSize       int
-	ReplaceBlanksInModelName bool
-	Debug                    bool
-}
-
 type Transform interface {
 	Process(metrics MetricsByCounter, sysInfo SystemInfo) error
 	Name() string
@@ -184,5 +147,11 @@ type PodInfo struct {
 	Container string
 }
 
-// MetricsByCounter represeents a map where each Counter is associated with a slice of Metric objects
+// MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
 type MetricsByCounter map[Counter][]Metric
+
+// CounterSet return
+type CounterSet struct {
+	DCGMCounters     []Counter
+	ExporterCounters []Counter
+}

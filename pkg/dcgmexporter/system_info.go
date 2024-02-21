@@ -99,7 +99,7 @@ func SetGPUInstanceProfileName(sysInfo *SystemInfo, entityId uint, profileName s
 func SetMigProfileNames(sysInfo *SystemInfo, values []dcgm.FieldValue_v2) error {
 	var err error
 	var errFound bool
-	errStr := fmt.Sprintf("cannot find match for entities:")
+	errStr := "cannot find match for entities:"
 
 	for _, v := range values {
 		if !SetGPUInstanceProfileName(sysInfo, v.EntityId, dcgm.Fv2_String(v)) {

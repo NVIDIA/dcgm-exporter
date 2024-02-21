@@ -16,7 +16,11 @@
 
 package dcgmexporter
 
-import "sync"
+import (
+	"sync"
+
+	"golang.org/x/sync/errgroup"
+)
 
 type Registry struct {
 	collectors []Collector
@@ -29,27 +33,60 @@ func NewRegistry() *Registry {
 	}
 }
 
+// Register registers a collector with the registry.
 func (r *Registry) Register(c Collector) {
 	r.collectors = append(r.collectors, c)
 }
 
-func (r *Registry) Gather() (map[Counter][]Metric, error) {
+// Gather gathers metrics from all registered collectors.
+func (r *Registry) Gather() (MetricsByCounter, error) {
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 
-	output := map[Counter][]Metric{}
+	var wg sync.WaitGroup
+	wg.Add(len(r.collectors))
+
+	g := new(errgroup.Group)
+
+	var sm sync.Map
 
 	for _, c := range r.collectors {
-		metrics, err := c.GetMetrics()
+		c := c //creates new c, see https://golang.org/doc/faq#closures_and_goroutines
+		g.Go(func() error {
+			metrics, err := c.GetMetrics()
 
-		if err != nil {
-			return nil, err
-		}
+			if err != nil {
+				return err
+			}
 
-		for counter, metricVals := range metrics {
-			output[counter] = append(output[counter], metricVals...)
-		}
+			for counter, metricVals := range metrics {
+				val, _ := sm.LoadOrStore(counter, []Metric{})
+				out := val.([]Metric)
+				out = append(out, metricVals...)
+				sm.Store(counter, out)
+			}
+
+			return nil
+		})
 	}
 
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	output := MetricsByCounter{}
+
+	sm.Range(func(key, value interface{}) bool {
+		output[key.(Counter)] = value.([]Metric)
+		return true // continue iteration
+	})
+
 	return output, nil
+}
+
+// Cleanup resources of registered collectors
+func (r *Registry) Cleanup() {
+	for _, c := range r.collectors {
+		c.Cleanup()
+	}
 }

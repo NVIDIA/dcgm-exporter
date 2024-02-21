@@ -69,11 +69,12 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		MajorRange: []int{-1},
 		MinorRange: []int{-1},
 	}
-	cfg := Config{
+	config := Config{
 		GPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
 		UseFakeGPUs:     false,
+		CollectInterval: 1,
 	}
 
 	dcgmGetAllDeviceCount = func() (uint, error) {
@@ -121,16 +122,30 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		dcgmAddEntityToGroup = dcgm.AddEntityToGroup
 	}()
 
-	g, cleanup, err := NewDCGMCollector(counters, &cfg, "", dcgm.FE_GPU)
+	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
+
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	require.NoError(t, err)
+
+	gpuItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	require.True(t, exists)
+
+	g, cleanup, err := NewDCGMCollector(counters, "", &config, gpuItem)
 	require.NoError(t, err)
 
 	/* Test for error when no switches are available to monitor. */
-	_, _, err = NewDCGMCollector(counters, &cfg, "", dcgm.FE_SWITCH)
-	require.Error(t, err)
+	switchItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH)
+	assert.False(t, exists, "dcgm.FE_SWITCH should not be available")
+
+	_, _, err = NewDCGMCollector(counters, "", &config, switchItem)
+	require.Error(t, err, "NewDCGMCollector should return error")
 
 	/* Test for error when no cpus are available to monitor. */
-	_, _, err = NewDCGMCollector(counters, &cfg, "", dcgm.FE_CPU)
-	require.NoError(t, err)
+	cpuItem, exist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
+	require.False(t, exist, "dcgm.FE_CPU should not be available")
+
+	_, _, err = NewDCGMCollector(counters, "", &config, cpuItem)
+	require.Error(t, err, "NewDCGMCollector should return error")
 
 	out, err := g.GetMetrics()
 	require.NoError(t, err)
@@ -154,7 +169,7 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 
 func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
 	dOpt := DeviceOptions{true, []int{-1}, []int{-1}}
-	cfg := Config{
+	config := Config{
 		CPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
@@ -208,7 +223,18 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}()
 
 	/* Test that only cpu metrics are collected for cpu entities. */
-	c, cleanup, err := NewDCGMCollector(counters, &cfg, "", dcgm.FE_CPU)
+
+	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
+	require.NoError(t, err)
+
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
+	require.NoError(t, err)
+
+	cpuItem, cpuItemExist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
+	require.True(t, cpuItemExist)
+
+	c, cleanup, err := NewDCGMCollector(counters, "", &config, cpuItem)
 	require.NoError(t, err)
 
 	out, err := c.GetMetrics()
@@ -329,14 +355,21 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		MajorRange: []int{-1},
 		MinorRange: []int{-1},
 	}
-	cfg := Config{
+	config := Config{
 		GPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
 		UseFakeGPUs:     false,
 	}
 
-	c, cleanup, err := NewDCGMCollector(counters, &cfg, "", dcgm.FE_GPU)
+	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	require.NoError(t, err)
+
+	gpuItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	require.True(t, exists)
+
+	c, cleanup, err := NewDCGMCollector(counters, "", &config, gpuItem)
 	require.NoError(t, err)
 
 	defer cleanup()

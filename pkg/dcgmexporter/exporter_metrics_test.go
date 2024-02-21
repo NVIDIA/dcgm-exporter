@@ -26,7 +26,7 @@ func TestIdentifyMetricType(t *testing.T) {
 	tests := []struct {
 		name   string
 		field  string
-		output DCGMExporterMetric
+		output ExporterCounter
 		valid  bool
 	}{
 		{

@@ -48,24 +48,25 @@ const (
 )
 
 const (
-	CLIFieldsFile               = "collectors"
-	CLIAddress                  = "address"
-	CLICollectInterval          = "collect-interval"
-	CLIKubernetes               = "kubernetes"
-	CLIKubernetesGPUIDType      = "kubernetes-gpu-id-type"
-	CLIUseOldNamespace          = "use-old-namespace"
-	CLIRemoteHEInfo             = "remote-hostengine-info"
-	CLIGPUDevices               = "devices"
-	CLISwitchDevices            = "switch-devices"
-	CLICPUDevices               = "cpu-devices"
-	CLINoHostname               = "no-hostname"
-	CLIUseFakeGPUs              = "fake-gpus"
-	CLIConfigMapData            = "configmap-data"
-	CLIWebSystemdSocket         = "web-systemd-socket"
-	CLIWebConfigFile            = "web-config-file"
-	CLIXIDCountWindowSize       = "xid-count-window-size"
-	CLIReplaceBlanksInModelName = "replace-blanks-in-model-name"
-	CLIDebugMode                = "debug"
+	CLIFieldsFile                          = "collectors"
+	CLIAddress                             = "address"
+	CLICollectInterval                     = "collect-interval"
+	CLIKubernetes                          = "kubernetes"
+	CLIKubernetesGPUIDType                 = "kubernetes-gpu-id-type"
+	CLIUseOldNamespace                     = "use-old-namespace"
+	CLIRemoteHEInfo                        = "remote-hostengine-info"
+	CLIGPUDevices                          = "devices"
+	CLISwitchDevices                       = "switch-devices"
+	CLICPUDevices                          = "cpu-devices"
+	CLINoHostname                          = "no-hostname"
+	CLIUseFakeGPUs                         = "fake-gpus"
+	CLIConfigMapData                       = "configmap-data"
+	CLIWebSystemdSocket                    = "web-systemd-socket"
+	CLIWebConfigFile                       = "web-config-file"
+	CLIXIDCountWindowSize                  = "xid-count-window-size"
+	CLIReplaceBlanksInModelName            = "replace-blanks-in-model-name"
+	CLIDebugMode                           = "debug"
+	CLIClockThrottleReasonsCountWindowSize = "clock-throttle-reasons-count-window-size"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -199,6 +200,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Enable debug output",
 			EnvVars: []string{"DCGM_EXPORTER_DEBUG"},
 		},
+		&cli.IntFlag{
+			Name:    CLIClockThrottleReasonsCountWindowSize,
+			Value:   int((5 * time.Minute).Milliseconds()),
+			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in DCGM Exporter.",
+			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -285,15 +292,16 @@ restart:
 		config.MetricGroups = groups
 	}
 
-	counters, exporterCounters, err := dcgmexporter.ExtractCounters(config)
+	cs, err := dcgmexporter.GetCounterSet(config)
+
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
-	// Copy labels from counters to exporterCounters
-	for i := range counters {
-		if counters[i].PromType == "label" {
-			exporterCounters = append(exporterCounters, counters[i])
+	// Copy labels from DCGM Counters to ExporterCounters
+	for i := range cs.DCGMCounters {
+		if cs.DCGMCounters[i].PromType == "label" {
+			cs.ExporterCounters = append(cs.ExporterCounters, cs.DCGMCounters[i])
 		}
 	}
 
@@ -302,9 +310,35 @@ restart:
 		return err
 	}
 
+	allCounters := []dcgmexporter.Counter{}
+
+	allCounters = append(allCounters, cs.DCGMCounters...)
+	allCounters = append(allCounters,
+		dcgmexporter.Counter{
+			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+		},
+		dcgmexporter.Counter{
+			FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
+		},
+	)
+
+	fieldEntityGroupTypeSystemInfo := dcgmexporter.NewEntityGroupTypeSystemInfo(allCounters, config)
+
+	for _, egt := range dcgmexporter.FieldEntityGroupTypeToMonitor {
+		err := fieldEntityGroupTypeSystemInfo.Load(egt)
+		if err != nil {
+			logrus.Infof("Not collecting %s metrics", egt.String())
+		}
+	}
+
 	ch := make(chan string, 10)
 
-	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config, counters, hostname, dcgmexporter.NewDCGMCollector)
+	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config,
+		cs.DCGMCounters,
+		hostname,
+		dcgmexporter.NewDCGMCollector,
+		fieldEntityGroupTypeSystemInfo,
+	)
 	defer cleanup()
 	if err != nil {
 		logrus.Fatal(err)
@@ -312,18 +346,41 @@ restart:
 
 	cRegistry := dcgmexporter.NewRegistry()
 
-	if dcgmexporter.IsdcgmExpXIDErrorsCountEnabled(exporterCounters) {
-		xidCollector, err := dcgmexporter.NewXIDCollector(config, exporterCounters, hostname)
+	if dcgmexporter.IsDCGMExpXIDErrorsCountEnabled(cs.ExporterCounters) {
+		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+		if !exists {
+			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMXIDErrorsCount.String())
+		}
+
+		xidCollector, err := dcgmexporter.NewXIDCollector(cs.ExporterCounters, hostname, config, item)
 		if err != nil {
 			logrus.Fatal(err)
 		}
 
-		defer func() {
-			xidCollector.Cleanup()
-		}()
-
 		cRegistry.Register(xidCollector)
+
+		logrus.Infof("%s collector initialized", dcgmexporter.DCGMXIDErrorsCount.String())
 	}
+
+	if dcgmexporter.IsDCGMExpClockThrottleReasonsEnabledCount(cs.ExporterCounters) {
+		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+		if !exists {
+			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMClockThrottleReasonsCount.String())
+		}
+		clocksThrottleReasonsCollector, err := dcgmexporter.NewClocksThrottleReasonsCollector(
+			cs.ExporterCounters, hostname, config, item)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+
+		cRegistry.Register(clocksThrottleReasonsCollector)
+
+		logrus.Infof("%s collector initialized", dcgmexporter.DCGMClockThrottleReasonsCount.String())
+	}
+
+	defer func() {
+		cRegistry.Cleanup()
+	}()
 
 	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, cRegistry)
 	defer cleanup()
@@ -436,25 +493,26 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 	}
 
 	return &dcgmexporter.Config{
-		CollectorsFile:           c.String(CLIFieldsFile),
-		Address:                  c.String(CLIAddress),
-		CollectInterval:          c.Int(CLICollectInterval),
-		Kubernetes:               c.Bool(CLIKubernetes),
-		KubernetesGPUIdType:      dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
-		CollectDCP:               true,
-		UseOldNamespace:          c.Bool(CLIUseOldNamespace),
-		UseRemoteHE:              c.IsSet(CLIRemoteHEInfo),
-		RemoteHEInfo:             c.String(CLIRemoteHEInfo),
-		GPUDevices:               gOpt,
-		SwitchDevices:            sOpt,
-		CPUDevices:               cOpt,
-		NoHostname:               c.Bool(CLINoHostname),
-		UseFakeGPUs:              c.Bool(CLIUseFakeGPUs),
-		ConfigMapData:            c.String(CLIConfigMapData),
-		WebSystemdSocket:         c.Bool(CLIWebSystemdSocket),
-		WebConfigFile:            c.String(CLIWebConfigFile),
-		XIDCountWindowSize:       c.Int(CLIXIDCountWindowSize),
-		ReplaceBlanksInModelName: c.Bool(CLIReplaceBlanksInModelName),
-		Debug:                    c.Bool(CLIDebugMode),
+		CollectorsFile:                      c.String(CLIFieldsFile),
+		Address:                             c.String(CLIAddress),
+		CollectInterval:                     c.Int(CLICollectInterval),
+		Kubernetes:                          c.Bool(CLIKubernetes),
+		KubernetesGPUIdType:                 dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		CollectDCP:                          true,
+		UseOldNamespace:                     c.Bool(CLIUseOldNamespace),
+		UseRemoteHE:                         c.IsSet(CLIRemoteHEInfo),
+		RemoteHEInfo:                        c.String(CLIRemoteHEInfo),
+		GPUDevices:                          gOpt,
+		SwitchDevices:                       sOpt,
+		CPUDevices:                          cOpt,
+		NoHostname:                          c.Bool(CLINoHostname),
+		UseFakeGPUs:                         c.Bool(CLIUseFakeGPUs),
+		ConfigMapData:                       c.String(CLIConfigMapData),
+		WebSystemdSocket:                    c.Bool(CLIWebSystemdSocket),
+		WebConfigFile:                       c.String(CLIWebConfigFile),
+		XIDCountWindowSize:                  c.Int(CLIXIDCountWindowSize),
+		ReplaceBlanksInModelName:            c.Bool(CLIReplaceBlanksInModelName),
+		Debug:                               c.Bool(CLIDebugMode),
+		ClockThrottleReasonsCountWindowSize: c.Int(CLIClockThrottleReasonsCountWindowSize),
 	}, nil
 }

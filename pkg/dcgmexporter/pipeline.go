@@ -27,60 +27,75 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func NewMetricsPipeline(
-	c *Config, counters []Counter, hostname string, newDCGMCollector DCGMCollectorConstructor,
+func NewMetricsPipeline(config *Config,
+	counters []Counter,
+	hostname string,
+	newDCGMCollector DCGMCollectorConstructor,
+	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
 ) (*MetricsPipeline, func(), error) {
 
 	logrus.WithField(LoggerDumpKey, fmt.Sprintf("%+v", counters)).Debug("Counters are initialized")
 
 	cleanups := []func(){}
-	gpuCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_GPU)
-	if err != nil {
-		logrus.Info("Not collecting gpu metrics: ", err)
-	} else {
-		cleanups = append(cleanups, cleanup)
-	}
 
-	switchCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_SWITCH)
-	if err != nil {
-		logrus.Info("Not collecting switch metrics: ", err)
-	} else {
-		cleanups = append(cleanups, cleanup)
-	}
+	var (
+		gpuCollector    *DCGMCollector
+		switchCollector *DCGMCollector
+		linkCollector   *DCGMCollector
+		cpuCollector    *DCGMCollector
+		coreCollector   *DCGMCollector
+		err             error
+	)
 
-	linkCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_LINK)
-	if err != nil {
-		logrus.Info("Not collecting link metrics: ", err)
-	} else {
-		cleanups = append(cleanups, cleanup)
-	}
-
-	cpuCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_CPU)
-	if err != nil {
-		logrus.Info("Not collecting cpu metrics: ", err)
-	} else {
-		cleanups = append(cleanups, cleanup)
-	}
-
-	coreCollector, cleanup, err := newDCGMCollector(counters, c, hostname, dcgm.FE_CPU_CORE)
-	if err != nil {
-		logrus.Info("Not collecting cpu core metrics: ", err)
-	} else {
-		cleanups = append(cleanups, cleanup)
-	}
-
-	transformations := []Transform{}
-	if c.Kubernetes {
-		podMapper, err := NewPodMapper(c)
+	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU); exists {
+		var cleanup func()
+		gpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
-			logrus.Warnf("Could not enable kubernetes metric collection: %v", err)
-		} else {
-			transformations = append(transformations, podMapper)
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_GPU")
 		}
+		cleanups = append(cleanups, cleanup)
 	}
+
+	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH); exists {
+		var cleanup func()
+		switchCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_SWITCH")
+		}
+		cleanups = append(cleanups, cleanup)
+	}
+
+	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_LINK); exists {
+		var cleanup func()
+		linkCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_LINK")
+		}
+		cleanups = append(cleanups, cleanup)
+	}
+
+	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU); exists {
+		var cleanup func()
+		cpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_CPU")
+		}
+		cleanups = append(cleanups, cleanup)
+	}
+
+	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU_CORE); exists {
+		var cleanup func()
+		coreCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		if err != nil {
+			logrus.Warn("Cannot create DCGMCollector for dcgm.FE_CPU_CORE")
+		}
+		cleanups = append(cleanups, cleanup)
+	}
+
+	transformations := getTransformations(config)
 
 	return &MetricsPipeline{
-			config: c,
+			config: config,
 
 			migMetricsFormat:     template.Must(template.New("migMetrics").Parse(migMetricsFormat)),
 			switchMetricsFormat:  template.Must(template.New("switchMetrics").Parse(switchMetricsFormat)),
@@ -100,6 +115,20 @@ func NewMetricsPipeline(
 				cleanup()
 			}
 		}, nil
+}
+
+func getTransformations(c *Config) []Transform {
+	transformations := []Transform{}
+	if c.Kubernetes {
+		podMapper, err := NewPodMapper(c)
+		if err != nil {
+			logrus.Warnf("Could not enable kubernetes metric collection: %v", err)
+		} else {
+			transformations = append(transformations, podMapper)
+		}
+	}
+
+	return transformations
 }
 
 // Primarely for testing, caller expected to cleanup the collector

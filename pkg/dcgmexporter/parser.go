@@ -33,13 +33,17 @@ import (
 )
 
 const (
-	CPU_FIELDS_START = 1100
-	DCP_FIELDS_START = 1000
+	cpuFieldsStart = 1100
+	dcpFieldsStart = 1000
 )
 
-func ExtractCounters(c *Config) ([]Counter, []Counter, error) {
-	var err error
-	var records [][]string
+func GetCounterSet(c *Config) (*CounterSet, error) {
+	var (
+		err     error
+		records [][]string
+	)
+
+	res := new(CounterSet)
 
 	if c.ConfigMapData != undefinedConfigMapData {
 		var client kubernetes.Interface
@@ -52,7 +56,7 @@ func ExtractCounters(c *Config) ([]Counter, []Counter, error) {
 			logrus.Fatal(err)
 		}
 	} else {
-		logrus.Infof("No configmap data specified")
+		err = fmt.Errorf("no configmap data specified")
 	}
 
 	if err != nil || c.ConfigMapData == undefinedConfigMapData {
@@ -61,16 +65,16 @@ func ExtractCounters(c *Config) ([]Counter, []Counter, error) {
 		records, err = ReadCSVFile(c.CollectorsFile)
 		if err != nil {
 			logrus.Errorf("Could not read metrics file '%s'; err: %v", c.CollectorsFile, err)
-			return nil, nil, err
+			return res, err
 		}
 	}
 
-	counters, extraCounters, err := extractCounters(records, c)
+	res, err = extractCounters(records, c)
 	if err != nil {
-		return nil, nil, err
+		return res, err
 	}
 
-	return counters, extraCounters, err
+	return res, err
 }
 
 func ReadCSVFile(filename string) ([][]string, error) {
@@ -88,9 +92,8 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error) {
-	f := make([]Counter, 0, len(records))
-	expf := make([]Counter, 0)
+func extractCounters(records [][]string, c *Config) (*CounterSet, error) {
+	res := CounterSet{}
 
 	for i, record := range records {
 		var useOld = false
@@ -103,7 +106,7 @@ func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error
 		}
 
 		if len(record) != 3 {
-			return nil, nil, fmt.Errorf("malformed CSV record; err: failed to parse line %d (`%v`), "+
+			return nil, fmt.Errorf("malformed CSV record; err: failed to parse line %d (`%v`), "+
 				"expected 3 fields", i,
 				record)
 		}
@@ -114,9 +117,9 @@ func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error
 
 			expField, err := IdentifyMetricType(record[0])
 			if err != nil {
-				return nil, nil, fmt.Errorf("could not find DCGM field; err: %w", err)
+				return nil, fmt.Errorf("could not find DCGM field; err: %w", err)
 			} else if expField != DCGMFIUnknown {
-				expf = append(expf, Counter{dcgm.Short(expField), record[0], record[1], record[2]})
+				res.ExporterCounters = append(res.ExporterCounters, Counter{dcgm.Short(expField), record[0], record[1], record[2]})
 				continue
 			}
 		}
@@ -132,10 +135,10 @@ func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error
 			}
 
 			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
+				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 			}
 
-			f = append(f, Counter{fieldID, record[0], record[1], record[2]})
+			res.DCGMCounters = append(res.DCGMCounters, Counter{fieldID, record[0], record[1], record[2]})
 		} else {
 			if !fieldIsSupported(uint(oldFieldID), c) {
 				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
@@ -143,19 +146,18 @@ func extractCounters(records [][]string, c *Config) ([]Counter, []Counter, error
 			}
 
 			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
+				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 			}
 
-			f = append(f, Counter{oldFieldID, record[0], record[1], record[2]})
-
+			res.DCGMCounters = append(res.DCGMCounters, Counter{oldFieldID, record[0], record[1], record[2]})
 		}
 	}
 
-	return f, expf, nil
+	return &res, nil
 }
 
 func fieldIsSupported(fieldID uint, c *Config) bool {
-	if fieldID < DCP_FIELDS_START || fieldID >= CPU_FIELDS_START {
+	if fieldID < dcpFieldsStart || fieldID >= cpuFieldsStart {
 		return true
 	}
 
