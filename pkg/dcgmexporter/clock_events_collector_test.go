@@ -24,11 +24,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
 func TestClockEventsCollector_Gather(t *testing.T) {
