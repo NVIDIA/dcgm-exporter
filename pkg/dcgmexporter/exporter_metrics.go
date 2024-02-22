@@ -19,16 +19,16 @@ package dcgmexporter
 import "fmt"
 
 const (
-	dcgmExpClockThrottleReasonsCount = "DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT"
-	dcgmExpXIDErrorsCount            = "DCGM_EXP_XID_ERRORS_COUNT"
+	dcgmExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
+	dcgmExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
 )
 
 type ExporterCounter uint16
 
 const (
-	DCGMFIUnknown                 ExporterCounter = 0
-	DCGMXIDErrorsCount            ExporterCounter = iota + 9000
-	DCGMClockThrottleReasonsCount ExporterCounter = iota
+	DCGMFIUnknown        ExporterCounter = 0
+	DCGMXIDErrorsCount   ExporterCounter = iota + 9000
+	DCGMClockEventsCount ExporterCounter = iota
 )
 
 // String method to convert the enum value to a string
@@ -36,8 +36,8 @@ func (enm ExporterCounter) String() string {
 	switch enm {
 	case DCGMXIDErrorsCount:
 		return dcgmExpXIDErrorsCount
-	case DCGMClockThrottleReasonsCount:
-		return dcgmExpClockThrottleReasonsCount
+	case DCGMClockEventsCount:
+		return dcgmExpClockEventsCount
 	default:
 		return "DCGM_FI_UNKNOWN"
 	}
@@ -45,9 +45,9 @@ func (enm ExporterCounter) String() string {
 
 // DCGMFields maps DCGMExporterMetric String to enum
 var DCGMFields = map[string]ExporterCounter{
-	DCGMXIDErrorsCount.String():            DCGMXIDErrorsCount,
-	DCGMClockThrottleReasonsCount.String(): DCGMClockThrottleReasonsCount,
-	DCGMFIUnknown.String():                 DCGMFIUnknown,
+	DCGMXIDErrorsCount.String():   DCGMXIDErrorsCount,
+	DCGMClockEventsCount.String(): DCGMClockEventsCount,
+	DCGMFIUnknown.String():        DCGMFIUnknown,
 }
 
 func IdentifyMetricType(s string) (ExporterCounter, error) {

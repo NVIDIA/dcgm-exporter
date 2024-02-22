@@ -31,26 +31,26 @@ type DeviceOptions struct {
 }
 
 type Config struct {
-	CollectorsFile                      string
-	Address                             string
-	CollectInterval                     int
-	Kubernetes                          bool
-	KubernetesGPUIdType                 KubernetesGPUIDType
-	CollectDCP                          bool
-	UseOldNamespace                     bool
-	UseRemoteHE                         bool
-	RemoteHEInfo                        string
-	GPUDevices                          DeviceOptions
-	SwitchDevices                       DeviceOptions
-	CPUDevices                          DeviceOptions
-	NoHostname                          bool
-	UseFakeGPUs                         bool
-	ConfigMapData                       string
-	MetricGroups                        []dcgm.MetricGroup
-	WebSystemdSocket                    bool
-	WebConfigFile                       string
-	XIDCountWindowSize                  int
-	ReplaceBlanksInModelName            bool
-	Debug                               bool
-	ClockThrottleReasonsCountWindowSize int
+	CollectorsFile             string
+	Address                    string
+	CollectInterval            int
+	Kubernetes                 bool
+	KubernetesGPUIdType        KubernetesGPUIDType
+	CollectDCP                 bool
+	UseOldNamespace            bool
+	UseRemoteHE                bool
+	RemoteHEInfo               string
+	GPUDevices                 DeviceOptions
+	SwitchDevices              DeviceOptions
+	CPUDevices                 DeviceOptions
+	NoHostname                 bool
+	UseFakeGPUs                bool
+	ConfigMapData              string
+	MetricGroups               []dcgm.MetricGroup
+	WebSystemdSocket           bool
+	WebConfigFile              string
+	XIDCountWindowSize         int
+	ReplaceBlanksInModelName   bool
+	Debug                      bool
+	ClockEventsCountWindowSize int
 }

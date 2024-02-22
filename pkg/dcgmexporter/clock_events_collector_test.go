@@ -31,7 +31,7 @@ import (
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 )
 
-func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
+func TestClockEventsCollector_Gather(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest(t)
 	runOnlyWithLiveGPUs(t)
@@ -44,11 +44,11 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
 		},
-		ClockThrottleReasonsCountWindowSize: int(time.Duration(5) * time.Minute),
+		ClockEventsCountWindowSize: int(time.Duration(5) * time.Minute),
 	}
 
 	records := [][]string{
-		{"DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT", "gauge", ""},
+		{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
@@ -81,8 +81,8 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
-	type clockThrottleReasonExpectation map[string]string
-	expectations := map[string]clockThrottleReasonExpectation{}
+	type clockEventsCountExpectation map[string]string
+	expectations := map[string]clockEventsCountExpectation{}
 
 	for i, gpuID := range gpuIDs {
 		err = dcgm.InjectFieldValue(gpuID,
@@ -112,7 +112,7 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		expectations[fmt.Sprint(gpuID)] = clockThrottleReasonExpectation{
+		expectations[fmt.Sprint(gpuID)] = clockEventsCountExpectation{
 			DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL.String(): "2",
 			DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL.String(): "2",
 			DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE.String():   "1",
@@ -147,7 +147,7 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, hostname, config, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -157,7 +157,7 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 	metrics, err := collector.GetMetrics()
 	require.NoError(t, err)
 	require.NotEmpty(t, metrics)
-	// We expect 1 metric: DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT
+	// We expect 1 metric: DCGM_EXP_CLOCK_EVENTS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
@@ -171,14 +171,14 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 		}
 	}
 
-	// We expect 9 records, because we have 3 fake GPU and each GPU experienced 3 CLOCK_THROTTLE errors
+	// We expect 9 records, because we have 3 fake GPU and each GPU experienced 3 CLOCK_EVENTS
 	require.Len(t, metricValues, 9)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
-		require.Equal(t, fmt.Sprint(config.ClockThrottleReasonsCountWindowSize), val.Labels["window_size_in_ms"])
+		require.Equal(t, fmt.Sprint(config.ClockEventsCountWindowSize), val.Labels["window_size_in_ms"])
 		expected, exists := expectations[val.GPU]
 		require.True(t, exists)
-		actualReason, exists := val.Labels["throttle_reason"]
+		actualReason, exists := val.Labels["clock_event"]
 		require.True(t, exists)
 		expectedVal, exists := expected[actualReason]
 		require.True(t, exists)
@@ -186,7 +186,7 @@ func TestClocksThrottleReasonsCollector_Gather(t *testing.T) {
 	}
 }
 
-func TestClocksThrottleReasonsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
+func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	config := &Config{
 		GPUDevices: DeviceOptions{
 			Flex:       true,
@@ -209,7 +209,7 @@ func TestClocksThrottleReasonsCollector_NewClocksThrottleReasonsCollector(t *tes
 	require.NoError(t, err)
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	t.Run("Should Return Error When DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT is not present", func(t *testing.T) {
+	t.Run("Should Return Error When DCGM_EXP_CLOCK_EVENTS_COUNT is not present", func(t *testing.T) {
 		records := [][]string{
 			{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 		}
@@ -217,24 +217,24 @@ func TestClocksThrottleReasonsCollector_NewClocksThrottleReasonsCollector(t *tes
 		require.NoError(t, err)
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
-		collector, err := NewClocksThrottleReasonsCollector(cc.DCGMCounters, "", config, item)
+		collector, err := NewClockEventsCollector(cc.DCGMCounters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
 
 	t.Run("Should Return Error When Counter Param Is Empty", func(t *testing.T) {
 		counters := make([]Counter, 0)
-		collector, err := NewClocksThrottleReasonsCollector(counters, "", config, item)
+		collector, err := NewClockEventsCollector(counters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
 
-	t.Run("Should Not Return Error When DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT Present More Than Once", func(t *testing.T) {
+	t.Run("Should Not Return Error When DCGM_EXP_CLOCK_EVENTS_COUNT Present More Than Once", func(t *testing.T) {
 		records := [][]string{
 			{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
-			{"DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT", "gauge", ""},
-			{"DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT", "gauge", ""},
-			{"DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT", "gauge", ""},
+			{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
+			{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
+			{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 		}
 		cc, err := extractCounters(records, config)
 		require.NoError(t, err)
@@ -243,13 +243,13 @@ func TestClocksThrottleReasonsCollector_NewClocksThrottleReasonsCollector(t *tes
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		xidCollector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, "", config, item)
+		collector, err := NewClockEventsCollector(cc.ExporterCounters, "", config, item)
 		require.NoError(t, err)
-		require.NotNil(t, xidCollector)
+		require.NotNil(t, collector)
 	})
 }
 
-func TestClocksThrottleReasonsCollector_Gather_AllTheThings(t *testing.T) {
+func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest(t)
 	runOnlyWithLiveGPUs(t)
@@ -261,11 +261,11 @@ func TestClocksThrottleReasonsCollector_Gather_AllTheThings(t *testing.T) {
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
 		},
-		ClockThrottleReasonsCountWindowSize: int(time.Duration(5) * time.Minute),
+		ClockEventsCountWindowSize: int(time.Duration(5) * time.Minute),
 	}
 
 	records := [][]string{
-		{"DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT", "gauge", ""},
+		{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
@@ -344,7 +344,7 @@ func TestClocksThrottleReasonsCollector_Gather_AllTheThings(t *testing.T) {
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClocksThrottleReasonsCollector(cc.ExporterCounters, hostname, config, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -354,7 +354,7 @@ func TestClocksThrottleReasonsCollector_Gather_AllTheThings(t *testing.T) {
 	metrics, err := collector.GetMetrics()
 	require.NoError(t, err)
 	require.NotEmpty(t, metrics)
-	// We expect 1 metric: DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT
+	// We expect 1 metric: DCGM_EXP_CLOCK_EVENTS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
@@ -372,10 +372,10 @@ func TestClocksThrottleReasonsCollector_Gather_AllTheThings(t *testing.T) {
 	require.Len(t, metricValues, 9)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
-		require.Equal(t, fmt.Sprint(config.ClockThrottleReasonsCountWindowSize), val.Labels["window_size_in_ms"])
+		require.Equal(t, fmt.Sprint(config.ClockEventsCountWindowSize), val.Labels["window_size_in_ms"])
 		expected, exists := expectations[val.GPU]
 		require.True(t, exists)
-		actualReason, exists := val.Labels["throttle_reason"]
+		actualReason, exists := val.Labels["clock_event"]
 		require.True(t, exists)
 		expectedVal, exists := expected[actualReason]
 		require.True(t, exists)

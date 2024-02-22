@@ -48,25 +48,25 @@ const (
 )
 
 const (
-	CLIFieldsFile                          = "collectors"
-	CLIAddress                             = "address"
-	CLICollectInterval                     = "collect-interval"
-	CLIKubernetes                          = "kubernetes"
-	CLIKubernetesGPUIDType                 = "kubernetes-gpu-id-type"
-	CLIUseOldNamespace                     = "use-old-namespace"
-	CLIRemoteHEInfo                        = "remote-hostengine-info"
-	CLIGPUDevices                          = "devices"
-	CLISwitchDevices                       = "switch-devices"
-	CLICPUDevices                          = "cpu-devices"
-	CLINoHostname                          = "no-hostname"
-	CLIUseFakeGPUs                         = "fake-gpus"
-	CLIConfigMapData                       = "configmap-data"
-	CLIWebSystemdSocket                    = "web-systemd-socket"
-	CLIWebConfigFile                       = "web-config-file"
-	CLIXIDCountWindowSize                  = "xid-count-window-size"
-	CLIReplaceBlanksInModelName            = "replace-blanks-in-model-name"
-	CLIDebugMode                           = "debug"
-	CLIClockThrottleReasonsCountWindowSize = "clock-throttle-reasons-count-window-size"
+	CLIFieldsFile                 = "collectors"
+	CLIAddress                    = "address"
+	CLICollectInterval            = "collect-interval"
+	CLIKubernetes                 = "kubernetes"
+	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
+	CLIUseOldNamespace            = "use-old-namespace"
+	CLIRemoteHEInfo               = "remote-hostengine-info"
+	CLIGPUDevices                 = "devices"
+	CLISwitchDevices              = "switch-devices"
+	CLICPUDevices                 = "cpu-devices"
+	CLINoHostname                 = "no-hostname"
+	CLIUseFakeGPUs                = "fake-gpus"
+	CLIConfigMapData              = "configmap-data"
+	CLIWebSystemdSocket           = "web-systemd-socket"
+	CLIWebConfigFile              = "web-config-file"
+	CLIXIDCountWindowSize         = "xid-count-window-size"
+	CLIReplaceBlanksInModelName   = "replace-blanks-in-model-name"
+	CLIDebugMode                  = "debug"
+	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -201,10 +201,10 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_DEBUG"},
 		},
 		&cli.IntFlag{
-			Name:    CLIClockThrottleReasonsCountWindowSize,
+			Name:    CLIClockEventsCountWindowSize,
 			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in DCGM Exporter.",
-			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
+			Usage:   "Set time window size in milliseconds (ms) for counting clock events in DCGM Exporter.",
+			EnvVars: []string{"DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE"},
 		},
 	}
 
@@ -362,12 +362,12 @@ restart:
 		logrus.Infof("%s collector initialized", dcgmexporter.DCGMXIDErrorsCount.String())
 	}
 
-	if dcgmexporter.IsDCGMExpClockThrottleReasonsEnabledCount(cs.ExporterCounters) {
+	if dcgmexporter.IsDCGMExpClockEventsCountEnabled(cs.ExporterCounters) {
 		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
-			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMClockThrottleReasonsCount.String())
+			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMClockEventsCount.String())
 		}
-		clocksThrottleReasonsCollector, err := dcgmexporter.NewClocksThrottleReasonsCollector(
+		clocksThrottleReasonsCollector, err := dcgmexporter.NewClockEventsCollector(
 			cs.ExporterCounters, hostname, config, item)
 		if err != nil {
 			logrus.Fatal(err)
@@ -375,7 +375,7 @@ restart:
 
 		cRegistry.Register(clocksThrottleReasonsCollector)
 
-		logrus.Infof("%s collector initialized", dcgmexporter.DCGMClockThrottleReasonsCount.String())
+		logrus.Infof("%s collector initialized", dcgmexporter.DCGMClockEventsCount.String())
 	}
 
 	defer func() {
@@ -493,26 +493,26 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 	}
 
 	return &dcgmexporter.Config{
-		CollectorsFile:                      c.String(CLIFieldsFile),
-		Address:                             c.String(CLIAddress),
-		CollectInterval:                     c.Int(CLICollectInterval),
-		Kubernetes:                          c.Bool(CLIKubernetes),
-		KubernetesGPUIdType:                 dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
-		CollectDCP:                          true,
-		UseOldNamespace:                     c.Bool(CLIUseOldNamespace),
-		UseRemoteHE:                         c.IsSet(CLIRemoteHEInfo),
-		RemoteHEInfo:                        c.String(CLIRemoteHEInfo),
-		GPUDevices:                          gOpt,
-		SwitchDevices:                       sOpt,
-		CPUDevices:                          cOpt,
-		NoHostname:                          c.Bool(CLINoHostname),
-		UseFakeGPUs:                         c.Bool(CLIUseFakeGPUs),
-		ConfigMapData:                       c.String(CLIConfigMapData),
-		WebSystemdSocket:                    c.Bool(CLIWebSystemdSocket),
-		WebConfigFile:                       c.String(CLIWebConfigFile),
-		XIDCountWindowSize:                  c.Int(CLIXIDCountWindowSize),
-		ReplaceBlanksInModelName:            c.Bool(CLIReplaceBlanksInModelName),
-		Debug:                               c.Bool(CLIDebugMode),
-		ClockThrottleReasonsCountWindowSize: c.Int(CLIClockThrottleReasonsCountWindowSize),
+		CollectorsFile:             c.String(CLIFieldsFile),
+		Address:                    c.String(CLIAddress),
+		CollectInterval:            c.Int(CLICollectInterval),
+		Kubernetes:                 c.Bool(CLIKubernetes),
+		KubernetesGPUIdType:        dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		CollectDCP:                 true,
+		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
+		UseRemoteHE:                c.IsSet(CLIRemoteHEInfo),
+		RemoteHEInfo:               c.String(CLIRemoteHEInfo),
+		GPUDevices:                 gOpt,
+		SwitchDevices:              sOpt,
+		CPUDevices:                 cOpt,
+		NoHostname:                 c.Bool(CLINoHostname),
+		UseFakeGPUs:                c.Bool(CLIUseFakeGPUs),
+		ConfigMapData:              c.String(CLIConfigMapData),
+		WebSystemdSocket:           c.Bool(CLIWebSystemdSocket),
+		WebConfigFile:              c.String(CLIWebConfigFile),
+		XIDCountWindowSize:         c.Int(CLIXIDCountWindowSize),
+		ReplaceBlanksInModelName:   c.Bool(CLIReplaceBlanksInModelName),
+		Debug:                      c.Bool(CLIDebugMode),
+		ClockEventsCountWindowSize: c.Int(CLIClockEventsCountWindowSize),
 	}, nil
 }
