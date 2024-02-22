@@ -92,3 +92,7 @@ validate-modules:
 	@echo "- Checking for any unused/missing packages in go.mod..."
 	go mod tidy
 	@git diff --exit-code -- go.sum go.mod
+
+.PHONY: tools
+tools: ## Install required tools and utilities
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2

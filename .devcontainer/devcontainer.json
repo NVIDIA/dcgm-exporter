@@ -1,8 +1,8 @@
 // Read here https://containers.dev/implementors/json_reference/
 {
-  "name": "DCGM-Exporter dev container",
+  "name": "dcgm-exporter-container",
   "build": {
-    "dockerfile": "Dockerfile",
+    "dockerfile": "Dockerfile"
   },
   "privileged": true,
   "runArgs": [
@@ -16,6 +16,6 @@
     "--cap-add=SYS_ADMIN",
     "--security-opt",
     "seccomp=unconfined",
-    "--gpus=all",
+    "--gpus=all"
     ]
 }

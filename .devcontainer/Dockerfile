@@ -11,7 +11,8 @@ RUN groupadd -g $USER_GID $USERNAME && \
 # Allow 'developer' to use sudo without a password
 RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-RUN set -eux; \
+RUN --mount=type=cache,target=/var/cache/apt \
+	set -eux; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends \
         git \
@@ -22,11 +23,15 @@ RUN set -eux; \
 		make \
 		pkg-config \
         wget \
-	; \
-	rm -rf /var/lib/apt/lists/*
+		datacenter-gpu-manager=1:${DCGM_VERSION} \
+		libcap2-bin \
+		&& apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/*
+
 RUN set -eux; \
 	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
 	url=; \
+	echo "$arch"; \
 	case "$arch" in \
 		'amd64') \
 			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
@@ -47,19 +52,14 @@ RUN set -eux; \
 	fi; \
     wget -O go.tgz "$url" --progress=dot:giga; \
     tar -C /usr/local -xzf go.tgz; \
-	rm go.tgz;
-
+	rm go.tgz
 ENV GOTOOLCHAIN=local
 ENV GOPATH /go
 ENV PATH $GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH $PATH:/usr/local/go/bin
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl \
-	&& apt-get autoremove -y \
-	&& rm -rf /var/lib/apt/lists/* \
-	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite
+RUN rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
