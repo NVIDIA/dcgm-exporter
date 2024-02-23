@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"text/template"
@@ -132,29 +131,12 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		uuid = "uuid"
 	}
 	for _, mi := range monitoringInfo {
-		latestValues, err := dcgm.EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.labelDeviceFields)
-		if err != nil {
-			return nil, err
-		}
-		// Extract Labels
-		for _, val := range latestValues {
-			v := ToString(val)
-			// Filter out counters with no value and ignored fields for this entity
-			if v == SkipDCGMValue {
-				continue
-			}
-
-			counter, err := FindCounterField(c.labelsCounters, val.FieldId)
+		if len(c.labelsCounters) > 0 {
+			err := c.getLabelsFromCounters(mi, labels)
 			if err != nil {
-				continue
-			}
-
-			if counter.PromType == "label" {
-				labels[counter.FieldName] = v
-				continue
+				return nil, err
 			}
 		}
-
 		entityValues, exists := mapEntityIDToValues[mi.DeviceInfo.GPU]
 		if exists {
 			for entityValue, val := range entityValues {
@@ -200,6 +182,32 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
+func (c *expCollector) getLabelsFromCounters(mi MonitoringInfo, labels map[string]string) error {
+	latestValues, err := dcgm.EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.labelDeviceFields)
+	if err != nil {
+		return err
+	}
+	// Extract Labels
+	for _, val := range latestValues {
+		v := ToString(val)
+		// Filter out counters with no value and ignored fields for this entity
+		if v == SkipDCGMValue {
+			continue
+		}
+
+		counter, err := FindCounterField(c.labelsCounters, val.FieldId)
+		if err != nil {
+			continue
+		}
+
+		if counter.PromType == "label" {
+			labels[counter.FieldName] = v
+			continue
+		}
+	}
+	return nil
+}
+
 func (c *expCollector) Cleanup() {
 	for _, cleanup := range c.cleanups {
 		cleanup()
@@ -218,7 +226,6 @@ func newExpCollector(
 	for i := 0; i < len(counters); i++ {
 		if counters[i].PromType == "label" {
 			labelsCounters = append(labelsCounters, counters[i])
-			counters = slices.Delete(counters, i, i+1)
 		}
 	}
 
