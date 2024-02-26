@@ -22,6 +22,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
+	_ "go.uber.org/automaxprocs"
 )
 
 var (
