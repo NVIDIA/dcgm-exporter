@@ -1,9 +1,9 @@
 apiVersion: v2
 name: dcgm-exporter
 description: A Helm chart for DCGM exporter
-version: "3.3.1"
+version: "3.4.0"
 kubeVersion: ">= 1.19.0-0"
-appVersion: "3.3.1"
+appVersion: "3.4.0"
 sources:
 - https://github.com/nvidia/dcgm-exporter
 home: https://github.com/nvidia/dcgm-exporter/
