@@ -1,0 +1,21 @@
+// Read here https://containers.dev/implementors/json_reference/
+{
+  "name": "dcgm-exporter-container",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "privileged": true,
+  "runArgs": [
+    "-v", "/run/docker.sock:/run/docker.sock:rw",
+    "--mount", "type=bind,src=${env:HOME}/.ssh,dst=/home/developer/.ssh",
+    "-p", "2222:22",
+    "--name", "vscode_dev_container",
+    "-e", "DCGM_BUILD_INSIDE_DOCKER=1",
+    "-e", "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+    "-e", "NVIDIA_VISIBLE_DEVICES=ALL",
+    "--cap-add=SYS_ADMIN",
+    "--security-opt",
+    "seccomp=unconfined",
+    "--gpus=all"
+    ]
+}
