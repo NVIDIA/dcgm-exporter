@@ -19,6 +19,7 @@ package dcgmexporter
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"reflect"
 	"testing"
@@ -28,8 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
-	"k8s.io/kubernetes/pkg/kubelet/util"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
@@ -92,7 +92,7 @@ func GetGPUUUIDs(metrics []Metric) []string {
 }
 
 func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
-	l, err := util.CreateListener("unix://" + socket)
+	l, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 
 	stopped := make(chan interface{})
@@ -278,7 +278,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 				sysInfo := SystemInfo{
 					GPUCount: 1,
-					GPUs: [32]GPUInfo{
+					GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 						{
 							DeviceInfo: dcgm.Device{
 								UUID: "00000000-0000-0000-0000-000000000000",
