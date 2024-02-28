@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		libcap2-bin \
 		&& apt-get autoremove -y \
 	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
-	# DCGM exporter doesn't use ibdcgm_cublas_proxy*.so.
+	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
 	&& rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
 	&& rm -rf /var/lib/apt/lists/*
 
