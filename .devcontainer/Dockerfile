@@ -26,6 +26,9 @@ RUN --mount=type=cache,target=/var/cache/apt \
 		datacenter-gpu-manager=1:${DCGM_VERSION} \
 		libcap2-bin \
 		&& apt-get autoremove -y \
+	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
+	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
+	&& rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
 	&& rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -59,8 +62,7 @@ ENV PATH $GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH $PATH:/usr/local/go/bin
 
-RUN rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite
-# Required for DCP metrics
+# Required for DCGM metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
 ENV NVIDIA_DISABLE_REQUIRE="true"
