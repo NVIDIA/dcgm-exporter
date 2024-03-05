@@ -94,4 +94,3 @@ validate-modules:
 tools: ## Install required tools and utilities
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2
 	go install github.com/axw/gocov/gocov@latest
-	

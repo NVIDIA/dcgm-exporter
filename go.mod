@@ -7,6 +7,7 @@ require (
 	github.com/NVIDIA/go-nvml v0.12.0-2
 	github.com/avast/retry-go/v4 v4.5.1
 	github.com/bits-and-blooms/bitset v1.13.0
+	github.com/go-kit/log v0.2.1
 	github.com/gorilla/mux v1.8.1
 	github.com/prometheus/client_model v0.6.0
 	github.com/prometheus/common v0.47.0
@@ -31,7 +32,6 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/evanphx/json-patch v4.12.0+incompatible // indirect
-	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect

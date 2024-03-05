@@ -31,3 +31,23 @@ const (
 const (
 	windowSizeInMSLabel = "window_size_in_ms"
 )
+
+// DCGMDbgLvl is a DCGM library debug level.
+const (
+	DCGMDbgLvlNone  = "NONE"
+	DCGMDbgLvlFatal = "FATAL"
+	DCGMDbgLvlError = "ERROR"
+	DCGMDbgLvlWarn  = "WARN"
+	DCGMDbgLvlInfo  = "INFO"
+	DCGMDbgLvlDebug = "DEBUG"
+	DCGMDbgLvlVerb  = "VERB"
+)
+
+var DCGMDbgLvlValues = []string{DCGMDbgLvlNone,
+	DCGMDbgLvlFatal,
+	DCGMDbgLvlError,
+	DCGMDbgLvlWarn,
+	DCGMDbgLvlInfo,
+	DCGMDbgLvlDebug,
+	DCGMDbgLvlVerb,
+}
