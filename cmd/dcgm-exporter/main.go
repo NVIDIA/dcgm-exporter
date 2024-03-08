@@ -19,12 +19,13 @@ package main
 import (
 	"os"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
 
 var (
-	BuildVersion = "Filled by the build system"
+	BuildVersion = "3.3.5-3.4.0"
 )
 
 func main() {
