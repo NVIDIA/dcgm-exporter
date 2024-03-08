@@ -137,7 +137,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	config.Kubernetes = true
 
 	allCounters := []Counter{
-		Counter{
+		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
@@ -200,7 +200,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	defer teardownTest(t)
 
 	allCounters := []Counter{
-		Counter{
+		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
@@ -333,7 +333,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	}
 
 	allCounters := []Counter{
-		Counter{
+		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}

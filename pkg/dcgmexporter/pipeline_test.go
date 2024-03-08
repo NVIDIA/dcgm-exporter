@@ -18,10 +18,11 @@ package dcgmexporter
 
 import (
 	"errors"
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
@@ -90,47 +91,47 @@ func TestCountPipelineCleanup(t *testing.T) {
 	}{{
 		name: "only_gpu",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_GPU: struct{}{},
+			dcgm.FE_GPU: {},
 		},
 	}, {
 		name: "gpu_switch",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH: struct{}{},
+			dcgm.FE_SWITCH: {},
 		},
 	}, {
 		name: "gpu_link",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_LINK: struct{}{},
+			dcgm.FE_LINK: {},
 		},
 	}, {
 		name: "gpu_cpu",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU: struct{}{},
+			dcgm.FE_CPU: {},
 		},
 	}, {
 		name: "gpu_core",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU_CORE: struct{}{},
+			dcgm.FE_CPU_CORE: {},
 		},
 	}, {
 		name: "gpu_switch_link",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH: struct{}{},
-			dcgm.FE_LINK:   struct{}{},
+			dcgm.FE_SWITCH: {},
+			dcgm.FE_LINK:   {},
 		},
 	}, {
 		name: "gpu_cpu_core",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU:      struct{}{},
-			dcgm.FE_CPU_CORE: struct{}{},
+			dcgm.FE_CPU:      {},
+			dcgm.FE_CPU_CORE: {},
 		},
 	}, {
 		name: "all",
 		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH:   struct{}{},
-			dcgm.FE_LINK:     struct{}{},
-			dcgm.FE_CPU:      struct{}{},
-			dcgm.FE_CPU_CORE: struct{}{},
+			dcgm.FE_SWITCH:   {},
+			dcgm.FE_LINK:     {},
+			dcgm.FE_CPU:      {},
+			dcgm.FE_CPU_CORE: {},
 		},
 	}} {
 
@@ -181,11 +182,11 @@ func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *test
 
 	fieldEntityGroupTypeSystemInfo := &FieldEntityGroupTypeSystemInfo{
 		items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-			dcgm.FE_GPU:      FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_SWITCH:   FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_LINK:     FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_CPU:      FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_CPU_CORE: FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_GPU:      {},
+			dcgm.FE_SWITCH:   {},
+			dcgm.FE_LINK:     {},
+			dcgm.FE_CPU:      {},
+			dcgm.FE_CPU_CORE: {},
 		},
 	}
 

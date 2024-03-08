@@ -25,10 +25,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 	"github.com/avast/retry-go/v4"
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
 
 func TestStartAndReadMetrics(t *testing.T) {

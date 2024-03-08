@@ -19,8 +19,9 @@ package main
 import (
 	"os"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
 
 var (

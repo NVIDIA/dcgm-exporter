@@ -17,12 +17,13 @@
 package logging
 
 import (
+	"testing"
+
 	"github.com/go-kit/log/level"
 	"github.com/sirupsen/logrus"
 	"github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestLogrusAdapter_Log(t *testing.T) {

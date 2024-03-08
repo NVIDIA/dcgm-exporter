@@ -22,10 +22,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
 
 func NewMetricsServer(c *Config, metrics chan string, registry *Registry) (*MetricsServer, func(), error) {
