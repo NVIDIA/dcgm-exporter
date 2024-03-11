@@ -48,12 +48,6 @@ var expMetricsFormat = `
 {{- end }}
 {{ end }}`
 
-// Collector interface
-type Collector interface {
-	GetMetrics() (MetricsByCounter, error)
-	Cleanup()
-}
-
 var getExpMetricTemplate = sync.OnceValue(func() *template.Template {
 	return template.Must(template.New("expMetrics").Parse(expMetricsFormat))
 

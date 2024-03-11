@@ -20,25 +20,17 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+
+	m "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter"
 )
 
-type mockCollector struct {
-	mock.Mock
-}
-
-func (m *mockCollector) GetMetrics() (MetricsByCounter, error) {
-	args := m.Called()
-	return args.Get(0).(MetricsByCounter), args.Error(1)
-}
-
-func (m *mockCollector) Cleanup() {
-	m.Called()
-}
-
 func TestRegistry_Gather(t *testing.T) {
-	collector := new(mockCollector)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	collector := m.NewMockCollector(ctrl)
 	reg := NewRegistry()
 
 	metrics := MetricsByCounter{}
@@ -67,15 +59,15 @@ func TestRegistry_Gather(t *testing.T) {
 
 	type test struct {
 		name           string
-		collectorState func() *mock.Call
+		collectorState func() *gomock.Call
 		assert         func(MetricsByCounter, error)
 	}
 
 	tests := []test{
 		{
 			name: "When collector return no errors",
-			collectorState: func() *mock.Call {
-				return collector.On("GetMetrics").Return(metrics, nil)
+			collectorState: func() *gomock.Call {
+				return collector.EXPECT().GetMetrics().Return(metrics, nil)
 			},
 			assert: func(mbc MetricsByCounter, err error) {
 				require.NoError(t, err)
@@ -84,8 +76,8 @@ func TestRegistry_Gather(t *testing.T) {
 		},
 		{
 			name: "When collector return errors",
-			collectorState: func() *mock.Call {
-				return collector.On("GetMetrics").Return(MetricsByCounter{}, errors.New("Boom!"))
+			collectorState: func() *gomock.Call {
+				return collector.EXPECT().GetMetrics().Return(MetricsByCounter{}, errors.New("Boom!"))
 			},
 			assert: func(mbc MetricsByCounter, err error) {
 				require.Error(t, err)
@@ -98,10 +90,9 @@ func TestRegistry_Gather(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reg.collectors = nil
 			reg.Register(collector)
-			mockCall := tc.collectorState()
+			tc.collectorState()
 			got, err := reg.Gather()
 			tc.assert(got, err)
-			mockCall.Unset()
 		})
 
 	}

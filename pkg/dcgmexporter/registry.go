@@ -51,7 +51,7 @@ func (r *Registry) Gather() (MetricsByCounter, error) {
 	var sm sync.Map
 
 	for _, c := range r.collectors {
-		c := c //creates new c, see https://golang.org/doc/faq#closures_and_goroutines
+		c := c // creates new c, see https://golang.org/doc/faq#closures_and_goroutines
 		g.Go(func() error {
 			metrics, err := c.GetMetrics()
 

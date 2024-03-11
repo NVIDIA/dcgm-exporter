@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/mock_registry.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter RegistryInterface
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/mock_expcollector.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter Collector
+
 package dcgmexporter
 
 import (
@@ -145,6 +148,18 @@ type PodInfo struct {
 	Name      string
 	Namespace string
 	Container string
+}
+
+// Collector interface
+type Collector interface {
+	GetMetrics() (MetricsByCounter, error)
+	Cleanup()
+}
+
+type RegistryInterface interface {
+	Register(c Collector)
+	Gather() (MetricsByCounter, error)
+	Cleanup()
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
