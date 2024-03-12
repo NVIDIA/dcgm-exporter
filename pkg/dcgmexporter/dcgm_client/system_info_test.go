@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
 var fakeProfileName = "2fake.4gb"

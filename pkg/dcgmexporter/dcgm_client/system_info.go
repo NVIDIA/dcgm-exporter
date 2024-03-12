@@ -26,7 +26,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
 var (
@@ -155,7 +155,7 @@ func CPUCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
 	return false
 }
 
-func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt common.DeviceOptions) error {
+func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt common2.DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -180,7 +180,7 @@ func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt common.DeviceOptions) err
 	return nil
 }
 
-func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt common.DeviceOptions) error {
+func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt common2.DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -205,7 +205,7 @@ func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt common.DeviceOptions) 
 	return nil
 }
 
-func VerifyDevicePresence(sysInfo *SystemInfo, gOpt common.DeviceOptions) error {
+func VerifyDevicePresence(sysInfo *SystemInfo, gOpt common2.DeviceOptions) error {
 	if gOpt.Flex {
 		return nil
 	}
@@ -250,7 +250,7 @@ func getCoreArray(bitmask []uint64) []uint {
 	return cores
 }
 
-func InitializeCPUInfo(sysInfo SystemInfo, sOpt common.DeviceOptions) (SystemInfo, error) {
+func InitializeCPUInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (SystemInfo, error) {
 	hierarchy, err := DcgmGetCpuHierarchy()
 	if err != nil {
 		return sysInfo, err
@@ -281,7 +281,7 @@ func InitializeCPUInfo(sysInfo SystemInfo, sOpt common.DeviceOptions) (SystemInf
 	return sysInfo, nil
 }
 
-func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common.DeviceOptions) (SystemInfo, error) {
+func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (SystemInfo, error) {
 	switches, err := dcgm.GetEntityGroupEntities(dcgm.FE_SWITCH)
 	if err != nil {
 		return sysInfo, err
@@ -322,7 +322,7 @@ func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common.DeviceOptions) (Syst
 }
 
 func InitializeGPUInfo(
-	sysInfo SystemInfo, gOpt common.DeviceOptions, useFakeGPUs bool,
+	sysInfo SystemInfo, gOpt common2.DeviceOptions, useFakeGPUs bool,
 ) (SystemInfo,
 	error) {
 	gpuCount, err := DcgmGetAllDeviceCount()
@@ -393,7 +393,7 @@ func InitializeGPUInfo(
 }
 
 func InitializeSystemInfo(
-	gOpt common.DeviceOptions, sOpt common.DeviceOptions, cOpt common.DeviceOptions, useFakeGPUs bool,
+	gOpt common2.DeviceOptions, sOpt common2.DeviceOptions, cOpt common2.DeviceOptions, useFakeGPUs bool,
 	entityType dcgm.Field_Entity_Group,
 ) (SystemInfo, error) {
 	sysInfo := SystemInfo{}
@@ -457,8 +457,8 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				err := dcgm.DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						common.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:         err,
+						common2.LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:          err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -504,8 +504,8 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				err := dcgm.DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						common.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:         err,
+						common2.LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:          err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -529,8 +529,8 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 				err := dcgm.DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						common.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:         err,
+						common2.LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:          err,
 					}).Warn("can not destroy group")
 				}
 			}, err
@@ -541,8 +541,8 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 		err := dcgm.DestroyGroup(groupID)
 		if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 			logrus.WithFields(logrus.Fields{
-				common.LoggerGroupIDKey: groupID,
-				logrus.ErrorKey:         err,
+				common2.LoggerGroupIDKey: groupID,
+				logrus.ErrorKey:          err,
 			}).Warn("can not destroy group")
 		}
 	}, nil

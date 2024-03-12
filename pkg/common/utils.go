@@ -18,6 +18,7 @@ package common
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 )
@@ -34,4 +35,20 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("timeout waiting for WaitGroup")
 	}
+}
+
+func GetHostname(config *Config) (string, error) {
+	hostname := ""
+	var err error
+	if !config.NoHostname {
+		if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
+			hostname = nodeName
+		} else {
+			hostname, err = os.Hostname()
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	return hostname, nil
 }

@@ -19,12 +19,38 @@ package dcgm_client
 import (
 	"fmt"
 	"math/rand"
+	"os"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
+
+func InitDCGM(config *common.Config) func() {
+	if config.UseRemoteHE {
+		logrus.Info("Attempting to connect to remote hostengine at ", config.RemoteHEInfo)
+		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
+		if err != nil {
+			cleanup()
+			logrus.Fatal(err)
+		}
+		return cleanup
+	} else {
+		if config.EnableDCGMLog {
+			os.Setenv("__DCGM_DBG_FILE", "-")
+			os.Setenv("__DCGM_DBG_LVL", config.DCGMLogLevel)
+		}
+
+		cleanup, err := dcgm.Init(dcgm.Embedded)
+		if err != nil {
+			cleanup()
+			logrus.Fatal(err)
+		}
+
+		return cleanup
+	}
+}
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
 	group, err := dcgm.NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))

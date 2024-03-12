@@ -21,7 +21,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
 // FieldEntityGroupTypeToMonitor supported entity group types

@@ -17,7 +17,7 @@
 package kubernetes
 
 import (
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
 type PodMapper struct {

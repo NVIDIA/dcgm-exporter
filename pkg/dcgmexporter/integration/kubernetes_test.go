@@ -33,8 +33,8 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
+	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
 )
@@ -57,7 +57,7 @@ func TestProcessPodMapper(t *testing.T) {
 
 	original := out
 
-	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(common.Counter)]
+	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(common2.Counter)]
 
 	kubernetes.SocketPath = tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
@@ -67,7 +67,7 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup = StartMockServer(t, server, kubernetes.SocketPath)
 	defer cleanup()
 
-	podMapper, err := kubernetes.NewPodMapper(&common.Config{KubernetesGPUIdType: common.GPUUID})
+	podMapper, err := kubernetes.NewPodMapper(&common2.Config{KubernetesGPUIdType: common2.GPUUID})
 	require.NoError(t, err)
 	var sysInfo dcgmClient.SystemInfo
 	err = podMapper.Process(out, sysInfo)
@@ -171,7 +171,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	type TestCase struct {
-		KubernetesGPUIDType common.KubernetesGPUIDType
+		KubernetesGPUIDType common2.KubernetesGPUIDType
 		GPUInstanceID       uint
 		MetricGPUID         string
 		MetricGPUDevice     string
@@ -181,41 +181,41 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 	testCases := []TestCase{
 		{
-			KubernetesGPUIDType: common.GPUUID,
+			KubernetesGPUIDType: common2.GPUUID,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: common.GPUUID,
+			KubernetesGPUIDType: common2.GPUUID,
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 		},
 		{
-			KubernetesGPUIDType: common.GPUUID,
+			KubernetesGPUIDType: common2.GPUUID,
 			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: common.DeviceName,
+			KubernetesGPUIDType: common2.DeviceName,
 			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: common.DeviceName,
+			KubernetesGPUIDType: common2.DeviceName,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "nvidia0/gi0",
 		},
 		{
-			KubernetesGPUIDType: common.DeviceName,
+			KubernetesGPUIDType: common2.DeviceName,
 			MetricGPUDevice:     "0",
 			PODGPUID:            "0/vgpu",
 		},
 		{
-			KubernetesGPUIDType: common.GPUUID,
+			KubernetesGPUIDType: common2.GPUUID,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5::",
 		},
@@ -256,11 +256,11 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					kubernetes.NvmlGetMIGDeviceInfoByIDHook = nvmlprovider.GetMIGDeviceInfoByID
 				}()
 
-				podMapper, err := kubernetes.NewPodMapper(&common.Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
+				podMapper, err := kubernetes.NewPodMapper(&common2.Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
 				metrics := collector.MetricsByCounter{}
-				counter := common.Counter{
+				counter := common2.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -272,7 +272,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
 					Value:         "42",
 					MigProfile:    tc.MetricMigProfile,
-					Counter: common.Counter{
+					Counter: common2.Counter{
 						FieldID:   155,
 						FieldName: "DCGM_FI_DEV_POWER_USAGE",
 						PromType:  "gauge",
@@ -295,7 +295,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err = podMapper.Process(metrics, sysInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(common.Counter)] {
+				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(common2.Counter)] {
 					require.Contains(t, metric.Attributes, podAttribute)
 					require.Contains(t, metric.Attributes, namespaceAttribute)
 					require.Contains(t, metric.Attributes, containerAttribute)

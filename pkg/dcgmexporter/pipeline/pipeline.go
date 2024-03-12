@@ -26,8 +26,8 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
 )
@@ -36,7 +36,7 @@ func NewMetricsPipeline(
 	config *common.Config,
 	counters []common.Counter,
 	hostname string,
-	newDCGMCollector collector.DCGMCollectorConstructor,
+	newDCGMCollector collector.DCGMCollectorConstructor, // TODO replace with mocks in testing
 	fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
 ) (*MetricsPipeline, func(), error) {
 
@@ -138,7 +138,8 @@ func GetTransformations(c *common.Config) []collector.Transform {
 }
 
 // Primarely for testing, caller expected to cleanup the collector
-func NewMetricsPipelineWithGPUCollector(c *common.Config, collector *collector.DCGMCollector) (*MetricsPipeline, func(),
+func NewMetricsPipelineWithGPUCollector(c *common.Config, collector *collector.DCGMCollector) (*MetricsPipeline,
+	func(),
 	error) {
 	return &MetricsPipeline{
 		config: c,

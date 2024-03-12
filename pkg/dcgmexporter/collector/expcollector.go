@@ -25,7 +25,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 )
 

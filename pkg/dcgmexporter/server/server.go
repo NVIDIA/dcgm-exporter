@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/registry"
 
 	"github.com/gorilla/mux"

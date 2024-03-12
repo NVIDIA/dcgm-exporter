@@ -19,8 +19,8 @@ package pipeline
 import (
 	"text/template"
 
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
 )
 
 type MetricsPipeline struct {

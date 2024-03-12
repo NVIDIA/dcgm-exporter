@@ -21,8 +21,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
 )
 
 type Registry struct {

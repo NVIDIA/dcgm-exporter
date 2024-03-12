@@ -19,13 +19,12 @@ package collector
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 )
 
@@ -69,22 +68,6 @@ func NewDCGMCollector(
 	collector.Cleanups = cleanups
 
 	return collector, func() { collector.Cleanup() }, nil
-}
-
-func GetHostname(config *common.Config) (string, error) {
-	hostname := ""
-	var err error
-	if !config.NoHostname {
-		if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
-			hostname = nodeName
-		} else {
-			hostname, err = os.Hostname()
-			if err != nil {
-				return "", err
-			}
-		}
-	}
-	return hostname, nil
 }
 
 func (c *DCGMCollector) Cleanup() {

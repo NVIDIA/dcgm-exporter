@@ -24,8 +24,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	m "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
 )
 
 func TestRegistry_Gather(t *testing.T) {

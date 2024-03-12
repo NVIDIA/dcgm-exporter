@@ -31,7 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/metrics"
 )
 
@@ -65,7 +65,7 @@ func GetCounterSet(c *common.Config) (*common.CounterSet, error) {
 	if err != nil || c.ConfigMapData == UndefinedConfigMapData {
 		logrus.Infof("Falling back to metric file '%s'", c.CollectorsFile)
 
-		records, err = ReadCSVFile(c.CollectorsFile)
+		records, err = readCSVFile(c.CollectorsFile)
 		if err != nil {
 			logrus.Errorf("Could not read metrics file '%s'; err: %v", c.CollectorsFile, err)
 			return res, err
@@ -80,7 +80,7 @@ func GetCounterSet(c *common.Config) (*common.CounterSet, error) {
 	return res, err
 }
 
-func ReadCSVFile(filename string) ([][]string, error) {
+func readCSVFile(filename string) ([][]string, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
