@@ -43,7 +43,6 @@ type expCollector struct {
 	fieldValueParser    func(val int64) []int64        // Function to parse the field value
 	labelFiller         func(map[string]string, int64) // Function to fill labels
 	windowSize          int                            // Window size
-	transformations     []Transform                    // Transformers for metric postprocessing
 }
 
 func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
@@ -137,13 +136,6 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 	}
 
-	for _, transform := range c.transformations {
-		err := transform.Process(metrics, c.sysInfo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to transform metrics for transform '%s'; err: %v", transform.Name(), err)
-		}
-	}
-
 	return metrics, nil
 }
 
@@ -173,6 +165,10 @@ func (c *expCollector) getLabelsFromCounters(mi dcgmClient.MonitoringInfo, label
 	return nil
 }
 
+func (c *expCollector) GetSysinfo() dcgmClient.SystemInfo {
+	return c.sysInfo
+}
+
 func (c *expCollector) Cleanup() {
 	for _, cleanup := range c.cleanups {
 		cleanup()
@@ -196,9 +192,6 @@ func newExpCollector(
 
 	labelDeviceFields := dcgmClient.NewDeviceFields(labelsCounters, dcgm.FE_GPU)
 
-	// TODO
-	// transformations := dcgmexporter.getTransformations(common)
-
 	collector := expCollector{
 		hostname:            hostname,
 		config:              config,
@@ -209,8 +202,6 @@ func newExpCollector(
 			return []int64{val}
 		},
 		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {},
-		// TODO
-		// transformations: transformations,
 	}
 
 	collector.sysInfo = fieldEntityGroupTypeSystemInfo.SystemInfo

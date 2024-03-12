@@ -17,22 +17,26 @@
 package registry
 
 import (
+	"fmt"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/pipeline"
 )
 
 type Registry struct {
-	collectors []collector.Collector
-	mtx        sync.RWMutex
+	collectors      []collector.Collector
+	transformations []pipeline.Transform
+	mtx             sync.RWMutex
 }
 
-func NewRegistry() *Registry {
+func NewRegistry(config *common.Config) *Registry {
 	return &Registry{
-		collectors: make([]collector.Collector, 0),
+		collectors:      make([]collector.Collector, 0),
+		transformations: pipeline.GetTransformations(config),
 	}
 }
 
@@ -57,9 +61,15 @@ func (r *Registry) Gather() (collector.MetricsByCounter, error) {
 		c := c // creates new c, see https://golang.org/doc/faq#closures_and_goroutines
 		g.Go(func() error {
 			metrics, err := c.GetMetrics()
-
 			if err != nil {
 				return err
+			}
+
+			for _, transform := range r.transformations {
+				err := transform.Process(metrics, c.GetSysinfo())
+				if err != nil {
+					return fmt.Errorf("failed to transform metrics for transform '%s'; err: %w", transform.Name(), err)
+				}
 			}
 
 			for counter, metricVals := range metrics {

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//go:generate mockgen -destination=mocks/pkg/dcgmexporter/mock_registry.go github.com/NVIDIA/dcgm_client-exporter/pkg/dcgmexporter RegistryInterface
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/registry/mock_registry.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/registry RegistryInterface
 
 package registry
 

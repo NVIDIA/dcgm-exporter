@@ -290,7 +290,7 @@ restart:
 		logrus.Fatal(err)
 	}
 
-	cRegistry := registry.NewRegistry()
+	cRegistry := registry.NewRegistry(config)
 
 	enableDCGMExpXIDErrorsCountCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
 

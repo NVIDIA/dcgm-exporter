@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	m "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter"
+	m "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter/collector"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 )
@@ -33,7 +33,7 @@ func TestRegistry_Gather(t *testing.T) {
 	defer ctrl.Finish()
 
 	newCollector := m.NewMockCollector(ctrl)
-	reg := NewRegistry()
+	reg := NewRegistry(&common.Config{})
 
 	metrics := collector.MetricsByCounter{}
 	counterA := common.Counter{

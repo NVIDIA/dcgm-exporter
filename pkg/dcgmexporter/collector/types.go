@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//go:generate mockgen -destination=mocks/pkg/dcgmexporter/mock_expcollector.go github.com/NVIDIA/dcgm_client-exporter/pkg/dcgmexporter Collector
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/collector/mock_expcollector.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector Collector
 
 package collector
 
@@ -64,6 +64,7 @@ func (m Metric) GetIDOfType(idType common2.KubernetesGPUIDType) (string, error) 
 type Collector interface {
 	GetMetrics() (MetricsByCounter, error)
 	Cleanup()
+	GetSysinfo() dcgmClient.SystemInfo
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
@@ -77,10 +78,4 @@ type DCGMCollector struct {
 	SysInfo                  dcgmClient.SystemInfo
 	Hostname                 string
 	ReplaceBlanksInModelName bool
-}
-
-// TODO
-type Transform interface {
-	Process(metrics MetricsByCounter, sysInfo dcgmClient.SystemInfo) error
-	Name() string
 }

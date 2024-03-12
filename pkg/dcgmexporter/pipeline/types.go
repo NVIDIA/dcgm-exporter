@@ -21,12 +21,13 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 )
 
 type MetricsPipeline struct {
 	config *common.Config
 
-	transformations      []collector.Transform
+	transformations      []Transform
 	migMetricsFormat     *template.Template
 	switchMetricsFormat  *template.Template
 	linkMetricsFormat    *template.Template
@@ -39,4 +40,9 @@ type MetricsPipeline struct {
 	linkCollector   *collector.DCGMCollector
 	cpuCollector    *collector.DCGMCollector
 	coreCollector   *collector.DCGMCollector
+}
+
+type Transform interface {
+	Process(metrics collector.MetricsByCounter, sysInfo dcgm_client.SystemInfo) error
+	Name() string
 }

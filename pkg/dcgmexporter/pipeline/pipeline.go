@@ -123,8 +123,8 @@ func NewMetricsPipeline(
 		}, nil
 }
 
-func GetTransformations(c *common.Config) []collector.Transform {
-	transformations := []collector.Transform{}
+func GetTransformations(c *common.Config) []Transform {
+	transformations := []Transform{}
 	if c.Kubernetes {
 		podMapper, err := kubernetes.NewPodMapper(c)
 		if err != nil {
