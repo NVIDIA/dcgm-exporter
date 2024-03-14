@@ -33,7 +33,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 var (
@@ -59,7 +59,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics collector.MetricsByCounter, sysInfo dcgmClient.SystemInfo) error {
+func (p *PodMapper) Process(metrics collector.MetricsByCounter, sysInfo sysinfo.SystemInfo) error {
 	_, err := os.Stat(SocketPath)
 	if os.IsNotExist(err) {
 		logrus.Infof("No Kubelet socket, ignoring")
@@ -139,7 +139,7 @@ func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodRes
 }
 
 func (p *PodMapper) toDeviceToPod(
-	devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo dcgmClient.SystemInfo,
+	devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo sysinfo.SystemInfo,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 
@@ -165,7 +165,7 @@ func (p *PodMapper) toDeviceToPod(
 					if strings.HasPrefix(deviceID, MIG_UUID_PREFIX) {
 						migDevice, err := NvmlGetMIGDeviceInfoByIDHook(deviceID)
 						if err == nil {
-							giIdentifier := dcgmClient.GetGPUInstanceIdentifier(sysInfo, migDevice.ParentUUID,
+							giIdentifier := sysinfo.GetGPUInstanceIdentifier(sysInfo, migDevice.ParentUUID,
 								uint(migDevice.GPUInstanceID))
 							deviceToPodMap[giIdentifier] = podInfo
 						}

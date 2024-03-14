@@ -24,7 +24,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type Metric struct {
@@ -64,7 +64,7 @@ func (m Metric) GetIDOfType(idType common2.KubernetesGPUIDType) (string, error) 
 type Collector interface {
 	GetMetrics() (MetricsByCounter, error)
 	Cleanup()
-	GetSysinfo() dcgmClient.SystemInfo
+	GetSysinfo() sysinfo.SystemInfo
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
@@ -75,7 +75,7 @@ type DCGMCollector struct {
 	DeviceFields             []dcgm.Short
 	Cleanups                 []func()
 	UseOldNamespace          bool
-	SysInfo                  dcgmClient.SystemInfo
+	SysInfo                  sysinfo.SystemInfo
 	Hostname                 string
 	ReplaceBlanksInModelName bool
 }

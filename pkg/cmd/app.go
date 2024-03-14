@@ -25,6 +25,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/pipeline"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/registry"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/server"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/utils"
 	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
@@ -331,7 +332,7 @@ restart:
 }
 
 func enableDCGMExpClockEventsCount(
-	cs *common.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
+	cs *common.CounterSet, fieldEntityGroupTypeSystemInfo *sysinfo.FieldEntityGroupTypeSystemInfo,
 	hostname string, config *common.Config, cRegistry *registry.Registry,
 ) {
 	if common.IsMetricsTypeEnabled(cs.ExporterCounters, metrics.DCGMExpClockEventsCount) {
@@ -352,7 +353,7 @@ func enableDCGMExpClockEventsCount(
 }
 
 func enableDCGMExpXIDErrorsCountCollector(
-	cs *common.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
+	cs *common.CounterSet, fieldEntityGroupTypeSystemInfo *sysinfo.FieldEntityGroupTypeSystemInfo,
 	hostname string, config *common.Config, cRegistry *registry.Registry,
 ) {
 	if common.IsMetricsTypeEnabled(cs.ExporterCounters, metrics.DCGMExpXIDErrorsCount) {
@@ -374,7 +375,7 @@ func enableDCGMExpXIDErrorsCountCollector(
 
 func getFieldEntityGroupTypeSystemInfo(
 	cs *common.CounterSet, config *common.Config,
-) *dcgmClient.FieldEntityGroupTypeSystemInfo {
+) *sysinfo.FieldEntityGroupTypeSystemInfo {
 	allCounters := []common.Counter{}
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
@@ -387,9 +388,9 @@ func getFieldEntityGroupTypeSystemInfo(
 		},
 	)
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 
-	for _, egt := range dcgmClient.FieldEntityGroupTypeToMonitor {
+	for _, egt := range sysinfo.FieldEntityGroupTypeToMonitor {
 		err := fieldEntityGroupTypeSystemInfo.Load(egt)
 		if err != nil {
 			logrus.Infof("Not collecting %s metrics; %s", egt.String(), err)

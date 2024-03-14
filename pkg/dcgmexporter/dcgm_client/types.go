@@ -22,49 +22,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-
-	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
-
-type GPUInfo struct {
-	DeviceInfo   dcgm.Device
-	GPUInstances []GPUInstanceInfo
-	MigEnabled   bool
-}
-
-type CPUInfo struct {
-	EntityId uint
-	Cores    []uint
-}
-
-type SwitchInfo struct {
-	EntityId uint
-	NvLinks  []dcgm.NvLinkStatus
-}
-
-type ComputeInstanceInfo struct {
-	InstanceInfo dcgm.MigEntityInfo
-	ProfileName  string
-	EntityId     uint
-}
-
-type GPUInstanceInfo struct {
-	Info             dcgm.MigEntityInfo
-	ProfileName      string
-	EntityId         uint
-	ComputeInstances []ComputeInstanceInfo
-}
-
-type SystemInfo struct {
-	GPUCount uint
-	GPUs     [dcgm.MAX_NUM_DEVICES]GPUInfo
-	GOpt     common.DeviceOptions
-	SOpt     common.DeviceOptions
-	COpt     common.DeviceOptions
-	InfoType dcgm.Field_Entity_Group
-	Switches []SwitchInfo
-	CPUs     []CPUInfo
-}
 
 type DCGMClient interface {
 	AddEntityToGroup(dcgm.GroupHandle, dcgm.Field_Entity_Group, uint) error

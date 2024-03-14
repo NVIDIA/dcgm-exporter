@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgm_client
+package sysinfo
 
 import (
 	"fmt"
@@ -22,6 +22,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
+	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 )
 
 // FieldEntityGroupTypeToMonitor supported entity group types
@@ -116,5 +117,22 @@ func getSystemInfo(config *common.Config, entityType dcgm.Field_Entity_Group) (*
 	if err != nil {
 		return nil, err
 	}
-	return &sysInfo, err
+	return sysInfo, err
+}
+
+func NewDeviceFields(counters []common.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
+	var deviceFields []dcgm.Short
+	for _, f := range counters {
+		meta := dcgmClient.Client().FieldGetById(f.FieldID)
+
+		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
+			deviceFields = append(deviceFields, f.FieldID)
+		} else if entityType == dcgm.FE_GPU && (meta.EntityLevel == dcgm.FE_GPU_CI || meta.EntityLevel == dcgm.FE_GPU_I || meta.EntityLevel == dcgm.FE_VGPU) {
+			deviceFields = append(deviceFields, f.FieldID)
+		} else if entityType == dcgm.FE_CPU && (meta.EntityLevel == dcgm.FE_CPU || meta.EntityLevel == dcgm.FE_CPU_CORE) {
+			deviceFields = append(deviceFields, f.FieldID)
+		}
+	}
+
+	return deviceFields
 }

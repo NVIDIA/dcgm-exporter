@@ -24,8 +24,8 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/metrics"
+	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type xidCollector struct {

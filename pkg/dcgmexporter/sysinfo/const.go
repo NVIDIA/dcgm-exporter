@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgm_client
+package sysinfo
 
 const (
 	PARENT_ID_IGNORED      = 0

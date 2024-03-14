@@ -21,7 +21,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type MetricsPipeline struct {
@@ -43,6 +43,6 @@ type MetricsPipeline struct {
 }
 
 type Transform interface {
-	Process(metrics collector.MetricsByCounter, sysInfo dcgm_client.SystemInfo) error
+	Process(metrics collector.MetricsByCounter, sysInfo sysinfo.SystemInfo) error
 	Name() string
 }

@@ -30,8 +30,8 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/pipeline"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/utils"
 )
 
@@ -71,7 +71,7 @@ func testNewDCGMCollector(
 		c []common.Counter,
 		hostname string,
 		config *common.Config,
-		fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+		fieldEntityGroupTypeSystemInfo sysinfo.FieldEntityGroupTypeSystemInfoItem,
 	) (*collector.DCGMCollector, func(), error) {
 		// should always create GPU Collector
 		if fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType != dcgm.FE_GPU {
@@ -165,12 +165,12 @@ func TestCountPipelineCleanup(t *testing.T) {
 				logrus.Fatal(err)
 			}
 
-			fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(cc.DCGMCounters, config)
+			fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(cc.DCGMCounters, config)
 
 			for egt := range c.enabledCollector {
 				// We inject system info for unit test purpose
-				fieldEntityGroupTypeSystemInfo.Items[egt] = dcgmClient.FieldEntityGroupTypeSystemInfoItem{
-					SystemInfo: dcgmClient.SystemInfo{
+				fieldEntityGroupTypeSystemInfo.Items[egt] = sysinfo.FieldEntityGroupTypeSystemInfoItem{
+					SystemInfo: sysinfo.SystemInfo{
 						InfoType: egt,
 					},
 				}
@@ -196,13 +196,13 @@ func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *test
 
 	config := &common.Config{}
 
-	fieldEntityGroupTypeSystemInfo := &dcgmClient.FieldEntityGroupTypeSystemInfo{
-		Items: map[dcgm.Field_Entity_Group]dcgmClient.FieldEntityGroupTypeSystemInfoItem{
-			dcgm.FE_GPU:      dcgmClient.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_SWITCH:   dcgmClient.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_LINK:     dcgmClient.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_CPU:      dcgmClient.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_CPU_CORE: dcgmClient.FieldEntityGroupTypeSystemInfoItem{},
+	fieldEntityGroupTypeSystemInfo := &sysinfo.FieldEntityGroupTypeSystemInfo{
+		Items: map[dcgm.Field_Entity_Group]sysinfo.FieldEntityGroupTypeSystemInfoItem{
+			dcgm.FE_GPU:      sysinfo.FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_SWITCH:   sysinfo.FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_LINK:     sysinfo.FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_CPU:      sysinfo.FieldEntityGroupTypeSystemInfoItem{},
+			dcgm.FE_CPU_CORE: sysinfo.FieldEntityGroupTypeSystemInfoItem{},
 		},
 	}
 
@@ -210,7 +210,7 @@ func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *test
 		sampleCounters,
 		"",
 		func(
-			_ []common.Counter, _ string, _ *common.Config, item dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+			_ []common.Counter, _ string, _ *common.Config, item sysinfo.FieldEntityGroupTypeSystemInfoItem,
 		) (*collector.DCGMCollector,
 			func(), error) {
 			assert.True(t, item.IsEmpty())

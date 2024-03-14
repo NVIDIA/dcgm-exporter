@@ -107,7 +107,9 @@ func (d DCGMClientImpl) EntitiesGetLatestValues(
 	return dcgm.EntitiesGetLatestValues(entities, fields, flags)
 }
 
-func (d DCGMClientImpl) EntityGetLatestValues(entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+func (d DCGMClientImpl) EntityGetLatestValues(
+	entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short,
+) ([]dcgm.FieldValue_v1,
 	error) {
 	return dcgm.EntityGetLatestValues(entityGroup, entityId, fields)
 }
@@ -207,99 +209,4 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
 	}, nil
-}
-
-func NewDeviceFields(counters []common.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
-	var deviceFields []dcgm.Short
-	for _, f := range counters {
-		meta := Client().FieldGetById(f.FieldID)
-
-		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
-			deviceFields = append(deviceFields, f.FieldID)
-		} else if entityType == dcgm.FE_GPU && (meta.EntityLevel == dcgm.FE_GPU_CI || meta.EntityLevel == dcgm.FE_GPU_I || meta.EntityLevel == dcgm.FE_VGPU) {
-			deviceFields = append(deviceFields, f.FieldID)
-		} else if entityType == dcgm.FE_CPU && (meta.EntityLevel == dcgm.FE_CPU || meta.EntityLevel == dcgm.FE_CPU_CORE) {
-			deviceFields = append(deviceFields, f.FieldID)
-		}
-	}
-
-	return deviceFields
-}
-
-func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) {
-	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", rand.Uint64())
-	fieldGroup, err := Client().FieldGroupCreate(name, deviceFields)
-	if err != nil {
-		return dcgm.FieldHandle{}, func() {}, err
-	}
-
-	return fieldGroup, func() {
-		err := Client().FieldGroupDestroy(fieldGroup)
-		if err != nil {
-			logrus.WithError(err).Warn("Cannot destroy field group.")
-		}
-	}, nil
-}
-
-func WatchFieldGroup(
-	group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32,
-) error {
-	err := Client().WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func SetupDcgmFieldsWatch(
-	deviceFields []dcgm.Short, sysInfo SystemInfo,
-	collectIntervalUsec int64,
-) ([]func(), error) {
-	var err error
-	var cleanups []func()
-	var cleanup func()
-	var groups []dcgm.GroupHandle
-	var fieldGroup dcgm.FieldHandle
-
-	if sysInfo.InfoType == dcgm.FE_LINK {
-		/* one group per-nvswitch is created for nvlinks */
-		groups, cleanups, err = CreateLinkGroupsFromSystemInfo(sysInfo)
-	} else if sysInfo.InfoType == dcgm.FE_CPU_CORE {
-		/* one group per-CPU is created for cpu cores */
-		groups, cleanups, err = CreateCoreGroupsFromSystemInfo(sysInfo)
-	} else {
-		group, cleanup, err := CreateGroupFromSystemInfo(sysInfo)
-		if err == nil {
-			groups = append(groups, group)
-			cleanups = append(cleanups, cleanup)
-		}
-	}
-
-	if err != nil {
-		goto fail
-	}
-
-	for _, gr := range groups {
-		fieldGroup, cleanup, err = NewFieldGroup(deviceFields)
-		if err != nil {
-			goto fail
-		}
-
-		cleanups = append(cleanups, cleanup)
-
-		err = WatchFieldGroup(gr, fieldGroup, collectIntervalUsec, 0.0, 1)
-		if err != nil {
-			goto fail
-		}
-	}
-
-	return cleanups, nil
-
-fail:
-	for _, f := range cleanups {
-		f()
-	}
-
-	return nil, err
 }

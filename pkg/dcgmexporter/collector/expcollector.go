@@ -27,12 +27,13 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
-	sysInfo             dcgmClient.SystemInfo          // Hardware system info
+	sysInfo             sysinfo.SystemInfo             // Hardware system info
 	counter             common.Counter                 // Counter that collector
 	hostname            string                         // Hostname
 	config              *common.Config                 // Configuration settings
@@ -51,7 +52,7 @@ func newExpCollector(
 	hostname string,
 	counterDeviceFields []dcgm.Short,
 	config *common.Config,
-	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+	fieldEntityGroupTypeSystemInfo sysinfo.FieldEntityGroupTypeSystemInfoItem,
 ) expCollector {
 	var labelsCounters []common.Counter
 	for i := 0; i < len(counters); i++ {
@@ -60,7 +61,7 @@ func newExpCollector(
 		}
 	}
 
-	labelDeviceFields := dcgmClient.NewDeviceFields(labelsCounters, dcgm.FE_GPU)
+	labelDeviceFields := sysinfo.NewDeviceFields(labelsCounters, dcgm.FE_GPU)
 
 	collector := expCollector{
 		hostname:            hostname,
@@ -78,7 +79,7 @@ func newExpCollector(
 
 	var err error
 
-	collector.cleanups, err = dcgmClient.SetupDcgmFieldsWatch(collector.counterDeviceFields,
+	collector.cleanups, err = sysinfo.SetupDcgmFieldsWatch(collector.counterDeviceFields,
 		collector.sysInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
@@ -130,7 +131,7 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 	labels := map[string]string{}
 	labels[WindowSizeInMSLabel] = fmt.Sprint(c.windowSize)
 
-	monitoringInfo := dcgmClient.GetMonitoredEntities(c.sysInfo)
+	monitoringInfo := sysinfo.GetMonitoredEntities(c.sysInfo)
 	metrics := make(MetricsByCounter)
 	useOld := c.config.UseOldNamespace
 	uuid := "UUID"
@@ -182,8 +183,9 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func (c *expCollector) getLabelsFromCounters(mi dcgmClient.MonitoringInfo, labels map[string]string) error {
-	latestValues, err := dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.labelDeviceFields)
+func (c *expCollector) getLabelsFromCounters(mi sysinfo.MonitoringInfo, labels map[string]string) error {
+	latestValues, err := dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
+		c.labelDeviceFields)
 	if err != nil {
 		return err
 	}
@@ -208,7 +210,7 @@ func (c *expCollector) getLabelsFromCounters(mi dcgmClient.MonitoringInfo, label
 	return nil
 }
 
-func (c *expCollector) GetSysinfo() dcgmClient.SystemInfo {
+func (c *expCollector) GetSysinfo() sysinfo.SystemInfo {
 	return c.sysInfo
 }
 

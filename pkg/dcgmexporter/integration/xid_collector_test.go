@@ -33,6 +33,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/server"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/utils"
 )
 
@@ -125,7 +126,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
 
@@ -229,7 +230,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
 

@@ -35,8 +35,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 func TestProcessPodMapper(t *testing.T) {
@@ -69,7 +69,7 @@ func TestProcessPodMapper(t *testing.T) {
 
 	podMapper, err := kubernetes.NewPodMapper(&common2.Config{KubernetesGPUIdType: common2.GPUUID})
 	require.NoError(t, err)
-	var sysInfo dcgmClient.SystemInfo
+	var sysInfo sysinfo.SystemInfo
 	err = podMapper.Process(out, sysInfo)
 	require.NoError(t, err)
 
@@ -280,9 +280,9 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					Attributes: map[string]string{},
 				})
 
-				sysInfo := dcgmClient.SystemInfo{
+				sysInfo := sysinfo.SystemInfo{
 					GPUCount: 1,
-					GPUs: [dcgm.MAX_NUM_DEVICES]dcgmClient.GPUInfo{
+					GPUs: [dcgm.MAX_NUM_DEVICES]sysinfo.GPUInfo{
 						{
 							DeviceInfo: dcgm.Device{
 								UUID: "00000000-0000-0000-0000-000000000000",

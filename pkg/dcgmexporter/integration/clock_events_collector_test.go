@@ -34,6 +34,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/utils"
 )
 
@@ -150,7 +151,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
 
@@ -216,7 +217,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
@@ -352,7 +353,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 
 	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
@@ -459,7 +460,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(allCounters, config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(allCounters, config)
 
 	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)

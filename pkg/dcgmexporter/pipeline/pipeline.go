@@ -28,8 +28,8 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
+	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 func NewMetricsPipeline(

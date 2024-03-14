@@ -28,6 +28,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 var sampleCounters = []common.Counter{
@@ -93,7 +94,7 @@ func testDCGMGPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 	fakeClient := dcgmClient.NewFakeDCGMClient(&config, false)
 	defer fakeClient.Cleanup()
 
-	fakeClient.FakeFuncs([]string {
+	fakeClient.FakeFuncs([]string{
 		"GetAllDeviceCount",
 		"GetDeviceInfo",
 		"GetGpuInstanceHierarchy",
@@ -102,7 +103,7 @@ func testDCGMGPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 	})
 	dcgmClient.SetClient(&fakeClient)
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(counters, &config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(counters, &config)
 
 	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
@@ -157,7 +158,7 @@ func testDCGMCPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 	}
 
 	fakeClient := dcgmClient.NewFakeDCGMClient(&config, false)
-	fakeClient.FakeFuncs([]string {
+	fakeClient.FakeFuncs([]string{
 		"GetAllDeviceCount",
 		"GetDeviceInfo",
 		"GetGpuInstanceHierarchy",
@@ -168,7 +169,7 @@ func testDCGMCPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 
 	/* Test that only cpu metrics are collected for cpu entities. */
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(counters, &config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(counters, &config)
 	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
 	require.NoError(t, err)
 
@@ -225,7 +226,7 @@ func TestToMetric(t *testing.T) {
 		},
 	}
 
-	var instanceInfo *dcgmClient.GPUInstanceInfo = nil
+	var instanceInfo *sysinfo.GPUInstanceInfo = nil
 
 	type testCase struct {
 		replaceBlanksInModelName bool
@@ -303,7 +304,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		UseFakeGPUs:     false,
 	}
 
-	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(counters, &config)
+	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(counters, &config)
 	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
 	require.NoError(t, err)
 

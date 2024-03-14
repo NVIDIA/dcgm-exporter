@@ -26,17 +26,18 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type DCGMCollectorConstructor func(
-	[]common.Counter, string, *common.Config, dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+	[]common.Counter, string, *common.Config, sysinfo.FieldEntityGroupTypeSystemInfoItem,
 ) (*DCGMCollector, func(), error)
 
 func NewDCGMCollector(
 	c []common.Counter,
 	hostname string,
 	config *common.Config,
-	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+	fieldEntityGroupTypeSystemInfo sysinfo.FieldEntityGroupTypeSystemInfoItem,
 ) (*DCGMCollector, func(), error) {
 
 	if fieldEntityGroupTypeSystemInfo.IsEmpty() {
@@ -58,7 +59,7 @@ func NewDCGMCollector(
 	collector.UseOldNamespace = config.UseOldNamespace
 	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
-	cleanups, err := dcgmClient.SetupDcgmFieldsWatch(collector.DeviceFields,
+	cleanups, err := sysinfo.SetupDcgmFieldsWatch(collector.DeviceFields,
 		fieldEntityGroupTypeSystemInfo.SystemInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
@@ -77,7 +78,7 @@ func (c *DCGMCollector) Cleanup() {
 }
 
 func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
-	monitoringInfo := dcgmClient.GetMonitoredEntities(c.SysInfo)
+	monitoringInfo := sysinfo.GetMonitoredEntities(c.SysInfo)
 
 	metrics := make(MetricsByCounter)
 
@@ -87,7 +88,8 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
 			vals, err = dcgmClient.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId, c.DeviceFields)
 		} else {
-			vals, err = dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.DeviceFields)
+			vals, err = dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
+				c.DeviceFields)
 		}
 
 		if err != nil {
@@ -131,7 +133,7 @@ func FindCounterField(c []common.Counter, fieldId uint) (common.Counter, error) 
 
 func ToSwitchMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []common.Counter, mi dcgmClient.MonitoringInfo, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []common.Counter, mi sysinfo.MonitoringInfo, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
 
@@ -176,7 +178,7 @@ func ToSwitchMetric(
 
 func ToCPUMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []common.Counter, mi dcgmClient.MonitoringInfo, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []common.Counter, mi sysinfo.MonitoringInfo, useOld bool, hostname string,
 ) {
 	var labels = map[string]string{}
 
@@ -224,7 +226,7 @@ func ToMetric(
 	values []dcgm.FieldValue_v1,
 	c []common.Counter,
 	d dcgm.Device,
-	instanceInfo *dcgmClient.GPUInstanceInfo,
+	instanceInfo *sysinfo.GPUInstanceInfo,
 	useOld bool,
 	hostname string,
 	replaceBlanksInModelName bool,
