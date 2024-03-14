@@ -45,21 +45,64 @@ type expCollector struct {
 	windowSize          int                            // Window size
 }
 
+// newExpCollector is a constructor for the expCollector
+func newExpCollector(
+	counters []common.Counter,
+	hostname string,
+	counterDeviceFields []dcgm.Short,
+	config *common.Config,
+	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+) expCollector {
+	var labelsCounters []common.Counter
+	for i := 0; i < len(counters); i++ {
+		if counters[i].PromType == "label" {
+			labelsCounters = append(labelsCounters, counters[i])
+		}
+	}
+
+	labelDeviceFields := dcgmClient.NewDeviceFields(labelsCounters, dcgm.FE_GPU)
+
+	collector := expCollector{
+		hostname:            hostname,
+		config:              config,
+		labelDeviceFields:   labelDeviceFields,
+		labelsCounters:      labelsCounters,
+		counterDeviceFields: counterDeviceFields,
+		fieldValueParser: func(val int64) []int64 {
+			return []int64{val}
+		},
+		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {},
+	}
+
+	collector.sysInfo = fieldEntityGroupTypeSystemInfo.SystemInfo
+
+	var err error
+
+	collector.cleanups, err = dcgmClient.SetupDcgmFieldsWatch(collector.counterDeviceFields,
+		collector.sysInfo,
+		int64(config.CollectInterval)*1000)
+	if err != nil {
+		logrus.Fatal("Failed to watch metrics: ", err)
+	}
+
+	return collector
+}
+
 func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 
 	fieldGroupIdx := expCollectorFieldGroupIdx.Add(1)
 
 	fieldGroupName := fmt.Sprintf("expCollectorFieldGroupName%d", fieldGroupIdx)
-	fieldsGroup, err := dcgm.FieldGroupCreate(fieldGroupName, c.counterDeviceFields)
+	fieldsGroup, err := dcgmClient.Client().FieldGroupCreate(fieldGroupName, c.counterDeviceFields)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		_ = dcgm.FieldGroupDestroy(fieldsGroup)
+		_ = dcgmClient.Client().FieldGroupDestroy(fieldsGroup)
 	}()
 
-	err = dcgm.UpdateAllFields()
+	err = dcgmClient.Client().UpdateAllFields()
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +111,7 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 
 	window := time.Now().Add(-time.Duration(c.windowSize) * time.Millisecond)
 
-	values, _, err := dcgm.GetValuesSince(dcgm.GroupAllGPUs(), fieldsGroup, window)
+	values, _, err := dcgmClient.Client().GetValuesSince(dcgmClient.Client().GroupAllGPUs(), fieldsGroup, window)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +183,7 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func (c *expCollector) getLabelsFromCounters(mi dcgmClient.MonitoringInfo, labels map[string]string) error {
-	latestValues, err := dcgm.EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.labelDeviceFields)
+	latestValues, err := dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId, c.labelDeviceFields)
 	if err != nil {
 		return err
 	}
@@ -173,47 +216,4 @@ func (c *expCollector) Cleanup() {
 	for _, cleanup := range c.cleanups {
 		cleanup()
 	}
-}
-
-// newExpCollector is a constructor for the expCollector
-func newExpCollector(
-	counters []common.Counter,
-	hostname string,
-	counterDeviceFields []dcgm.Short,
-	config *common.Config,
-	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
-) expCollector {
-	var labelsCounters []common.Counter
-	for i := 0; i < len(counters); i++ {
-		if counters[i].PromType == "label" {
-			labelsCounters = append(labelsCounters, counters[i])
-		}
-	}
-
-	labelDeviceFields := dcgmClient.NewDeviceFields(labelsCounters, dcgm.FE_GPU)
-
-	collector := expCollector{
-		hostname:            hostname,
-		config:              config,
-		labelDeviceFields:   labelDeviceFields,
-		labelsCounters:      labelsCounters,
-		counterDeviceFields: counterDeviceFields,
-		fieldValueParser: func(val int64) []int64 {
-			return []int64{val}
-		},
-		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {},
-	}
-
-	collector.sysInfo = fieldEntityGroupTypeSystemInfo.SystemInfo
-
-	var err error
-
-	collector.cleanups, err = dcgmClient.SetupDcgmFieldsWatch(collector.counterDeviceFields,
-		collector.sysInfo,
-		int64(config.CollectInterval)*1000)
-	if err != nil {
-		logrus.Fatal("Failed to watch metrics: ", err)
-	}
-
-	return collector
 }

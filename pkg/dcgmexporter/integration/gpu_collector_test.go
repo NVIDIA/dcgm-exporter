@@ -66,11 +66,10 @@ var expectedCPUMetrics = map[string]bool{
 }
 
 func TestDCGMCollector(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+	dcgmClient.Initialize(&common.Config{UseRemoteHE: false})
+	defer dcgmClient.Client().Cleanup()
 
-	_, cleanup = testDCGMGPUCollector(t, sampleCounters)
+	_, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	cleanup()
 
 	_, cleanup = testDCGMCPUCollector(t, sampleCounters)
@@ -91,52 +90,17 @@ func testDCGMGPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 		CollectInterval: 1,
 	}
 
-	dcgmClient.DcgmGetAllDeviceCount = func() (uint, error) {
-		return 1, nil
-	}
+	fakeClient := dcgmClient.NewFakeDCGMClient(&config, false)
+	defer fakeClient.Cleanup()
 
-	dcgmClient.DcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
-		dev := dcgm.Device{
-			GPU:  0,
-			UUID: fmt.Sprintf("fake%d", gpuId),
-		}
-
-		return dev, nil
-	}
-
-	dcgmClient.DcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
-		hierarchy := dcgm.MigHierarchy_v2{
-			Count: 0,
-		}
-		return hierarchy, nil
-	}
-
-	dcgmClient.DcgmAddEntityToGroup = func(
-		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
-	) (err error) {
-		return nil
-	}
-
-	dcgmClient.DcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
-		CPU := dcgm.CpuHierarchyCpu_v1{
-			CpuId:      0,
-			OwnedCores: []uint64{0},
-		}
-		hierarchy := dcgm.CpuHierarchy_v1{
-			Version: 0,
-			NumCpus: 1,
-			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{CPU},
-		}
-
-		return hierarchy, nil
-	}
-
-	defer func() {
-		dcgmClient.DcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
-		dcgmClient.DcgmGetDeviceInfo = dcgm.GetDeviceInfo
-		dcgmClient.DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-		dcgmClient.DcgmAddEntityToGroup = dcgm.AddEntityToGroup
-	}()
+	fakeClient.FakeFuncs([]string {
+		"GetAllDeviceCount",
+		"GetDeviceInfo",
+		"GetGpuInstanceHierarchy",
+		"AddEntityToGroup",
+		"GetCpuHierarchy",
+	})
+	dcgmClient.SetClient(&fakeClient)
 
 	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(counters, &config)
 
@@ -192,61 +156,20 @@ func testDCGMCPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 		UseFakeGPUs:     false,
 	}
 
-	dcgmClient.DcgmGetAllDeviceCount = func() (uint, error) {
-		return 0, nil
-	}
-
-	dcgmClient.DcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
-		dev := dcgm.Device{
-			GPU:           0,
-			DCGMSupported: "No",
-			UUID:          fmt.Sprintf("fake%d", gpuId),
-		}
-
-		return dev, nil
-	}
-
-	dcgmClient.DcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
-		hierarchy := dcgm.MigHierarchy_v2{
-			Count: 0,
-		}
-		return hierarchy, nil
-	}
-
-	dcgmClient.DcgmAddEntityToGroup = func(
-		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
-	) (err error) {
-		return nil
-	}
-
-	dcgmClient.DcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
-		CPU := dcgm.CpuHierarchyCpu_v1{
-			CpuId:      0,
-			OwnedCores: []uint64{0, 18446744073709551360, 65535},
-		}
-		hierarchy := dcgm.CpuHierarchy_v1{
-			Version: 0,
-			NumCpus: 1,
-			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{CPU},
-		}
-
-		return hierarchy, nil
-	}
-
-	defer func() {
-		dcgmClient.DcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
-		dcgmClient.DcgmGetDeviceInfo = dcgm.GetDeviceInfo
-		dcgmClient.DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-		dcgmClient.DcgmAddEntityToGroup = dcgm.AddEntityToGroup
-	}()
+	fakeClient := dcgmClient.NewFakeDCGMClient(&config, false)
+	fakeClient.FakeFuncs([]string {
+		"GetAllDeviceCount",
+		"GetDeviceInfo",
+		"GetGpuInstanceHierarchy",
+		"AddEntityToGroup",
+		"GetCpuHierarchy",
+	})
+	dcgmClient.SetClient(&fakeClient)
 
 	/* Test that only cpu metrics are collected for cpu entities. */
 
 	fieldEntityGroupTypeSystemInfo := dcgmClient.NewEntityGroupTypeSystemInfo(counters, &config)
 	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
-	require.NoError(t, err)
-
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
 	require.NoError(t, err)
 
 	cpuItem, cpuItemExist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
@@ -339,7 +262,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 
 	runOnlyWithLiveGPUs(t)
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -356,7 +279,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
-	numGPUs, err = dcgm.GetAllDeviceCount()
+	numGPUs, err = dcgmClient.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	counters := []common.Counter{

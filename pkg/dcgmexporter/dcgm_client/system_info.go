@@ -26,16 +26,7 @@ import (
 	"github.com/bits-and-blooms/bitset"
 	"github.com/sirupsen/logrus"
 
-	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
-)
-
-var (
-	DcgmGetAllDeviceCount       = dcgm.GetAllDeviceCount
-	DcgmGetDeviceInfo           = dcgm.GetDeviceInfo
-	DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-	DcgmAddEntityToGroup        = dcgm.AddEntityToGroup
-	DcgmCreateGroup             = dcgm.CreateGroup
-	DcgmGetCpuHierarchy         = dcgm.GetCpuHierarchy
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
 type MonitoringInfo struct {
@@ -86,7 +77,7 @@ func PopulateMigProfileNames(sysInfo *SystemInfo, entities []dcgm.GroupEntityPai
 	var fields []dcgm.Short
 	fields = append(fields, dcgm.DCGM_FI_DEV_NAME)
 	flags := dcgm.DCGM_FV_FLAG_LIVE_DATA
-	values, err := dcgm.EntitiesGetLatestValues(entities, fields, flags)
+	values, err := Client().EntitiesGetLatestValues(entities, fields, flags)
 
 	if err != nil {
 		return err
@@ -155,7 +146,7 @@ func CPUCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
 	return false
 }
 
-func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt common2.DeviceOptions) error {
+func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt common.DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -180,7 +171,7 @@ func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt common2.DeviceOptions) er
 	return nil
 }
 
-func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt common2.DeviceOptions) error {
+func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt common.DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -205,7 +196,7 @@ func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt common2.DeviceOptions)
 	return nil
 }
 
-func VerifyDevicePresence(sysInfo *SystemInfo, gOpt common2.DeviceOptions) error {
+func VerifyDevicePresence(sysInfo *SystemInfo, gOpt common.DeviceOptions) error {
 	if gOpt.Flex {
 		return nil
 	}
@@ -250,8 +241,8 @@ func getCoreArray(bitmask []uint64) []uint {
 	return cores
 }
 
-func InitializeCPUInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (SystemInfo, error) {
-	hierarchy, err := DcgmGetCpuHierarchy()
+func InitializeCPUInfo(sysInfo SystemInfo, sOpt common.DeviceOptions) (SystemInfo, error) {
+	hierarchy, err := Client().GetCpuHierarchy()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -281,8 +272,8 @@ func InitializeCPUInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (SystemIn
 	return sysInfo, nil
 }
 
-func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (SystemInfo, error) {
-	switches, err := dcgm.GetEntityGroupEntities(dcgm.FE_SWITCH)
+func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common.DeviceOptions) (SystemInfo, error) {
+	switches, err := Client().GetEntityGroupEntities(dcgm.FE_SWITCH)
 	if err != nil {
 		return sysInfo, err
 	}
@@ -291,7 +282,7 @@ func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (Sys
 		return sysInfo, fmt.Errorf("no switches to monitor")
 	}
 
-	links, err := dcgm.GetNvLinkLinkStatus()
+	links, err := Client().GetNvLinkLinkStatus()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -322,10 +313,10 @@ func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt common2.DeviceOptions) (Sys
 }
 
 func InitializeGPUInfo(
-	sysInfo SystemInfo, gOpt common2.DeviceOptions, useFakeGPUs bool,
+	sysInfo SystemInfo, gOpt common.DeviceOptions, useFakeGPUs bool,
 ) (SystemInfo,
 	error) {
-	gpuCount, err := DcgmGetAllDeviceCount()
+	gpuCount, err := Client().GetAllDeviceCount()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -334,7 +325,7 @@ func InitializeGPUInfo(
 	for i := uint(0); i < sysInfo.GPUCount; i++ {
 		// Default mig enabled to false
 		sysInfo.GPUs[i].MigEnabled = false
-		sysInfo.GPUs[i].DeviceInfo, err = DcgmGetDeviceInfo(i)
+		sysInfo.GPUs[i].DeviceInfo, err = Client().GetDeviceInfo(i)
 		if err != nil {
 			if useFakeGPUs {
 				sysInfo.GPUs[i].DeviceInfo.GPU = i
@@ -345,7 +336,7 @@ func InitializeGPUInfo(
 		}
 	}
 
-	hierarchy, err := DcgmGetGpuInstanceHierarchy()
+	hierarchy, err := Client().GetGpuInstanceHierarchy()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -393,7 +384,7 @@ func InitializeGPUInfo(
 }
 
 func InitializeSystemInfo(
-	gOpt common2.DeviceOptions, sOpt common2.DeviceOptions, cOpt common2.DeviceOptions, useFakeGPUs bool,
+	gOpt common.DeviceOptions, sOpt common.DeviceOptions, cOpt common.DeviceOptions, useFakeGPUs bool,
 	entityType dcgm.Field_Entity_Group,
 ) (SystemInfo, error) {
 	sysInfo := SystemInfo{}
@@ -435,7 +426,7 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 		for i, core := range cpu.Cores {
 
 			if i == 0 || i%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
-				groupID, err = dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+				groupID, err = Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 				if err != nil {
 					return nil, cleanups, err
 				}
@@ -447,18 +438,18 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				continue
 			}
 
-			err = dcgm.AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
+			err = Client().AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
 
 			if err != nil {
 				return groups, cleanups, err
 			}
 
 			cleanups = append(cleanups, func() {
-				err := dcgm.DestroyGroup(groupID)
+				err := Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						common2.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:          err,
+						common.LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:         err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -478,7 +469,7 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 			continue
 		}
 
-		groupID, err := DcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+		groupID, err := Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 		if err != nil {
 			return nil, cleanups, err
 		}
@@ -494,18 +485,18 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				continue
 			}
 
-			err = dcgm.AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
+			err = Client().AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
 
 			if err != nil {
 				return groups, cleanups, err
 			}
 
 			cleanups = append(cleanups, func() {
-				err := dcgm.DestroyGroup(groupID)
+				err := Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						common2.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:          err,
+						common.LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:         err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -517,20 +508,20 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 
 func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), error) {
 	monitoringInfo := GetMonitoredEntities(sysInfo)
-	groupID, err := DcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+	groupID, err := Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 	if err != nil {
 		return dcgm.GroupHandle{}, func() {}, err
 	}
 
 	for _, mi := range monitoringInfo {
-		err := DcgmAddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
+		err := Client().AddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
 		if err != nil {
 			return groupID, func() {
-				err := dcgm.DestroyGroup(groupID)
+				err := Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						common2.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:          err,
+						common.LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:         err,
 					}).Warn("can not destroy group")
 				}
 			}, err
@@ -538,11 +529,11 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 	}
 
 	return groupID, func() {
-		err := dcgm.DestroyGroup(groupID)
+		err := Client().DestroyGroup(groupID)
 		if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 			logrus.WithFields(logrus.Fields{
-				common2.LoggerGroupIDKey: groupID,
-				logrus.ErrorKey:          err,
+				common.LoggerGroupIDKey: groupID,
+				logrus.ErrorKey:         err,
 			}).Warn("can not destroy group")
 		}
 	}, nil

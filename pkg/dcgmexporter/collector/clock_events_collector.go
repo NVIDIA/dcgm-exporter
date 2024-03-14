@@ -62,7 +62,7 @@ func NewClockEventsCollector(
 	config *common.Config,
 	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
 ) (Collector, error) {
-	if !IsDCGMExpClockEventsCountEnabled(counters) {
+	if !common.IsMetricsTypeEnabled(counters, metrics.DCGMExpClockEventsCount) {
 		logrus.Error(metrics.DCGMExpClockEventsCount + " collector is disabled")
 		return nil, fmt.Errorf(metrics.DCGMExpClockEventsCount + " collector is disabled")
 	}
@@ -103,12 +103,4 @@ func NewClockEventsCollector(
 	}
 
 	return &collector, nil
-}
-
-// IsDCGMExpClockEventsCountEnabled checks if the DCGM_EXP_CLOCK_EVENTS_COUNT counter exists
-func IsDCGMExpClockEventsCountEnabled(counters []common.Counter) bool {
-	return slices.ContainsFunc(counters,
-		func(c common.Counter) bool {
-			return c.FieldName == metrics.DCGMExpClockEventsCount
-		})
 }

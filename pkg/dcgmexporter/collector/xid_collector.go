@@ -42,7 +42,7 @@ func NewXIDCollector(
 	config *common.Config,
 	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
 ) (Collector, error) {
-	if !IsDCGMExpXIDErrorsCountEnabled(counters) {
+	if !common.IsMetricsTypeEnabled(counters, metrics.DCGMExpXIDErrorsCount) {
 		logrus.Error(metrics.DCGMExpXIDErrorsCount + " collector is disabled")
 		return nil, fmt.Errorf(metrics.DCGMExpXIDErrorsCount + " collector is disabled")
 	}
@@ -65,10 +65,4 @@ func NewXIDCollector(
 	collector.windowSize = config.XIDCountWindowSize
 
 	return &collector, nil
-}
-
-func IsDCGMExpXIDErrorsCountEnabled(counters []common.Counter) bool {
-	return slices.ContainsFunc(counters, func(c common.Counter) bool {
-		return c.FieldName == metrics.DCGMExpXIDErrorsCount
-	})
 }

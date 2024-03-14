@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
@@ -27,7 +28,28 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
-func InitDCGM(config *common.Config) func() {
+var dcgmClient DCGMClient
+
+func Initialize(config *common.Config) {
+	dcgmClient = newDCGMClient(config)
+}
+
+func Client() DCGMClient {
+	return dcgmClient
+}
+
+func SetClient(d DCGMClient) {
+	dcgmClient = d
+}
+
+type DCGMClientImpl struct {
+	shutdown      func()
+	moduleCleanup func()
+}
+
+func newDCGMClient(config *common.Config) DCGMClient {
+	client := DCGMClientImpl{}
+
 	if config.UseRemoteHE {
 		logrus.Info("Attempting to connect to remote hostengine at ", config.RemoteHEInfo)
 		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
@@ -35,7 +57,7 @@ func InitDCGM(config *common.Config) func() {
 			cleanup()
 			logrus.Fatal(err)
 		}
-		return cleanup
+		client.shutdown = cleanup
 	} else {
 		if config.EnableDCGMLog {
 			os.Setenv("__DCGM_DBG_FILE", "-")
@@ -47,19 +69,140 @@ func InitDCGM(config *common.Config) func() {
 			cleanup()
 			logrus.Fatal(err)
 		}
-
-		return cleanup
+		client.shutdown = cleanup
 	}
+
+	// Initialize the DcgmFields module
+	if val := dcgm.FieldsInit(); val < 0 {
+		logrus.Fatalf("Failed to initialize DCGM Fields module; err: %d", val)
+	} else {
+		logrus.Infof("Initialized DCGM Fields module.")
+	}
+
+	return client
+}
+
+func (d DCGMClientImpl) AddEntityToGroup(
+	groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group,
+	entityId uint,
+) error {
+	return dcgm.AddEntityToGroup(groupId, entityGroupId, entityId)
+}
+
+func (d DCGMClientImpl) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index uint, parentId uint) error {
+	return dcgm.AddLinkEntityToGroup(groupId, index, parentId)
+}
+
+func (d DCGMClientImpl) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
+	return dcgm.CreateGroup(groupName)
+}
+
+func (d DCGMClientImpl) DestroyGroup(groupId dcgm.GroupHandle) error {
+	return dcgm.DestroyGroup(groupId)
+}
+
+func (d DCGMClientImpl) EntitiesGetLatestValues(
+	entities []dcgm.GroupEntityPair, fields []dcgm.Short, flags uint,
+) ([]dcgm.FieldValue_v2, error) {
+	return dcgm.EntitiesGetLatestValues(entities, fields, flags)
+}
+
+func (d DCGMClientImpl) EntityGetLatestValues(entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+	error) {
+	return dcgm.EntityGetLatestValues(entityGroup, entityId, fields)
+}
+
+func (d DCGMClientImpl) FieldGetById(fieldId dcgm.Short) dcgm.FieldMeta {
+	return dcgm.FieldGetById(fieldId)
+}
+
+func (d DCGMClientImpl) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
+	return dcgm.FieldGroupCreate(fieldsGroupName, fields)
+}
+
+func (d DCGMClientImpl) FieldGroupDestroy(fieldsGroup dcgm.FieldHandle) error {
+	return dcgm.FieldGroupDestroy(fieldsGroup)
+}
+
+func (d DCGMClientImpl) GetAllDeviceCount() (uint, error) {
+	return dcgm.GetAllDeviceCount()
+}
+
+func (d DCGMClientImpl) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
+	return dcgm.GetCpuHierarchy()
+}
+
+func (d DCGMClientImpl) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
+	return dcgm.GetDeviceInfo(gpuId)
+}
+
+func (d DCGMClientImpl) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
+	return dcgm.GetEntityGroupEntities(entityGroup)
+}
+
+func (d DCGMClientImpl) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
+	return dcgm.GetGpuInstanceHierarchy()
+}
+
+func (d DCGMClientImpl) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
+	return dcgm.GetNvLinkLinkStatus()
+}
+
+func (d DCGMClientImpl) GetSupportedDevices() ([]uint, error) {
+	return dcgm.GetSupportedDevices()
+}
+
+func (d DCGMClientImpl) GetSupportedMetricGroups(gpuId uint) ([]dcgm.MetricGroup, error) {
+	return dcgm.GetSupportedMetricGroups(gpuId)
+}
+
+func (d DCGMClientImpl) GetValuesSince(
+	gpuGroup dcgm.GroupHandle, fieldGroup dcgm.FieldHandle, sinceTime time.Time,
+) ([]dcgm.FieldValue_v2, time.Time, error) {
+	return dcgm.GetValuesSince(gpuGroup, fieldGroup, sinceTime)
+}
+
+func (d DCGMClientImpl) GroupAllGPUs() dcgm.GroupHandle {
+	return dcgm.GroupAllGPUs()
+}
+
+func (d DCGMClientImpl) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+	error) {
+	return dcgm.LinkGetLatestValues(index, parentId, fields)
+}
+
+func (d DCGMClientImpl) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {
+	return dcgm.NewDefaultGroup(groupName)
+}
+
+func (d DCGMClientImpl) UpdateAllFields() error {
+	return dcgm.UpdateAllFields()
+}
+
+func (d DCGMClientImpl) WatchFieldsWithGroupEx(
+	fieldsGroup dcgm.FieldHandle, group dcgm.GroupHandle, updateFreq int64, maxKeepAge float64,
+	maxKeepSamples int32,
+) error {
+	return dcgm.WatchFieldsWithGroupEx(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
+}
+
+func (d DCGMClientImpl) Cleanup() {
+	// Terminates the DcgmFields module
+	if val := dcgm.FieldsTerm(); val < 0 {
+		logrus.Errorf("Failed to terminate DCGM Fields module; err: %d", val)
+	}
+
+	d.shutdown()
 }
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
-	group, err := dcgm.NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+	group, err := Client().NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 	if err != nil {
 		return dcgm.GroupHandle{}, func() {}, err
 	}
 
 	return group, func() {
-		err := dcgm.DestroyGroup(group)
+		err := Client().DestroyGroup(group)
 		if err != nil {
 			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
@@ -69,7 +212,7 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 func NewDeviceFields(counters []common.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
 	for _, f := range counters {
-		meta := dcgm.FieldGetById(f.FieldID)
+		meta := Client().FieldGetById(f.FieldID)
 
 		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
 			deviceFields = append(deviceFields, f.FieldID)
@@ -85,13 +228,13 @@ func NewDeviceFields(counters []common.Counter, entityType dcgm.Field_Entity_Gro
 
 func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) {
 	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", rand.Uint64())
-	fieldGroup, err := dcgm.FieldGroupCreate(name, deviceFields)
+	fieldGroup, err := Client().FieldGroupCreate(name, deviceFields)
 	if err != nil {
 		return dcgm.FieldHandle{}, func() {}, err
 	}
 
 	return fieldGroup, func() {
-		err := dcgm.FieldGroupDestroy(fieldGroup)
+		err := Client().FieldGroupDestroy(fieldGroup)
 		if err != nil {
 			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
@@ -101,7 +244,7 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 func WatchFieldGroup(
 	group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32,
 ) error {
-	err := dcgm.WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
+	err := Client().WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
 	if err != nil {
 		return err
 	}
@@ -109,8 +252,10 @@ func WatchFieldGroup(
 	return nil
 }
 
-func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collectIntervalUsec int64) ([]func(),
-	error) {
+func SetupDcgmFieldsWatch(
+	deviceFields []dcgm.Short, sysInfo SystemInfo,
+	collectIntervalUsec int64,
+) ([]func(), error) {
 	var err error
 	var cleanups []func()
 	var cleanup func()

@@ -19,22 +19,23 @@ package integration
 import (
 	"testing"
 
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
+	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 )
 
 func setupTest(t *testing.T) func(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	assert.NoError(t, err)
+	dcgmClient.Initialize(&common.Config{UseRemoteHE: false})
 
 	return func(t *testing.T) {
-		defer cleanup()
+		defer dcgmClient.Client().Cleanup()
 	}
 }
 
 func runOnlyWithLiveGPUs(t *testing.T) {
 	t.Helper()
-	gpus, err := dcgm.GetSupportedDevices()
+	gpus, err := dcgmClient.Client().GetSupportedDevices()
 	assert.NoError(t, err)
 	if len(gpus) < 1 {
 		t.Skip("Skipping test that requires live GPUs. None were found")

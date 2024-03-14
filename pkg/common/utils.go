@@ -19,6 +19,7 @@ package common
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"time"
 )
@@ -51,4 +52,10 @@ func GetHostname(config *Config) (string, error) {
 		}
 	}
 	return hostname, nil
+}
+
+func IsMetricsTypeEnabled(counters []Counter, metricsType string) bool {
+	return slices.ContainsFunc(counters, func(c Counter) bool {
+		return c.FieldName == metricsType
+	})
 }

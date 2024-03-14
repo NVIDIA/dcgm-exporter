@@ -72,7 +72,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {

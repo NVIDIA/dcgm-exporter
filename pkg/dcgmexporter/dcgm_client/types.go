@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-//go:generate mockgen -destination=mocks/pkg/dcgmexporter/mock_expcollector.go github.com/NVIDIA/dcgm_client-exporter/pkg/dcgmexporter Collector
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/dcgm_client/mock_client.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client DCGMClient
 
 package dcgm_client
 
 import (
+	"time"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
@@ -62,4 +64,31 @@ type SystemInfo struct {
 	InfoType dcgm.Field_Entity_Group
 	Switches []SwitchInfo
 	CPUs     []CPUInfo
+}
+
+type DCGMClient interface {
+	AddEntityToGroup(dcgm.GroupHandle, dcgm.Field_Entity_Group, uint) error
+	AddLinkEntityToGroup(dcgm.GroupHandle, uint, uint) error
+	CreateGroup(string) (dcgm.GroupHandle, error)
+	DestroyGroup(groupId dcgm.GroupHandle) error
+	EntitiesGetLatestValues([]dcgm.GroupEntityPair, []dcgm.Short, uint) ([]dcgm.FieldValue_v2, error)
+	EntityGetLatestValues(dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
+	FieldGetById(dcgm.Short) dcgm.FieldMeta
+	FieldGroupCreate(string, []dcgm.Short) (dcgm.FieldHandle, error)
+	FieldGroupDestroy(dcgm.FieldHandle) error
+	GetAllDeviceCount() (uint, error)
+	GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error)
+	GetDeviceInfo(uint) (dcgm.Device, error)
+	GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error)
+	GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error)
+	GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error)
+	GetSupportedDevices() ([]uint, error)
+	GetSupportedMetricGroups(uint) ([]dcgm.MetricGroup, error)
+	GetValuesSince(dcgm.GroupHandle, dcgm.FieldHandle, time.Time) ([]dcgm.FieldValue_v2, time.Time, error)
+	GroupAllGPUs() dcgm.GroupHandle
+	LinkGetLatestValues(uint, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
+	NewDefaultGroup(string) (dcgm.GroupHandle, error)
+	UpdateAllFields() error
+	WatchFieldsWithGroupEx(dcgm.FieldHandle, dcgm.GroupHandle, int64, float64, int32) error
+	Cleanup()
 }

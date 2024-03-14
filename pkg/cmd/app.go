@@ -54,7 +54,7 @@ const (
 
 func NewApp(buildVersion ...string) *cli.App {
 	c := cli.NewApp()
-	c.Name = "DCGM Exporter"
+	c.Name = "GetClient Exporter"
 	c.Usage = "Generates GPU metrics in the prometheus format"
 	if len(buildVersion) == 0 {
 		buildVersion = append(buildVersion, "")
@@ -71,7 +71,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.StringFlag{
 			Name:    common.CLIFieldsFile,
 			Aliases: []string{"f"},
-			Usage:   "Path to the file, that contains the DCGM fields to collect",
+			Usage:   "Path to the file, that contains the GetClient fields to collect",
 			Value:   "/etc/dcgm_client-exporter/default-counters.csv",
 			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
 		},
@@ -168,7 +168,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    common.CLIXIDCountWindowSize,
 			Aliases: []string{"x"},
 			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in DCGM Exporter.",
+			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in GetClient Exporter.",
 			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
 		},
 		&cli.BoolFlag{
@@ -187,19 +187,19 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.IntFlag{
 			Name:    common.CLIClockEventsCountWindowSize,
 			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Set time window size in milliseconds (ms) for counting clock events in DCGM Exporter.",
+			Usage:   "Set time window size in milliseconds (ms) for counting clock events in GetClient Exporter.",
 			EnvVars: []string{"DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE"},
 		},
 		&cli.BoolFlag{
 			Name:    common.CLIEnableDCGMLog,
 			Value:   false,
-			Usage:   "Enable writing DCGM logs to standard output (stdout).",
+			Usage:   "Enable writing GetClient logs to standard output (stdout).",
 			EnvVars: []string{"DCGM_EXPORTER_ENABLE_DCGM_LOG"},
 		},
 		&cli.StringFlag{
 			Name:    common.CLIDCGMLogLevel,
 			Value:   common.DCGMDbgLvlNone,
-			Usage:   "Specify the DCGM log verbosity level. This parameter is effective only when the '--enable-dcgm_client-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
+			Usage:   "Specify the GetClient log verbosity level. This parameter is effective only when the '--enable-dcgm_client-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
 		},
 	}
@@ -259,14 +259,10 @@ restart:
 
 	enableDebugLogging(config)
 
-	cleanupDCGM := dcgmClient.InitDCGM(config)
-	defer cleanupDCGM()
+	dcgmClient.Initialize(config)
+	defer dcgmClient.Client().Cleanup()
 
 	logrus.Info("DCGM successfully initialized!")
-
-	// TODO (handle properly)
-	dcgm.FieldsInit()
-	defer dcgm.FieldsTerm()
 
 	fillConfigMetricGroups(config)
 
@@ -338,7 +334,7 @@ func enableDCGMExpClockEventsCount(
 	cs *common.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
 	hostname string, config *common.Config, cRegistry *registry.Registry,
 ) {
-	if collector.IsDCGMExpClockEventsCountEnabled(cs.ExporterCounters) {
+	if common.IsMetricsTypeEnabled(cs.ExporterCounters, metrics.DCGMExpClockEventsCount) {
 		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
 			logrus.Fatalf("%s collector cannot be initialized", metrics.DCGMClockEventsCount.String())
@@ -359,7 +355,7 @@ func enableDCGMExpXIDErrorsCountCollector(
 	cs *common.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
 	hostname string, config *common.Config, cRegistry *registry.Registry,
 ) {
-	if collector.IsDCGMExpXIDErrorsCountEnabled(cs.ExporterCounters) {
+	if common.IsMetricsTypeEnabled(cs.ExporterCounters, metrics.DCGMExpXIDErrorsCount) {
 		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
 			logrus.Fatalf("%s collector cannot be initialized", metrics.DCGMXIDErrorsCount.String())
@@ -408,7 +404,7 @@ func getCounters(config *common.Config) *common.CounterSet {
 		logrus.Fatal(err)
 	}
 
-	// Copy labels from DCGM Counters to ExporterCounters
+	// Copy labels from GetClient Counters to ExporterCounters
 	for i := range cs.DCGMCounters {
 		if cs.DCGMCounters[i].PromType == "label" {
 			cs.ExporterCounters = append(cs.ExporterCounters, cs.DCGMCounters[i])
@@ -419,7 +415,7 @@ func getCounters(config *common.Config) *common.CounterSet {
 
 func fillConfigMetricGroups(config *common.Config) {
 	var groups []dcgm.MetricGroup
-	groups, err := dcgm.GetSupportedMetricGroups(0)
+	groups, err := dcgmClient.Client().GetSupportedMetricGroups(0)
 	if err != nil {
 		config.CollectDCP = false
 		logrus.Info("Not collecting DCP metrics: ", err)
