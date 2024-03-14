@@ -16,11 +16,12 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
-	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
+	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
 
 const (

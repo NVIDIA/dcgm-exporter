@@ -18,6 +18,7 @@ package logging
 
 import (
 	"fmt"
+
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/sirupsen/logrus"

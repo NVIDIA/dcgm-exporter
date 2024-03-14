@@ -110,7 +110,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	allCounters := []Counter{
-		Counter{
+		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
@@ -212,7 +212,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	defer teardownTest(t)
 
 	allCounters := []Counter{
-		Counter{
+		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}

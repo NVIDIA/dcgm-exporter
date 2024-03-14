@@ -20,11 +20,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCapture(t *testing.T) {

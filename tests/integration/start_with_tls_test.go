@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 	"github.com/avast/retry-go/v4"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
 
 func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {

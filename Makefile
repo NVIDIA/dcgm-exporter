@@ -22,6 +22,7 @@ FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker buildx build
+MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local
 all: ubuntu22.04 ubi9
@@ -94,3 +95,17 @@ validate-modules:
 tools: ## Install required tools and utilities
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2
 	go install github.com/axw/gocov/gocov@latest
+	go install golang.org/x/tools/cmd/goimports@latest
+
+goimports:
+	go list -f {{.Dir}} $(MODULE)/... \
+		| xargs goimports -local $(MODULE) -w
+
+check-fmt:
+	@echo "Checking code formatting.  Any listed files don't match goimports:"
+	! (find . -iname "*.go" \
+		| xargs goimports -l -local $(MODULE) | grep .)
+
+.PHONY: e2e-test
+e2e-test:
+	cd tests/e2e && make e2e-test

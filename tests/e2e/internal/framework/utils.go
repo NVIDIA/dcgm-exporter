@@ -14,44 +14,33 @@
  * limitations under the License.
  */
 
-package stdout
+package framework
 
-/*
-#include <stdio.h>
-void printBoom() {
-	printf("Boom\n");
-	fflush(stdout);
-}
-*/
-import "C"
 import (
-	"bytes"
-	"context"
+	"os"
+	"path/filepath"
 	"strings"
-	"testing"
-	"time"
-
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func testCaptureWithCGO(t *testing.T) {
-	t.Helper()
+// ResolvePath resolves a path containing $HOME or ~ to an absolute path.
+func ResolvePath(path string) (string, error) {
+	// Expand environment variables like $HOME
+	path = os.ExpandEnv(path)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// If the path starts with ~, replace it with the home directory
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = strings.Replace(path, "~", home, 1)
+	}
 
-	buf := &bytes.Buffer{}
-	logrus.SetOutput(buf)
+	// Clean up the path and make it absolute
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
 
-	err := Capture(ctx, func() error {
-		C.printBoom()
-		return nil
-	})
-	assert.NoError(t, err)
-
-	time.Sleep(10 * time.Millisecond)
-	require.Equal(t, "Boom", strings.TrimSpace(buf.String()))
-
-	cancel()
+	return absPath, nil
 }
