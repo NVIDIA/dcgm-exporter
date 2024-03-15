@@ -54,20 +54,22 @@ type DcgmGroup struct {
 	entityList []dcgm.GroupEntityPair
 }
 
-func (d *DcgmGroupManager) AddNewGroup(groupName string, groupType DcgmGroupType, groupID *uint) error {
+func (d *DcgmGroupManager) AddNewGroup(groupName string, groupType DcgmGroupType) (uint, error) {
 
-	newGroupID := atomic.AddUint32(&d.groupIDSequence, 1)
-	*groupID = uint(newGroupID)
+	newGroupID := uint(atomic.AddUint32(&d.groupIDSequence, 1))
 
 	newGroup := DcgmGroup{
-		groupId:    *groupID,
+		groupId:    newGroupID,
 		name:       groupName,
 		entityList: make([]dcgm.GroupEntityPair, 0),
 	}
 
-	d.groupIDMap[*groupID] = &newGroup
+	if d.groupIDMap == nil {
+		d.groupIDMap = make(map[uint]*DcgmGroup)
+	}
+	d.groupIDMap[newGroupID] = &newGroup
 
-	return nil
+	return newGroupID, nil
 }
 
 func (d *DcgmGroupManager) RemoveGroup(groupID uint) error {
@@ -191,15 +193,13 @@ func (f *FakeDCGMClient) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index ui
 
 func (f *FakeDCGMClient) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
 	if f.useFake(getFunctionName()) {
-		var groupID *uint
-
-		err := f.dcgmGroupManager.AddNewGroup(groupName, DCGM_GROUP_DEFAULT, groupID)
+		groupID, err := f.dcgmGroupManager.AddNewGroup(groupName, DCGM_GROUP_DEFAULT)
 		if err != nil {
 			return dcgm.GroupHandle{}, err
 		}
 
 		groupHandle := dcgm.GroupHandle{}
-		groupHandle.Handle(uint64(*groupID))
+		groupHandle.SetHandle(uintptr(groupID))
 
 		return groupHandle, nil
 	} else {

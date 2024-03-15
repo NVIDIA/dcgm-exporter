@@ -146,22 +146,22 @@ func TestVerifyDevicePresence(t *testing.T) {
 	sysInfo := SpoofSystemInfo()
 	var dOpt common.DeviceOptions
 	dOpt.Flex = true
-	err := VerifyDevicePresence(&sysInfo, dOpt)
+	err := sysInfo.VerifyDevicePresence(dOpt)
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 
 	dOpt.Flex = false
 	dOpt.MajorRange = append(dOpt.MajorRange, -1)
 	dOpt.MinorRange = append(dOpt.MinorRange, -1)
-	err = VerifyDevicePresence(&sysInfo, dOpt)
+	err = sysInfo.VerifyDevicePresence(dOpt)
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 
 	dOpt.MinorRange[0] = 10 // this GPU instance doesn't exist
-	err = VerifyDevicePresence(&sysInfo, dOpt)
+	err = sysInfo.VerifyDevicePresence(dOpt)
 	require.NotEqual(t, err, nil, "Expected to have an error for a non-existent GPU instance, but none found")
 
 	dOpt.MajorRange[0] = 10 // this GPU doesn't exist
 	dOpt.MinorRange[0] = -1
-	err = VerifyDevicePresence(&sysInfo, dOpt)
+	err = sysInfo.VerifyDevicePresence(dOpt)
 	require.NotEqual(t, err, nil, "Expected to have an error for a non-existent GPU, but none found")
 
 	// Add GPUs and instances that exist
@@ -169,7 +169,7 @@ func TestVerifyDevicePresence(t *testing.T) {
 	dOpt.MajorRange = append(dOpt.MajorRange, 1)
 	dOpt.MinorRange[0] = 0
 	dOpt.MinorRange = append(dOpt.MinorRange, 14)
-	err = VerifyDevicePresence(&sysInfo, dOpt)
+	err = sysInfo.VerifyDevicePresence(dOpt)
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 }
 
@@ -665,9 +665,9 @@ func TestSetMigProfileNames(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.valid {
-				assert.NoError(t, SetMigProfileNames(&tt.sysInfo, tt.values), "Expected no error.")
+				assert.NoError(t, tt.sysInfo.SetMigProfileNames(tt.values), "Expected no error.")
 			} else {
-				assert.Error(t, SetMigProfileNames(&tt.sysInfo, tt.values), "Expected an error.")
+				assert.Error(t, tt.sysInfo.SetMigProfileNames(tt.values), "Expected an error.")
 			}
 		})
 	}
