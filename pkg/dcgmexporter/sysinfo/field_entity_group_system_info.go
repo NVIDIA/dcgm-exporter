@@ -35,7 +35,7 @@ var FieldEntityGroupTypeToMonitor = []dcgm.Field_Entity_Group{
 }
 
 type FieldEntityGroupTypeSystemInfoItem struct {
-	SystemInfo   SystemInfo
+	SystemInfo   SystemInfoInterface
 	DeviceFields []dcgm.Short
 }
 
@@ -84,7 +84,7 @@ func (e *FieldEntityGroupTypeSystemInfo) Load(entityType dcgm.Field_Entity_Group
 	}
 
 	e.Items[entityType] = FieldEntityGroupTypeSystemInfoItem{
-		SystemInfo:   *sysInfo,
+		SystemInfo:   sysInfo,
 		DeviceFields: deviceFields,
 	}
 

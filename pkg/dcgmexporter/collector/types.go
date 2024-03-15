@@ -64,7 +64,7 @@ func (m Metric) GetIDOfType(idType common2.KubernetesGPUIDType) (string, error) 
 type Collector interface {
 	GetMetrics() (MetricsByCounter, error)
 	Cleanup()
-	GetSysinfo() sysinfo.SystemInfo
+	GetSysinfo() sysinfo.SystemInfoInterface
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
@@ -75,7 +75,7 @@ type DCGMCollector struct {
 	DeviceFields             []dcgm.Short
 	Cleanups                 []func()
 	UseOldNamespace          bool
-	SysInfo                  sysinfo.SystemInfo
+	SysInfo                  sysinfo.SystemInfoInterface
 	Hostname                 string
 	ReplaceBlanksInModelName bool
 }

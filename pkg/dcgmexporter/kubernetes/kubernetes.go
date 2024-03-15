@@ -59,7 +59,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics collector.MetricsByCounter, sysInfo sysinfo.SystemInfo) error {
+func (p *PodMapper) Process(metrics collector.MetricsByCounter, sysInfo sysinfo.SystemInfoInterface) error {
 	_, err := os.Stat(SocketPath)
 	if os.IsNotExist(err) {
 		logrus.Infof("No Kubelet socket, ignoring")
@@ -139,7 +139,7 @@ func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodRes
 }
 
 func (p *PodMapper) toDeviceToPod(
-	devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo sysinfo.SystemInfo,
+	devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo sysinfo.SystemInfoInterface,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 

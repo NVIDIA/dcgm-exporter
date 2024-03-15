@@ -31,7 +31,7 @@ var fakeProfileName = "2fake.4gb"
 
 func SpoofSwitchSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
-	sysInfo.InfoType = dcgm.FE_SWITCH
+	sysInfo.infoType = dcgm.FE_SWITCH
 	sw1 := SwitchInfo{
 		EntityId: 0,
 	}
@@ -72,18 +72,18 @@ func SpoofSwitchSystemInfo() SystemInfo {
 	sw2.NvLinks = append(sw2.NvLinks, l3)
 	sw2.NvLinks = append(sw2.NvLinks, l4)
 
-	sysInfo.Switches = append(sysInfo.Switches, sw1)
-	sysInfo.Switches = append(sysInfo.Switches, sw2)
+	sysInfo.switches = append(sysInfo.switches, sw1)
+	sysInfo.switches = append(sysInfo.switches, sw2)
 
-	sysInfo.SOpt.MajorRange = []int{-1}
-	sysInfo.SOpt.MinorRange = []int{-1}
+	sysInfo.sOpt.MajorRange = []int{-1}
+	sysInfo.sOpt.MinorRange = []int{-1}
 
 	return sysInfo
 }
 
 func SpoofSystemInfo() SystemInfo {
 	var sysInfo SystemInfo
-	sysInfo.GPUCount = 2
+	sysInfo.gpuCount = 2
 	sysInfo.GPUs[0].DeviceInfo.GPU = 0
 	gi := GPUInstanceInfo{
 		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlProfileSlices: 3},
@@ -128,7 +128,7 @@ func TestMonitoredEntities(t *testing.T) {
 		}
 	}
 	require.Equal(t, instanceCount, 2, "Expected 2 GPU instances but found %d", instanceCount)
-	require.Equal(t, gpuCount, 0, "Expected 0 GPUs but found %d", gpuCount)
+	require.Equal(t, gpuCount, 0, "Expected 0 gpus but found %d", gpuCount)
 
 	sysInfo.GPUs[0].GPUInstances = sysInfo.GPUs[0].GPUInstances[:0]
 	sysInfo.GPUs[1].GPUInstances = sysInfo.GPUs[1].GPUInstances[:0]
@@ -164,7 +164,7 @@ func TestVerifyDevicePresence(t *testing.T) {
 	err = sysInfo.VerifyDevicePresence(dOpt)
 	require.NotEqual(t, err, nil, "Expected to have an error for a non-existent GPU, but none found")
 
-	// Add GPUs and instances that exist
+	// Add gpus and instances that exist
 	dOpt.MajorRange[0] = 0
 	dOpt.MajorRange = append(dOpt.MajorRange, 1)
 	dOpt.MinorRange[0] = 0
@@ -185,7 +185,7 @@ func TestMonitoredSwitches(t *testing.T) {
 	}
 
 	/* test that only "up" links are monitored and 1 from each switch */
-	sysInfo.InfoType = dcgm.FE_LINK
+	sysInfo.infoType = dcgm.FE_LINK
 	monitoring = GetMonitoredEntities(sysInfo)
 	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored links but found %d", len(monitoring)))
 	for i, mi := range monitoring {
@@ -206,7 +206,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "Monitor all devices",
 			switchID: 1,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					Flex: true,
 				},
 			},
@@ -216,7 +216,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "MajorRange empty",
 			switchID: 2,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{},
 				},
 			},
@@ -226,7 +226,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "MajorRange contains -1 to watch all devices",
 			switchID: 3,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{-1},
 				},
 			},
@@ -236,7 +236,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "SwitchID in MajorRange",
 			switchID: 4,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{3, 4, 5},
 				},
 			},
@@ -246,7 +246,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "SwitchID not in MajorRange",
 			switchID: 5,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{3, 4, 6},
 				},
 			},
@@ -273,7 +273,7 @@ func TestIsLinkWatched(t *testing.T) {
 		{
 			name:      "Monitor all devices",
 			linkIndex: 1,
-			sysInfo:   SystemInfo{SOpt: common.DeviceOptions{Flex: true}},
+			sysInfo:   SystemInfo{sOpt: common.DeviceOptions{Flex: true}},
 			want:      true,
 		},
 		{
@@ -286,10 +286,10 @@ func TestIsLinkWatched(t *testing.T) {
 			name:      "Watched link with empty MinorRange",
 			linkIndex: 2,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{-1},
 				},
-				Switches: []SwitchInfo{
+				switches: []SwitchInfo{
 					{
 						EntityId: 1,
 						NvLinks: []dcgm.NvLinkStatus{
@@ -305,11 +305,11 @@ func TestIsLinkWatched(t *testing.T) {
 			switchID:  1,
 			linkIndex: 3,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{-1},
 					MinorRange: []int{-1},
 				},
-				Switches: []SwitchInfo{
+				switches: []SwitchInfo{
 					{
 						EntityId: 1,
 						NvLinks: []dcgm.NvLinkStatus{
@@ -325,11 +325,11 @@ func TestIsLinkWatched(t *testing.T) {
 			switchID:  1,
 			linkIndex: 4,
 			sysInfo: SystemInfo{
-				SOpt: common.DeviceOptions{
+				sOpt: common.DeviceOptions{
 					MajorRange: []int{-1},
 					MinorRange: []int{1, 2, 3},
 				},
-				Switches: []SwitchInfo{
+				switches: []SwitchInfo{
 					{
 						EntityId: 1,
 						NvLinks: []dcgm.NvLinkStatus{
@@ -361,8 +361,8 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "Monitor all devices",
 			cpuID: 1,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{Flex: true},
-				CPUs: []CPUInfo{
+				cOpt: common.DeviceOptions{Flex: true},
+				cpus: []CPUInfo{
 					{
 						EntityId: 1,
 					},
@@ -374,8 +374,8 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "MajorRange Contains -1",
 			cpuID: 2,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{MajorRange: []int{-1}},
-				CPUs: []CPUInfo{
+				cOpt: common.DeviceOptions{MajorRange: []int{-1}},
+				cpus: []CPUInfo{
 					{
 						EntityId: 2,
 					},
@@ -387,8 +387,8 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "CPU ID in MajorRange",
 			cpuID: 3,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{MajorRange: []int{1, 2, 3}},
-				CPUs: []CPUInfo{
+				cOpt: common.DeviceOptions{MajorRange: []int{1, 2, 3}},
+				cpus: []CPUInfo{
 					{
 						EntityId: 3,
 					},
@@ -400,8 +400,8 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "CPU ID Not in MajorRange",
 			cpuID: 4,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{MajorRange: []int{1, 2, 3}},
-				CPUs: []CPUInfo{
+				cOpt: common.DeviceOptions{MajorRange: []int{1, 2, 3}},
+				cpus: []CPUInfo{
 					{
 						EntityId: 4,
 					},
@@ -413,8 +413,8 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "MajorRange Empty",
 			cpuID: 5,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{MajorRange: []int{}},
-				CPUs: []CPUInfo{
+				cOpt: common.DeviceOptions{MajorRange: []int{}},
+				cpus: []CPUInfo{
 					{
 						EntityId: 5,
 					},
@@ -426,8 +426,8 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "CPU not found",
 			cpuID: 6,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{MajorRange: []int{}},
-				CPUs: []CPUInfo{
+				cOpt: common.DeviceOptions{MajorRange: []int{}},
+				cpus: []CPUInfo{
 					{
 						EntityId: 5,
 					},
@@ -457,7 +457,7 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 1,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{Flex: true},
+				cOpt: common.DeviceOptions{Flex: true},
 			},
 			want: true,
 		},
@@ -466,11 +466,11 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 2,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{
+				cOpt: common.DeviceOptions{
 					MinorRange: []int{1, 2, 3},
 					MajorRange: []int{-1},
 				},
-				CPUs: []CPUInfo{{EntityId: 1}},
+				cpus: []CPUInfo{{EntityId: 1}},
 			},
 			want: true,
 		},
@@ -479,11 +479,11 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 4,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{
+				cOpt: common.DeviceOptions{
 					MinorRange: []int{1, 2, 3},
 					MajorRange: []int{-1},
 				},
-				CPUs: []CPUInfo{{EntityId: 1}},
+				cpus: []CPUInfo{{EntityId: 1}},
 			},
 			want: false,
 		},
@@ -492,11 +492,11 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 5,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{
+				cOpt: common.DeviceOptions{
 					MinorRange: []int{-1},
 					MajorRange: []int{-1},
 				},
-				CPUs: []CPUInfo{{EntityId: 1}},
+				cpus: []CPUInfo{{EntityId: 1}},
 			},
 			want: true,
 		},
@@ -505,11 +505,11 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 1,
 			cpuID:  2,
 			sysInfo: SystemInfo{
-				COpt: common.DeviceOptions{
+				cOpt: common.DeviceOptions{
 					MinorRange: []int{1, 2, 3},
 					MajorRange: []int{-1},
 				},
-				CPUs: []CPUInfo{{EntityId: 1}},
+				cpus: []CPUInfo{{EntityId: 1}},
 			},
 			want: false,
 		},
@@ -532,8 +532,8 @@ func TestSetMigProfileNames(t *testing.T) {
 		{
 			name: "MIG profile found",
 			sysInfo: SystemInfo{
-				GPUCount: 1,
-				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+				gpuCount: 1,
+				gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 					{
 						GPUInstances: []GPUInstanceInfo{
 							{EntityId: 1},
@@ -551,10 +551,10 @@ func TestSetMigProfileNames(t *testing.T) {
 			valid: true,
 		},
 		{
-			name: "Multiple MIG GPUs",
+			name: "Multiple MIG gpus",
 			sysInfo: SystemInfo{
-				GPUCount: 3,
-				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+				gpuCount: 3,
+				gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 					{
 						GPUInstances: []GPUInstanceInfo{
 							{EntityId: 1},
@@ -582,10 +582,10 @@ func TestSetMigProfileNames(t *testing.T) {
 			valid: true,
 		},
 		{
-			name: "Multiple MIG GPUs and Values",
+			name: "Multiple MIG gpus and Values",
 			sysInfo: SystemInfo{
-				GPUCount: 3,
-				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+				gpuCount: 3,
+				gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 					{
 						GPUInstances: []GPUInstanceInfo{
 							{EntityId: 1},
@@ -620,8 +620,8 @@ func TestSetMigProfileNames(t *testing.T) {
 		{
 			name: "MIG profile not found",
 			sysInfo: SystemInfo{
-				GPUCount: 1,
-				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+				gpuCount: 1,
+				gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 					{
 						GPUInstances: []GPUInstanceInfo{
 							{EntityId: 1},
@@ -641,8 +641,8 @@ func TestSetMigProfileNames(t *testing.T) {
 		{
 			name: "MIG profile not string type",
 			sysInfo: SystemInfo{
-				GPUCount: 1,
-				GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+				gpuCount: 1,
+				gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 					{
 						GPUInstances: []GPUInstanceInfo{
 							{EntityId: 1},

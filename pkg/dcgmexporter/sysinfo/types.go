@@ -18,9 +18,39 @@ package sysinfo
 
 import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/sysinfo/mock_system_info.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo SystemInfoInterface
+
 type SystemInfoInterface interface {
+	GPUCount() uint
+	GPUs() [MaxDeviceCount]GPUInfo
+	GPU(uint) GPUInfo
+	Switches() []SwitchInfo
+	Switch(uint) SwitchInfo
+	CPUs() []CPUInfo
+	CPU(uint) CPUInfo
+	GOpts() common.DeviceOptions
+	SOpts() common.DeviceOptions
+	COpts() common.DeviceOptions
+	InfoType() dcgm.Field_Entity_Group
+	InitializeNvSwitchInfo(sOpt common.DeviceOptions) error
+	InitializeGPUInfo(gOpt common.DeviceOptions, useFakeGPUs bool) error
+	InitializeCPUInfo(sOpt common.DeviceOptions) error
+	SetGPUInstanceProfileName(entityId uint, profileName string) bool
+	VerifyCPUDevicePresence(sOpt common.DeviceOptions) error
+	VerifySwitchDevicePresence(sOpt common.DeviceOptions) error
+	VerifyDevicePresence(gOpt common.DeviceOptions) error
+	PopulateMigProfileNames(entities []dcgm.GroupEntityPair) error
+	SetMigProfileNames(values []dcgm.FieldValue_v2) error
+	GPUIdExists(gpuId int) bool
+	SwitchIdExists(switchId int) bool
+	CPUIdExists(cpuId int) bool
+	GPUInstanceIdExists(gpuInstanceId int) bool
+	LinkIdExists(linkId int) bool
+	CPUCoreIdExists(coreId int) bool
 }
 
 type GPUInfo struct {

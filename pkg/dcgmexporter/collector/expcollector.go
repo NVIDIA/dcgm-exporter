@@ -33,7 +33,7 @@ import (
 var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
-	sysInfo             sysinfo.SystemInfo             // Hardware system info
+	sysInfo             sysinfo.SystemInfoInterface    // Hardware system info
 	counter             common.Counter                 // Counter that collector
 	hostname            string                         // Hostname
 	config              *common.Config                 // Configuration settings
@@ -210,7 +210,7 @@ func (c *expCollector) getLabelsFromCounters(mi sysinfo.MonitoringInfo, labels m
 	return nil
 }
 
-func (c *expCollector) GetSysinfo() sysinfo.SystemInfo {
+func (c *expCollector) GetSysinfo() sysinfo.SystemInfoInterface {
 	return c.sysInfo
 }
 

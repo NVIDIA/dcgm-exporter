@@ -64,7 +64,7 @@ const (
 )
 
 const (
-	FlexKey  = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
-	MajorKey = "g" // Monitor top-level entities: GPUs or NvSwitches or CPUs
+	FlexKey  = "f" // Monitor all gpus if MIG is disabled or all GPU instances if MIG is enabled
+	MajorKey = "g" // Monitor top-level entities: gpus or NvSwitches or cpus
 	MinorKey = "i" // Monitor sub-level entities: GPU instances/NvLinks/CPUCores - GPUI cannot be specified if MIG is disabled
 )

@@ -29,7 +29,7 @@ import (
 type KubernetesGPUIDType string
 
 type DeviceOptions struct {
-	Flex       bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
+	Flex       bool  // If true, then monitor all gpus if MIG mode is disabled or all GPU instances if MIG is enabled.
 	MajorRange []int // The indices of each GPU/NvSwitch to monitor, or -1 to monitor all
 	MinorRange []int // The indices of each GPUInstance/NvLink to monitor, or -1 to monitor all
 }

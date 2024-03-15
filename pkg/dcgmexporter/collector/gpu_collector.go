@@ -101,10 +101,10 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 			return nil, err
 		}
 
-		// InstanceInfo will be nil for GPUs
-		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
+		// InstanceInfo will be nil for gpus
+		if c.SysInfo.InfoType() == dcgm.FE_SWITCH || c.SysInfo.InfoType() == dcgm.FE_LINK {
 			ToSwitchMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
-		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
+		} else if c.SysInfo.InfoType() == dcgm.FE_CPU || c.SysInfo.InfoType() == dcgm.FE_CPU_CORE {
 			ToCPUMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
 			ToMetric(metrics,

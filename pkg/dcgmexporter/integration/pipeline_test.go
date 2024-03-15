@@ -24,10 +24,12 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/mock/gomock"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
 
+	mock_sysinfo "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/pipeline"
@@ -74,9 +76,9 @@ func testNewDCGMCollector(
 		fieldEntityGroupTypeSystemInfo sysinfo.FieldEntityGroupTypeSystemInfoItem,
 	) (*collector.DCGMCollector, func(), error) {
 		// should always create GPU Collector
-		if fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType != dcgm.FE_GPU {
-			if _, ok := enabledCollector[fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType]; !ok {
-				t.Errorf("collector '%s' should not be created", fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType)
+		if fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType() != dcgm.FE_GPU {
+			if _, ok := enabledCollector[fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType()]; !ok {
+				t.Errorf("collector '%s' should not be created", fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType())
 				return nil, func() {}, nil
 			}
 		}
@@ -167,13 +169,17 @@ func TestCountPipelineCleanup(t *testing.T) {
 
 			fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(cc.DCGMCounters, config)
 
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
 			for egt := range c.enabledCollector {
+				mockSystemInfo := mock_sysinfo.NewMockSystemInfoInterface(ctrl)
+
 				// We inject system info for unit test purpose
 				fieldEntityGroupTypeSystemInfo.Items[egt] = sysinfo.FieldEntityGroupTypeSystemInfoItem{
-					SystemInfo: sysinfo.SystemInfo{
-						InfoType: egt,
-					},
+					SystemInfo: mockSystemInfo,
 				}
+				mockSystemInfo.EXPECT().InfoType().Return(egt).AnyTimes()
 			}
 
 			_, cleanup, err := pipeline.NewMetricsPipeline(config,

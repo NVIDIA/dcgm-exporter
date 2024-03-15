@@ -38,6 +38,6 @@ func runOnlyWithLiveGPUs(t *testing.T) {
 	gpus, err := dcgmClient.Client().GetSupportedDevices()
 	assert.NoError(t, err)
 	if len(gpus) < 1 {
-		t.Skip("Skipping test that requires live GPUs. None were found")
+		t.Skip("Skipping test that requires live gpus. None were found")
 	}
 }

@@ -37,19 +37,19 @@ const (
 	                 {{.MajorKey}}[:id1[,-id2...] or 
 	                 {{.MinorKey}}[:id1[,-id2...].
 	If an id list is used, then devices with match IDs must exist on the system. For example:
-		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled. (See {{.FlexKey}})
-		{{.MajorKey}} = Monitor all GPUs
+		(default) = monitor all GPU instances in MIG mode, all gpus if MIG mode is disabled. (See {{.FlexKey}})
+		{{.MajorKey}} = Monitor all gpus
 		{{.MinorKey}} = Monitor all GPU instances
-		{{.FlexKey}} = Monitor all GPUs if MIG is disabled, or all GPU instances if MIG is enabled.
+		{{.FlexKey}} = Monitor all gpus if MIG is disabled, or all GPU instances if MIG is enabled.
                        Note: this rule will be applied to each GPU. If it has GPU instances, those
                              will be monitored. If it doesn't, then the GPU will be monitored.
                              This is our recommended option for single or mixed MIG Strategies.
-		{{.MajorKey}}:0,1 = monitor GPUs 0 and 1
+		{{.MajorKey}}:0,1 = monitor gpus 0 and 1
 		{{.MinorKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
 
 	NOTE 1: -i cannot be specified unless MIG mode is enabled.
 	NOTE 2: Any time indices are specified, those indices must exist on the system.
-	NOTE 3: In MIG mode, only -f or -i with a range can be specified. GPUs are not assigned to pods
+	NOTE 3: In MIG mode, only -f or -i with a range can be specified. gpus are not assigned to pods
 		and therefore reporting must occur at the GPU instance level.`
 )
 
@@ -156,7 +156,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.BoolFlag{
 			Name:    common.CLIUseFakeGPUs,
 			Value:   false,
-			Usage:   "Accept GPUs that are fake, for testing purposes only",
+			Usage:   "Accept gpus that are fake, for testing purposes only",
 			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
 		},
 		&cli.StringFlag{

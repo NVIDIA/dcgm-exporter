@@ -28,11 +28,13 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
+	mock_sysinfo "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter/sysinfo"
 	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
@@ -70,7 +72,7 @@ func TestProcessPodMapper(t *testing.T) {
 	podMapper, err := kubernetes.NewPodMapper(&common2.Config{KubernetesGPUIdType: common2.GPUUID})
 	require.NoError(t, err)
 	var sysInfo sysinfo.SystemInfo
-	err = podMapper.Process(out, sysInfo)
+	err = podMapper.Process(out, &sysInfo)
 	require.NoError(t, err)
 
 	require.Len(t, out, len(original))
@@ -280,19 +282,22 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					Attributes: map[string]string{},
 				})
 
-				sysInfo := sysinfo.SystemInfo{
-					GPUCount: 1,
-					GPUs: [dcgm.MAX_NUM_DEVICES]sysinfo.GPUInfo{
-						{
-							DeviceInfo: dcgm.Device{
-								UUID: "00000000-0000-0000-0000-000000000000",
-								GPU:  0,
-							},
-							MigEnabled: true,
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
+
+				mockGPU := sysinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{
+							UUID: "00000000-0000-0000-0000-000000000000",
+							GPU:  0,
 						},
-					},
+					MigEnabled: true,
 				}
-				err = podMapper.Process(metrics, sysInfo)
+
+				mockSystemInfo := mock_sysinfo.NewMockSystemInfoInterface(ctrl)
+				mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+				mockSystemInfo.EXPECT().GPU(uint(0)).Return(mockGPU).MinTimes(0)
+
+				err = podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
 				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(common2.Counter)] {

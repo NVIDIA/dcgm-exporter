@@ -43,6 +43,6 @@ type MetricsPipeline struct {
 }
 
 type Transform interface {
-	Process(metrics collector.MetricsByCounter, sysInfo sysinfo.SystemInfo) error
+	Process(metrics collector.MetricsByCounter, sysInfo sysinfo.SystemInfoInterface) error
 	Name() string
 }
