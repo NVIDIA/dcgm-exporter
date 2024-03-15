@@ -361,7 +361,7 @@ var cpuCoreMetricsFormat = `
 {{- end }}
 {{ end }}`
 
-// Template is passed here so that it isn't recompiled at each iteration
+// FormatMetrics Template is passed here so that it isn't recompiled at each iteration
 func FormatMetrics(t *template.Template, groupedMetrics MetricsByCounter) (string, error) {
 	// Format metrics
 	var res bytes.Buffer

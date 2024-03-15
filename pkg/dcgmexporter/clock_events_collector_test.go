@@ -132,7 +132,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		gpuIDsAsString[i] = fmt.Sprint(g)
 	}
 
-	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(gpuIDsAsString))
+	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpuIDsAsString))
 	// Tell that the app is running on K8S
 	config.Kubernetes = true
 

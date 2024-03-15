@@ -58,7 +58,7 @@ func TestProcessPodMapper(t *testing.T) {
 	socketPath = tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 	gpus := GetGPUUUIDs(arbirtaryMetric)
-	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(gpus))
+	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
 
 	cleanup = StartMockServer(t, server, socketPath)
 	defer cleanup()
@@ -125,12 +125,14 @@ func CreateTmpDir(t *testing.T) (string, func()) {
 
 // Contains a list of UUIDs
 type PodResourcesMockServer struct {
-	gpus []string
+	resourceName string
+	gpus         []string
 }
 
-func NewPodResourcesMockServer(used []string) *PodResourcesMockServer {
+func NewPodResourcesMockServer(resourceName string, gpus []string) *PodResourcesMockServer {
 	return &PodResourcesMockServer{
-		gpus: used,
+		resourceName: resourceName,
+		gpus:         gpus,
 	}
 }
 
@@ -148,7 +150,7 @@ func (s *PodResourcesMockServer) List(
 					Name: "default",
 					Devices: []*podresourcesapi.ContainerDevices{
 						{
-							ResourceName: nvidiaResourceName,
+							ResourceName: s.resourceName,
 							DeviceIds:    []string{gpu},
 						},
 					},
@@ -169,6 +171,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	type TestCase struct {
 		KubernetesGPUIDType KubernetesGPUIDType
 		GPUInstanceID       uint
+		ResourceName        string
 		MetricGPUID         string
 		MetricGPUDevice     string
 		MetricMigProfile    string
@@ -178,17 +181,20 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testCases := []TestCase{
 		{
 			KubernetesGPUIDType: GPUUID,
+			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
+			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
+			ResourceName:        nvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
@@ -196,24 +202,37 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
+			ResourceName:        nvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
+			ResourceName:        nvidiaResourceName,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "nvidia0/gi0",
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
+			ResourceName:        nvidiaResourceName,
 			MetricGPUDevice:     "0",
 			PODGPUID:            "0/vgpu",
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
+			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5::",
+		},
+		{
+			KubernetesGPUIDType: GPUUID,
+			ResourceName:        "nvidia.com/mig-1g.10gb",
+			MetricMigProfile:    "1g.10gb",
+			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			MetricGPUDevice:     "0",
+			GPUInstanceID:       3,
 		},
 	}
 
@@ -235,7 +254,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				defer cleanup()
 
 				gpus := []string{tc.PODGPUID}
-				podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(gpus))
+				podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(tc.ResourceName, gpus))
 
 				cleanup = StartMockServer(t, server, socketPath)
 				defer cleanup()
@@ -261,6 +280,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
 				}
+
 				metrics[counter] = append(metrics[counter], Metric{
 					GPU:           "0",
 					GPUUUID:       tc.MetricGPUID,

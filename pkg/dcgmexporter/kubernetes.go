@@ -59,7 +59,7 @@ func (p *PodMapper) Name() string {
 func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error {
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
-		logrus.Infof("No Kubelet socket, ignoring")
+		logrus.Info("No Kubelet socket, ignoring")
 		return nil
 	}
 
@@ -77,6 +77,8 @@ func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error 
 
 	deviceToPod := p.toDeviceToPod(pods, sysInfo)
 
+	logrus.Debugf("Device to pod mapping: %+v", deviceToPod)
+
 	// Note: for loop are copies the value, if we want to change the value
 	// and not the copy, we need to use the indexes
 	for counter := range metrics {
@@ -85,14 +87,18 @@ func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error 
 			if err != nil {
 				return err
 			}
-			if !p.Config.UseOldNamespace {
-				metrics[counter][j].Attributes[podAttribute] = deviceToPod[deviceID].Name
-				metrics[counter][j].Attributes[namespaceAttribute] = deviceToPod[deviceID].Namespace
-				metrics[counter][j].Attributes[containerAttribute] = deviceToPod[deviceID].Container
-			} else {
-				metrics[counter][j].Attributes[oldPodAttribute] = deviceToPod[deviceID].Name
-				metrics[counter][j].Attributes[oldNamespaceAttribute] = deviceToPod[deviceID].Namespace
-				metrics[counter][j].Attributes[oldContainerAttribute] = deviceToPod[deviceID].Container
+
+			podInfo, exists := deviceToPod[deviceID]
+			if exists {
+				if !p.Config.UseOldNamespace {
+					metrics[counter][j].Attributes[podAttribute] = podInfo.Name
+					metrics[counter][j].Attributes[namespaceAttribute] = podInfo.Namespace
+					metrics[counter][j].Attributes[containerAttribute] = podInfo.Container
+				} else {
+					metrics[counter][j].Attributes[oldPodAttribute] = podInfo.Name
+					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
+					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
+				}
 			}
 		}
 	}
