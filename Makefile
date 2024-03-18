@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+include hack/VERSION
+
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
 
-DCGM_VERSION   := 3.3.5
+DCGM_VERSION   := $(NEW_DCGM_VERSION)
 GOLANG_VERSION := 1.21.5
-VERSION        := 3.4.0
+VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
 PLATFORMS      := linux/amd64,linux/arm64
@@ -25,9 +27,9 @@ DOCKERCMD      := docker buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local
-all: ubuntu22.04 ubi9
+all: update-version ubuntu22.04 ubi9
 
-binary:
+binary: update-version
 	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main:
@@ -42,7 +44,7 @@ check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
-push:
+push: update-version
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
 
@@ -109,3 +111,19 @@ check-fmt:
 .PHONY: e2e-test
 e2e-test:
 	cd tests/e2e && make e2e-test
+
+# Command for in-place substitution
+SED_CMD := sed -i$(shell uname -s | grep -q Darwin && echo " ''")
+
+# Create list of paths to YAML, README.md, and Makefile files
+FILE_PATHS := $(shell find . -type f \( -name "*.yaml" -o -name "README.md" -o -name "Makefile" \))
+
+# Replace the old version with the new version in specified files
+update-version:
+	@echo "Updating DCGM version in files from $(OLD_DCGM_VERSION) to $(NEW_DCGM_VERSION)..."
+	@$(foreach file,$(FILE_PATHS),$(SED_CMD) "s/$(OLD_DCGM_VERSION)/$(NEW_DCGM_VERSION)/g" $(file);)
+	@echo "Updating DCGM Exporter version in files from $(OLD_EXPORTER_VERSION) to $(NEW_EXPORTER_VERSION)..."
+	@$(foreach file,$(FILE_PATHS),$(SED_CMD) "s/$(OLD_EXPORTER_VERSION)/$(NEW_EXPORTER_VERSION)/g" $(file);)
+
+# Update DCGM and DCGM Exporter versions
+update-versions: update-version
