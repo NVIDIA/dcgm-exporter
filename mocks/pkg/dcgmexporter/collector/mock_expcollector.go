@@ -10,12 +10,11 @@
 package mock_collector
 
 import (
-	"reflect"
+	reflect "reflect"
 
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
-
-	"go.uber.org/mock/gomock"
+	collector "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
+	sysinfo "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockCollector is a mock of Collector interface.
@@ -69,10 +68,10 @@ func (mr *MockCollectorMockRecorder) GetMetrics() *gomock.Call {
 }
 
 // GetSysinfo mocks base method.
-func (m *MockCollector) GetSysinfo() sysinfo.SystemInfo {
+func (m *MockCollector) GetSysinfo() sysinfo.SystemInfoInterface {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSysinfo")
-	ret0, _ := ret[0].(sysinfo.SystemInfo)
+	ret0, _ := ret[0].(sysinfo.SystemInfoInterface)
 	return ret0
 }
 

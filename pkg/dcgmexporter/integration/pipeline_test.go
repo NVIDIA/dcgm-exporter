@@ -17,13 +17,11 @@
 package integration
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"testing"
 
 	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -185,7 +183,6 @@ func TestCountPipelineCleanup(t *testing.T) {
 			_, cleanup, err := pipeline.NewMetricsPipeline(config,
 				cc.DCGMCounters,
 				"",
-				testNewDCGMCollector(t, &cleanupCounter, c.enabledCollector),
 				fieldEntityGroupTypeSystemInfo)
 			require.NoError(t, err, "case: %s failed", c.name)
 
@@ -215,13 +212,6 @@ func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *test
 	p, cleanup, err := pipeline.NewMetricsPipeline(config,
 		sampleCounters,
 		"",
-		func(
-			_ []common.Counter, _ string, _ *common.Config, item sysinfo.FieldEntityGroupTypeSystemInfoItem,
-		) (*collector.DCGMCollector,
-			func(), error) {
-			assert.True(t, item.IsEmpty())
-			return nil, func() {}, errors.New("empty")
-		},
 		fieldEntityGroupTypeSystemInfo,
 	)
 	require.NoError(t, err)

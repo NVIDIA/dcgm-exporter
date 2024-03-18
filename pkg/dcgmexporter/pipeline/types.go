@@ -35,11 +35,11 @@ type MetricsPipeline struct {
 	cpuCoreMetricsFormat *template.Template
 
 	counters        []common.Counter
-	gpuCollector    *collector.DCGMCollector
-	switchCollector *collector.DCGMCollector
-	linkCollector   *collector.DCGMCollector
-	cpuCollector    *collector.DCGMCollector
-	coreCollector   *collector.DCGMCollector
+	gpuCollector    collector.Collector
+	switchCollector collector.Collector
+	linkCollector   collector.Collector
+	cpuCollector    collector.Collector
+	coreCollector   collector.Collector
 }
 
 type Transform interface {

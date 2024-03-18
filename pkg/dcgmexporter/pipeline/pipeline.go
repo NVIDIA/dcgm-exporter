@@ -36,7 +36,6 @@ func NewMetricsPipeline(
 	config *common.Config,
 	counters []common.Counter,
 	hostname string,
-	newDCGMCollector collector.DCGMCollectorConstructor, // TODO replace with mocks in testing
 	fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
 ) (*MetricsPipeline, func(), error) {
 
@@ -45,17 +44,17 @@ func NewMetricsPipeline(
 	cleanups := []func(){}
 
 	var (
-		gpuCollector    *collector.DCGMCollector
-		switchCollector *collector.DCGMCollector
-		linkCollector   *collector.DCGMCollector
-		cpuCollector    *collector.DCGMCollector
-		coreCollector   *collector.DCGMCollector
+		gpuCollector    collector.Collector
+		switchCollector collector.Collector
+		linkCollector   collector.Collector
+		cpuCollector    collector.Collector
+		coreCollector   collector.Collector
 		err             error
 	)
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU); exists {
 		var cleanup func()
-		gpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		gpuCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_GPU")
 		}
@@ -64,7 +63,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH); exists {
 		var cleanup func()
-		switchCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		switchCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_SWITCH")
 		}
@@ -73,7 +72,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_LINK); exists {
 		var cleanup func()
-		linkCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		linkCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_LINK")
 		}
@@ -82,7 +81,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU); exists {
 		var cleanup func()
-		cpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		cpuCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_CPU")
 		}
@@ -91,7 +90,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU_CORE); exists {
 		var cleanup func()
-		coreCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
+		coreCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_CPU_CORE")
 		}
@@ -201,7 +200,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		for _, transform := range m.transformations {
-			err := transform.Process(metrics, m.gpuCollector.SysInfo)
+			err := transform.Process(metrics, m.gpuCollector.GetSysinfo())
 			if err != nil {
 				return "", fmt.Errorf("failed to transform metrics for transform '%s'; err: %w", transform.Name(), err)
 			}

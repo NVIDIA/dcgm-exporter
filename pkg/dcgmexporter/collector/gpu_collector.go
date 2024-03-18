@@ -121,6 +121,10 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
+func (c *DCGMCollector) GetSysinfo() sysinfo.SystemInfoInterface {
+	return c.SysInfo
+}
+
 func FindCounterField(c []common.Counter, fieldId uint) (common.Counter, error) {
 	for i := 0; i < len(c); i++ {
 		if uint(c[i].FieldID) == fieldId {

@@ -21,13 +21,10 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/sirupsen/logrus"
 )
-
-var nvmlOnce *sync.Once = new(sync.Once)
 
 type MIGDeviceInfo struct {
 	ParentUUID        string
@@ -35,20 +32,42 @@ type MIGDeviceInfo struct {
 	ComputeInstanceID int
 }
 
-// GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
-func GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
-	var err error
+var nvmlClient NVMLClient
 
-	nvmlOnce.Do(func() {
-		ret := nvml.Init()
-		if ret != nvml.SUCCESS {
-			err = errors.New(nvml.ErrorString(ret))
-			logrus.Error("Can not init NVML library.")
-		}
-	})
-	if err != nil {
-		return nil, err
+func Initialize() {
+	nvmlClient = newNVMLClient()
+}
+
+func Client() NVMLClient {
+	return nvmlClient
+}
+
+func SetClient(n NVMLClient) {
+	nvmlClient = n
+}
+
+type NVMLClientImpl struct {
+	initialized bool
+}
+
+func newNVMLClient() NVMLClient {
+	if Client() != nil {
+		return Client()
 	}
+
+	logrus.Info("Attempting to initialize NVML library.")
+	ret := nvml.Init()
+	if ret != nvml.SUCCESS {
+		err := errors.New(nvml.ErrorString(ret))
+		logrus.Errorf("Can not init NVML library; err: %v", err)
+	}
+
+	return NVMLClientImpl{initialized: true}
+}
+
+// GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
+func (m NVMLClientImpl) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
+	var err error
 
 	// 	1. With drivers >= R470 (470.42.01+), each MIG device is assigned a GPU UUID starting
 	//  with MIG-<UUID>.

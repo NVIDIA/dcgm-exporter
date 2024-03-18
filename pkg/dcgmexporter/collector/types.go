@@ -23,12 +23,12 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
-	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type Metric struct {
-	Counter common2.Counter
+	Counter common.Counter
 	Value   string
 
 	GPU          string
@@ -46,15 +46,15 @@ type Metric struct {
 	Attributes map[string]string
 }
 
-func (m Metric) GetIDOfType(idType common2.KubernetesGPUIDType) (string, error) {
+func (m Metric) GetIDOfType(idType common.KubernetesGPUIDType) (string, error) {
 	// For MIG devices, return the MIG profile instead of
 	if m.MigProfile != "" {
 		return fmt.Sprintf("%s-%s", m.GPU, m.GPUInstanceID), nil
 	}
 	switch idType {
-	case common2.GPUUID:
+	case common.GPUUID:
 		return m.GPUUUID, nil
-	case common2.DeviceName:
+	case common.DeviceName:
 		return m.GPUDevice, nil
 	}
 	return "", fmt.Errorf("unsupported KubernetesGPUIDType for MetricID '%s'", idType)
@@ -68,10 +68,10 @@ type Collector interface {
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
-type MetricsByCounter map[common2.Counter][]Metric
+type MetricsByCounter map[common.Counter][]Metric
 
 type DCGMCollector struct {
-	Counters                 []common2.Counter
+	Counters                 []common.Counter
 	DeviceFields             []dcgm.Short
 	Cleanups                 []func()
 	UseOldNamespace          bool

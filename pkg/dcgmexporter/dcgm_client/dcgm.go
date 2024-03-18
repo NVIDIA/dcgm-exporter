@@ -25,6 +25,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
@@ -48,6 +49,10 @@ type DCGMClientImpl struct {
 }
 
 func newDCGMClient(config *common.Config) DCGMClient {
+	if Client() != nil {
+		return Client()
+	}
+
 	client := DCGMClientImpl{}
 
 	if config.UseRemoteHE {
@@ -78,6 +83,9 @@ func newDCGMClient(config *common.Config) DCGMClient {
 	} else {
 		logrus.Infof("Initialized DCGM Fields module.")
 	}
+
+	// Initialize NVML Provider
+	nvmlprovider.Initialize()
 
 	return client
 }

@@ -35,7 +35,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	mock_sysinfo "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter/sysinfo"
-	common2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
+	mock_provider "github.com/NVIDIA/dcgm-exporter/mocks/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
@@ -59,7 +60,7 @@ func TestProcessPodMapper(t *testing.T) {
 
 	original := out
 
-	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(common2.Counter)]
+	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(common.Counter)]
 
 	kubernetes.SocketPath = tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
@@ -69,7 +70,7 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup = StartMockServer(t, server, kubernetes.SocketPath)
 	defer cleanup()
 
-	podMapper, err := kubernetes.NewPodMapper(&common2.Config{KubernetesGPUIdType: common2.GPUUID})
+	podMapper, err := kubernetes.NewPodMapper(&common.Config{KubernetesGPUIdType: common.GPUUID})
 	require.NoError(t, err)
 	var sysInfo sysinfo.SystemInfo
 	err = podMapper.Process(out, &sysInfo)
@@ -173,7 +174,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	type TestCase struct {
-		KubernetesGPUIDType common2.KubernetesGPUIDType
+		KubernetesGPUIDType common.KubernetesGPUIDType
 		GPUInstanceID       uint
 		MetricGPUID         string
 		MetricGPUDevice     string
@@ -183,41 +184,41 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 	testCases := []TestCase{
 		{
-			KubernetesGPUIDType: common2.GPUUID,
+			KubernetesGPUIDType: common.GPUUID,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: common2.GPUUID,
+			KubernetesGPUIDType: common.GPUUID,
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 		},
 		{
-			KubernetesGPUIDType: common2.GPUUID,
+			KubernetesGPUIDType: common.GPUUID,
 			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: common2.DeviceName,
+			KubernetesGPUIDType: common.DeviceName,
 			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: common2.DeviceName,
+			KubernetesGPUIDType: common.DeviceName,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "nvidia0/gi0",
 		},
 		{
-			KubernetesGPUIDType: common2.DeviceName,
+			KubernetesGPUIDType: common.DeviceName,
 			MetricGPUDevice:     "0",
 			PODGPUID:            "0/vgpu",
 		},
 		{
-			KubernetesGPUIDType: common2.GPUUID,
+			KubernetesGPUIDType: common.GPUUID,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5::",
 		},
@@ -246,23 +247,23 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				cleanup = StartMockServer(t, server, kubernetes.SocketPath)
 				defer cleanup()
 
-				kubernetes.NvmlGetMIGDeviceInfoByIDHook = func(uuid string) (*nvmlprovider.MIGDeviceInfo, error) {
-					return &nvmlprovider.MIGDeviceInfo{
-						ParentUUID:        "00000000-0000-0000-0000-000000000000",
-						GPUInstanceID:     3,
-						ComputeInstanceID: 0,
-					}, nil
+				migDeviceInfo := &nvmlprovider.MIGDeviceInfo{
+					ParentUUID:        "00000000-0000-0000-0000-000000000000",
+					GPUInstanceID:     3,
+					ComputeInstanceID: 0,
 				}
 
-				defer func() {
-					kubernetes.NvmlGetMIGDeviceInfoByIDHook = nvmlprovider.GetMIGDeviceInfoByID
-				}()
+				ctrl := gomock.NewController(t)
+				defer ctrl.Finish()
 
-				podMapper, err := kubernetes.NewPodMapper(&common2.Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
+				mockNVMLClient := mock_provider.NewMockNVMLClient(ctrl)
+				mockNVMLClient.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil)
+
+				podMapper, err := kubernetes.NewPodMapper(&common.Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
 				metrics := collector.MetricsByCounter{}
-				counter := common2.Counter{
+				counter := common.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -274,7 +275,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
 					Value:         "42",
 					MigProfile:    tc.MetricMigProfile,
-					Counter: common2.Counter{
+					Counter: common.Counter{
 						FieldID:   155,
 						FieldName: "DCGM_FI_DEV_POWER_USAGE",
 						PromType:  "gauge",
@@ -282,14 +283,11 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					Attributes: map[string]string{},
 				})
 
-				ctrl := gomock.NewController(t)
-				defer ctrl.Finish()
-
 				mockGPU := sysinfo.GPUInfo{
 					DeviceInfo: dcgm.Device{
-							UUID: "00000000-0000-0000-0000-000000000000",
-							GPU:  0,
-						},
+						UUID: "00000000-0000-0000-0000-000000000000",
+						GPU:  0,
+					},
 					MigEnabled: true,
 				}
 
@@ -300,7 +298,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err = podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(common2.Counter)] {
+				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(common.Counter)] {
 					require.Contains(t, metric.Attributes, podAttribute)
 					require.Contains(t, metric.Attributes, namespaceAttribute)
 					require.Contains(t, metric.Attributes, containerAttribute)
