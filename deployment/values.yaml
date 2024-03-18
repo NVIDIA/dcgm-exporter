@@ -37,13 +37,21 @@ arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
 # the watched exporter fields.
 # Example arguments: ["-m", "default:exporter-metrics-config-map"]
 
+# Image pull secrets for container images
 imagePullSecrets: []
+
+# Overrides the chart's name
 nameOverride: ""
+
+# Overrides the chart's computed fullname
 fullnameOverride: ""
+
+# Overrides the deployment namespace
 namespaceOverride: ""
 
+# Defines the runtime class that will be used by the pod
 runtimeClassName: ""
-
+# Defines serviceAccount names for components.
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
@@ -59,16 +67,20 @@ rollingUpdate:
   # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during during an update
   maxSurge: 0
 
+# Labels to be added to dcgm-exporter pods
 podLabels: {}
 
+# Annotations to be added to dcgm-exporter pods
 podAnnotations: {}
 # Using this annotation which is required for prometheus scraping
  # prometheus.io/scrape: "true"
  # prometheus.io/port: "9400"
 
+# The SecurityContext for the dcgm-exporter pods
 podSecurityContext: {}
   # fsGroup: 2000
 
+# The SecurityContext for the dcgm-exporter containers
 securityContext:
   runAsNonRoot: false
   runAsUser: 0
@@ -76,7 +88,9 @@ securityContext:
      add: ["SYS_ADMIN"]
   # readOnlyRootFilesystem: true
 
+# Defines the dcgm-exporter service
 service:
+  # When enabled, the helm chart will create service
   enable: true
   type: ClusterIP
   port: 9400
@@ -84,6 +98,7 @@ service:
   # Annotations to add to the service
   annotations: {}
 
+# Allows to control pod resources
 resources: {}
   # limits:
   #   cpu: 100m
@@ -137,4 +152,5 @@ extraEnv: []
 #- name: EXTRA_VAR
 #  value: "TheStringValue"
 
+# Path to the kubelet socket for /pod-resources
 kubeletPath: "/var/lib/kubelet/pod-resources"
