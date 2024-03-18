@@ -115,8 +115,8 @@ e2e-test:
 # Command for in-place substitution
 SED_CMD := sed -i$(shell uname -s | grep -q Darwin && echo " ''")
 
-# Create list of paths to Go, YAML, README.md, and Makefile files
-FILE_PATHS := $(shell find . -type f \( -name "*.go" -o -name "*.yaml" -o -name "README.md" -o -name "Makefile" \))
+# Create list of paths to YAML, README.md, and Makefile files
+FILE_PATHS := $(shell find . -type f \( -name "*.yaml" -o -name "README.md" -o -name "Makefile" \))
 
 # Replace the old version with the new version in specified files
 update-version:

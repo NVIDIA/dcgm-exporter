@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	BuildVersion = "3.3.5-3.4.0"
+	BuildVersion = "Filled by the build system"
 )
 
 func main() {
