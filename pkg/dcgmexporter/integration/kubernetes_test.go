@@ -38,7 +38,7 @@ import (
 	mock_provider "github.com/NVIDIA/dcgm-exporter/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
@@ -49,8 +49,8 @@ func TestProcessPodMapper(t *testing.T) {
 	tmpDir, cleanup := CreateTmpDir(t)
 	defer cleanup()
 
-	dcgmClient.Initialize(&common.Config{UseRemoteHE: false})
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(&common.Config{UseRemoteHE: false})
+	defer dcgmProvider.Client().Cleanup()
 
 	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	defer cleanup()
@@ -122,7 +122,7 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 }
 
 func CreateTmpDir(t *testing.T) (string, func()) {
-	path, err := os.MkdirTemp("", "dcgm_client-exporter")
+	path, err := os.MkdirTemp("", "dcgmprovider-exporter")
 	require.NoError(t, err)
 
 	return path, func() {

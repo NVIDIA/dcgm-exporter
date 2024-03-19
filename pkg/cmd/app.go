@@ -20,7 +20,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/metrics"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/pipeline"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/registry"
@@ -32,7 +32,7 @@ import (
 
 const (
 	undefinedConfigMapData = "none"
-	deviceUsageTemplate    = `Specify which devices dcgm_client-exporter monitors.
+	deviceUsageTemplate    = `Specify which devices dcgmprovider-exporter monitors.
 	Possible values: {{.FlexKey}} or 
 	                 {{.MajorKey}}[:id1[,-id2...] or 
 	                 {{.MinorKey}}[:id1[,-id2...].
@@ -73,7 +73,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    common.CLIFieldsFile,
 			Aliases: []string{"f"},
 			Usage:   "Path to the file, that contains the GetClient fields to collect",
-			Value:   "/etc/dcgm_client-exporter/default-counters.csv",
+			Value:   "/etc/dcgm-exporter/default-counters.csv",
 			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
 		},
 		&cli.StringFlag{
@@ -200,7 +200,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.StringFlag{
 			Name:    common.CLIDCGMLogLevel,
 			Value:   common.DCGMDbgLvlNone,
-			Usage:   "Specify the GetClient log verbosity level. This parameter is effective only when the '--enable-dcgm_client-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
+			Usage:   "Specify the GetClient log verbosity level. This parameter is effective only when the '--enable-dcgm-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
 		},
 	}
@@ -213,7 +213,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
 		})
 	} else {
-		err := "dcgm_client-exporter is only supported on Linux."
+		err := "dcgm-exporter is only supported on Linux."
 		logrus.Fatal(err)
 		return nil
 	}
@@ -250,7 +250,7 @@ func action(c *cli.Context) (err error) {
 func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
 restart:
 
-	logrus.Info("Starting dcgm_client-exporter")
+	logrus.Info("Starting dcgm-exporter")
 
 	config := &common.Config{}
 	err := config.Load(c)
@@ -260,8 +260,8 @@ restart:
 
 	enableDebugLogging(config)
 
-	dcgmClient.Initialize(config)
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(config)
+	defer dcgmProvider.Client().Cleanup()
 
 	logrus.Info("DCGM successfully initialized!")
 
@@ -416,7 +416,7 @@ func getCounters(config *common.Config) *common.CounterSet {
 
 func fillConfigMetricGroups(config *common.Config) {
 	var groups []dcgm.MetricGroup
-	groups, err := dcgmClient.Client().GetSupportedMetricGroups(0)
+	groups, err := dcgmProvider.Client().GetSupportedMetricGroups(0)
 	if err != nil {
 		config.CollectDCP = false
 		logrus.Info("Not collecting DCP metrics: ", err)

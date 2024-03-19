@@ -25,7 +25,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/metrics"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type xidCollector struct {
@@ -40,7 +40,7 @@ func NewXIDCollector(
 	counters []common.Counter,
 	hostname string,
 	config *common.Config,
-	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+	fieldEntityGroupTypeSystemInfo sysinfo.FieldEntityGroupTypeSystemInfoItem,
 ) (Collector, error) {
 	if !common.IsMetricsTypeEnabled(counters, metrics.DCGMExpXIDErrorsCount) {
 		logrus.Error(metrics.DCGMExpXIDErrorsCount + " collector is disabled")

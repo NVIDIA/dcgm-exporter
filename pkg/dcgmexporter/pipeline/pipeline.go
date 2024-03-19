@@ -29,7 +29,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 func NewMetricsPipeline(
@@ -37,7 +37,7 @@ func NewMetricsPipeline(
 	counters []common.Counter,
 	hostname string,
 	newDCGMCollector collector.DCGMCollectorConstructor,
-	fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
+	fieldEntityGroupTypeSystemInfo *sysinfo.FieldEntityGroupTypeSystemInfo,
 ) (*MetricsPipeline, func(), error) {
 
 	logrus.WithField(common.LoggerDumpKey, fmt.Sprintf("%+v", counters)).Debug("Counters are initialized")
@@ -57,7 +57,7 @@ func NewMetricsPipeline(
 		var cleanup func()
 		gpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
-			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_GPU")
+			logrus.Warn("Cannot create DCGMCollector for dcgmprovider.FE_GPU")
 		}
 		cleanups = append(cleanups, cleanup)
 	}
@@ -66,7 +66,7 @@ func NewMetricsPipeline(
 		var cleanup func()
 		switchCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
-			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_SWITCH")
+			logrus.Warn("Cannot create DCGMCollector for dcgmprovider.FE_SWITCH")
 		}
 		cleanups = append(cleanups, cleanup)
 	}
@@ -75,7 +75,7 @@ func NewMetricsPipeline(
 		var cleanup func()
 		linkCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
-			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_LINK")
+			logrus.Warn("Cannot create DCGMCollector for dcgmprovider.FE_LINK")
 		}
 		cleanups = append(cleanups, cleanup)
 	}
@@ -84,7 +84,7 @@ func NewMetricsPipeline(
 		var cleanup func()
 		cpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
-			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_CPU")
+			logrus.Warn("Cannot create DCGMCollector for dcgmprovider.FE_CPU")
 		}
 		cleanups = append(cleanups, cleanup)
 	}
@@ -93,7 +93,7 @@ func NewMetricsPipeline(
 		var cleanup func()
 		coreCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
-			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_CPU_CORE")
+			logrus.Warn("Cannot create DCGMCollector for dcgmprovider.FE_CPU_CORE")
 		}
 		cleanups = append(cleanups, cleanup)
 	}

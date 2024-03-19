@@ -36,8 +36,8 @@ const (
 	CLIReplaceBlanksInModelName   = "replace-blanks-in-model-name"
 	CLIDebugMode                  = "debug"
 	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
-	CLIEnableDCGMLog              = "enable-dcgm_client-log"
-	CLIDCGMLogLevel               = "dcgm_client-log-level"
+	CLIEnableDCGMLog              = "enable-dcgmprovider-log"
+	CLIDCGMLogLevel               = "dcgmprovider-log-level"
 )
 
 const (

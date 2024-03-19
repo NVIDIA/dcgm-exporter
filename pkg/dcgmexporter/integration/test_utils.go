@@ -22,20 +22,20 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 )
 
 func setupTest(t *testing.T) func(t *testing.T) {
-	dcgmClient.Initialize(&common.Config{UseRemoteHE: false})
+	dcgmProvider.Initialize(&common.Config{UseRemoteHE: false})
 
 	return func(t *testing.T) {
-		defer dcgmClient.Client().Cleanup()
+		defer dcgmProvider.Client().Cleanup()
 	}
 }
 
 func runOnlyWithLiveGPUs(t *testing.T) {
 	t.Helper()
-	gpus, err := dcgmClient.Client().GetSupportedDevices()
+	gpus, err := dcgmProvider.Client().GetSupportedDevices()
 	assert.NoError(t, err)
 	if len(gpus) < 1 {
 		t.Skip("Skipping test that requires live gpus. None were found")

@@ -32,15 +32,15 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/utils"
 )
 
 func TestClockEventsCollector_Gather(t *testing.T) {
-	//teardownTest := setupTest(t)
-	//defer teardownTest(t)
+	// teardownTest := setupTest(t)
+	// defer teardownTest(t)
 
 	testutils.RequireLinux(t)
 
@@ -59,8 +59,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
-	dcgmClient.Initialize(config)
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(config)
+	defer dcgmProvider.Client().Cleanup()
 	runOnlyWithLiveGPUs(t)
 
 	cc, err := utils.ExtractCounters(records, config)
@@ -75,7 +75,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
+	numGPUs, err := dcgmProvider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -206,11 +206,11 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		},
 	}
 
-	dcgmClient.Initialize(config)
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(config)
+	defer dcgmProvider.Client().Cleanup()
 
-	//teardownTest := setupTest(t)
-	//defer teardownTest(t)
+	// teardownTest := setupTest(t)
+	// defer teardownTest(t)
 
 	allCounters := []common.Counter{
 		common.Counter{
@@ -264,8 +264,8 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
-	//teardownTest := setupTest(t)
-	//defer teardownTest(t)
+	// teardownTest := setupTest(t)
+	// defer teardownTest(t)
 
 	hostname := "local-test"
 	config := &common.Config{
@@ -282,8 +282,8 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
-	dcgmClient.Initialize(config)
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(config)
+	defer dcgmProvider.Client().Cleanup()
 	runOnlyWithLiveGPUs(t)
 
 	cc, err := utils.ExtractCounters(records, config)
@@ -298,7 +298,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
+	numGPUs, err := dcgmProvider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -394,8 +394,8 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
-	//teardownTest := setupTest(t)
-	//defer teardownTest(t)
+	// teardownTest := setupTest(t)
+	// defer teardownTest(t)
 
 	hostname := "local-test"
 	config := &common.Config{
@@ -411,8 +411,8 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 		{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 	}
 
-	dcgmClient.Initialize(config)
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(config)
+	defer dcgmProvider.Client().Cleanup()
 	runOnlyWithLiveGPUs(t)
 
 	cc, err := utils.ExtractCounters(records, config)
@@ -421,7 +421,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	require.Len(t, cc.DCGMCounters, 0)
 
 	// Create fake GPU
-	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
+	numGPUs, err := dcgmProvider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {

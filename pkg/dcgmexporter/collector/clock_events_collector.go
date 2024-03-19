@@ -25,7 +25,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/metrics"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
 type clockEventsCollector struct {
@@ -60,7 +60,7 @@ func NewClockEventsCollector(
 	counters []common.Counter,
 	hostname string,
 	config *common.Config,
-	fieldEntityGroupTypeSystemInfo dcgmClient.FieldEntityGroupTypeSystemInfoItem,
+	fieldEntityGroupTypeSystemInfo sysinfo.FieldEntityGroupTypeSystemInfoItem,
 ) (Collector, error) {
 	if !common.IsMetricsTypeEnabled(counters, metrics.DCGMExpClockEventsCount) {
 		logrus.Error(metrics.DCGMExpClockEventsCount + " collector is disabled")

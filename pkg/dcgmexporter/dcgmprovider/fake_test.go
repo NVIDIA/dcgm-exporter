@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgm_client
+package dcgmprovider
 
 import (
 	"testing"
@@ -23,7 +23,7 @@ import (
 )
 
 func TestCreateDeleteGroup(t *testing.T) {
-	fakeClient := NewFakeDCGMClient(nil, true)
+	fakeClient := NewFakeDCGMProvider(nil, true)
 	handle, err := fakeClient.CreateGroup("abc")
 	assert.Nil(t, err)
 	err = fakeClient.DestroyGroup(handle)

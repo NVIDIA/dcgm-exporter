@@ -22,7 +22,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 )
 
 // FieldEntityGroupTypeToMonitor supported entity group types
@@ -123,7 +123,7 @@ func getSystemInfo(config *common.Config, entityType dcgm.Field_Entity_Group) (*
 func NewDeviceFields(counters []common.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
 	for _, f := range counters {
-		meta := dcgmClient.Client().FieldGetById(f.FieldID)
+		meta := dcgmProvider.Client().FieldGetById(f.FieldID)
 
 		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
 			deviceFields = append(deviceFields, f.FieldID)

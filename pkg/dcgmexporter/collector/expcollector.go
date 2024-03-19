@@ -26,7 +26,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
@@ -94,16 +94,16 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 	fieldGroupIdx := expCollectorFieldGroupIdx.Add(1)
 
 	fieldGroupName := fmt.Sprintf("expCollectorFieldGroupName%d", fieldGroupIdx)
-	fieldsGroup, err := dcgmClient.Client().FieldGroupCreate(fieldGroupName, c.counterDeviceFields)
+	fieldsGroup, err := dcgmProvider.Client().FieldGroupCreate(fieldGroupName, c.counterDeviceFields)
 	if err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		_ = dcgmClient.Client().FieldGroupDestroy(fieldsGroup)
+		_ = dcgmProvider.Client().FieldGroupDestroy(fieldsGroup)
 	}()
 
-	err = dcgmClient.Client().UpdateAllFields()
+	err = dcgmProvider.Client().UpdateAllFields()
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 
 	window := time.Now().Add(-time.Duration(c.windowSize) * time.Millisecond)
 
-	values, _, err := dcgmClient.Client().GetValuesSince(dcgmClient.Client().GroupAllGPUs(), fieldsGroup, window)
+	values, _, err := dcgmProvider.Client().GetValuesSince(dcgmProvider.Client().GroupAllGPUs(), fieldsGroup, window)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func (c *expCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func (c *expCollector) getLabelsFromCounters(mi sysinfo.MonitoringInfo, labels map[string]string) error {
-	latestValues, err := dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
+	latestValues, err := dcgmProvider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
 		c.labelDeviceFields)
 	if err != nil {
 		return err

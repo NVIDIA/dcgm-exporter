@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgm_client
+package dcgmprovider
 
 import (
 	"encoding/binary"
@@ -117,34 +117,34 @@ func (d *DcgmGroup) GetEntities() ([]dcgm.GroupEntityPair, error) {
 	return d.entityList, nil
 }
 
-type FakeDCGMClient struct {
+type FakeDCGMProvider struct {
 	dcgmGroupManager   DcgmGroupManager
 	fakeAll            bool
 	fakeFuncs          map[string]bool
-	realDCGMClient     DCGMClient
+	realDCGMProvider   DCGMProvider
 	shutdownRealClient bool
 }
 
-func NewFakeDCGMClient(config *common.Config, fakeAll bool) FakeDCGMClient {
+func NewFakeDCGMProvider(config *common.Config, fakeAll bool) FakeDCGMProvider {
 
-	fakeClient := FakeDCGMClient{
+	fakeClient := FakeDCGMProvider{
 		dcgmGroupManager: DcgmGroupManager{},
 		fakeAll:          fakeAll,
 	}
 
-	funcs := reflect.TypeOf((*DCGMClient)(nil)).Elem()
+	funcs := reflect.TypeOf((*DCGMProvider)(nil)).Elem()
 	fakeClient.fakeFuncs = make(map[string]bool)
 	for i := 0; i < funcs.NumMethod(); i++ {
 		fakeClient.fakeFuncs[funcs.Method(i).Name] = false
 	}
 
 	if !fakeAll {
-		if realDCGMClient := Client(); realDCGMClient != nil {
+		if realDCGMProvider := Client(); realDCGMProvider != nil {
 			fmt.Println("Using existing client")
-			fakeClient.realDCGMClient = realDCGMClient
+			fakeClient.realDCGMProvider = realDCGMProvider
 		} else {
 			fmt.Println("Using new client")
-			fakeClient.realDCGMClient = newDCGMClient(config)
+			fakeClient.realDCGMProvider = newDCGMProvider(config)
 			fakeClient.shutdownRealClient = true
 		}
 	}
@@ -152,17 +152,17 @@ func NewFakeDCGMClient(config *common.Config, fakeAll bool) FakeDCGMClient {
 	return fakeClient
 }
 
-func (f *FakeDCGMClient) FakeFunc(funcName string) {
+func (f *FakeDCGMProvider) FakeFunc(funcName string) {
 	f.fakeFuncs[funcName] = true
 }
 
-func (f *FakeDCGMClient) FakeFuncs(funcNames []string) {
+func (f *FakeDCGMProvider) FakeFuncs(funcNames []string) {
 	for _, funcName := range funcNames {
 		f.FakeFunc(funcName)
 	}
 }
 
-func (f *FakeDCGMClient) AddEntityToGroup(
+func (f *FakeDCGMProvider) AddEntityToGroup(
 	groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
 ) error {
 	if f.useFake(getFunctionName()) {
@@ -171,11 +171,11 @@ func (f *FakeDCGMClient) AddEntityToGroup(
 		}
 		return fmt.Errorf("group not found")
 	} else {
-		return f.realDCGMClient.AddEntityToGroup(groupId, entityGroupId, entityId)
+		return f.realDCGMProvider.AddEntityToGroup(groupId, entityGroupId, entityId)
 	}
 }
 
-func (f *FakeDCGMClient) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index uint, parentId uint) error {
+func (f *FakeDCGMProvider) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index uint, parentId uint) error {
 	if f.useFake(getFunctionName()) {
 		slice := []byte{uint8(dcgm.FE_SWITCH), uint8(index), uint8(parentId), 0}
 
@@ -187,11 +187,11 @@ func (f *FakeDCGMClient) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index ui
 
 		return fmt.Errorf("group not found")
 	} else {
-		return f.realDCGMClient.AddLinkEntityToGroup(groupId, index, parentId)
+		return f.realDCGMProvider.AddLinkEntityToGroup(groupId, index, parentId)
 	}
 }
 
-func (f *FakeDCGMClient) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
+func (f *FakeDCGMProvider) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
 	if f.useFake(getFunctionName()) {
 		groupID, err := f.dcgmGroupManager.AddNewGroup(groupName, DCGM_GROUP_DEFAULT)
 		if err != nil {
@@ -203,30 +203,30 @@ func (f *FakeDCGMClient) CreateGroup(groupName string) (dcgm.GroupHandle, error)
 
 		return groupHandle, nil
 	} else {
-		return f.realDCGMClient.CreateGroup(groupName)
+		return f.realDCGMProvider.CreateGroup(groupName)
 	}
 }
 
-func (f *FakeDCGMClient) DestroyGroup(groupId dcgm.GroupHandle) error {
+func (f *FakeDCGMProvider) DestroyGroup(groupId dcgm.GroupHandle) error {
 	if f.useFake(getFunctionName()) {
 		return f.dcgmGroupManager.RemoveGroup(uint(groupId.GetHandle()))
 	} else {
-		return f.realDCGMClient.DestroyGroup(groupId)
+		return f.realDCGMProvider.DestroyGroup(groupId)
 	}
 }
 
-func (f *FakeDCGMClient) EntitiesGetLatestValues(
+func (f *FakeDCGMProvider) EntitiesGetLatestValues(
 	entities []dcgm.GroupEntityPair, fields []dcgm.Short,
 	flags uint,
 ) ([]dcgm.FieldValue_v2, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.EntitiesGetLatestValues(entities, fields, flags)
+	return f.realDCGMProvider.EntitiesGetLatestValues(entities, fields, flags)
 	// }
 }
 
-func (f *FakeDCGMClient) EntityGetLatestValues(
+func (f *FakeDCGMProvider) EntityGetLatestValues(
 	entityGroup dcgm.Field_Entity_Group, entityId uint,
 	fields []dcgm.Short,
 ) ([]dcgm.FieldValue_v1, error) {
@@ -237,40 +237,40 @@ func (f *FakeDCGMClient) EntityGetLatestValues(
 	//  }
 }
 
-func (f *FakeDCGMClient) FieldGetById(fieldId dcgm.Short) dcgm.FieldMeta {
+func (f *FakeDCGMProvider) FieldGetById(fieldId dcgm.Short) dcgm.FieldMeta {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.FieldGetById(fieldId)
+	return f.realDCGMProvider.FieldGetById(fieldId)
 	// }
 }
 
-func (f *FakeDCGMClient) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
+func (f *FakeDCGMProvider) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.FieldGroupCreate(fieldsGroupName, fields)
+	return f.realDCGMProvider.FieldGroupCreate(fieldsGroupName, fields)
 	// }
 }
 
-func (f *FakeDCGMClient) FieldGroupDestroy(fieldsGroup dcgm.FieldHandle) error {
+func (f *FakeDCGMProvider) FieldGroupDestroy(fieldsGroup dcgm.FieldHandle) error {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.FieldGroupDestroy(fieldsGroup)
+	return f.realDCGMProvider.FieldGroupDestroy(fieldsGroup)
 	// }
 }
 
-func (f *FakeDCGMClient) GetAllDeviceCount() (uint, error) {
+func (f *FakeDCGMProvider) GetAllDeviceCount() (uint, error) {
 	if f.useFake(getFunctionName()) {
 		// TODO (temp)
 		return 1, nil
 	} else {
-		return f.realDCGMClient.GetAllDeviceCount()
+		return f.realDCGMProvider.GetAllDeviceCount()
 	}
 }
 
-func (f *FakeDCGMClient) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
+func (f *FakeDCGMProvider) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
 	if f.useFake(getFunctionName()) {
 		// TODO (temp)
 		CPU := dcgm.CpuHierarchyCpu_v1{
@@ -285,11 +285,11 @@ func (f *FakeDCGMClient) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
 
 		return hierarchy, nil
 	} else {
-		return f.realDCGMClient.GetCpuHierarchy()
+		return f.realDCGMProvider.GetCpuHierarchy()
 	}
 }
 
-func (f *FakeDCGMClient) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
+func (f *FakeDCGMProvider) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
 	if f.useFake(getFunctionName()) {
 		// TODO (temp)
 		dev := dcgm.Device{
@@ -299,19 +299,19 @@ func (f *FakeDCGMClient) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
 
 		return dev, nil
 	} else {
-		return f.realDCGMClient.GetDeviceInfo(gpuId)
+		return f.realDCGMProvider.GetDeviceInfo(gpuId)
 	}
 }
 
-func (f *FakeDCGMClient) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
+func (f *FakeDCGMProvider) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.GetEntityGroupEntities(entityGroup)
+	return f.realDCGMProvider.GetEntityGroupEntities(entityGroup)
 	// }
 }
 
-func (f *FakeDCGMClient) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
+func (f *FakeDCGMProvider) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
 	if f.useFake(getFunctionName()) {
 		// TODO (temp)
 		hierarchy := dcgm.MigHierarchy_v2{
@@ -319,19 +319,19 @@ func (f *FakeDCGMClient) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error)
 		}
 		return hierarchy, nil
 	} else {
-		return f.realDCGMClient.GetGpuInstanceHierarchy()
+		return f.realDCGMProvider.GetGpuInstanceHierarchy()
 	}
 }
 
-func (f *FakeDCGMClient) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
+func (f *FakeDCGMProvider) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.GetNvLinkLinkStatus()
+	return f.realDCGMProvider.GetNvLinkLinkStatus()
 	// }
 }
 
-func (f *FakeDCGMClient) GetSupportedDevices() ([]uint, error) {
+func (f *FakeDCGMProvider) GetSupportedDevices() ([]uint, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
@@ -339,15 +339,15 @@ func (f *FakeDCGMClient) GetSupportedDevices() ([]uint, error) {
 	//  }
 }
 
-func (f *FakeDCGMClient) GetSupportedMetricGroups(gpuId uint) ([]dcgm.MetricGroup, error) {
+func (f *FakeDCGMProvider) GetSupportedMetricGroups(gpuId uint) ([]dcgm.MetricGroup, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.GetSupportedMetricGroups(gpuId)
+	return f.realDCGMProvider.GetSupportedMetricGroups(gpuId)
 	// }
 }
 
-func (f *FakeDCGMClient) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+func (f *FakeDCGMProvider) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
 	error) {
 	// if f.useFake(getFunctionName()) {
 
@@ -356,7 +356,7 @@ func (f *FakeDCGMClient) LinkGetLatestValues(index uint, parentId uint, fields [
 	// }
 }
 
-func (f *FakeDCGMClient) GetValuesSince(
+func (f *FakeDCGMProvider) GetValuesSince(
 	gpuGroup dcgm.GroupHandle, fieldGroup dcgm.FieldHandle, sinceTime time.Time,
 ) ([]dcgm.FieldValue_v2, time.Time, error) {
 	// if f.useFake(getFunctionName()) {
@@ -366,7 +366,7 @@ func (f *FakeDCGMClient) GetValuesSince(
 	// }
 }
 
-func (f *FakeDCGMClient) GroupAllGPUs() dcgm.GroupHandle {
+func (f *FakeDCGMProvider) GroupAllGPUs() dcgm.GroupHandle {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
@@ -374,15 +374,15 @@ func (f *FakeDCGMClient) GroupAllGPUs() dcgm.GroupHandle {
 	//  }
 }
 
-func (f *FakeDCGMClient) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {
+func (f *FakeDCGMProvider) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.NewDefaultGroup(groupName)
+	return f.realDCGMProvider.NewDefaultGroup(groupName)
 	// }
 }
 
-func (f *FakeDCGMClient) UpdateAllFields() error {
+func (f *FakeDCGMProvider) UpdateAllFields() error {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
@@ -390,24 +390,24 @@ func (f *FakeDCGMClient) UpdateAllFields() error {
 	// }
 }
 
-func (f *FakeDCGMClient) WatchFieldsWithGroupEx(
+func (f *FakeDCGMProvider) WatchFieldsWithGroupEx(
 	fieldsGroup dcgm.FieldHandle, group dcgm.GroupHandle, updateFreq int64, maxKeepAge float64,
 	maxKeepSamples int32,
 ) error {
 	// if f.useFake(getFunctionName()) {
 
 	// } else {
-	return f.realDCGMClient.WatchFieldsWithGroupEx(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
+	return f.realDCGMProvider.WatchFieldsWithGroupEx(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
 	// }
 }
 
-func (f *FakeDCGMClient) Cleanup() {
+func (f *FakeDCGMProvider) Cleanup() {
 	if f.shutdownRealClient {
-		f.realDCGMClient.Cleanup()
+		f.realDCGMProvider.Cleanup()
 	}
 }
 
-func (f *FakeDCGMClient) useFake(funcName string) bool {
+func (f *FakeDCGMProvider) useFake(funcName string) bool {
 	return f.fakeAll || f.fakeFuncs[funcName]
 }
 

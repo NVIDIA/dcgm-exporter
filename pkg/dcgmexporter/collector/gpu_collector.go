@@ -25,7 +25,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
@@ -86,9 +86,9 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		var vals []dcgm.FieldValue_v1
 		var err error
 		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
-			vals, err = dcgmClient.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId, c.DeviceFields)
+			vals, err = dcgmProvider.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId, c.DeviceFields)
 		} else {
-			vals, err = dcgmClient.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
+			vals, err = dcgmProvider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
 				c.DeviceFields)
 		}
 

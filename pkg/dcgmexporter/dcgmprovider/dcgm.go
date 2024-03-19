@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgm_client
+package dcgmprovider
 
 import (
 	"fmt"
@@ -29,36 +29,36 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 )
 
-var dcgmClient DCGMClient
+var dcgmProvider DCGMProvider
 
 func Initialize(config *common.Config) {
-	dcgmClient = newDCGMClient(config)
+	dcgmProvider = newDCGMProvider(config)
 }
 
 func reset() {
-	dcgmClient = nil
+	dcgmProvider = nil
 }
 
-func Client() DCGMClient {
-	return dcgmClient
+func Client() DCGMProvider {
+	return dcgmProvider
 }
 
-func SetClient(d DCGMClient) {
-	dcgmClient = d
+func SetClient(d DCGMProvider) {
+	dcgmProvider = d
 }
 
-type DCGMClientImpl struct {
+type dcgmProviderImpl struct {
 	shutdown      func()
 	moduleCleanup func()
 }
 
-func newDCGMClient(config *common.Config) DCGMClient {
+func newDCGMProvider(config *common.Config) DCGMProvider {
 	if Client() != nil {
 		logrus.Info("DCGM already initialized")
 		return Client()
 	}
 
-	client := DCGMClientImpl{}
+	client := dcgmProviderImpl{}
 
 	if config.UseRemoteHE {
 		logrus.Info("Attempting to connect to remote hostengine at ", config.RemoteHEInfo)
@@ -96,113 +96,113 @@ func newDCGMClient(config *common.Config) DCGMClient {
 	return client
 }
 
-func (d DCGMClientImpl) AddEntityToGroup(
+func (d dcgmProviderImpl) AddEntityToGroup(
 	groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group,
 	entityId uint,
 ) error {
 	return dcgm.AddEntityToGroup(groupId, entityGroupId, entityId)
 }
 
-func (d DCGMClientImpl) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index uint, parentId uint) error {
+func (d dcgmProviderImpl) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index uint, parentId uint) error {
 	return dcgm.AddLinkEntityToGroup(groupId, index, parentId)
 }
 
-func (d DCGMClientImpl) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
+func (d dcgmProviderImpl) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
 	return dcgm.CreateGroup(groupName)
 }
 
-func (d DCGMClientImpl) DestroyGroup(groupId dcgm.GroupHandle) error {
+func (d dcgmProviderImpl) DestroyGroup(groupId dcgm.GroupHandle) error {
 	return dcgm.DestroyGroup(groupId)
 }
 
-func (d DCGMClientImpl) EntitiesGetLatestValues(
+func (d dcgmProviderImpl) EntitiesGetLatestValues(
 	entities []dcgm.GroupEntityPair, fields []dcgm.Short, flags uint,
 ) ([]dcgm.FieldValue_v2, error) {
 	return dcgm.EntitiesGetLatestValues(entities, fields, flags)
 }
 
-func (d DCGMClientImpl) EntityGetLatestValues(
+func (d dcgmProviderImpl) EntityGetLatestValues(
 	entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short,
 ) ([]dcgm.FieldValue_v1,
 	error) {
 	return dcgm.EntityGetLatestValues(entityGroup, entityId, fields)
 }
 
-func (d DCGMClientImpl) FieldGetById(fieldId dcgm.Short) dcgm.FieldMeta {
+func (d dcgmProviderImpl) FieldGetById(fieldId dcgm.Short) dcgm.FieldMeta {
 	return dcgm.FieldGetById(fieldId)
 }
 
-func (d DCGMClientImpl) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
+func (d dcgmProviderImpl) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
 	return dcgm.FieldGroupCreate(fieldsGroupName, fields)
 }
 
-func (d DCGMClientImpl) FieldGroupDestroy(fieldsGroup dcgm.FieldHandle) error {
+func (d dcgmProviderImpl) FieldGroupDestroy(fieldsGroup dcgm.FieldHandle) error {
 	return dcgm.FieldGroupDestroy(fieldsGroup)
 }
 
-func (d DCGMClientImpl) GetAllDeviceCount() (uint, error) {
+func (d dcgmProviderImpl) GetAllDeviceCount() (uint, error) {
 	return dcgm.GetAllDeviceCount()
 }
 
-func (d DCGMClientImpl) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
+func (d dcgmProviderImpl) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
 	return dcgm.GetCpuHierarchy()
 }
 
-func (d DCGMClientImpl) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
+func (d dcgmProviderImpl) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
 	return dcgm.GetDeviceInfo(gpuId)
 }
 
-func (d DCGMClientImpl) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
+func (d dcgmProviderImpl) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
 	return dcgm.GetEntityGroupEntities(entityGroup)
 }
 
-func (d DCGMClientImpl) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
+func (d dcgmProviderImpl) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
 	return dcgm.GetGpuInstanceHierarchy()
 }
 
-func (d DCGMClientImpl) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
+func (d dcgmProviderImpl) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
 	return dcgm.GetNvLinkLinkStatus()
 }
 
-func (d DCGMClientImpl) GetSupportedDevices() ([]uint, error) {
+func (d dcgmProviderImpl) GetSupportedDevices() ([]uint, error) {
 	return dcgm.GetSupportedDevices()
 }
 
-func (d DCGMClientImpl) GetSupportedMetricGroups(gpuId uint) ([]dcgm.MetricGroup, error) {
+func (d dcgmProviderImpl) GetSupportedMetricGroups(gpuId uint) ([]dcgm.MetricGroup, error) {
 	return dcgm.GetSupportedMetricGroups(gpuId)
 }
 
-func (d DCGMClientImpl) GetValuesSince(
+func (d dcgmProviderImpl) GetValuesSince(
 	gpuGroup dcgm.GroupHandle, fieldGroup dcgm.FieldHandle, sinceTime time.Time,
 ) ([]dcgm.FieldValue_v2, time.Time, error) {
 	return dcgm.GetValuesSince(gpuGroup, fieldGroup, sinceTime)
 }
 
-func (d DCGMClientImpl) GroupAllGPUs() dcgm.GroupHandle {
+func (d dcgmProviderImpl) GroupAllGPUs() dcgm.GroupHandle {
 	return dcgm.GroupAllGPUs()
 }
 
-func (d DCGMClientImpl) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+func (d dcgmProviderImpl) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
 	error) {
 	return dcgm.LinkGetLatestValues(index, parentId, fields)
 }
 
-func (d DCGMClientImpl) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {
+func (d dcgmProviderImpl) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {
 	return dcgm.NewDefaultGroup(groupName)
 }
 
-func (d DCGMClientImpl) UpdateAllFields() error {
+func (d dcgmProviderImpl) UpdateAllFields() error {
 	return dcgm.UpdateAllFields()
 }
 
-func (d DCGMClientImpl) WatchFieldsWithGroupEx(
+func (d dcgmProviderImpl) WatchFieldsWithGroupEx(
 	fieldsGroup dcgm.FieldHandle, group dcgm.GroupHandle, updateFreq int64, maxKeepAge float64,
 	maxKeepSamples int32,
 ) error {
 	return dcgm.WatchFieldsWithGroupEx(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
 }
 
-func (d DCGMClientImpl) Cleanup() {
+func (d dcgmProviderImpl) Cleanup() {
 	// Terminates the DcgmFields module
 	logrus.Info("Attempting to terminate DCGM Fields module.")
 	if val := dcgm.FieldsTerm(); val < 0 {

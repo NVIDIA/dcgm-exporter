@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//go:generate mockgen -destination=mocks/pkg/dcgmexporter/dcgm_client/mock_client.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client DCGMClient
+//go:generate mockgen -destination=mocks/pkg/dcgmexporter/dcgmprovider/mock_client.go github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider DCGMProvider
 
-package dcgm_client
+package dcgmprovider
 
 import (
 	"time"
@@ -24,7 +24,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
-type DCGMClient interface {
+type DCGMProvider interface {
 	AddEntityToGroup(dcgm.GroupHandle, dcgm.Field_Entity_Group, uint) error
 	AddLinkEntityToGroup(dcgm.GroupHandle, uint, uint) error
 	CreateGroup(string) (dcgm.GroupHandle, error)

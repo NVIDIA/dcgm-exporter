@@ -27,7 +27,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
 
@@ -67,8 +67,8 @@ var expectedCPUMetrics = map[string]bool{
 }
 
 func TestDCGMCollector(t *testing.T) {
-	dcgmClient.Initialize(&common.Config{UseRemoteHE: false})
-	defer dcgmClient.Client().Cleanup()
+	dcgmProvider.Initialize(&common.Config{UseRemoteHE: false})
+	defer dcgmProvider.Client().Cleanup()
 
 	_, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	cleanup()
@@ -91,7 +91,7 @@ func testDCGMGPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 		CollectInterval: 1,
 	}
 
-	fakeClient := dcgmClient.NewFakeDCGMClient(&config, false)
+	fakeClient := dcgmProvider.NewFakeDCGMProvider(&config, false)
 	defer fakeClient.Cleanup()
 
 	fakeClient.FakeFuncs([]string{
@@ -101,7 +101,7 @@ func testDCGMGPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 		"AddEntityToGroup",
 		"GetCpuHierarchy",
 	})
-	dcgmClient.SetClient(&fakeClient)
+	dcgmProvider.SetClient(&fakeClient)
 
 	fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(counters, &config)
 
@@ -116,14 +116,14 @@ func testDCGMGPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 
 	/* Test for error when no switches are available to monitor. */
 	switchItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH)
-	assert.False(t, exists, "dcgm_client.FE_SWITCH should not be available")
+	assert.False(t, exists, "dcgmprovider.FE_SWITCH should not be available")
 
 	_, _, err = collector.NewDCGMCollector(counters, "", &config, switchItem)
 	require.Error(t, err, "NewDCGMCollector should return error")
 
 	/* Test for error when no cpus are available to monitor. */
 	cpuItem, exist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
-	require.False(t, exist, "dcgm_client.FE_CPU should not be available")
+	require.False(t, exist, "dcgmprovider.FE_CPU should not be available")
 
 	_, _, err = collector.NewDCGMCollector(counters, "", &config, cpuItem)
 	require.Error(t, err, "NewDCGMCollector should return error")
@@ -157,7 +157,7 @@ func testDCGMCPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 		UseFakeGPUs:     false,
 	}
 
-	fakeClient := dcgmClient.NewFakeDCGMClient(&config, false)
+	fakeClient := dcgmProvider.NewFakeDCGMProvider(&config, false)
 	fakeClient.FakeFuncs([]string{
 		"GetAllDeviceCount",
 		"GetDeviceInfo",
@@ -165,7 +165,7 @@ func testDCGMCPUCollector(t *testing.T, counters []common.Counter) (*collector.D
 		"AddEntityToGroup",
 		"GetCpuHierarchy",
 	})
-	dcgmClient.SetClient(&fakeClient)
+	dcgmProvider.SetClient(&fakeClient)
 
 	/* Test that only cpu metrics are collected for cpu entities. */
 
@@ -263,7 +263,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 
 	runOnlyWithLiveGPUs(t)
 	// Create fake GPU
-	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
+	numGPUs, err := dcgmProvider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -280,7 +280,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
-	numGPUs, err = dcgmClient.Client().GetAllDeviceCount()
+	numGPUs, err = dcgmProvider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	counters := []common.Counter{

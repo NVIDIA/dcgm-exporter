@@ -31,7 +31,7 @@ import (
 
 	config2 "github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
-	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
+	dcgmProvider "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/server"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/utils"
@@ -73,7 +73,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgmClient.Client().GetAllDeviceCount()
+	numGPUs, err := dcgmProvider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
