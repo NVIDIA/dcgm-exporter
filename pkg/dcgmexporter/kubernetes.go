@@ -54,7 +54,7 @@ func (p *PodMapper) Name() string {
 }
 
 func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error {
-	socketPath := p.Config.PodResourceKubeletDir + "/kubelet.sock"
+	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
 		logrus.Info("No Kubelet socket, ignoring")
