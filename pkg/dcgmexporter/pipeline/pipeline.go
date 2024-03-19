@@ -193,7 +193,7 @@ func (m *MetricsPipeline) run() (string, error) {
 	var err error
 	var formatted string
 
-	if m.gpuCollector != nil {
+	if !common.IsNil(m.gpuCollector){
 		/* Collect GPU Metrics */
 		metrics, err = m.gpuCollector.GetMetrics()
 		if err != nil {
@@ -213,7 +213,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	if m.switchCollector != nil {
+	if !common.IsNil(m.switchCollector) {
 		/* Collect Switch Metrics */
 		metrics, err = m.switchCollector.GetMetrics()
 		if err != nil {
@@ -230,7 +230,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	if m.linkCollector != nil {
+	if !common.IsNil(m.linkCollector) {
 		/* Collect Link Metrics */
 		metrics, err = m.linkCollector.GetMetrics()
 		if err != nil {
@@ -247,7 +247,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	if m.cpuCollector != nil {
+	if !common.IsNil(m.cpuCollector) {
 		/* Collect CPU Metrics */
 		metrics, err = m.cpuCollector.GetMetrics()
 		if err != nil {
@@ -264,7 +264,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 	}
 
-	if m.coreCollector != nil {
+	if !common.IsNil(m.coreCollector) {
 		/* Collect cpu core Metrics */
 		metrics, err = m.coreCollector.GetMetrics()
 		if err != nil {

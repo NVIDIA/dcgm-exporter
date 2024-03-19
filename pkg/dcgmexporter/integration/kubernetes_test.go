@@ -237,10 +237,6 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				kubernetes.SocketPath = tmpDir + "/kubelet.sock"
 				server := grpc.NewServer()
 
-				cleanup, err := dcgm.Init(dcgm.Embedded)
-				require.NoError(t, err)
-				defer cleanup()
-
 				gpus := []string{tc.PODGPUID}
 				podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(gpus))
 

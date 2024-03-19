@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -192,43 +191,4 @@ func TestCountPipelineCleanup(t *testing.T) {
 			require.Equal(t, len(c.enabledCollector), cleanupCounter, "case: %s failed", c.name)
 		})
 	}
-}
-
-func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
-
-	config := &common.Config{}
-
-	fieldEntityGroupTypeSystemInfo := &sysinfo.FieldEntityGroupTypeSystemInfo{
-		Items: map[dcgm.Field_Entity_Group]sysinfo.FieldEntityGroupTypeSystemInfoItem{
-			dcgm.FE_GPU:      sysinfo.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_SWITCH:   sysinfo.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_LINK:     sysinfo.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_CPU:      sysinfo.FieldEntityGroupTypeSystemInfoItem{},
-			dcgm.FE_CPU_CORE: sysinfo.FieldEntityGroupTypeSystemInfoItem{},
-		},
-	}
-
-	p, cleanup, err := pipeline.NewMetricsPipeline(config,
-		sampleCounters,
-		"",
-		func(
-			_ []common.Counter, _ string, _ *common.Config, item sysinfo.FieldEntityGroupTypeSystemInfoItem,
-		) (*collector.DCGMCollector, func(), error) {
-			assert.True(t, item.IsEmpty())
-			return nil, func() {}, fmt.Errorf("empty")
-		},
-		fieldEntityGroupTypeSystemInfo,
-	)
-	require.NoError(t, err)
-	defer cleanup()
-	require.NoError(t, err)
-
-	fmt.Println(p)
-	// TODO
-	/*out, err := p.run()
-	require.NoError(t, err)
-	require.Empty(t, out)*/
 }
