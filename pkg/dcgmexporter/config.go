@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package dcgmexporter
 
 import "github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -55,4 +56,5 @@ type Config struct {
 	ClockEventsCountWindowSize int
 	EnableDCGMLog              bool
 	DCGMLogLevel               string
+	PodResourcesKubeletSocket  string
 }

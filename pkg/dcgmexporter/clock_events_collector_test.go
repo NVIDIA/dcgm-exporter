@@ -123,7 +123,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	// Create a fake K8S to emulate work on K8S environment
 	tmpDir, cleanup := CreateTmpDir(t)
 	defer cleanup()
-	socketPath = tmpDir + "/kubelet.sock"
+	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 
 	gpuIDsAsString := make([]string, len(gpuIDs))
@@ -135,6 +135,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpuIDsAsString))
 	// Tell that the app is running on K8S
 	config.Kubernetes = true
+	config.PodResourcesKubeletSocket = socketPath
 
 	allCounters := []Counter{
 		{

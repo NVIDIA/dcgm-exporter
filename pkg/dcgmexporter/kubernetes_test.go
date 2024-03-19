@@ -55,7 +55,7 @@ func TestProcessPodMapper(t *testing.T) {
 
 	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(Counter)]
 
-	socketPath = tmpDir + "/kubelet.sock"
+	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 	gpus := GetGPUUUIDs(arbirtaryMetric)
 	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
@@ -63,7 +63,7 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup = StartMockServer(t, server, socketPath)
 	defer cleanup()
 
-	podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID})
+	podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID, PodResourcesKubeletSocket: socketPath})
 	require.NoError(t, err)
 	var sysInfo SystemInfo
 	err = podMapper.Process(out, sysInfo)
@@ -246,7 +246,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			func(t *testing.T) {
 				tmpDir, cleanup := CreateTmpDir(t)
 				defer cleanup()
-				socketPath = tmpDir + "/kubelet.sock"
+				socketPath := tmpDir + "/kubelet.sock"
 				server := grpc.NewServer()
 
 				cleanup, err := dcgm.Init(dcgm.Embedded)
@@ -271,7 +271,9 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					nvmlGetMIGDeviceInfoByIDHook = nvmlprovider.GetMIGDeviceInfoByID
 				}()
 
-				podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
+				podMapper, err := NewPodMapper(&Config{
+					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
+					PodResourcesKubeletSocket: socketPath})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
 				metrics := MetricsByCounter{}

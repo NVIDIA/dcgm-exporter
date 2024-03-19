@@ -34,9 +34,6 @@ import (
 )
 
 var (
-	socketDir  = "/var/lib/kubelet/pod-resources"
-	socketPath = socketDir + "/kubelet.sock"
-
 	connectionTimeout = 10 * time.Second
 
 	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
@@ -57,6 +54,7 @@ func (p *PodMapper) Name() string {
 }
 
 func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error {
+	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
 		logrus.Info("No Kubelet socket, ignoring")
