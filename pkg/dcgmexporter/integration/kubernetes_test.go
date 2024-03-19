@@ -38,6 +38,7 @@ import (
 	mock_provider "github.com/NVIDIA/dcgm-exporter/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/collector"
+	dcgmClient "github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgm_client"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/kubernetes"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/sysinfo"
 )
@@ -48,9 +49,8 @@ func TestProcessPodMapper(t *testing.T) {
 	tmpDir, cleanup := CreateTmpDir(t)
 	defer cleanup()
 
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+	dcgmClient.Initialize(&common.Config{UseRemoteHE: false})
+	defer dcgmClient.Client().Cleanup()
 
 	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	defer cleanup()
@@ -257,7 +257,8 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				defer ctrl.Finish()
 
 				mockNVMLClient := mock_provider.NewMockNVMLClient(ctrl)
-				mockNVMLClient.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil)
+				mockNVMLClient.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil).MinTimes(0)
+				nvmlprovider.SetClient(mockNVMLClient)
 
 				podMapper, err := kubernetes.NewPodMapper(&common.Config{KubernetesGPUIdType: tc.KubernetesGPUIDType})
 				require.NoError(t, err)

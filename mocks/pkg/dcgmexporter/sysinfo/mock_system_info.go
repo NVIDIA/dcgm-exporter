@@ -182,10 +182,10 @@ func (mr *MockSystemInfoInterfaceMockRecorder) GPUInstanceIdExists(arg0 any) *go
 }
 
 // GPUs mocks base method.
-func (m *MockSystemInfoInterface) GPUs() [dcgm.MAX_NUM_DEVICES]sysinfo.GPUInfo {
+func (m *MockSystemInfoInterface) GPUs() [sysinfo.MaxDeviceCount]sysinfo.GPUInfo {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GPUs")
-	ret0, _ := ret[0].([dcgm.MAX_NUM_DEVICES]sysinfo.GPUInfo)
+	ret0, _ := ret[0].([sysinfo.MaxDeviceCount]sysinfo.GPUInfo)
 	return ret0
 }
 

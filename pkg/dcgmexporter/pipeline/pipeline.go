@@ -36,6 +36,7 @@ func NewMetricsPipeline(
 	config *common.Config,
 	counters []common.Counter,
 	hostname string,
+	newDCGMCollector collector.DCGMCollectorConstructor,
 	fieldEntityGroupTypeSystemInfo *dcgmClient.FieldEntityGroupTypeSystemInfo,
 ) (*MetricsPipeline, func(), error) {
 
@@ -54,7 +55,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU); exists {
 		var cleanup func()
-		gpuCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
+		gpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_GPU")
 		}
@@ -63,7 +64,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH); exists {
 		var cleanup func()
-		switchCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
+		switchCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_SWITCH")
 		}
@@ -72,7 +73,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_LINK); exists {
 		var cleanup func()
-		linkCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
+		linkCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_LINK")
 		}
@@ -81,7 +82,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU); exists {
 		var cleanup func()
-		cpuCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
+		cpuCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_CPU")
 		}
@@ -90,7 +91,7 @@ func NewMetricsPipeline(
 
 	if item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU_CORE); exists {
 		var cleanup func()
-		coreCollector, cleanup, err = collector.NewDCGMCollector(counters, hostname, config, item)
+		coreCollector, cleanup, err = newDCGMCollector(counters, hostname, config, item)
 		if err != nil {
 			logrus.Warn("Cannot create DCGMCollector for dcgm_client.FE_CPU_CORE")
 		}

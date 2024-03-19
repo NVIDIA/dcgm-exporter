@@ -39,9 +39,9 @@ import (
 )
 
 func TestClockEventsCollector_Gather(t *testing.T) {
-	teardownTest := setupTest(t)
-	defer teardownTest(t)
-	runOnlyWithLiveGPUs(t)
+	//teardownTest := setupTest(t)
+	//defer teardownTest(t)
+
 	testutils.RequireLinux(t)
 
 	hostname := "local-test"
@@ -61,6 +61,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 
 	dcgmClient.Initialize(config)
 	defer dcgmClient.Client().Cleanup()
+	runOnlyWithLiveGPUs(t)
 
 	cc, err := utils.ExtractCounters(records, config)
 	require.NoError(t, err)
@@ -208,8 +209,8 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	dcgmClient.Initialize(config)
 	defer dcgmClient.Client().Cleanup()
 
-	teardownTest := setupTest(t)
-	defer teardownTest(t)
+	//teardownTest := setupTest(t)
+	//defer teardownTest(t)
 
 	allCounters := []common.Counter{
 		common.Counter{
@@ -263,9 +264,8 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
-	teardownTest := setupTest(t)
-	defer teardownTest(t)
-	runOnlyWithLiveGPUs(t)
+	//teardownTest := setupTest(t)
+	//defer teardownTest(t)
 
 	hostname := "local-test"
 	config := &common.Config{
@@ -284,6 +284,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	dcgmClient.Initialize(config)
 	defer dcgmClient.Client().Cleanup()
+	runOnlyWithLiveGPUs(t)
 
 	cc, err := utils.ExtractCounters(records, config)
 	require.NoError(t, err)
@@ -393,9 +394,8 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
-	teardownTest := setupTest(t)
-	defer teardownTest(t)
-	runOnlyWithLiveGPUs(t)
+	//teardownTest := setupTest(t)
+	//defer teardownTest(t)
 
 	hostname := "local-test"
 	config := &common.Config{
@@ -413,6 +413,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 
 	dcgmClient.Initialize(config)
 	defer dcgmClient.Client().Cleanup()
+	runOnlyWithLiveGPUs(t)
 
 	cc, err := utils.ExtractCounters(records, config)
 	require.NoError(t, err)

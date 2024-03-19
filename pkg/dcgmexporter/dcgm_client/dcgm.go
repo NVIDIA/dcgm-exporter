@@ -35,6 +35,10 @@ func Initialize(config *common.Config) {
 	dcgmClient = newDCGMClient(config)
 }
 
+func reset() {
+	dcgmClient = nil
+}
+
 func Client() DCGMClient {
 	return dcgmClient
 }
@@ -50,6 +54,7 @@ type DCGMClientImpl struct {
 
 func newDCGMClient(config *common.Config) DCGMClient {
 	if Client() != nil {
+		logrus.Info("DCGM already initialized")
 		return Client()
 	}
 
@@ -69,6 +74,7 @@ func newDCGMClient(config *common.Config) DCGMClient {
 			os.Setenv("__DCGM_DBG_LVL", config.DCGMLogLevel)
 		}
 
+		logrus.Info("Attempting to initialize DCGM.")
 		cleanup, err := dcgm.Init(dcgm.Embedded)
 		if err != nil {
 			cleanup()
@@ -198,11 +204,15 @@ func (d DCGMClientImpl) WatchFieldsWithGroupEx(
 
 func (d DCGMClientImpl) Cleanup() {
 	// Terminates the DcgmFields module
+	logrus.Info("Attempting to terminate DCGM Fields module.")
 	if val := dcgm.FieldsTerm(); val < 0 {
 		logrus.Errorf("Failed to terminate DCGM Fields module; err: %d", val)
 	}
 
+	logrus.Info("Attempting to terminate DCGM.")
 	d.shutdown()
+
+	reset()
 }
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {

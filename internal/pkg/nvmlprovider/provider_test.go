@@ -23,6 +23,9 @@ import (
 )
 
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
+
+	Initialize()
+
 	tests := []struct {
 		name          string
 		uuid          string
@@ -62,7 +65,7 @@ func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			deviceInfo, err := GetMIGDeviceInfoByID(tc.uuid)
+			deviceInfo, err := Client().GetMIGDeviceInfoByID(tc.uuid)
 			if tc.expectedError && err != nil {
 				return
 			}

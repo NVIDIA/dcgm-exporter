@@ -29,7 +29,7 @@ import (
 
 var fakeProfileName = "2fake.4gb"
 
-func SpoofSwitchSystemInfo() SystemInfo {
+func SpoofSwitchSystemInfo() *SystemInfo {
 	var sysInfo SystemInfo
 	sysInfo.infoType = dcgm.FE_SWITCH
 	sw1 := SwitchInfo{
@@ -78,35 +78,48 @@ func SpoofSwitchSystemInfo() SystemInfo {
 	sysInfo.sOpt.MajorRange = []int{-1}
 	sysInfo.sOpt.MinorRange = []int{-1}
 
-	return sysInfo
+	return &sysInfo
 }
 
 func SpoofSystemInfo() SystemInfo {
-	var sysInfo SystemInfo
-	sysInfo.gpuCount = 2
-	sysInfo.GPUs[0].DeviceInfo.GPU = 0
-	gi := GPUInstanceInfo{
-		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlProfileSlices: 3},
-		ProfileName: fakeProfileName,
-		EntityId:    0,
+	sysInfo := SystemInfo{
+		gpuCount: 2,
+		gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+			{
+				DeviceInfo: dcgm.Device{
+					GPU: 0,
+				},
+				GPUInstances: []GPUInstanceInfo{
+					{
+						Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlProfileSlices: 3},
+						ProfileName: fakeProfileName,
+						EntityId:    0,
+					},
+				},
+			},
+			{
+				DeviceInfo: dcgm.Device{
+					GPU: 1,
+				},
+				GPUInstances: []GPUInstanceInfo{
+					{
+						Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlInstanceId: 1, NvmlProfileSlices: 3},
+						ProfileName: fakeProfileName,
+						EntityId:    14,
+					},
+				},
+			},
+		},
 	}
-	sysInfo.GPUs[0].GPUInstances = append(sysInfo.GPUs[0].GPUInstances, gi)
-	gi2 := GPUInstanceInfo{
-		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlInstanceId: 1, NvmlProfileSlices: 3},
-		ProfileName: fakeProfileName,
-		EntityId:    14,
-	}
-	sysInfo.GPUs[1].GPUInstances = append(sysInfo.GPUs[1].GPUInstances, gi2)
-	sysInfo.GPUs[1].DeviceInfo.GPU = 1
 
 	return sysInfo
 }
 
 func TestMonitoredEntities(t *testing.T) {
 	sysInfo := SpoofSystemInfo()
-	sysInfo.GOpt.Flex = true
+	sysInfo.gOpt.Flex = true
 
-	monitoring := GetMonitoredEntities(sysInfo)
+	monitoring := GetMonitoredEntities(&sysInfo)
 	require.Equal(t, len(monitoring), 2, fmt.Sprintf("Should have 2 monitored entities but found %d", len(monitoring)))
 	instanceCount := 0
 	gpuCount := 0
@@ -130,9 +143,9 @@ func TestMonitoredEntities(t *testing.T) {
 	require.Equal(t, instanceCount, 2, "Expected 2 GPU instances but found %d", instanceCount)
 	require.Equal(t, gpuCount, 0, "Expected 0 gpus but found %d", gpuCount)
 
-	sysInfo.GPUs[0].GPUInstances = sysInfo.GPUs[0].GPUInstances[:0]
-	sysInfo.GPUs[1].GPUInstances = sysInfo.GPUs[1].GPUInstances[:0]
-	monitoring = GetMonitoredEntities(sysInfo)
+	sysInfo.gpus[0].GPUInstances = sysInfo.gpus[0].GPUInstances[:0]
+	sysInfo.gpus[1].GPUInstances = sysInfo.gpus[1].GPUInstances[:0]
+	monitoring = GetMonitoredEntities(&sysInfo)
 	require.Equal(t, 2, len(monitoring), fmt.Sprintf("Should have 2 monitored entities but found %d", len(monitoring)))
 	for i, mi := range monitoring {
 		require.Equal(t, mi.Entity.EntityGroupId, dcgm.FE_GPU, "Expected FE_GPU but found %d", mi.Entity.EntityGroupId)
@@ -256,7 +269,7 @@ func TestIsSwitchWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsSwitchWatched(tt.switchID, tt.sysInfo)
+			got := IsSwitchWatched(tt.switchID, &tt.sysInfo)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -344,7 +357,7 @@ func TestIsLinkWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsLinkWatched(tt.linkIndex, tt.switchID, tt.sysInfo)
+			got := IsLinkWatched(tt.linkIndex, tt.switchID, &tt.sysInfo)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -439,7 +452,7 @@ func TestIsCPUWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCPUWatched(tt.cpuID, tt.sysInfo))
+			assert.Equal(t, tt.want, IsCPUWatched(tt.cpuID, &tt.sysInfo))
 		})
 	}
 }
@@ -517,7 +530,7 @@ func TestIsCoreWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCoreWatched(tt.coreID, tt.cpuID, tt.sysInfo))
+			assert.Equal(t, tt.want, IsCoreWatched(tt.coreID, tt.cpuID, &tt.sysInfo))
 		})
 	}
 }

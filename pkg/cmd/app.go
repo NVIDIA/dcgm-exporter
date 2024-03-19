@@ -279,6 +279,7 @@ restart:
 	newPipeline, cleanup, err := pipeline.NewMetricsPipeline(config,
 		cs.DCGMCounters,
 		hostname,
+		collector.NewDCGMCollector,
 		fieldEntityGroupTypeSystemInfo,
 	)
 	defer cleanup()
