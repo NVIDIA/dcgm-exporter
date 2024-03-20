@@ -460,25 +460,24 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 	var groupID dcgm.GroupHandle
 	var err error
 
-	/* Create per-cpu core groups */
 	for _, cpu := range sysInfo.CPUs {
 		if !IsCPUWatched(cpu.EntityId, sysInfo) {
 			continue
 		}
 
 		for i, core := range cpu.Cores {
+			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
+				continue
+			}
 
-			if i == 0 || i%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
+			// Create per-cpu core groups or after max number of CPU cores have been added to current group
+			if i%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
 				groupID, err = dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 				if err != nil {
 					return nil, cleanups, err
 				}
 
 				groups = append(groups, groupID)
-			}
-
-			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
-				continue
 			}
 
 			err = dcgm.AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
@@ -757,11 +756,11 @@ func AddAllCPUCores(sysInfo SystemInfo) []MonitoringInfo {
 	var monitoring []MonitoringInfo
 
 	for _, cpu := range sysInfo.CPUs {
-		for _, core := range cpu.Cores {
-			if !IsCPUWatched(cpu.EntityId, sysInfo) {
-				continue
-			}
+		if !IsCPUWatched(cpu.EntityId, sysInfo) {
+			continue
+		}
 
+		for _, core := range cpu.Cores {
 			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
 				continue
 			}
