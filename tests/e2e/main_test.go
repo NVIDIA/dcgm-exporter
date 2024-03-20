@@ -22,60 +22,64 @@ import (
 	"os"
 	"testing"
 
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/suite"
-
 	"github.com/google/uuid"
+	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2/types"
+	"github.com/onsi/gomega"
 )
 
 var runID = uuid.New()
 
-var log *logrus.Entry
-
-var suiteCfg = suiteConfig{}
+var testContext = testContextType{}
 
 func TestMain(m *testing.M) {
-	// Create a new logger instance
-	logrus.SetOutput(os.Stdout)
-	logrus.SetFormatter(&logrus.TextFormatter{})
-	logrus.SetLevel(logrus.InfoLevel)
-	log = logrus.WithField("e2eRunID", runID)
-
-	flag.StringVar(&suiteCfg.kubeconfig,
+	flag.StringVar(&testContext.kubeconfig,
 		"kubeconfig",
 		"~/.kube/config",
 		"path to the kubeconfig file.")
 
-	flag.StringVar(&suiteCfg.namespace,
+	flag.StringVar(&testContext.namespace,
 		"namespace",
 		"dcgm-exporter",
 		"Namespace name to use for the DCGM-exporter deployment")
 
-	flag.StringVar(&suiteCfg.chart,
+	flag.StringVar(&testContext.chart,
 		"chart",
 		"",
 		"Helm chart to use")
 
-	flag.StringVar(&suiteCfg.imageRepository,
+	flag.StringVar(&testContext.imageRepository,
 		"image-repository",
 		"",
 		"DCGM-exporter image repository")
 
-	flag.StringVar(&suiteCfg.imageTag,
+	flag.StringVar(&testContext.imageTag,
 		"image-tag",
 		"",
 		"DCGM-exporter image tag to use")
 
-	flag.StringVar(&suiteCfg.arguments,
+	flag.StringVar(&testContext.arguments,
 		"arguments",
 		"",
-		`DCGM-exporter command line parameters. Example: -arguments={-f=/etc/dcgm-exporter/default-counters.csv}`)
+		`DCGM-exporter command line arguments. Example: -arguments="{-f=/etc/dcgm-exporter/default-counters.csv}"`)
 
 	flag.Parse()
+
 	os.Exit(m.Run())
 }
 
-// TestRunSuite will be run by the 'go test' command
-func TestRunSuite(t *testing.T) {
-	suite.Run(t, NewSuite())
+func createGinkgoConfig() (types.SuiteConfig, types.ReporterConfig) {
+	// fetch the current config
+	suiteConfig, reporterConfig := ginkgo.GinkgoConfiguration()
+	// Randomize specs as well as suites
+	suiteConfig.RandomizeAllSpecs = true
+	return suiteConfig, reporterConfig
+}
+
+func TestE2E(t *testing.T) {
+	gomega.RegisterFailHandler(ginkgo.Fail)
+
+	// Run tests through the Ginkgo runner with output to console + JUnit for Jenkins
+	suiteConfig, reporterConfig := createGinkgoConfig()
+	ginkgo.RunSpecs(t, "DCGM-exporter e2e suite", suiteConfig, reporterConfig)
 }

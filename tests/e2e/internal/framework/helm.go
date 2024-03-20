@@ -64,6 +64,9 @@ func NewHelmClient(opts ...HelmClientOption) (*HelmClient, error) {
 			Namespace:        client.namespace,
 			RepositoryConfig: client.repositoryConfig,
 			RepositoryCache:  client.repositoryCache,
+			DebugLog: func(format string, v ...interface{}) {
+				// suppress helm chart client debug log
+			},
 		},
 		RestConfig: client.k8sRestConfig,
 	}

@@ -26,6 +26,8 @@ define TEST_CMD
 	fi
 	$(GO_CMD) test --tags=e2e -v . \
 		-args \
+		--ginkgo.v \
+		--ginkgo.no-color \
 		-kubeconfig=$(KUBECONFIG) \
 		-chart="$(CHART)" \
 		-namespace=$(NAMESPACE) \
@@ -43,3 +45,5 @@ e2e-test-no-profiling:
 	@$(TEST_CMD) \
 		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}"
 
+binary:
+	go test -c --tags="e2e" .

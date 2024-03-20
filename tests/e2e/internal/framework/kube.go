@@ -75,21 +75,16 @@ func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, label
 	return podList.Items, nil
 }
 
-func (c *KubeClient) CheckPodCondition(ctx context.Context,
+func (c *KubeClient) CheckPodStatus(ctx context.Context,
 	namespace, podName string,
-	podConditionType corev1.PodConditionType) (bool, error) {
+	condition func(namespace, podName string, status corev1.PodStatus) (bool, error)) (bool, error) {
 	pod, err := c.client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return false, fmt.Errorf("unexpected error getting pod %s; err: %w", podName, err)
 	}
 
-	for _, c := range pod.Status.Conditions {
-		if c.Type != podConditionType {
-			continue
-		}
-		if c.Status == corev1.ConditionTrue {
-			return true, nil
-		}
+	if condition != nil {
+		return condition(namespace, podName, pod.Status)
 	}
 
 	for _, c := range pod.Status.ContainerStatuses {
@@ -118,6 +113,7 @@ func (c *KubeClient) CreatePod(ctx context.Context,
 			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
 			Containers: []corev1.Container{
 				{
 					Name:  containerName,
