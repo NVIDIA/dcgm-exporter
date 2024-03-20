@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Feature Request Form
+description: Request new or improved functionality or changes to existing functionality
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this feature request!
+
+  - type: dropdown
+    id: new_or_improvement
+    attributes:
+      label: Is this a new feature, an improvement, or a change to existing functionality?
+      options:
+        - New Feature
+        - Improvement
+        - Change
+    validations:
+      required: true
+
+  - type: dropdown
+    id: criticality
+    attributes:
+      label: How would you describe the priority of this feature request
+      options:
+        - Must have.
+        - Should have.
+        - Nice to have.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Please provide a clear description of problem this feature solves
+      description: Real usage examples are especially helpful, non-code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: Feature_Description
+    attributes:
+      label: Feature Description
+      description: Please provide clear description of the feature you request (refer to [User Story format](https://www.atlassian.com/agile/project-management/user-stories#:~:text=User%20story%20template%20and%20examples) and [EARS format](https://ieeexplore.ieee.org/document/5328509))
+      placeholder: >
+        For new feature request, please use one of the following format to describe the feature
+          1. From End-user perspective, use the following user story format
+              As a <persona>, I <want to>, <so that>.
+          2. From System perspective, use the following EARS format
+              <Pre-Condition> <System> shall  <process> <object to be process> <condition>
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe your ideal solution
+      description: Please describe the functionality you would like added.
+      placeholder: >
+          How would you see an ideal solution?
+    validations:
+      required: true
+  - type: textarea
+    id: misc
+    attributes:
+      label: Additional context
+      description: Add any other context, code examples, or references to existing implementations about the feature request here.
