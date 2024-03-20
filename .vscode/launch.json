@@ -5,6 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Go: Launch e2e",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}/tests/e2e",
+            "args": ["-kubeconfig","~/.kube/config", "-chart","./../../deployment/","-image-repository","nvidia/dcgm-exporter","-arguments","{-f=/etc/dcgm-exporter/dcp-metrics-included.csv,--enable-dcgm-log=true,--dcgm-log-level=ERROR}"],
+            "env": {},
+            "buildFlags": "-tags=e2e"
+        },
+        {
             "name": "Run Debug",
             "type": "go",
             "request": "launch",

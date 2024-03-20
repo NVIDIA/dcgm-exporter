@@ -25,9 +25,25 @@ e2e-test:
 		echo "[ERR] KUBECONFIG is missing, must be set"; \
 		exit 1; \
 	fi
-	$(GO_CMD) test --tags=e2e -v . -args \
+	$(GO_CMD) test -failfast --tags=e2e -v . -args \
 		-kubeconfig=$(KUBECONFIG) \
 		-chart="$(CHART)" \
 		-namespace=$(NAMESPACE) \
 		-image-repository=$(IMAGE_REPOSITORY) \
 		-image-tag=$(IMAGE_TAG)
+
+
+.PHONY: e2e-test-no-profiling
+e2e-test-no-profiling:
+	@if [ -z ${KUBECONFIG} ]; then \
+		echo "[ERR] KUBECONFIG is missing, must be set"; \
+		exit 1; \
+	fi
+	$(GO_CMD) test -failfast --tags=e2e -v . -args \
+		-kubeconfig=$(KUBECONFIG) \
+		-chart="$(CHART)" \
+		-namespace=$(NAMESPACE) \
+		-image-repository=$(IMAGE_REPOSITORY) \
+		-image-tag=$(IMAGE_TAG) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}"
+
