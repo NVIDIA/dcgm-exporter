@@ -74,7 +74,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
 }
-git
+
 // TestRunSuite will be run by the 'go test' command
 func TestRunSuite(t *testing.T) {
 	suite.Run(t, NewSuite())
