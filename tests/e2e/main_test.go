@@ -69,12 +69,12 @@ func TestMain(m *testing.M) {
 	flag.StringVar(&suiteCfg.arguments,
 		"arguments",
 		"",
-		"DCGM-exporter command line")
+		`DCGM-exporter command line parameters. Example: -arguments={-f=/etc/dcgm-exporter/default-counters.csv}`)
 
 	flag.Parse()
 	os.Exit(m.Run())
 }
-
+git
 // TestRunSuite will be run by the 'go test' command
 func TestRunSuite(t *testing.T) {
 	suite.Run(t, NewSuite())
