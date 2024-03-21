@@ -465,20 +465,22 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 			continue
 		}
 
-		for i, core := range cpu.Cores {
+		var groupCoreCount int
+		for _, core := range cpu.Cores {
 			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
 				continue
 			}
 
 			// Create per-cpu core groups or after max number of CPU cores have been added to current group
-			if i%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
+			if groupCoreCount%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
 				groupID, err = dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 				if err != nil {
 					return nil, cleanups, err
 				}
-
 				groups = append(groups, groupID)
 			}
+
+			groupCoreCount++
 
 			err = dcgm.AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
 
