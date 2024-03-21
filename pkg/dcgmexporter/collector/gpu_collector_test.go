@@ -41,7 +41,6 @@ func Test_NewDCGMCollector(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockDCGMProvider := mock_dcgmprovider.NewMockDCGMProvider(ctrl)
 	mockSysInfo := mock_sysinfo.NewMockSystemInfoInterface(ctrl)
 	mockSysInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).MinTimes(0)
 	mockSysInfo.EXPECT().GOpts().Return(common.DeviceOptions{
@@ -56,9 +55,9 @@ func Test_NewDCGMCollector(t *testing.T) {
 		MigEnabled:   false,
 	}).MinTimes(0)
 
-	dcgmprovider.SetClient(mockDCGMProvider)
-
 	// Mock DCGM calls
+	mockDCGMProvider := mock_dcgmprovider.NewMockDCGMProvider(ctrl)
+	dcgmprovider.SetClient(mockDCGMProvider)
 	mockGroupHandle := dcgm.GroupHandle{}
 	mockGroupHandle.SetHandle(uintptr(1))
 	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil)

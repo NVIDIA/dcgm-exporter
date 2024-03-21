@@ -23,8 +23,11 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
+	mock_dcgmprovider "github.com/NVIDIA/dcgm-exporter/mocks/pkg/dcgmexporter/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/common"
+	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter/dcgmprovider"
 )
 
 var fakeProfileName = "2fake.4gb"
@@ -684,4 +687,33 @@ func TestSetMigProfileNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_CreateCoreGroupsFromSystemInfo(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	fakeSysInfo := &SystemInfo{
+		cpus: []CPUInfo{
+			{EntityId: 1, Cores: []uint{1, 2, 3}},
+			{EntityId: 2, Cores: []uint{1, 2, 3}},
+		},
+		cOpt: common.DeviceOptions{
+			Flex: true,
+		},
+	}
+
+	// Mock DCGM calls
+	mockDCGMProvider := mock_dcgmprovider.NewMockDCGMProvider(ctrl)
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(uintptr(1))
+	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).MinTimes(0)
+	mockDCGMProvider.EXPECT().AddEntityToGroup(mockGroupHandle, gomock.Any(), gomock.Any()).Return(nil).MinTimes(0)
+	mockDCGMProvider.EXPECT().DestroyGroup(mockGroupHandle).MinTimes(0)
+
+	groups, _, err := CreateCoreGroupsFromSystemInfo(fakeSysInfo)
+	assert.Nil(t, err)
+	assert.True(t, len(groups) == 2)
 }

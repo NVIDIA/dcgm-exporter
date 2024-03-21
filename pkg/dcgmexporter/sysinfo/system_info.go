@@ -474,20 +474,24 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 			continue
 		}
 
-		for i, core := range cpu.Cores {
+		var groupCoreCount int
+		for _, core := range cpu.Cores {
+			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
+				continue
+			}
 
-			if i == 0 || i%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
+			// Create per-cpu core groups or after max number of CPU cores have been added to current group
+			var addGroupCleanup bool
+			if groupCoreCount%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
 				groupID, err = dcgmProvider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 				if err != nil {
 					return nil, cleanups, err
 				}
-
 				groups = append(groups, groupID)
+				addGroupCleanup = true
 			}
 
-			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
-				continue
-			}
+			groupCoreCount++
 
 			err = dcgmProvider.Client().AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
 
@@ -495,15 +499,17 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 				return groups, cleanups, err
 			}
 
-			cleanups = append(cleanups, func() {
-				err := dcgmProvider.Client().DestroyGroup(groupID)
-				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
-					logrus.WithFields(logrus.Fields{
-						common.LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:         err,
-					}).Warn("can not destroy group")
-				}
-			})
+			if addGroupCleanup {
+				cleanups = append(cleanups, func() {
+					err := dcgmProvider.Client().DestroyGroup(groupID)
+					if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
+						logrus.WithFields(logrus.Fields{
+							common.LoggerGroupIDKey: groupID,
+							logrus.ErrorKey:         err,
+						}).Warn("can not destroy group")
+					}
+				})
+			}
 		}
 	}
 
