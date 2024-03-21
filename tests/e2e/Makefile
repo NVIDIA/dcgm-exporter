@@ -19,15 +19,27 @@ IMAGE_REPOSITORY ?= "nvcr.io/nvidia/k8s/dcgm-exporter"
 IMAGE_TAG ?= "3.3.5-3.4.0-ubuntu22.04"
 KUBECONFIG ?= "~/.kube/config"
 
-.PHONY: e2e-test
-e2e-test:
+define TEST_CMD
 	@if [ -z ${KUBECONFIG} ]; then \
 		echo "[ERR] KUBECONFIG is missing, must be set"; \
 		exit 1; \
 	fi
-	$(GO_CMD) test --tags=e2e -v . -args \
+	$(GO_CMD) test --tags=e2e -v . \
+		-args \
 		-kubeconfig=$(KUBECONFIG) \
 		-chart="$(CHART)" \
 		-namespace=$(NAMESPACE) \
 		-image-repository=$(IMAGE_REPOSITORY) \
 		-image-tag=$(IMAGE_TAG)
+endef
+
+.PHONY: e2e-test
+e2e-test:
+	@$(TEST_CMD)
+
+
+.PHONY: e2e-test-no-profiling
+e2e-test-no-profiling:
+	@$(TEST_CMD) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}"
+

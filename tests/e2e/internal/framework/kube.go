@@ -92,6 +92,12 @@ func (c *KubeClient) CheckPodCondition(ctx context.Context,
 		}
 	}
 
+	for _, c := range pod.Status.ContainerStatuses {
+		if c.State.Waiting != nil && c.State.Waiting.Reason == "CrashLoopBackOff" {
+			return false, fmt.Errorf("pod %s in namespace %s is in CrashLoopBackOff", pod.Name, pod.Namespace)
+		}
+	}
+
 	return false, nil
 }
 

@@ -66,6 +66,11 @@ func TestMain(m *testing.M) {
 		"",
 		"DCGM-exporter image tag to use")
 
+	flag.StringVar(&suiteCfg.arguments,
+		"arguments",
+		"",
+		`DCGM-exporter command line parameters. Example: -arguments={-f=/etc/dcgm-exporter/default-counters.csv}`)
+
 	flag.Parse()
 	os.Exit(m.Run())
 }

@@ -64,6 +64,7 @@ type suiteConfig struct {
 	chart           string
 	imageRepository string
 	imageTag        string
+	arguments       string
 }
 
 type Suite struct {
@@ -159,6 +160,10 @@ func (s *Suite) SetupSuite() {
 		fmt.Sprintf("serviceMonitor.enabled=%v", false),
 	}
 
+	if s.arguments != "" {
+		values = append(values, fmt.Sprintf("arguments=%s", s.arguments))
+	}
+
 	if s.imageRepository != "" {
 		values = append(values, fmt.Sprintf("image.repository=%s", s.imageRepository))
 	}
@@ -190,11 +195,9 @@ func (s *Suite) TearDownSuite() {
 	s.T().Log("Starting tear down E2E test setup...")
 
 	if s.workloadPod != nil {
-		s.T().Logf("Starting delete of the workload pod: %s...", s.workloadPod.Name)
 
 		err = s.k8SClient.DeletePod(s.ctx, s.namespace, s.workloadPod.Name)
 		s.Assert().NoErrorf(err, "Failed to delete pod: %s", s.workloadPod.Name)
-
 		if err == nil {
 			s.T().Logf("Workload pod: %s is deleted.", s.workloadPod.Name)
 		}
@@ -203,19 +206,18 @@ func (s *Suite) TearDownSuite() {
 	s.T().Logf("Starting uninstall of the helm chart: %s...", s.chart)
 
 	err = s.helmClient.Uninstall(s.helmReleaseName)
-	s.Assert().NoError(err, "Failed to uninstall helm chart")
-
+	s.Assert().NoErrorf(err, "Failed to uninstall release: %s with error: %v", s.helmReleaseName, err)
 	if err == nil {
 		s.T().Logf("The helm chart: %s is uninstalled", s.chart)
 	}
 
 	err = s.helmClient.Cleanup()
+	if err != nil {
+		s.T().Logf("Failed to clean up directories used by helm client: %v", err)
+	}
 
-	s.Assert().NoError(err, "Failed to clean up directories used by helm client")
-
-	s.T().Logf("Deleting namespace: %s...", s.namespace)
 	err = s.k8SClient.DeleteNamespace(s.ctx, s.namespace)
-	s.Assert().NoError(err, "Cannot delete namespace")
+	s.Assert().NoErrorf(err, "Failed to delete namespace %q with error: %v", s.namespace, err)
 	if err == nil {
 		s.T().Logf("Namespace: %q deleted", s.namespace)
 	}
@@ -226,8 +228,9 @@ func (s *Suite) TearDownSuite() {
 func (s *Suite) TestDCGMExporter() {
 	s.DCGMExporterPrechecks()
 
-	s.T().Run("Create workload pod", func(t *testing.T) {
-		t.Log("Creating a workload pod...")
+	s.Run("Create workload pod", func() {
+
+		s.T().Log("Creating a workload pod...")
 
 		var err error
 
@@ -239,18 +242,21 @@ func (s *Suite) TestDCGMExporter() {
 			workloadImage,
 		)
 
-		require.NoError(t, err, "Cannot create workload pod")
+		s.Require().NoError(err, "Cannot create workload pod")
 
-		require.Eventuallyf(t, func() bool {
+		s.Require().Eventuallyf(func() bool {
 			isReady, err := s.k8SClient.CheckPodCondition(s.ctx, s.namespace, s.workloadPod.Name, corev1.PodScheduled)
-			assert.NoErrorf(t, err, "Cannot get pod status: %v", err)
+			s.Require().NoErrorf(err, "Cannot get pod status: %v", err)
 			return isReady
-		}, 15*time.Minute, 5*time.Second, "Failed to create pod: %s", s.workloadPod.Name)
+		}, 15*time.Minute, time.Second, "Failed to create pod: %s", s.workloadPod.Name)
 
-		t.Log("The workload was created.")
+		s.T().Log("The workload was created.")
 	})
 
 	s.T().Run("Verify metrics", func(t *testing.T) {
+		if s.T().Failed() {
+			s.T().Skip("Test skipped, because previous step failed")
+		}
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
 			metrics, err := s.k8SClient.DoHttpRequest(s.ctx,
 				s.namespace,
@@ -292,44 +298,50 @@ func (s *Suite) TestDCGMExporter() {
 						ptr.Deref(metricFamily.Name, ""), expectedLabels, metric.Label)
 				}
 			}
-		}, 60*time.Second, 30*time.Second)
+		}, time.Minute, time.Second)
 	})
 }
 
 func (s *Suite) DCGMExporterPrechecks() {
-	s.T().Run("Checking pre-requisite: dcgm-exporter is up and running",
-		func(t *testing.T) {
-			t.Log("Checking the dcgm-exporter pod....")
-			t.Log("It can take up to the 15 minutes.")
+	s.Run("Checking pre-requisite: dcgm-exporter is up and running",
+		func() {
+			s.T().Log("Checking the dcgm-exporter pod....")
+			s.T().Log("It can take up to the 15 minutes.")
 			labelMap := map[string]string{dcgmExporterPodNameLabel: dcgmExporterPodNameLabelValue}
 
 			var pod *corev1.Pod
 
-			require.Eventuallyf(t, func() bool {
+			s.Require().Eventuallyf(func() bool {
 				pods, err := s.k8SClient.GetPodsByLabel(s.ctx, s.namespace, labelMap)
 				if err != nil {
 					log.Warnf("Error retrieving pods: %v", err)
 					return false
 				}
 
-				require.Lenf(t, pods, 1, "Expected a one pod only")
+				s.Require().Lenf(pods, 1, "Expected a one pod only")
 				pod = &pods[0]
 
 				return true
-			}, 15*time.Minute, 5*time.Second, "The pod was not created")
+			}, 15*time.Minute, time.Second, "The pod was not created")
 
-			require.NotNil(t, pod, "Nil value is not expected after pod created")
+			s.Require().NotNil(pod, "Nil value is not expected after pod created")
 
-			require.Eventuallyf(t, func() bool {
+			var errs error
+			s.Require().Eventuallyf(func() bool {
 				isReady, err := s.k8SClient.CheckPodCondition(s.ctx, s.namespace, pod.Name, corev1.PodReady)
-				assert.NoErrorf(t, err, "Cannot get pod status: %v", err)
+				if err != nil {
+					errs = err
+					return true
+				}
 
 				s.dcgmExpPod = pod
 
 				return isReady
-			}, 15*time.Minute, 5*time.Second, "The %s pod is not running", pod.Name)
+			}, time.Minute, time.Second, "The %s pod is not running", pod.Name)
 
-			t.Log("The dcgm-exporter pod is running")
+			s.Require().NoError(errs)
+
+			s.T().Log("The dcgm-exporter pod is running")
 		},
 	)
 }
