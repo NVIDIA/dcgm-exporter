@@ -60,7 +60,7 @@ body:
   - type: textarea
     id: steps-to-reproduce
     attributes:
-      label: How can we reproduce the issue?
+      label: How to reproduce the issue?
       description: Clear and concise steps to reproduce an issue can help everyone by allowing us to identify and fix problems more quickly.
   - type: textarea
     id: misc
