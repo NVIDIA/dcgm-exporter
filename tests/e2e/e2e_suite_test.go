@@ -21,13 +21,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
 
 	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
@@ -66,9 +63,13 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 	When("DCGM exporter is deployed on kubernetes", Ordered, func() {
 		// Init global suite vars
 		var (
-			kubeClient      *framework.KubeClient
-			helmClient      *framework.HelmClient
-			labels          map[string]string
+			kubeClient *framework.KubeClient
+			helmClient *framework.HelmClient
+
+			labels = map[string]string{
+				"e2eRunID": runID.String(),
+			}
+
 			helmReleaseName string
 			dcgmExpPod      *corev1.Pod
 			workloadPod     *corev1.Pod
@@ -83,85 +84,33 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 				Fail("chart parameter is empty")
 			}
 
-			var err error
+			shouldResolvePath()
 
-			testContext.kubeconfig, err = framework.ResolvePath(testContext.kubeconfig)
-			Expect(err).ShouldNot(HaveOccurred(),
-				"cannot resolve path to kubeconfig: %s, err: %v", testContext.kubeconfig, err)
+			kubeConfigShouldExists()
 
-			if _, err := os.Stat(testContext.kubeconfig); os.IsNotExist(err) {
-				Fail(fmt.Sprintf("kubeconfig file does not exist: %s", testContext.kubeconfig))
-			}
+			k8sConfig := shouldCreateK8SConfig()
 
-			// Init out-of-cluster K8S client
-			k8sConfig, err := clientcmd.BuildConfigFromFlags("", testContext.kubeconfig)
-			Expect(err).ShouldNot(HaveOccurred(), "unable to load kubeconfig from %s; err: %s", testContext.kubeconfig, err)
+			kubeClient = shouldCreateKubeClient(k8sConfig)
 
-			k8sClientset, err := kubernetes.NewForConfig(k8sConfig)
-			Expect(err).ShouldNot(HaveOccurred(), "cannot create k8s client: %s", err)
-
-			kubeClient = framework.NewKubeClient(k8sClientset)
-
-			labels = map[string]string{
-				"e2eRunID": runID.String(),
-			}
-
-			_, _ = fmt.Fprintf(GinkgoWriter, "Creating namespace: %q started.\n", testContext.namespace)
-
-			_, err = kubeClient.CreateNamespace(ctx, testContext.namespace, labels)
-			Expect(err).ShouldNot(HaveOccurred(), "Creating namespace: failed")
-
-			_, _ = fmt.Fprintf(GinkgoWriter, "Creating namespace: %q completed\n", testContext.namespace)
-
-			helmClient, err = framework.NewHelmClient(
-				framework.HelmWithNamespace(testContext.namespace),
-				framework.HelmWithKubeConfig(k8sConfig),
-				framework.HelmWithChart(testContext.chart),
-			)
-			Expect(err).ShouldNot(HaveOccurred(), "Creating namespace: %q failed\n", testContext.namespace)
+			helmClient = shouldCreateHelmClient(k8sConfig)
 		})
 
 		AfterAll(func(ctx context.Context) {
 			_, _ = fmt.Fprintln(GinkgoWriter, "Clean up: starting")
 
-			if helmClient != nil {
-				if helmReleaseName != "" {
-					_, _ = fmt.Fprintf(GinkgoWriter, "Helm chart uninstall: release %q of the helm chart: %q started.\n",
-						helmReleaseName,
-						testContext.chart)
+			shouldUninstallHelmChart(helmClient, helmReleaseName)
+			shouldCleanupHelmClient(helmClient)
 
-					err := helmClient.Uninstall(helmReleaseName)
-					if err != nil {
-						Fail(fmt.Sprintf("Helm chart uninstall: release: %s uninstall failed with error: %v", helmReleaseName, err))
-					} else {
-						_, _ = fmt.Fprintf(GinkgoWriter, "Helm chart uninstall: release %q of the helm chart: %q completed.\n",
-							helmReleaseName,
-							testContext.chart)
-					}
-				}
-
-				err := helmClient.Cleanup()
-				if err != nil {
-					Fail(fmt.Sprintf("Helm Client: clean up failed: %v", err))
-				}
-			}
-
-			_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q namespace started.\n", testContext.namespace)
-
-			if kubeClient != nil {
-				err := kubeClient.DeleteNamespace(ctx, testContext.namespace)
-				if err != nil {
-					Fail(fmt.Sprintf("Namespace deletion: Failed to delete namespace %q with error: %v", testContext.namespace, err))
-				} else {
-					_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q namespace completed.\n", testContext.namespace)
-				}
-			}
+			shouldDeleteNamespace(ctx, kubeClient)
 
 			_, _ = fmt.Fprintln(GinkgoWriter, "Clean up: completed")
 		})
 
-		It("should install dcgm-exporter helm chart", func(ctx context.Context) {
+		It("should create namespace", func(ctx context.Context) {
+			shouldCreateNamespace(ctx, kubeClient, labels)
+		})
 
+		It("should install dcgm-exporter helm chart", func(ctx context.Context) {
 			_, _ = fmt.Fprintf(GinkgoWriter, "Helm chart installation: %q chart started.\n",
 				testContext.chart)
 
@@ -189,7 +138,7 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 				Wait:          true,
 				DryRun:        false,
 			})
-			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v", testContext.kubeconfig, err)
+			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v", testContext.chart, err)
 
 			_, _ = fmt.Fprintf(GinkgoWriter, "Helm chart installation: %q completed.\n",
 				testContext.chart)
@@ -209,24 +158,15 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 					return false
 				}
 
-				return len(pods) == 1
+				if len(pods) == 1 {
+					dcgmExpPod = &pods[0]
+					return true
+				}
+
+				return false
 			}).WithPolling(time.Second).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
 
 			_, _ = fmt.Fprintln(GinkgoWriter, "Pod creation verification: completed")
-		})
-
-		It("should read pod", func(ctx context.Context) {
-			_, _ = fmt.Fprintln(GinkgoWriter, "Read dcgm-exporter pod: started")
-			pods, err := kubeClient.GetPodsByLabel(ctx, testContext.namespace, labelMap)
-			if err != nil {
-				Fail(fmt.Sprintf("Pod creation: Failed with error: %v", err))
-			}
-
-			Expect(pods).Should(HaveLen(1))
-
-			dcgmExpPod = &pods[0]
-
-			_, _ = fmt.Fprintln(GinkgoWriter, "Read dcgm-exporter pod: completed")
 		})
 
 		It("should ensure that the dcgm-exporter pod is ready", func(ctx context.Context) {
@@ -320,7 +260,6 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 		})
 
 		It("should verify metrics", func(ctx context.Context) {
-
 			Expect(metricsResponse).ShouldNot(BeEmpty())
 
 			var parser expfmt.TextParser
