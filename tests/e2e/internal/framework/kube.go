@@ -24,19 +24,24 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const nvidiaResourceName = "nvidia.com/gpu"
 
 // KubeClient is a kubernetes client
 type KubeClient struct {
-	client *clientset.Clientset
+	client *kubernetes.Clientset
 }
 
 // NewKubeClient creates a new KubeClient instance
-func NewKubeClient(client *clientset.Clientset) *KubeClient {
-	return &KubeClient{client: client}
+func NewKubeClient(k8sConfig *rest.Config) (*KubeClient, error) {
+	client, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		return nil, err
+	}
+	return &KubeClient{client: client}, nil
 }
 
 // CreateNamespace creates a new namespace
@@ -75,21 +80,17 @@ func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, label
 	return podList.Items, nil
 }
 
-func (c *KubeClient) CheckPodCondition(ctx context.Context,
+func (c *KubeClient) CheckPodStatus(ctx context.Context,
 	namespace, podName string,
-	podConditionType corev1.PodConditionType) (bool, error) {
+	condition func(namespace, podName string, status corev1.PodStatus) (bool, error),
+) (bool, error) {
 	pod, err := c.client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return false, fmt.Errorf("unexpected error getting pod %s; err: %w", podName, err)
 	}
 
-	for _, c := range pod.Status.Conditions {
-		if c.Type != podConditionType {
-			continue
-		}
-		if c.Status == corev1.ConditionTrue {
-			return true, nil
-		}
+	if condition != nil {
+		return condition(namespace, podName, pod.Status)
 	}
 
 	for _, c := range pod.Status.ContainerStatuses {
@@ -109,7 +110,6 @@ func (c *KubeClient) CreatePod(ctx context.Context,
 	containerName string,
 	image string,
 ) (*corev1.Pod, error) {
-
 	quantity, _ := resource.ParseQuantity("1")
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -118,6 +118,7 @@ func (c *KubeClient) CreatePod(ctx context.Context,
 			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
 			Containers: []corev1.Container{
 				{
 					Name:  containerName,
