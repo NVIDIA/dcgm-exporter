@@ -162,7 +162,6 @@ func (s *PodResourcesMockServer) List(
 	return &podresourcesapi.ListPodResourcesResponse{
 		PodResources: podResources,
 	}, nil
-
 }
 
 func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
@@ -273,7 +272,8 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 				podMapper, err := NewPodMapper(&Config{
 					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
-					PodResourcesKubeletSocket: socketPath})
+					PodResourcesKubeletSocket: socketPath,
+				})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
 				metrics := MetricsByCounter{}
