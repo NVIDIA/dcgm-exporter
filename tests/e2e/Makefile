@@ -45,5 +45,23 @@ e2e-test-no-profiling:
 	@$(TEST_CMD) \
 		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}"
 
+.PHONY: e2e-basic-auth
+e2e-basic-auth:
+	@$(TEST_CMD) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
+		--ginkgo.label-filter=basicAuth
+
+.PHONY: e2e-tls
+e2e-tls:
+	@$(TEST_CMD) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
+		--ginkgo.label-filter=tls
+
+.PHONY: e2e-default
+e2e-default:
+	@$(TEST_CMD) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
+		--ginkgo.label-filter=default
+
 binary:
 	go test -c --tags="e2e" .

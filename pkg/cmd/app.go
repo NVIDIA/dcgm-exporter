@@ -183,7 +183,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.StringFlag{
 			Name:    CLIWebConfigFile,
 			Value:   "",
-			Usage:   "TLS config file following webConfig spec.",
+			Usage:   "Web configuration file following webConfig spec: https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.",
 			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
 		},
 		&cli.IntFlag{

@@ -21,10 +21,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -45,10 +47,10 @@ func shouldResolvePath() {
 }
 
 func shouldCreateNamespace(ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "Creating namespace: %q started.\n", testContext.namespace)
+	By(fmt.Sprintf("Creating namespace: %q started.", testContext.namespace))
 	_, err := kubeClient.CreateNamespace(ctx, testContext.namespace, labels)
 	Expect(err).ShouldNot(HaveOccurred(), "Creating namespace: failed")
-	_, _ = fmt.Fprintf(GinkgoWriter, "Creating namespace: %q completed\n", testContext.namespace)
+	By(fmt.Sprintf("Creating namespace: %q completed\n", testContext.namespace))
 }
 
 func shouldCreateKubeClient(config *rest.Config) *framework.KubeClient {
@@ -77,17 +79,17 @@ func shouldCreateHelmClient(config *rest.Config) *framework.HelmClient {
 
 func shouldUninstallHelmChart(helmClient *framework.HelmClient, helmReleaseName string) {
 	if helmClient != nil && helmReleaseName != "" {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Helm chart uninstall: release %q of the helm chart: %q started.\n",
+		By(fmt.Sprintf("Helm chart uninstall: release %q of the helm chart: %q started.",
 			helmReleaseName,
-			testContext.chart)
+			testContext.chart))
 
 		err := helmClient.Uninstall(helmReleaseName)
 		if err != nil {
 			Fail(fmt.Sprintf("Helm chart uninstall: release: %s uninstall failed with error: %v", helmReleaseName, err))
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Helm chart uninstall: release %q of the helm chart: %q completed.\n",
+			By(fmt.Sprintf("Helm chart uninstall: release %q of the helm chart: %q completed.",
 				helmReleaseName,
-				testContext.chart)
+				testContext.chart))
 		}
 	}
 }
@@ -102,13 +104,90 @@ func shouldCleanupHelmClient(helmClient *framework.HelmClient) {
 }
 
 func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q namespace started.\n", testContext.namespace)
+	By(fmt.Sprintf("Namespace deletion: %q namespace started.", testContext.namespace))
 	if kubeClient != nil {
 		err := kubeClient.DeleteNamespace(ctx, testContext.namespace)
 		if err != nil {
 			Fail(fmt.Sprintf("Namespace deletion: Failed to delete namespace %q with error: %v", testContext.namespace, err))
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q namespace completed.\n", testContext.namespace)
+			By(fmt.Sprintf("Namespace deletion: %q namespace completed.\n", testContext.namespace))
 		}
 	}
+}
+
+func shouldCheckIfPodCreated(ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string) *corev1.Pod {
+	By("Pod creation verification: started")
+
+	var dcgmExpPod *corev1.Pod
+
+	Eventually(func(ctx context.Context) bool {
+		pods, err := kubeClient.GetPodsByLabel(ctx, testContext.namespace, labels)
+		if err != nil {
+			Fail(fmt.Sprintf("Pod creation: Failed with error: %v", err))
+			return false
+		}
+
+		if len(pods) == 1 {
+			dcgmExpPod = &pods[0]
+			return true
+		}
+
+		return false
+	}).WithPolling(time.Second).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
+
+	By("Pod creation verification: completed")
+
+	return dcgmExpPod
+}
+
+func getDefaultHelmValues() []string {
+	values := []string{
+		fmt.Sprintf("serviceMonitor.enabled=%v", false),
+	}
+
+	if testContext.arguments != "" {
+		values = append(values, fmt.Sprintf("arguments=%s", testContext.arguments))
+	}
+
+	if testContext.imageRepository != "" {
+		values = append(values, fmt.Sprintf("image.repository=%s", testContext.imageRepository))
+	}
+	if testContext.imageTag != "" {
+		values = append(values, fmt.Sprintf("image.tag=%s", testContext.imageTag))
+	}
+
+	return values
+}
+
+func shouldCheckIfPodIsReady(ctx context.Context, kubeClient *framework.KubeClient, namespace, podName string) {
+	By("Checking pod status: started")
+	Eventually(func(ctx context.Context) bool {
+		isReady, err := kubeClient.CheckPodStatus(ctx,
+			namespace,
+			podName,
+			func(namespace, podName string, status corev1.PodStatus) (bool, error) {
+				for _, c := range status.Conditions {
+					if c.Type != corev1.PodReady {
+						continue
+					}
+					if c.Status == corev1.ConditionTrue {
+						return true, nil
+					}
+				}
+
+				for _, c := range status.ContainerStatuses {
+					if c.State.Waiting != nil && c.State.Waiting.Reason == "CrashLoopBackOff" {
+						return false, fmt.Errorf("pod %s in namespace %s is in CrashLoopBackOff", podName, namespace)
+					}
+				}
+
+				return false, nil
+			})
+		if err != nil {
+			Fail(fmt.Sprintf("Checking pod status: Failed with error: %v", err))
+		}
+
+		return isReady
+	}).WithPolling(time.Second).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
+	By("Checking pod status: completed")
 }
