@@ -73,3 +73,23 @@ Create the name of the service account to use
     {{ default "default" .Values.serviceAccount.name }}
 {{- end -}}
 {{- end -}}
+
+
+{{/*
+Create the name of the tls secret to use
+*/}}
+{{- define "dcgm-exporter.tlsCertsSecretName" -}}
+{{- if .Values.tlsServerConfig.existingSecret -}}
+    {{- printf "%s" (tpl .Values.tlsServerConfig.existingSecret $) -}}
+{{- else -}}
+    {{ printf "%s-tls" (include "dcgm-exporter.fullname" .) }}
+{{- end -}}
+{{- end -}}
+
+
+{{/*
+Create the name of the web-config configmap name to use
+*/}}
+{{- define "dcgm-exporter.webConfigConfigMap" -}}
+  {{ printf "%s-web-config.yml" (include "dcgm-exporter.fullname" .) }}
+{{- end -}}

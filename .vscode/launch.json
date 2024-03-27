@@ -15,7 +15,7 @@
             "-kubeconfig","~/.kube/config",
             "-chart","./../../deployment/",
             "-image-repository","nvidia/dcgm-exporter",
-            "-arguments","{-f=/etc/dcgm-exporter/default-counters.csv,--enable-dcgm-log=true,--dcgm-log-level=ERROR}"],
+            "-arguments","{-f=/etc/dcgm-exporter/default-counters.csv}"],
             "env": {},
             "buildFlags": "-tags=e2e"
         },
