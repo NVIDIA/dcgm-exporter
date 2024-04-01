@@ -26,7 +26,7 @@ import (
 
 type SystemInfoInterface interface {
 	GPUCount() uint
-	GPUs() [MaxDeviceCount]GPUInfo
+	GPUs() []GPUInfo
 	GPU(uint) GPUInfo
 	Switches() []SwitchInfo
 	Switch(uint) SwitchInfo
@@ -36,21 +36,25 @@ type SystemInfoInterface interface {
 	SOpts() common.DeviceOptions
 	COpts() common.DeviceOptions
 	InfoType() dcgm.Field_Entity_Group
-	InitializeNvSwitchInfo(sOpt common.DeviceOptions) error
-	InitializeGPUInfo(gOpt common.DeviceOptions, useFakeGPUs bool) error
-	InitializeCPUInfo(sOpt common.DeviceOptions) error
-	SetGPUInstanceProfileName(entityId uint, profileName string) bool
-	VerifyCPUDevicePresence(sOpt common.DeviceOptions) error
-	VerifySwitchDevicePresence(sOpt common.DeviceOptions) error
-	VerifyDevicePresence(gOpt common.DeviceOptions) error
-	PopulateMigProfileNames(entities []dcgm.GroupEntityPair) error
-	SetMigProfileNames(values []dcgm.FieldValue_v2) error
-	GPUIdExists(gpuId int) bool
-	SwitchIdExists(switchId int) bool
-	CPUIdExists(cpuId int) bool
-	GPUInstanceIdExists(gpuInstanceId int) bool
-	LinkIdExists(linkId int) bool
-	CPUCoreIdExists(coreId int) bool
+	InitializeNvSwitchInfo(common.DeviceOptions) error
+	InitializeGPUInfo(common.DeviceOptions, bool) error
+	InitializeCPUInfo(common.DeviceOptions) error
+	SetGPUInstanceProfileName(uint, string) bool
+	VerifyCPUDevicePresence(common.DeviceOptions) error
+	VerifySwitchDevicePresence(common.DeviceOptions) error
+	VerifyDevicePresence(common.DeviceOptions) error
+	PopulateMigProfileNames([]dcgm.GroupEntityPair) error
+	SetMigProfileNames([]dcgm.FieldValue_v2) error
+	GPUIdExists(int) bool
+	SwitchIdExists(int) bool
+	CPUIdExists(int) bool
+	GPUInstanceIdExists(int) bool
+	LinkIdExists(int) bool
+	CPUCoreIdExists(int) bool
+	IsSwitchWatched(uint) bool
+	IsLinkWatched(uint, uint) bool
+	IsCPUWatched(uint) bool
+	IsCoreWatched(uint, uint) bool
 }
 
 type GPUInfo struct {

@@ -47,8 +47,8 @@ func (s *SystemInfo) GPUCount() uint {
 	return s.gpuCount
 }
 
-func (s *SystemInfo) GPUs() [MaxDeviceCount]GPUInfo {
-	return s.gpus
+func (s *SystemInfo) GPUs() []GPUInfo {
+	return s.gpus[:]
 }
 
 func (s *SystemInfo) GPU(i uint) GPUInfo {
@@ -462,6 +462,313 @@ func getCoreArray(bitmask []uint64) []uint {
 	return cores
 }
 
+func (s *SystemInfo) IsSwitchWatched(switchID uint) bool {
+	if s.SOpts().Flex {
+		return true
+	}
+
+	// When MajorRange contains -1 value, we do monitorig of all switches
+	if len(s.SOpts().MajorRange) > 0 && s.SOpts().MajorRange[0] == -1 {
+		return true
+	}
+
+	return slices.Contains(s.SOpts().MajorRange, int(switchID))
+}
+
+func (s *SystemInfo) IsLinkWatched(linkIndex uint, switchID uint) bool {
+	if s.SOpts().Flex {
+		return true
+	}
+
+	// Find a switch
+	switchIdx := slices.IndexFunc(s.Switches(), func(si SwitchInfo) bool {
+		return si.EntityId == switchID && s.IsSwitchWatched(si.EntityId)
+	})
+
+	if switchIdx > -1 {
+		// Switch exists and is watched
+		sw := s.Switch(uint(switchIdx))
+
+		if len(s.SOpts().MinorRange) > 0 && s.SOpts().MinorRange[0] == -1 {
+			return true
+		}
+
+		// The Link exists
+		if slices.ContainsFunc(sw.NvLinks, func(nls dcgm.NvLinkStatus) bool {
+			return nls.Index == linkIndex
+		}) {
+			// and the link index in the Minor range
+			return slices.Contains(s.SOpts().MinorRange, int(linkIndex))
+		}
+	}
+
+	return false
+}
+
+func (s *SystemInfo) IsCPUWatched(cpuID uint) bool {
+
+	if !slices.ContainsFunc(s.CPUs(), func(cpu CPUInfo) bool {
+		return cpu.EntityId == cpuID
+	}) {
+		return false
+	}
+
+	if s.COpts().Flex {
+		return true
+	}
+
+	if len(s.COpts().MajorRange) > 0 && s.COpts().MajorRange[0] == -1 {
+		return true
+	}
+
+	return slices.ContainsFunc(s.COpts().MajorRange, func(cpu int) bool {
+		return uint(cpu) == cpuID
+	})
+}
+
+func (s *SystemInfo) IsCoreWatched(coreID uint, cpuID uint) bool {
+	if s.COpts().Flex {
+		return true
+	}
+
+	// Find a CPU
+	cpuIdx := slices.IndexFunc(s.CPUs(), func(cpu CPUInfo) bool {
+		return s.IsCPUWatched(cpu.EntityId) && cpu.EntityId == cpuID
+	})
+
+	if cpuIdx > -1 {
+		if len(s.COpts().MinorRange) > 0 && s.COpts().MinorRange[0] == -1 {
+			return true
+		}
+
+		return slices.Contains(s.COpts().MinorRange, int(coreID))
+	}
+
+	return false
+}
+
+func GPUsToMonitor(sysInfo SystemInfoInterface) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for i := uint(0); i < sysInfo.GPUCount(); i++ {
+		mi := MonitoringInfo{
+			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPU(i).DeviceInfo.GPU},
+			sysInfo.GPU(i).DeviceInfo,
+			nil,
+			PARENT_ID_IGNORED,
+		}
+		monitoring = append(monitoring, mi)
+	}
+
+	return monitoring
+}
+
+func SwitchesToMonitor(sysInfo SystemInfoInterface) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, sw := range sysInfo.Switches() {
+		if !sysInfo.IsSwitchWatched(sw.EntityId) {
+			continue
+		}
+
+		mi := MonitoringInfo{
+			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_SWITCH, EntityId: sw.EntityId},
+			dcgm.Device{},
+			nil,
+			PARENT_ID_IGNORED,
+		}
+		monitoring = append(monitoring, mi)
+	}
+
+	return monitoring
+}
+
+func LinksToMonitor(sysInfo SystemInfoInterface) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, sw := range sysInfo.Switches() {
+		for _, link := range sw.NvLinks {
+			if link.State != dcgm.LS_UP {
+				continue
+			}
+
+			if !sysInfo.IsSwitchWatched(sw.EntityId) {
+				continue
+			}
+
+			if !sysInfo.IsLinkWatched(link.Index, sw.EntityId) {
+				continue
+			}
+
+			mi := MonitoringInfo{
+				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: link.Index},
+				dcgm.Device{},
+				nil,
+				link.ParentId,
+			}
+			monitoring = append(monitoring, mi)
+		}
+	}
+
+	return monitoring
+}
+
+func CPUsToMonitor(sysInfo SystemInfoInterface) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, cpu := range sysInfo.CPUs() {
+		if !sysInfo.IsCPUWatched(cpu.EntityId) {
+			continue
+		}
+
+		mi := MonitoringInfo{
+			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU, EntityId: cpu.EntityId},
+			dcgm.Device{},
+			nil,
+			PARENT_ID_IGNORED,
+		}
+		monitoring = append(monitoring, mi)
+	}
+
+	return monitoring
+}
+
+func CPUCoresToMonitor(sysInfo SystemInfoInterface) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for _, cpu := range sysInfo.CPUs() {
+		for _, core := range cpu.Cores {
+			if !sysInfo.IsCPUWatched(cpu.EntityId) {
+				continue
+			}
+
+			if !sysInfo.IsCoreWatched(core, cpu.EntityId) {
+				continue
+			}
+
+			mi := MonitoringInfo{
+				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: core},
+				dcgm.Device{},
+				nil,
+				cpu.EntityId,
+			}
+			monitoring = append(monitoring, mi)
+		}
+	}
+
+	return monitoring
+}
+
+func GPUInstancesToMonitor(sysInfo SystemInfoInterface, addFlexibly bool) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	for i := uint(0); i < sysInfo.GPUCount(); i++ {
+		if addFlexibly && len(sysInfo.GPU(i).GPUInstances) == 0 {
+			mi := MonitoringInfo{
+				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPU(i).DeviceInfo.GPU},
+				sysInfo.GPU(i).DeviceInfo,
+				nil,
+				PARENT_ID_IGNORED,
+			}
+			monitoring = append(monitoring, mi)
+		} else {
+			for j := 0; j < len(sysInfo.GPU(i).GPUInstances); j++ {
+				mi := MonitoringInfo{
+					dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      sysInfo.GPU(i).GPUInstances[j].EntityId,
+					},
+					sysInfo.GPU(i).DeviceInfo,
+					&sysInfo.GPU(i).GPUInstances[j],
+					PARENT_ID_IGNORED,
+				}
+				monitoring = append(monitoring, mi)
+			}
+		}
+	}
+
+	return monitoring
+}
+
+func GPUToMonitor(sysInfo SystemInfoInterface, gpuID int) *MonitoringInfo {
+	for i := uint(0); i < sysInfo.GPUCount(); i++ {
+		if sysInfo.GPU(i).DeviceInfo.GPU == uint(gpuID) {
+			return &MonitoringInfo{
+				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPU(i).DeviceInfo.GPU},
+				sysInfo.GPU(i).DeviceInfo,
+				nil,
+				PARENT_ID_IGNORED,
+			}
+		}
+	}
+
+	return nil
+}
+
+func GPUInstanceToMonitor(sysInfo SystemInfoInterface, gpuInstanceID int) *MonitoringInfo {
+	for i := uint(0); i < sysInfo.GPUCount(); i++ {
+		for _, instance := range sysInfo.GPU(i).GPUInstances {
+			if instance.EntityId == uint(gpuInstanceID) {
+				return &MonitoringInfo{
+					dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: uint(gpuInstanceID)},
+					sysInfo.GPU(i).DeviceInfo,
+					&instance,
+					PARENT_ID_IGNORED,
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func GetMonitoredEntities(sysInfo SystemInfoInterface) []MonitoringInfo {
+	var monitoring []MonitoringInfo
+
+	if sysInfo.InfoType() == dcgm.FE_SWITCH {
+		monitoring = SwitchesToMonitor(sysInfo)
+	} else if sysInfo.InfoType() == dcgm.FE_LINK {
+		monitoring = LinksToMonitor(sysInfo)
+	} else if sysInfo.InfoType() == dcgm.FE_CPU {
+		monitoring = CPUsToMonitor(sysInfo)
+	} else if sysInfo.InfoType() == dcgm.FE_CPU_CORE {
+		monitoring = CPUCoresToMonitor(sysInfo)
+	} else if sysInfo.GOpts().Flex {
+		monitoring = GPUInstancesToMonitor(sysInfo, true)
+	} else {
+		if len(sysInfo.GOpts().MajorRange) > 0 && sysInfo.GOpts().MajorRange[0] == -1 {
+			monitoring = GPUsToMonitor(sysInfo)
+		} else {
+			for _, gpuID := range sysInfo.GOpts().MajorRange {
+				// We've already verified that everything in the options list exists
+				monitoring = append(monitoring, *GPUToMonitor(sysInfo, gpuID))
+			}
+		}
+
+		if len(sysInfo.GOpts().MinorRange) > 0 && sysInfo.GOpts().MinorRange[0] == -1 {
+			monitoring = GPUInstancesToMonitor(sysInfo, false)
+		} else {
+			for _, gpuInstanceID := range sysInfo.GOpts().MinorRange {
+				// We've already verified that everything in the options list exists
+				monitoring = append(monitoring, *GPUInstanceToMonitor(sysInfo, gpuInstanceID))
+			}
+		}
+	}
+
+	return monitoring
+}
+
+func GetGPUInstanceIdentifier(sysInfo SystemInfoInterface, gpuuuid string, gpuInstanceID uint) string {
+	for i := uint(0); i < sysInfo.GPUCount(); i++ {
+		if sysInfo.GPU(i).DeviceInfo.UUID == gpuuuid {
+			identifier := fmt.Sprintf("%d-%d", sysInfo.GPU(i).DeviceInfo.GPU, gpuInstanceID)
+			return identifier
+		}
+	}
+
+	return ""
+}
+
 func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHandle, []func(), error) {
 	var groups []dcgm.GroupHandle
 	var cleanups []func()
@@ -470,25 +777,25 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 
 	/* Create per-cpu core groups */
 	for _, cpu := range sysInfo.CPUs() {
-		if !IsCPUWatched(cpu.EntityId, sysInfo) {
+		if !sysInfo.IsCPUWatched(cpu.EntityId) {
 			continue
 		}
 
 		var groupCoreCount int
 		for _, core := range cpu.Cores {
-			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
+			if !sysInfo.IsCoreWatched(core, cpu.EntityId) {
 				continue
 			}
 
 			// Create per-cpu core groups or after max number of CPU cores have been added to current group
-			var addGroupCleanup bool
+			// var addGroupCleanup bool
 			if groupCoreCount%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
 				groupID, err = dcgmProvider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 				if err != nil {
 					return nil, cleanups, err
 				}
 				groups = append(groups, groupID)
-				addGroupCleanup = true
+				//addGroupCleanup = true
 			}
 
 			groupCoreCount++
@@ -499,8 +806,7 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 				return groups, cleanups, err
 			}
 
-			if addGroupCleanup {
-				cleanups = append(cleanups, func() {
+			cleanups = append(cleanups, func() {
 					err := dcgmProvider.Client().DestroyGroup(groupID)
 					if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 						logrus.WithFields(logrus.Fields{
@@ -508,8 +814,7 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 							logrus.ErrorKey:         err,
 						}).Warn("can not destroy group")
 					}
-				})
-			}
+			})
 		}
 	}
 
@@ -522,7 +827,7 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 
 	/* Create per-switch link groups */
 	for _, sw := range sysInfo.Switches() {
-		if !IsSwitchWatched(sw.EntityId, sysInfo) {
+		if !sysInfo.IsSwitchWatched(sw.EntityId) {
 			continue
 		}
 
@@ -538,7 +843,7 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfoInterface) ([]dcgm.GroupHa
 				continue
 			}
 
-			if !IsLinkWatched(link.Index, sw.EntityId, sysInfo) {
+			if !sysInfo.IsLinkWatched(link.Index, sw.EntityId) {
 				continue
 			}
 
@@ -594,313 +899,6 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfoInterface) (dcgm.GroupHandle, f
 			}).Warn("can not destroy group")
 		}
 	}, nil
-}
-
-func AddAllGPUs(sysInfo SystemInfoInterface) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	for i := uint(0); i < sysInfo.GPUCount(); i++ {
-		mi := MonitoringInfo{
-			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPU(i).DeviceInfo.GPU},
-			sysInfo.GPU(i).DeviceInfo,
-			nil,
-			PARENT_ID_IGNORED,
-		}
-		monitoring = append(monitoring, mi)
-	}
-
-	return monitoring
-}
-
-func AddAllSwitches(sysInfo SystemInfoInterface) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	for _, sw := range sysInfo.Switches() {
-		if !IsSwitchWatched(sw.EntityId, sysInfo) {
-			continue
-		}
-
-		mi := MonitoringInfo{
-			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_SWITCH, EntityId: sw.EntityId},
-			dcgm.Device{},
-			nil,
-			PARENT_ID_IGNORED,
-		}
-		monitoring = append(monitoring, mi)
-	}
-
-	return monitoring
-}
-
-func AddAllLinks(sysInfo SystemInfoInterface) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	for _, sw := range sysInfo.Switches() {
-		for _, link := range sw.NvLinks {
-			if link.State != dcgm.LS_UP {
-				continue
-			}
-
-			if !IsSwitchWatched(sw.EntityId, sysInfo) {
-				continue
-			}
-
-			if !IsLinkWatched(link.Index, sw.EntityId, sysInfo) {
-				continue
-			}
-
-			mi := MonitoringInfo{
-				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: link.Index},
-				dcgm.Device{},
-				nil,
-				link.ParentId,
-			}
-			monitoring = append(monitoring, mi)
-		}
-	}
-
-	return monitoring
-}
-
-func IsSwitchWatched(switchID uint, sysInfo SystemInfoInterface) bool {
-	if sysInfo.SOpts().Flex {
-		return true
-	}
-
-	// When MajorRange contains -1 value, we do monitorig of all switches
-	if len(sysInfo.SOpts().MajorRange) > 0 && sysInfo.SOpts().MajorRange[0] == -1 {
-		return true
-	}
-
-	return slices.Contains(sysInfo.SOpts().MajorRange, int(switchID))
-}
-
-func IsLinkWatched(linkIndex uint, switchID uint, sysInfo SystemInfoInterface) bool {
-	if sysInfo.SOpts().Flex {
-		return true
-	}
-
-	// Find a switch
-	switchIdx := slices.IndexFunc(sysInfo.Switches(), func(si SwitchInfo) bool {
-		return si.EntityId == switchID && IsSwitchWatched(si.EntityId, sysInfo)
-	})
-
-	if switchIdx > -1 {
-		// Switch exists and is watched
-		sw := sysInfo.Switch(uint(switchIdx))
-
-		if len(sysInfo.SOpts().MinorRange) > 0 && sysInfo.SOpts().MinorRange[0] == -1 {
-			return true
-		}
-
-		// The Link exists
-		if slices.ContainsFunc(sw.NvLinks, func(nls dcgm.NvLinkStatus) bool {
-			return nls.Index == linkIndex
-		}) {
-			// and the link index in the Minor range
-			return slices.Contains(sysInfo.SOpts().MinorRange, int(linkIndex))
-		}
-	}
-
-	return false
-}
-
-func IsCPUWatched(cpuID uint, sysInfo SystemInfoInterface) bool {
-
-	if !slices.ContainsFunc(sysInfo.CPUs(), func(cpu CPUInfo) bool {
-		return cpu.EntityId == cpuID
-	}) {
-		return false
-	}
-
-	if sysInfo.COpts().Flex {
-		return true
-	}
-
-	if len(sysInfo.COpts().MajorRange) > 0 && sysInfo.COpts().MajorRange[0] == -1 {
-		return true
-	}
-
-	return slices.ContainsFunc(sysInfo.COpts().MajorRange, func(cpu int) bool {
-		return uint(cpu) == cpuID
-	})
-}
-
-func IsCoreWatched(coreID uint, cpuID uint, sysInfo SystemInfoInterface) bool {
-	if sysInfo.COpts().Flex {
-		return true
-	}
-
-	// Find a CPU
-	cpuIdx := slices.IndexFunc(sysInfo.CPUs(), func(cpu CPUInfo) bool {
-		return IsCPUWatched(cpu.EntityId, sysInfo) && cpu.EntityId == cpuID
-	})
-
-	if cpuIdx > -1 {
-		if len(sysInfo.COpts().MinorRange) > 0 && sysInfo.COpts().MinorRange[0] == -1 {
-			return true
-		}
-
-		return slices.Contains(sysInfo.COpts().MinorRange, int(coreID))
-	}
-
-	return false
-}
-
-func AddAllCPUs(sysInfo SystemInfoInterface) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	for _, cpu := range sysInfo.CPUs() {
-		if !IsCPUWatched(cpu.EntityId, sysInfo) {
-			continue
-		}
-
-		mi := MonitoringInfo{
-			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU, EntityId: cpu.EntityId},
-			dcgm.Device{},
-			nil,
-			PARENT_ID_IGNORED,
-		}
-		monitoring = append(monitoring, mi)
-	}
-
-	return monitoring
-}
-
-func AddAllCPUCores(sysInfo SystemInfoInterface) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	for _, cpu := range sysInfo.CPUs() {
-		for _, core := range cpu.Cores {
-			if !IsCPUWatched(cpu.EntityId, sysInfo) {
-				continue
-			}
-
-			if !IsCoreWatched(core, cpu.EntityId, sysInfo) {
-				continue
-			}
-
-			mi := MonitoringInfo{
-				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: core},
-				dcgm.Device{},
-				nil,
-				cpu.EntityId,
-			}
-			monitoring = append(monitoring, mi)
-		}
-	}
-
-	return monitoring
-}
-
-func AddAllGPUInstances(sysInfo SystemInfoInterface, addFlexibly bool) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	for i := uint(0); i < sysInfo.GPUCount(); i++ {
-		if addFlexibly && len(sysInfo.GPU(i).GPUInstances) == 0 {
-			mi := MonitoringInfo{
-				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPU(i).DeviceInfo.GPU},
-				sysInfo.GPU(i).DeviceInfo,
-				nil,
-				PARENT_ID_IGNORED,
-			}
-			monitoring = append(monitoring, mi)
-		} else {
-			for j := 0; j < len(sysInfo.GPU(i).GPUInstances); j++ {
-				mi := MonitoringInfo{
-					dcgm.GroupEntityPair{
-						EntityGroupId: dcgm.FE_GPU_I,
-						EntityId:      sysInfo.GPU(i).GPUInstances[j].EntityId,
-					},
-					sysInfo.GPU(i).DeviceInfo,
-					&sysInfo.GPU(i).GPUInstances[j],
-					PARENT_ID_IGNORED,
-				}
-				monitoring = append(monitoring, mi)
-			}
-		}
-	}
-
-	return monitoring
-}
-
-func GetMonitoringInfoForGPU(sysInfo SystemInfoInterface, gpuID int) *MonitoringInfo {
-	for i := uint(0); i < sysInfo.GPUCount(); i++ {
-		if sysInfo.GPU(i).DeviceInfo.GPU == uint(gpuID) {
-			return &MonitoringInfo{
-				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: sysInfo.GPU(i).DeviceInfo.GPU},
-				sysInfo.GPU(i).DeviceInfo,
-				nil,
-				PARENT_ID_IGNORED,
-			}
-		}
-	}
-
-	return nil
-}
-
-func GetMonitoringInfoForGPUInstance(sysInfo SystemInfoInterface, gpuInstanceID int) *MonitoringInfo {
-	for i := uint(0); i < sysInfo.GPUCount(); i++ {
-		for _, instance := range sysInfo.GPU(i).GPUInstances {
-			if instance.EntityId == uint(gpuInstanceID) {
-				return &MonitoringInfo{
-					dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: uint(gpuInstanceID)},
-					sysInfo.GPU(i).DeviceInfo,
-					&instance,
-					PARENT_ID_IGNORED,
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func GetMonitoredEntities(sysInfo SystemInfoInterface) []MonitoringInfo {
-	var monitoring []MonitoringInfo
-
-	if sysInfo.InfoType() == dcgm.FE_SWITCH {
-		monitoring = AddAllSwitches(sysInfo)
-	} else if sysInfo.InfoType() == dcgm.FE_LINK {
-		monitoring = AddAllLinks(sysInfo)
-	} else if sysInfo.InfoType() == dcgm.FE_CPU {
-		monitoring = AddAllCPUs(sysInfo)
-	} else if sysInfo.InfoType() == dcgm.FE_CPU_CORE {
-		monitoring = AddAllCPUCores(sysInfo)
-	} else if sysInfo.GOpts().Flex {
-		monitoring = AddAllGPUInstances(sysInfo, true)
-	} else {
-		if len(sysInfo.GOpts().MajorRange) > 0 && sysInfo.GOpts().MajorRange[0] == -1 {
-			monitoring = AddAllGPUs(sysInfo)
-		} else {
-			for _, gpuID := range sysInfo.GOpts().MajorRange {
-				// We've already verified that everything in the options list exists
-				monitoring = append(monitoring, *GetMonitoringInfoForGPU(sysInfo, gpuID))
-			}
-		}
-
-		if len(sysInfo.GOpts().MinorRange) > 0 && sysInfo.GOpts().MinorRange[0] == -1 {
-			monitoring = AddAllGPUInstances(sysInfo, false)
-		} else {
-			for _, gpuInstanceID := range sysInfo.GOpts().MinorRange {
-				// We've already verified that everything in the options list exists
-				monitoring = append(monitoring, *GetMonitoringInfoForGPUInstance(sysInfo, gpuInstanceID))
-			}
-		}
-	}
-
-	return monitoring
-}
-
-func GetGPUInstanceIdentifier(sysInfo SystemInfoInterface, gpuuuid string, gpuInstanceID uint) string {
-	for i := uint(0); i < sysInfo.GPUCount(); i++ {
-		if sysInfo.GPU(i).DeviceInfo.UUID == gpuuuid {
-			identifier := fmt.Sprintf("%d-%d", sysInfo.GPU(i).DeviceInfo.GPU, gpuInstanceID)
-			return identifier
-		}
-	}
-
-	return ""
 }
 
 func SetupDcgmFieldsWatch(

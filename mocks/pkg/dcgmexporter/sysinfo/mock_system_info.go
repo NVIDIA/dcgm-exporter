@@ -182,10 +182,10 @@ func (mr *MockSystemInfoInterfaceMockRecorder) GPUInstanceIdExists(arg0 any) *go
 }
 
 // GPUs mocks base method.
-func (m *MockSystemInfoInterface) GPUs() [sysinfo.MaxDeviceCount]sysinfo.GPUInfo {
+func (m *MockSystemInfoInterface) GPUs() []sysinfo.GPUInfo {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GPUs")
-	ret0, _ := ret[0].([sysinfo.MaxDeviceCount]sysinfo.GPUInfo)
+	ret0, _ := ret[0].([]sysinfo.GPUInfo)
 	return ret0
 }
 
@@ -249,6 +249,62 @@ func (m *MockSystemInfoInterface) InitializeNvSwitchInfo(arg0 common.DeviceOptio
 func (mr *MockSystemInfoInterfaceMockRecorder) InitializeNvSwitchInfo(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitializeNvSwitchInfo", reflect.TypeOf((*MockSystemInfoInterface)(nil).InitializeNvSwitchInfo), arg0)
+}
+
+// IsCPUWatched mocks base method.
+func (m *MockSystemInfoInterface) IsCPUWatched(arg0 uint) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsCPUWatched", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsCPUWatched indicates an expected call of IsCPUWatched.
+func (mr *MockSystemInfoInterfaceMockRecorder) IsCPUWatched(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsCPUWatched", reflect.TypeOf((*MockSystemInfoInterface)(nil).IsCPUWatched), arg0)
+}
+
+// IsCoreWatched mocks base method.
+func (m *MockSystemInfoInterface) IsCoreWatched(arg0, arg1 uint) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsCoreWatched", arg0, arg1)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsCoreWatched indicates an expected call of IsCoreWatched.
+func (mr *MockSystemInfoInterfaceMockRecorder) IsCoreWatched(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsCoreWatched", reflect.TypeOf((*MockSystemInfoInterface)(nil).IsCoreWatched), arg0, arg1)
+}
+
+// IsLinkWatched mocks base method.
+func (m *MockSystemInfoInterface) IsLinkWatched(arg0, arg1 uint) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsLinkWatched", arg0, arg1)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsLinkWatched indicates an expected call of IsLinkWatched.
+func (mr *MockSystemInfoInterfaceMockRecorder) IsLinkWatched(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsLinkWatched", reflect.TypeOf((*MockSystemInfoInterface)(nil).IsLinkWatched), arg0, arg1)
+}
+
+// IsSwitchWatched mocks base method.
+func (m *MockSystemInfoInterface) IsSwitchWatched(arg0 uint) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsSwitchWatched", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsSwitchWatched indicates an expected call of IsSwitchWatched.
+func (mr *MockSystemInfoInterfaceMockRecorder) IsSwitchWatched(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSwitchWatched", reflect.TypeOf((*MockSystemInfoInterface)(nil).IsSwitchWatched), arg0)
 }
 
 // LinkIdExists mocks base method.

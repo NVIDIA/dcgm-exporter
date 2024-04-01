@@ -34,6 +34,9 @@ binary: update-version
 test-main:
 	go test ./... -short
 
+mocks:
+    go generate ./...
+
 install: binary
 	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv

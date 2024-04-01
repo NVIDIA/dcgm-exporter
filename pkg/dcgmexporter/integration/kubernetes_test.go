@@ -250,7 +250,6 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				}
 
 				ctrl := gomock.NewController(t)
-				defer ctrl.Finish()
 
 				mockNVMLClient := mock_provider.NewMockNVMLClient(ctrl)
 				mockNVMLClient.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil).MinTimes(0)

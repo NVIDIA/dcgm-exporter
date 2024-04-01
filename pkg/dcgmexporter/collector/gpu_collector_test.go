@@ -41,19 +41,23 @@ func Test_NewDCGMCollector(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	// Mock Sysinfo
 	mockSysInfo := mock_sysinfo.NewMockSystemInfoInterface(ctrl)
-	mockSysInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).MinTimes(0)
+	mockSysInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
 	mockSysInfo.EXPECT().GOpts().Return(common.DeviceOptions{
 		Flex:       false,
 		MajorRange: []int{-1},
 		MinorRange: []int{-1},
-	})
-	mockSysInfo.EXPECT().GPUCount().Return(1).MinTimes(0)
-	mockSysInfo.EXPECT().GPU(0).Return(sysinfo.GPUInfo{
+	}).AnyTimes()
+	mockSysInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+	mockSysInfo.EXPECT().GPU(uint(0)).Return(sysinfo.GPUInfo{
 		DeviceInfo:   dcgm.Device{GPU: 1},
 		GPUInstances: []sysinfo.GPUInstanceInfo{},
 		MigEnabled:   false,
-	}).MinTimes(0)
+	}).AnyTimes()
+
+	// Mock Device Fields
+	mockDeviceFields := []dcgm.Short{1, 2, 3}
 
 	// Mock DCGM calls
 	mockDCGMProvider := mock_dcgmprovider.NewMockDCGMProvider(ctrl)
@@ -61,37 +65,37 @@ func Test_NewDCGMCollector(t *testing.T) {
 	mockGroupHandle := dcgm.GroupHandle{}
 	mockGroupHandle.SetHandle(uintptr(1))
 	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil)
-	mockDCGMProvider.EXPECT().AddEntityToGroup(mockGroupHandle, gomock.Any(), gomock.Any()).Return(nil).MinTimes(0)
-	mockDCGMProvider.EXPECT().DestroyGroup(mockGroupHandle).MinTimes(0)
+	mockDCGMProvider.EXPECT().AddEntityToGroup(mockGroupHandle, gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().DestroyGroup(mockGroupHandle).AnyTimes()
 
 	mockFieldHandle := dcgm.FieldHandle{}
 	mockFieldHandle.SetHandle(uintptr(1))
-	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).MinTimes(0)
-	mockDCGMProvider.EXPECT().FieldGroupDestroy(mockFieldHandle).MinTimes(0).MinTimes(0)
+	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupDestroy(mockFieldHandle).AnyTimes()
 
 	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(),
-		gomock.Any()).Return(nil).MinTimes(0)
+		gomock.Any()).Return(nil).AnyTimes()
 
 	config := &common.Config{}
 
 	// Set up the expected collector
 	expectedCollector := &DCGMCollector{
-		Counters: sampleCounters,
-		SysInfo:  mockSysInfo,
-		Hostname: "test-hostname",
+		Counters:     sampleCounters,
+		SysInfo:      mockSysInfo,
+		DeviceFields: mockDeviceFields,
+		Hostname:     "test-hostname",
 	}
 
 	fieldEntity := sysinfo.FieldEntityGroupTypeSystemInfoItem{
 		SystemInfo:   mockSysInfo,
-		DeviceFields: []dcgm.Short{1, 2, 3},
+		DeviceFields: mockDeviceFields,
 	}
 
 	collector, cleanups, err := NewDCGMCollector(sampleCounters, "test-hostname", config, fieldEntity)
-
 	require.NoError(t, err)
+	require.NotNil(t, cleanups)
 
+	// Unless we also mock SetupDcgmFieldsWatch there is no way to identify cleanup output
+	expectedCollector.Cleanups = collector.Cleanups
 	assert.Equal(t, expectedCollector, collector)
-
-	assert.NotNil(t, cleanups)
-	cleanups()
 }

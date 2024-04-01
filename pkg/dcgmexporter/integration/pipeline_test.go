@@ -168,7 +168,6 @@ func TestCountPipelineCleanup(t *testing.T) {
 			fieldEntityGroupTypeSystemInfo := sysinfo.NewEntityGroupTypeSystemInfo(cc.DCGMCounters, config)
 
 			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
 
 			for egt := range c.enabledCollector {
 				mockSystemInfo := mock_sysinfo.NewMockSystemInfoInterface(ctrl)

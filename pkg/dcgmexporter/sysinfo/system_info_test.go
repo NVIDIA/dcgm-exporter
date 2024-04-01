@@ -272,7 +272,7 @@ func TestIsSwitchWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsSwitchWatched(tt.switchID, &tt.sysInfo)
+			got := tt.sysInfo.IsSwitchWatched(tt.switchID)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -360,7 +360,7 @@ func TestIsLinkWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsLinkWatched(tt.linkIndex, tt.switchID, &tt.sysInfo)
+			got := tt.sysInfo.IsLinkWatched(tt.linkIndex, tt.switchID)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -455,7 +455,7 @@ func TestIsCPUWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCPUWatched(tt.cpuID, &tt.sysInfo))
+			assert.Equal(t, tt.want, tt.sysInfo.IsCPUWatched(tt.cpuID))
 		})
 	}
 }
@@ -533,7 +533,7 @@ func TestIsCoreWatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCoreWatched(tt.coreID, tt.cpuID, &tt.sysInfo))
+			assert.Equal(t, tt.want, tt.sysInfo.IsCoreWatched(tt.coreID, tt.cpuID))
 		})
 	}
 }
@@ -689,9 +689,9 @@ func TestSetMigProfileNames(t *testing.T) {
 	}
 }
 
-func Test_CreateCoreGroupsFromSystemInfo(t *testing.T) {
+func TestCreateCoreGroupsFromSystemInfo(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
+	// defer ctrl.Finish()
 
 	fakeSysInfo := &SystemInfo{
 		cpus: []CPUInfo{
@@ -713,7 +713,8 @@ func Test_CreateCoreGroupsFromSystemInfo(t *testing.T) {
 	mockDCGMProvider.EXPECT().AddEntityToGroup(mockGroupHandle, gomock.Any(), gomock.Any()).Return(nil).MinTimes(0)
 	mockDCGMProvider.EXPECT().DestroyGroup(mockGroupHandle).MinTimes(0)
 
-	groups, _, err := CreateCoreGroupsFromSystemInfo(fakeSysInfo)
+	groups, cleanups, err := CreateCoreGroupsFromSystemInfo(fakeSysInfo)
 	assert.Nil(t, err)
-	assert.True(t, len(groups) == 2)
+	assert.Equal(t, 2, len(groups), "Group count mismatch")
+	assert.Equal(t, 2, len(cleanups), "Cleanup count mismatch")
 }
