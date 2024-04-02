@@ -16,6 +16,7 @@ include hack/VERSION
 
 MKDIR    ?= mkdir
 REGISTRY ?= nvidia
+GOLANGCILINT_TIMEOUT ?= 10m
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
 GOLANG_VERSION := 1.21.5
@@ -83,7 +84,7 @@ test-coverage:
 
 .PHONY: lint
 lint:
-	golangci-lint run ./...
+	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1 --verbose
 
 .PHONY: validate-modules
 validate-modules:
@@ -98,6 +99,10 @@ tools: ## Install required tools and utilities
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2
 	go install github.com/axw/gocov/gocov@latest
 	go install golang.org/x/tools/cmd/goimports@latest
+	go install mvdan.cc/gofumpt@latest
+
+fmt:
+	find . -name '*.go' | xargs gofumpt -l -w
 
 goimports:
 	go list -f {{.Dir}} $(MODULE)/... \
