@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/cuda:12.3.1-base-ubi9 AS builder
+FROM nvcr.io/nvidia/cuda:12.3.2-base-ubi9 AS builder
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN set -eux; \
