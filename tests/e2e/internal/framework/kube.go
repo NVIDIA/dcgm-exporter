@@ -19,6 +19,14 @@ package framework
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+
+	"github.com/pkg/errors"
+	"k8s.io/client-go/transport/spdy"
+
+	"k8s.io/client-go/tools/portforward"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -32,16 +40,25 @@ const nvidiaResourceName = "nvidia.com/gpu"
 
 // KubeClient is a kubernetes client
 type KubeClient struct {
-	client *kubernetes.Clientset
+	client     *kubernetes.Clientset
+	restConfig *rest.Config
+	OutWriter  io.Writer
+	ErrWriter  io.Writer
 }
 
 // NewKubeClient creates a new KubeClient instance
-func NewKubeClient(k8sConfig *rest.Config) (*KubeClient, error) {
-	client, err := kubernetes.NewForConfig(k8sConfig)
+func NewKubeClient(restConfig *rest.Config) (*KubeClient, error) {
+	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, err
 	}
-	return &KubeClient{client: client}, nil
+
+	return &KubeClient{
+		client:     client,
+		restConfig: restConfig,
+		OutWriter:  io.Discard,
+		ErrWriter:  io.Discard,
+	}, nil
 }
 
 // CreateNamespace creates a new namespace
@@ -80,6 +97,7 @@ func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, label
 	return podList.Items, nil
 }
 
+// CheckPodStatus check pod status
 func (c *KubeClient) CheckPodStatus(ctx context.Context,
 	namespace, podName string,
 	condition func(namespace, podName string, status corev1.PodStatus) (bool, error),
@@ -143,8 +161,8 @@ func (c *KubeClient) DeletePod(ctx context.Context,
 	return c.client.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
-// DoHttpRequest makes http request to path on the pod
-func (c *KubeClient) DoHttpRequest(ctx context.Context,
+// DoHTTPRequest makes http request to path on the pod
+func (c *KubeClient) DoHTTPRequest(ctx context.Context,
 	namespace string,
 	name string,
 	port uint,
@@ -168,4 +186,52 @@ func (c *KubeClient) DoHttpRequest(ctx context.Context,
 	}
 
 	return rawResponse, nil
+}
+
+// PortForward turn on port forwarding for the pod
+func (c *KubeClient) PortForward(ctx context.Context, namespace string,
+	podName string,
+	targetPort int,
+) (int, error) {
+	transport, upgrader, err := spdy.RoundTripperFor(c.restConfig)
+	if err != nil {
+		return -1, err
+	}
+
+	req := c.client.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Namespace(namespace).
+		Name(podName).
+		SubResource("portforward")
+
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, "POST", req.URL())
+
+	// random select a unused port using port number 0
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		return -1, err
+	}
+
+	localPort := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	fw, err := portforward.New(dialer, []string{fmt.Sprintf("%d:%d", localPort, targetPort)}, ctx.Done(), make(chan struct{}),
+		c.OutWriter,
+		c.ErrWriter)
+	if err != nil {
+		return -1, err
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- fw.ForwardPorts()
+	}()
+
+	select {
+	case err = <-errCh:
+		return -1, errors.Wrap(err, "port forwarding failed")
+	case <-fw.Ready:
+	}
+
+	return localPort, nil
 }
