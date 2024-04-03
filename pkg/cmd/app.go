@@ -397,17 +397,27 @@ func enableDCGMExpXIDErrorsCountCollector(cs *dcgmexporter.CounterSet, fieldEnti
 }
 
 func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *dcgmexporter.Config) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
-	allCounters := []dcgmexporter.Counter{}
+	var allCounters []dcgmexporter.Counter
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
-	allCounters = append(allCounters,
-		dcgmexporter.Counter{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
-		},
-		dcgmexporter.Counter{
-			FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
-		},
-	)
+
+	if len(cs.ExporterCounters) > 0 {
+		if containsField(cs.ExporterCounters, dcgmexporter.DCGMXIDErrorsCount) &&
+			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
+			allCounters = append(allCounters,
+				dcgmexporter.Counter{
+					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
+				})
+		}
+
+		if containsField(cs.ExporterCounters, dcgmexporter.DCGMClockEventsCount) &&
+			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
+			allCounters = append(allCounters,
+				dcgmexporter.Counter{
+					FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+				})
+		}
+	}
 
 	fieldEntityGroupTypeSystemInfo := dcgmexporter.NewEntityGroupTypeSystemInfo(allCounters, config)
 
@@ -418,6 +428,12 @@ func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *dcgm
 		}
 	}
 	return fieldEntityGroupTypeSystemInfo
+}
+
+func containsField(slice []dcgmexporter.Counter, fieldID dcgmexporter.ExporterCounter) bool {
+	return slices.ContainsFunc(slice, func(counter dcgmexporter.Counter) bool {
+		return counter.FieldID == dcgm.Short(fieldID)
+	})
 }
 
 func getCounters(config *dcgmexporter.Config) *dcgmexporter.CounterSet {

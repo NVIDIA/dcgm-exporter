@@ -28,7 +28,7 @@ type ExporterCounter uint16
 const (
 	DCGMFIUnknown        ExporterCounter = 0
 	DCGMXIDErrorsCount   ExporterCounter = iota + 9000
-	DCGMClockEventsCount ExporterCounter = iota
+	DCGMClockEventsCount ExporterCounter = iota + 9000
 )
 
 // String method to convert the enum value to a string
