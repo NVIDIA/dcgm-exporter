@@ -37,7 +37,7 @@ func Capture(ctx context.Context, inner func() error) error {
 		return err
 	}
 
-	err = syscall.Dup2(int(w.Fd()), syscall.Stdout)
+	err = syscall.Dup3(int(w.Fd()), syscall.Stdout, 0)
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func Capture(ctx context.Context, inner func() error) error {
 			err = ierr
 		}
 
-		ierr = syscall.Dup2(stdout, syscall.Stdout)
+		ierr = syscall.Dup3(stdout, syscall.Stdout, 0)
 		if ierr != nil {
 			err = ierr
 		}
