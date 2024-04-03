@@ -401,23 +401,8 @@ func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *dcgm
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
 
-	if len(cs.ExporterCounters) > 0 {
-		if containsField(cs.ExporterCounters, dcgmexporter.DCGMXIDErrorsCount) &&
-			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
-			allCounters = append(allCounters,
-				dcgmexporter.Counter{
-					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
-				})
-		}
-
-		if containsField(cs.ExporterCounters, dcgmexporter.DCGMClockEventsCount) &&
-			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
-			allCounters = append(allCounters,
-				dcgmexporter.Counter{
-					FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
-				})
-		}
-	}
+	allCounters = appendDCGMXIDErrorsCountDependency(allCounters, cs)
+	allCounters = appendDCGMClockEventsCountDependency(cs, allCounters)
 
 	fieldEntityGroupTypeSystemInfo := dcgmexporter.NewEntityGroupTypeSystemInfo(allCounters, config)
 
@@ -428,6 +413,34 @@ func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *dcgm
 		}
 	}
 	return fieldEntityGroupTypeSystemInfo
+}
+
+// appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
+func appendDCGMClockEventsCountDependency(cs *dcgmexporter.CounterSet, allCounters []dcgmexporter.Counter) []dcgmexporter.Counter {
+	if len(cs.ExporterCounters) > 0 {
+		if containsField(cs.ExporterCounters, dcgmexporter.DCGMClockEventsCount) &&
+			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
+			allCounters = append(allCounters,
+				dcgmexporter.Counter{
+					FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+				})
+		}
+	}
+	return allCounters
+}
+
+// appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_XID_ERRORS_COUNT metric
+func appendDCGMXIDErrorsCountDependency(allCounters []dcgmexporter.Counter, cs *dcgmexporter.CounterSet) []dcgmexporter.Counter {
+	if len(cs.ExporterCounters) > 0 {
+		if containsField(cs.ExporterCounters, dcgmexporter.DCGMXIDErrorsCount) &&
+			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
+			allCounters = append(allCounters,
+				dcgmexporter.Counter{
+					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
+				})
+		}
+	}
+	return allCounters
 }
 
 func containsField(slice []dcgmexporter.Counter, fieldID dcgmexporter.ExporterCounter) bool {
