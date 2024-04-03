@@ -13,11 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package testutils
 
 import (
+	"reflect"
 	"runtime"
 	"testing"
+	"unsafe"
 )
 
 // RequireLinux checks if
@@ -26,4 +29,33 @@ func RequireLinux(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("Test is not supported on %q", runtime.GOOS)
 	}
+}
+
+// GetStructPrivateFieldValue returns private field value
+func GetStructPrivateFieldValue[T any](t *testing.T, v any, fieldName string) T {
+	t.Helper()
+	var result T
+	value := reflect.ValueOf(v)
+	if value.Kind() == reflect.Ptr {
+		value = value.Elem()
+	}
+
+	if value.Kind() != reflect.Struct {
+		t.Errorf("The type %s is not stuct", value.Type())
+		return result
+	}
+
+	fieldVal := value.FieldByName(fieldName)
+
+	if !fieldVal.IsValid() {
+		t.Errorf("The field %s is invalid for the %s type", fieldName, value.Type())
+		return result
+	}
+
+	fieldPtr := unsafe.Pointer(fieldVal.UnsafeAddr())
+
+	// Cast the field pointer to a pointer of the correct type
+	realPtr := (*T)(fieldPtr)
+
+	return *realPtr
 }
