@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -283,6 +284,16 @@ func ToMetric(
 
 		gpuModel := getGPUModel(d, replaceBlanksInModelName)
 
+		attrs := map[string]string{}
+		if counter.FieldName == "DCGM_FI_DEV_XID_ERRORS" {
+			attrs["err_code"] = strconv.Itoa(int(val.Int64()))
+			if v := int(val.Int64()); 0 < v && v < len(xidErrCodeToText) && xidErrCodeToText[v] != "" {
+				attrs["err_msg"] = xidErrCodeToText[val.Int64()]
+			} else {
+				attrs["err_msg"] = "Unknown Error"
+			}
+		}
+
 		m := Metric{
 			Counter: counter,
 			Value:   v,
@@ -295,7 +306,7 @@ func ToMetric(
 			Hostname:     hostname,
 
 			Labels:     labels,
-			Attributes: map[string]string{},
+			Attributes: attrs,
 		}
 		if instanceInfo != nil {
 			m.MigProfile = instanceInfo.ProfileName
