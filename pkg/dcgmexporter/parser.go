@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"

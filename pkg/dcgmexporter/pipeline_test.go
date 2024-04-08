@@ -18,7 +18,6 @@ package dcgmexporter
 
 import (
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/sirupsen/logrus"

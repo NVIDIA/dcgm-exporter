@@ -19,7 +19,6 @@ package dcgmexporter
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -73,22 +72,6 @@ func GetSystemInfo(config *Config, entityType dcgm.Field_Entity_Group) (*SystemI
 		return nil, err
 	}
 	return &sysInfo, err
-}
-
-func GetHostname(config *Config) (string, error) {
-	hostname := ""
-	var err error
-	if !config.NoHostname {
-		if nodeName := os.Getenv("NODE_NAME"); nodeName != "" {
-			hostname = nodeName
-		} else {
-			hostname, err = os.Hostname()
-			if err != nil {
-				return "", err
-			}
-		}
-	}
-	return hostname, nil
 }
 
 func (c *DCGMCollector) Cleanup() {
