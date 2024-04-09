@@ -59,7 +59,8 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 		}
 		status, err := retry.DoWithData(
 			func() (int, error) {
-				req := newRequestWithBasicAuth(t, "alice", "password", http.MethodGet, fmt.Sprintf("https://localhost:%d/metrics", port), nil)
+				req := newRequestWithBasicAuth(t, "alice", "password", http.MethodGet,
+					fmt.Sprintf("https://localhost:%d/metrics", port), nil)
 				resp, err := client.Do(req)
 				if err != nil {
 					return -1, err
@@ -84,7 +85,8 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 		}
 		status, err := retry.DoWithData(
 			func() (int, error) {
-				req := newRequestWithBasicAuth(t, "alice", "bad password", http.MethodGet, fmt.Sprintf("https://localhost:%d/metrics", port), nil)
+				req := newRequestWithBasicAuth(t, "alice", "bad password", http.MethodGet,
+					fmt.Sprintf("https://localhost:%d/metrics", port), nil)
 				resp, err := client.Do(req)
 				if err != nil {
 					return -1, err

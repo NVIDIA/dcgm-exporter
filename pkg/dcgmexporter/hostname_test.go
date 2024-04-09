@@ -25,20 +25,21 @@ import (
 	"go.uber.org/mock/gomock"
 
 	osmock "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
 
 func TestGetHostname(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  *Config
+		config  *appconfig.Config
 		hook    func() func()
 		want    string
 		wantErr assert.ErrorAssertionFunc
 	}{
 		{
 			name:   "When os.Hostname() return hostname",
-			config: &Config{UseRemoteHE: false},
+			config: &appconfig.Config{UseRemoteHE: false},
 			hook: func() func() {
 				ctrl := gomock.NewController(t)
 				m := osmock.NewMockOS(ctrl)
@@ -53,7 +54,7 @@ func TestGetHostname(t *testing.T) {
 		},
 		{
 			name:   "When GetHostname uses the NODE_NAME env variable",
-			config: &Config{UseRemoteHE: false},
+			config: &appconfig.Config{UseRemoteHE: false},
 			hook: func() func() {
 				ctrl := gomock.NewController(t)
 				m := osmock.NewMockOS(ctrl)
@@ -67,7 +68,7 @@ func TestGetHostname(t *testing.T) {
 		},
 		{
 			name:   "When os.Hostname() return error",
-			config: &Config{UseRemoteHE: false},
+			config: &appconfig.Config{UseRemoteHE: false},
 			hook: func() func() {
 				ctrl := gomock.NewController(t)
 				m := osmock.NewMockOS(ctrl)
@@ -82,7 +83,7 @@ func TestGetHostname(t *testing.T) {
 		},
 		{
 			name:   "When os.Hostname() return error",
-			config: &Config{UseRemoteHE: false},
+			config: &appconfig.Config{UseRemoteHE: false},
 			hook: func() func() {
 				ctrl := gomock.NewController(t)
 				m := osmock.NewMockOS(ctrl)
@@ -99,16 +100,16 @@ func TestGetHostname(t *testing.T) {
 			},
 		},
 		{
-			name: "When config.UseRemoteHE is true and remote hostname is name",
-			config: &Config{
+			name: "When appconfig.UseRemoteHE is true and remote hostname is name",
+			config: &appconfig.Config{
 				UseRemoteHE:  true,
 				RemoteHEInfo: "example.com:5555",
 			},
 			want: "example.com",
 		},
 		{
-			name: "When config.UseRemoteHE is true and hostname is IP address",
-			config: &Config{
+			name: "When appconfig.UseRemoteHE is true and hostname is IP address",
+			config: &appconfig.Config{
 				UseRemoteHE:  true,
 				RemoteHEInfo: "127.0.0.1",
 			},

@@ -24,6 +24,9 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 var sampleCounters = []Counter{
@@ -32,8 +35,18 @@ var sampleCounters = []Counter{
 	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
 	{dcgm.DCGM_FI_DRIVER_VERSION, "DCGM_FI_DRIVER_VERSION", "label", "Driver version"},
 	/* test that switch and link metrics are filtered out automatically when devices are not detected */
-	{dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT, "DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT", "gauge", "switch temperature"},
-	{dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS, "DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS", "gauge", "per-link flit errors"},
+	{
+		dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT,
+		"DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT",
+		"gauge",
+		"switch temperature",
+	},
+	{
+		dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS,
+		"DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS",
+		"gauge",
+		"per-link flit errors",
+	},
 	/* test that vgpu metrics are not filtered out */
 	{dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS, "DCGM_FI_DEV_VGPU_LICENSE_STATUS", "gauge", "vgpu license status"},
 	/* test that cpu and cpu core metrics are filtered out automatically when devices are not detected */
@@ -52,11 +65,13 @@ var expectedCPUMetrics = map[string]bool{
 }
 
 func TestDCGMCollector(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+	config := &appconfig.Config{
+		UseRemoteHE: false,
+	}
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
-	_, cleanup = testDCGMGPUCollector(t, sampleCounters)
+	_, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	cleanup()
 
 	_, cleanup = testDCGMCPUCollector(t, sampleCounters)
@@ -64,12 +79,12 @@ func TestDCGMCollector(t *testing.T) {
 }
 
 func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
-	dOpt := DeviceOptions{
+	dOpt := appconfig.DeviceOptions{
 		Flex:       true,
 		MajorRange: []int{-1},
 		MinorRange: []int{-1},
 	}
-	config := Config{
+	config := appconfig.Config{
 		GPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
@@ -97,7 +112,9 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return hierarchy, nil
 	}
 
-	dcgmAddEntityToGroup = func(groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint) (err error) {
+	dcgmAddEntityToGroup = func(
+		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
+	) (err error) {
 		return nil
 	}
 
@@ -168,8 +185,8 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 }
 
 func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, func()) {
-	dOpt := DeviceOptions{true, []int{-1}, []int{-1}}
-	config := Config{
+	dOpt := appconfig.DeviceOptions{true, []int{-1}, []int{-1}}
+	config := appconfig.Config{
 		CPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,
@@ -197,7 +214,9 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return hierarchy, nil
 	}
 
-	dcgmAddEntityToGroup = func(groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint) (err error) {
+	dcgmAddEntityToGroup = func(
+		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
+	) (err error) {
 		return nil
 	}
 
@@ -321,7 +340,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 
 	runOnlyWithLiveGPUs(t)
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -334,11 +353,11 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
 
-	gpuIDs, err := dcgm.CreateFakeEntities(entityList)
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
-	numGPUs, err = dcgm.GetAllDeviceCount()
+	numGPUs, err = dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	counters := []Counter{
@@ -350,12 +369,12 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		},
 	}
 
-	dOpt := DeviceOptions{
+	dOpt := appconfig.DeviceOptions{
 		Flex:       true,
 		MajorRange: []int{-1},
 		MinorRange: []int{-1},
 	}
-	config := Config{
+	config := appconfig.Config{
 		GPUDevices:      dOpt,
 		NoHostname:      false,
 		UseOldNamespace: false,

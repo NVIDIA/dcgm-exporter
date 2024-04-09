@@ -29,6 +29,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 const (
@@ -36,7 +38,7 @@ const (
 	dcpFieldsStart = 1000
 )
 
-func GetCounterSet(c *Config) (*CounterSet, error) {
+func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 	var (
 		err     error
 		records [][]string
@@ -91,7 +93,7 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractCounters(records [][]string, c *Config) (*CounterSet, error) {
+func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, error) {
 	res := CounterSet{}
 
 	for i, record := range records {
@@ -118,7 +120,8 @@ func extractCounters(records [][]string, c *Config) (*CounterSet, error) {
 			if err != nil {
 				return nil, fmt.Errorf("could not find DCGM field; err: %w", err)
 			} else if expField != DCGMFIUnknown {
-				res.ExporterCounters = append(res.ExporterCounters, Counter{dcgm.Short(expField), record[0], record[1], record[2]})
+				res.ExporterCounters = append(res.ExporterCounters,
+					Counter{dcgm.Short(expField), record[0], record[1], record[2]})
 				continue
 			}
 		}
@@ -155,7 +158,7 @@ func extractCounters(records [][]string, c *Config) (*CounterSet, error) {
 	return &res, nil
 }
 
-func fieldIsSupported(fieldID uint, c *Config) bool {
+func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {
 	if fieldID < dcpFieldsStart || fieldID >= cpuFieldsStart {
 		return true
 	}
@@ -175,7 +178,7 @@ func fieldIsSupported(fieldID uint, c *Config) bool {
 	return false
 }
 
-func readConfigMap(kubeClient kubernetes.Interface, c *Config) ([][]string, error) {
+func readConfigMap(kubeClient kubernetes.Interface, c *appconfig.Config) ([][]string, error) {
 	parts := strings.Split(c.ConfigMapData, ":")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("malformed configmap-data '%s'", c.ConfigMapData)

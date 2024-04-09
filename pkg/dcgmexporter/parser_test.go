@@ -7,6 +7,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 func TestEmptyConfigMap(t *testing.T) {
@@ -19,7 +21,7 @@ func TestEmptyConfigMap(t *testing.T) {
 		Data: map[string]string{"metrics": ""},
 	})
 
-	c := Config{
+	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
 	records, err := readConfigMap(clientset, &c)
@@ -37,7 +39,7 @@ func TestValidConfigMap(t *testing.T) {
 		Data: map[string]string{"metrics": "DCGM_FI_DEV_GPU_TEMP, gauge, temperature"},
 	})
 
-	c := Config{
+	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
 	records, err := readConfigMap(clientset, &c)
@@ -55,7 +57,7 @@ func TestInvalidConfigMapData(t *testing.T) {
 		Data: map[string]string{"bad": "DCGM_FI_DEV_GPU_TEMP, gauge, temperature"},
 	})
 
-	c := Config{
+	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
 	records, err := readConfigMap(clientset, &c)
@@ -72,7 +74,7 @@ func TestInvalidConfigMapName(t *testing.T) {
 		},
 	})
 
-	c := Config{
+	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
 	records, err := readConfigMap(clientset, &c)
@@ -89,7 +91,7 @@ func TestInvalidConfigMapNamespace(t *testing.T) {
 		},
 	})
 
-	c := Config{
+	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
 	records, err := readConfigMap(clientset, &c)
@@ -143,7 +145,7 @@ func extractCountersHelper(t *testing.T, input string, valid bool) {
 		t.Fatalf("Cannot close temp file: %v", err)
 	}
 
-	c := Config{
+	c := appconfig.Config{
 		ConfigMapData:  undefinedConfigMapData,
 		CollectorsFile: tmpFile.Name(),
 	}

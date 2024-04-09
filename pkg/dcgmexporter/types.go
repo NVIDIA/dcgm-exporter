@@ -24,6 +24,8 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/prometheus/exporter-toolkit/web"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 var (
@@ -52,7 +54,7 @@ type Transform interface {
 }
 
 type MetricsPipeline struct {
-	config *Config
+	config *appconfig.Config
 
 	transformations      []Transform
 	migMetricsFormat     *template.Template
@@ -105,15 +107,15 @@ type Metric struct {
 	Attributes map[string]string
 }
 
-func (m Metric) getIDOfType(idType KubernetesGPUIDType) (string, error) {
+func (m Metric) getIDOfType(idType appconfig.KubernetesGPUIDType) (string, error) {
 	// For MIG devices, return the MIG profile instead of
 	if m.MigProfile != "" {
 		return fmt.Sprintf("%s-%s", m.GPU, m.GPUInstanceID), nil
 	}
 	switch idType {
-	case GPUUID:
+	case appconfig.GPUUID:
 		return m.GPUUUID, nil
-	case DeviceName:
+	case appconfig.DeviceName:
 		return m.GPUDevice, nil
 	}
 	return "", fmt.Errorf("unsupported KubernetesGPUIDType for MetricID '%s'", idType)
@@ -138,7 +140,7 @@ type MetricsServer struct {
 }
 
 type PodMapper struct {
-	Config *Config
+	Config *appconfig.Config
 }
 
 type PodInfo struct {

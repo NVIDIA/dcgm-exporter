@@ -23,15 +23,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 )
 
 func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
-	config := &dcgmexporter.Config{
-		GPUDevices:    dcgmexporter.DeviceOptions{},
-		SwitchDevices: dcgmexporter.DeviceOptions{},
-		CPUDevices:    dcgmexporter.DeviceOptions{},
+	config := &appconfig.Config{
+		GPUDevices:    appconfig.DeviceOptions{},
+		SwitchDevices: appconfig.DeviceOptions{},
+		CPUDevices:    appconfig.DeviceOptions{},
 		UseFakeGPUs:   true,
 	}
 
@@ -180,8 +182,8 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 		},
 	}
 
-	cleanupDCGM := initDCGM(config)
-	defer cleanupDCGM()
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

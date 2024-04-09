@@ -25,17 +25,24 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 func TestRun(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+
+	config := &appconfig.Config{
+		UseRemoteHE: false,
+	}
+
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
 	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	defer cleanup()
 
-	p, cleanup, err := NewMetricsPipelineWithGPUCollector(&Config{}, c)
+	p, cleanup, err := NewMetricsPipelineWithGPUCollector(&appconfig.Config{}, c)
 	require.NoError(t, err)
 	defer cleanup()
 	require.NoError(t, err)
@@ -50,14 +57,17 @@ func TestRun(t *testing.T) {
 	t.Logf("Pipeline result is:\n%v", out)
 }
 
-func testNewDCGMCollector(t *testing.T,
+func testNewDCGMCollector(
+	t *testing.T,
 	counter *int, enabledCollector map[dcgm.Field_Entity_Group]struct{},
 ) DCGMCollectorConstructor {
 	t.Helper()
-	return func(c []Counter,
+	return func(
+		c []Counter,
 		hostname string,
-		config *Config,
-		fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
+		config *appconfig.Config,
+		fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+	) (*DCGMCollector, func(), error) {
 		// should always create GPU Collector
 		if fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType != dcgm.FE_GPU {
 			if _, ok := enabledCollector[fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType]; !ok {
@@ -87,57 +97,59 @@ func TestCountPipelineCleanup(t *testing.T) {
 	for _, c := range []struct {
 		name             string
 		enabledCollector map[dcgm.Field_Entity_Group]struct{}
-	}{{
-		name: "only_gpu",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_GPU: {},
+	}{
+		{
+			name: "only_gpu",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_GPU: {},
+			},
+		}, {
+			name: "gpu_switch",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_SWITCH: {},
+			},
+		}, {
+			name: "gpu_link",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_LINK: {},
+			},
+		}, {
+			name: "gpu_cpu",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_CPU: {},
+			},
+		}, {
+			name: "gpu_core",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_CPU_CORE: {},
+			},
+		}, {
+			name: "gpu_switch_link",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_SWITCH: {},
+				dcgm.FE_LINK:   {},
+			},
+		}, {
+			name: "gpu_cpu_core",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_CPU:      {},
+				dcgm.FE_CPU_CORE: {},
+			},
+		}, {
+			name: "all",
+			enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
+				dcgm.FE_SWITCH:   {},
+				dcgm.FE_LINK:     {},
+				dcgm.FE_CPU:      {},
+				dcgm.FE_CPU_CORE: {},
+			},
 		},
-	}, {
-		name: "gpu_switch",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH: {},
-		},
-	}, {
-		name: "gpu_link",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_LINK: {},
-		},
-	}, {
-		name: "gpu_cpu",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU: {},
-		},
-	}, {
-		name: "gpu_core",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU_CORE: {},
-		},
-	}, {
-		name: "gpu_switch_link",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH: {},
-			dcgm.FE_LINK:   {},
-		},
-	}, {
-		name: "gpu_cpu_core",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_CPU:      {},
-			dcgm.FE_CPU_CORE: {},
-		},
-	}, {
-		name: "all",
-		enabledCollector: map[dcgm.Field_Entity_Group]struct{}{
-			dcgm.FE_SWITCH:   {},
-			dcgm.FE_LINK:     {},
-			dcgm.FE_CPU:      {},
-			dcgm.FE_CPU_CORE: {},
-		},
-	}} {
+	} {
 
 		t.Run(c.name, func(t *testing.T) {
 			cleanupCounter := 0
 
-			config := &Config{
+			config := &appconfig.Config{
 				Kubernetes:     false,
 				ConfigMapData:  undefinedConfigMapData,
 				CollectorsFile: f.Name(),
@@ -173,11 +185,12 @@ func TestCountPipelineCleanup(t *testing.T) {
 }
 
 func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *testing.T) {
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+	config := &appconfig.Config{
+		UseRemoteHE: false,
+	}
 
-	config := &Config{}
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
 	fieldEntityGroupTypeSystemInfo := &FieldEntityGroupTypeSystemInfo{
 		items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
@@ -192,7 +205,9 @@ func TestNewMetricsPipelineWhenFieldEntityGroupTypeSystemInfoItemIsEmpty(t *test
 	p, cleanup, err := NewMetricsPipeline(config,
 		sampleCounters,
 		"",
-		func(_ []Counter, _ string, _ *Config, item FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
+		func(_ []Counter, _ string, _ *appconfig.Config, item FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector,
+			func(),
+			error) {
 			assert.True(t, item.isEmpty())
 			return nil, func() {}, errors.New("empty")
 		},

@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
@@ -40,7 +41,7 @@ var (
 	nvmlGetMIGDeviceInfoByIDHook   = nvmlprovider.GetMIGDeviceInfoByID
 )
 
-func NewPodMapper(c *Config) (*PodMapper, error) {
+func NewPodMapper(c *appconfig.Config) (*PodMapper, error) {
 	logrus.Infof("Kubernetes metrics collection enabled!")
 
 	return &PodMapper{

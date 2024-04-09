@@ -22,16 +22,18 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
-	group, err := dcgm.NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+	group, err := dcgmprovider.Client().NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 	if err != nil {
 		return dcgm.GroupHandle{}, func() {}, err
 	}
 
 	return group, func() {
-		err := dcgm.DestroyGroup(group)
+		err := dcgmprovider.Client().DestroyGroup(group)
 		if err != nil {
 			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
@@ -41,7 +43,7 @@ func NewGroup() (dcgm.GroupHandle, func(), error) {
 func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
 	for _, f := range counters {
-		meta := dcgm.FieldGetById(f.FieldID)
+		meta := dcgmprovider.Client().FieldGetById(f.FieldID)
 
 		if meta.EntityLevel == entityType || meta.EntityLevel == dcgm.FE_NONE {
 			deviceFields = append(deviceFields, f.FieldID)
@@ -57,13 +59,13 @@ func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []d
 
 func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) {
 	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", rand.Uint64())
-	fieldGroup, err := dcgm.FieldGroupCreate(name, deviceFields)
+	fieldGroup, err := dcgmprovider.Client().FieldGroupCreate(name, deviceFields)
 	if err != nil {
 		return dcgm.FieldHandle{}, func() {}, err
 	}
 
 	return fieldGroup, func() {
-		err := dcgm.FieldGroupDestroy(fieldGroup)
+		err := dcgmprovider.Client().FieldGroupDestroy(fieldGroup)
 		if err != nil {
 			logrus.WithError(err).Warn("Cannot destroy field group.")
 		}
@@ -73,7 +75,7 @@ func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 func WatchFieldGroup(
 	group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64, maxKeepAge float64, maxKeepSamples int32,
 ) error {
-	err := dcgm.WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
+	err := dcgmprovider.Client().WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
 	if err != nil {
 		return err
 	}

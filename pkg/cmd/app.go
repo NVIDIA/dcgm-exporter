@@ -20,6 +20,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
@@ -148,9 +150,9 @@ func NewApp(buildVersion ...string) *cli.App {
 		},
 		&cli.StringFlag{
 			Name:  CLIKubernetesGPUIDType,
-			Value: string(dcgmexporter.GPUUID),
+			Value: string(appconfig.GPUUID),
 			Usage: fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'",
-				dcgmexporter.GPUUID, dcgmexporter.DeviceName),
+				appconfig.GPUUID, appconfig.DeviceName),
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"},
 		},
 		&cli.StringFlag{
@@ -286,13 +288,10 @@ restart:
 
 	enableDebugLogging(config)
 
-	cleanupDCGM := initDCGM(config)
-	defer cleanupDCGM()
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
 	logrus.Info("DCGM successfully initialized!")
-
-	dcgm.FieldsInit()
-	defer dcgm.FieldsTerm()
 
 	fillConfigMetricGroups(config)
 
@@ -360,7 +359,10 @@ restart:
 	return nil
 }
 
-func enableDCGMExpClockEventsCount(cs *dcgmexporter.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmexporter.FieldEntityGroupTypeSystemInfo, hostname string, config *dcgmexporter.Config, cRegistry *dcgmexporter.Registry) {
+func enableDCGMExpClockEventsCount(
+	cs *dcgmexporter.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmexporter.FieldEntityGroupTypeSystemInfo,
+	hostname string, config *appconfig.Config, cRegistry *dcgmexporter.Registry,
+) {
 	if dcgmexporter.IsDCGMExpClockEventsCountEnabled(cs.ExporterCounters) {
 		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
@@ -378,7 +380,10 @@ func enableDCGMExpClockEventsCount(cs *dcgmexporter.CounterSet, fieldEntityGroup
 	}
 }
 
-func enableDCGMExpXIDErrorsCountCollector(cs *dcgmexporter.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmexporter.FieldEntityGroupTypeSystemInfo, hostname string, config *dcgmexporter.Config, cRegistry *dcgmexporter.Registry) {
+func enableDCGMExpXIDErrorsCountCollector(
+	cs *dcgmexporter.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmexporter.FieldEntityGroupTypeSystemInfo,
+	hostname string, config *appconfig.Config, cRegistry *dcgmexporter.Registry,
+) {
 	if dcgmexporter.IsDCGMExpXIDErrorsCountEnabled(cs.ExporterCounters) {
 		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
@@ -396,7 +401,9 @@ func enableDCGMExpXIDErrorsCountCollector(cs *dcgmexporter.CounterSet, fieldEnti
 	}
 }
 
-func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *dcgmexporter.Config) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
+func getFieldEntityGroupTypeSystemInfo(
+	cs *dcgmexporter.CounterSet, config *appconfig.Config,
+) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
 	var allCounters []dcgmexporter.Counter
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
@@ -416,7 +423,9 @@ func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *dcgm
 }
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
-func appendDCGMClockEventsCountDependency(cs *dcgmexporter.CounterSet, allCounters []dcgmexporter.Counter) []dcgmexporter.Counter {
+func appendDCGMClockEventsCountDependency(
+	cs *dcgmexporter.CounterSet, allCounters []dcgmexporter.Counter,
+) []dcgmexporter.Counter {
 	if len(cs.ExporterCounters) > 0 {
 		if containsField(cs.ExporterCounters, dcgmexporter.DCGMClockEventsCount) &&
 			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
@@ -430,7 +439,9 @@ func appendDCGMClockEventsCountDependency(cs *dcgmexporter.CounterSet, allCounte
 }
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_XID_ERRORS_COUNT metric
-func appendDCGMXIDErrorsCountDependency(allCounters []dcgmexporter.Counter, cs *dcgmexporter.CounterSet) []dcgmexporter.Counter {
+func appendDCGMXIDErrorsCountDependency(
+	allCounters []dcgmexporter.Counter, cs *dcgmexporter.CounterSet,
+) []dcgmexporter.Counter {
 	if len(cs.ExporterCounters) > 0 {
 		if containsField(cs.ExporterCounters, dcgmexporter.DCGMXIDErrorsCount) &&
 			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
@@ -449,7 +460,7 @@ func containsField(slice []dcgmexporter.Counter, fieldID dcgmexporter.ExporterCo
 	})
 }
 
-func getCounters(config *dcgmexporter.Config) *dcgmexporter.CounterSet {
+func getCounters(config *appconfig.Config) *dcgmexporter.CounterSet {
 	cs, err := dcgmexporter.GetCounterSet(config)
 	if err != nil {
 		logrus.Fatal(err)
@@ -464,9 +475,9 @@ func getCounters(config *dcgmexporter.Config) *dcgmexporter.CounterSet {
 	return cs
 }
 
-func fillConfigMetricGroups(config *dcgmexporter.Config) {
+func fillConfigMetricGroups(config *appconfig.Config) {
 	var groups []dcgm.MetricGroup
-	groups, err := dcgm.GetSupportedMetricGroups(0)
+	groups, err := dcgmprovider.Client().GetSupportedMetricGroups(0)
 	if err != nil {
 		config.CollectDCP = false
 		logrus.Info("Not collecting DCP metrics: ", err)
@@ -476,7 +487,7 @@ func fillConfigMetricGroups(config *dcgmexporter.Config) {
 	}
 }
 
-func enableDebugLogging(config *dcgmexporter.Config) {
+func enableDebugLogging(config *appconfig.Config) {
 	if config.Debug {
 		// enable debug logging
 		logrus.SetLevel(logrus.DebugLevel)
@@ -488,34 +499,8 @@ func enableDebugLogging(config *dcgmexporter.Config) {
 	logrus.WithField(dcgmexporter.LoggerDumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
 }
 
-func initDCGM(config *dcgmexporter.Config) func() {
-	if config.UseRemoteHE {
-		logrus.Info("Attemping to connect to remote hostengine at ", config.RemoteHEInfo)
-		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
-		if err != nil {
-			cleanup()
-			logrus.Fatal(err)
-		}
-		return cleanup
-	} else {
-
-		if config.EnableDCGMLog {
-			os.Setenv("__DCGM_DBG_FILE", "-")
-			os.Setenv("__DCGM_DBG_LVL", config.DCGMLogLevel)
-		}
-
-		cleanup, err := dcgm.Init(dcgm.Embedded)
-		if err != nil {
-			cleanup()
-			logrus.Fatal(err)
-		}
-
-		return cleanup
-	}
-}
-
-func parseDeviceOptions(devices string) (dcgmexporter.DeviceOptions, error) {
-	var dOpt dcgmexporter.DeviceOptions
+func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
+	var dOpt appconfig.DeviceOptions
 
 	letterAndRange := strings.Split(devices, ":")
 	count := len(letterAndRange)
@@ -577,7 +562,7 @@ func parseDeviceOptions(devices string) (dcgmexporter.DeviceOptions, error) {
 	return dOpt, nil
 }
 
-func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
+func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 	gOpt, err := parseDeviceOptions(c.String(CLIGPUDevices))
 	if err != nil {
 		return nil, err
@@ -598,12 +583,12 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		return nil, fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, dcgmLogLevel)
 	}
 
-	return &dcgmexporter.Config{
+	return &appconfig.Config{
 		CollectorsFile:             c.String(CLIFieldsFile),
 		Address:                    c.String(CLIAddress),
 		CollectInterval:            c.Int(CLICollectInterval),
 		Kubernetes:                 c.Bool(CLIKubernetes),
-		KubernetesGPUIdType:        dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		KubernetesGPUIdType:        appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:                 true,
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
 		UseRemoteHE:                c.IsSet(CLIRemoteHEInfo),

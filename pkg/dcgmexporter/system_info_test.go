@@ -23,6 +23,9 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 var fakeProfileName = "2fake.4gb"
@@ -141,7 +144,7 @@ func TestMonitoredEntities(t *testing.T) {
 
 func TestVerifyDevicePresence(t *testing.T) {
 	sysInfo := SpoofSystemInfo()
-	var dOpt DeviceOptions
+	var dOpt appconfig.DeviceOptions
 	dOpt.Flex = true
 	err := VerifyDevicePresence(&sysInfo, dOpt)
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
@@ -203,7 +206,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "Monitor all devices",
 			switchID: 1,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					Flex: true,
 				},
 			},
@@ -213,7 +216,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "MajorRange empty",
 			switchID: 2,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{},
 				},
 			},
@@ -223,7 +226,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "MajorRange contains -1 to watch all devices",
 			switchID: 3,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{-1},
 				},
 			},
@@ -233,7 +236,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "SwitchID in MajorRange",
 			switchID: 4,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{3, 4, 5},
 				},
 			},
@@ -243,7 +246,7 @@ func TestIsSwitchWatched(t *testing.T) {
 			name:     "SwitchID not in MajorRange",
 			switchID: 5,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{3, 4, 6},
 				},
 			},
@@ -270,7 +273,7 @@ func TestIsLinkWatched(t *testing.T) {
 		{
 			name:      "Monitor all devices",
 			linkIndex: 1,
-			sysInfo:   SystemInfo{sOpt: DeviceOptions{Flex: true}},
+			sysInfo:   SystemInfo{sOpt: appconfig.DeviceOptions{Flex: true}},
 			want:      true,
 		},
 		{
@@ -283,7 +286,7 @@ func TestIsLinkWatched(t *testing.T) {
 			name:      "Watched link with empty MinorRange",
 			linkIndex: 2,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{-1},
 				},
 				Switches: []SwitchInfo{
@@ -302,7 +305,7 @@ func TestIsLinkWatched(t *testing.T) {
 			switchID:  1,
 			linkIndex: 3,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{-1},
 					MinorRange: []int{-1},
 				},
@@ -322,7 +325,7 @@ func TestIsLinkWatched(t *testing.T) {
 			switchID:  1,
 			linkIndex: 4,
 			sysInfo: SystemInfo{
-				sOpt: DeviceOptions{
+				sOpt: appconfig.DeviceOptions{
 					MajorRange: []int{-1},
 					MinorRange: []int{1, 2, 3},
 				},
@@ -358,7 +361,7 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "Monitor all devices",
 			cpuID: 1,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{Flex: true},
+				cOpt: appconfig.DeviceOptions{Flex: true},
 				CPUs: []CPUInfo{
 					{
 						EntityId: 1,
@@ -371,7 +374,7 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "MajorRange Contains -1",
 			cpuID: 2,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{MajorRange: []int{-1}},
+				cOpt: appconfig.DeviceOptions{MajorRange: []int{-1}},
 				CPUs: []CPUInfo{
 					{
 						EntityId: 2,
@@ -384,7 +387,7 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "CPU ID in MajorRange",
 			cpuID: 3,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{MajorRange: []int{1, 2, 3}},
+				cOpt: appconfig.DeviceOptions{MajorRange: []int{1, 2, 3}},
 				CPUs: []CPUInfo{
 					{
 						EntityId: 3,
@@ -397,7 +400,7 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "CPU ID Not in MajorRange",
 			cpuID: 4,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{MajorRange: []int{1, 2, 3}},
+				cOpt: appconfig.DeviceOptions{MajorRange: []int{1, 2, 3}},
 				CPUs: []CPUInfo{
 					{
 						EntityId: 4,
@@ -410,7 +413,7 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "MajorRange Empty",
 			cpuID: 5,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{MajorRange: []int{}},
+				cOpt: appconfig.DeviceOptions{MajorRange: []int{}},
 				CPUs: []CPUInfo{
 					{
 						EntityId: 5,
@@ -423,7 +426,7 @@ func TestIsCPUWatched(t *testing.T) {
 			name:  "CPU not found",
 			cpuID: 6,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{MajorRange: []int{}},
+				cOpt: appconfig.DeviceOptions{MajorRange: []int{}},
 				CPUs: []CPUInfo{
 					{
 						EntityId: 5,
@@ -454,7 +457,7 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 1,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{Flex: true},
+				cOpt: appconfig.DeviceOptions{Flex: true},
 			},
 			want: true,
 		},
@@ -463,7 +466,7 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 2,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{
+				cOpt: appconfig.DeviceOptions{
 					MinorRange: []int{1, 2, 3},
 					MajorRange: []int{-1},
 				},
@@ -476,7 +479,7 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 4,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{
+				cOpt: appconfig.DeviceOptions{
 					MinorRange: []int{1, 2, 3},
 					MajorRange: []int{-1},
 				},
@@ -489,7 +492,7 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 5,
 			cpuID:  1,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{
+				cOpt: appconfig.DeviceOptions{
 					MinorRange: []int{-1},
 					MajorRange: []int{-1},
 				},
@@ -502,7 +505,7 @@ func TestIsCoreWatched(t *testing.T) {
 			coreID: 1,
 			cpuID:  2,
 			sysInfo: SystemInfo{
-				cOpt: DeviceOptions{
+				cOpt: appconfig.DeviceOptions{
 					MinorRange: []int{1, 2, 3},
 					MajorRange: []int{-1},
 				},
@@ -520,6 +523,12 @@ func TestIsCoreWatched(t *testing.T) {
 }
 
 func TestSetMigProfileNames(t *testing.T) {
+	config := &appconfig.Config{
+		UseRemoteHE: false,
+	}
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
+
 	tests := []struct {
 		name    string
 		sysInfo SystemInfo

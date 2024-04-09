@@ -25,8 +25,15 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/bits-and-blooms/bitset"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
+// TODO (roarora): These functional substitutions aren't compatible and causes a panic if the dcgmprovider client is
+//
+//	 used, the problem goes away when test itself uses mocks instead of these functions substitutions.
+//		In the subsequent patch that refactors gpu_collector tests below issue would be resolved.
 var (
 	dcgmGetAllDeviceCount       = dcgm.GetAllDeviceCount
 	dcgmGetDeviceInfo           = dcgm.GetDeviceInfo
@@ -68,9 +75,9 @@ type CPUInfo struct {
 type SystemInfo struct {
 	GPUCount uint
 	GPUs     [dcgm.MAX_NUM_DEVICES]GPUInfo
-	gOpt     DeviceOptions
-	sOpt     DeviceOptions
-	cOpt     DeviceOptions
+	gOpt     appconfig.DeviceOptions
+	sOpt     appconfig.DeviceOptions
+	cOpt     appconfig.DeviceOptions
 	InfoType dcgm.Field_Entity_Group
 	Switches []SwitchInfo
 	CPUs     []CPUInfo
@@ -102,7 +109,7 @@ func SetMigProfileNames(sysInfo *SystemInfo, values []dcgm.FieldValue_v2) error 
 	errStr := "cannot find match for entities:"
 
 	for _, v := range values {
-		if !SetGPUInstanceProfileName(sysInfo, v.EntityId, dcgm.Fv2_String(v)) {
+		if !SetGPUInstanceProfileName(sysInfo, v.EntityId, dcgmprovider.Client().Fv2_String(v)) {
 			errStr = fmt.Sprintf("%s group %d, id %d", errStr, v.EntityGroupId, v.EntityId)
 			errFound = true
 		}
@@ -124,7 +131,7 @@ func PopulateMigProfileNames(sysInfo *SystemInfo, entities []dcgm.GroupEntityPai
 	var fields []dcgm.Short
 	fields = append(fields, dcgm.DCGM_FI_DEV_NAME)
 	flags := dcgm.DCGM_FV_FLAG_LIVE_DATA
-	values, err := dcgm.EntitiesGetLatestValues(entities, fields, flags)
+	values, err := dcgmprovider.Client().EntitiesGetLatestValues(entities, fields, flags)
 
 	if err != nil {
 		return err
@@ -193,7 +200,7 @@ func CPUCoreIdExists(sysInfo *SystemInfo, coreId int) bool {
 	return false
 }
 
-func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
+func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt appconfig.DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -218,7 +225,7 @@ func VerifyCPUDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
 	return nil
 }
 
-func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
+func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt appconfig.DeviceOptions) error {
 	if sOpt.Flex {
 		return nil
 	}
@@ -243,7 +250,7 @@ func VerifySwitchDevicePresence(sysInfo *SystemInfo, sOpt DeviceOptions) error {
 	return nil
 }
 
-func VerifyDevicePresence(sysInfo *SystemInfo, gOpt DeviceOptions) error {
+func VerifyDevicePresence(sysInfo *SystemInfo, gOpt appconfig.DeviceOptions) error {
 	if gOpt.Flex {
 		return nil
 	}
@@ -288,7 +295,7 @@ func getCoreArray(bitmask []uint64) []uint {
 	return cores
 }
 
-func InitializeCPUInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, error) {
+func InitializeCPUInfo(sysInfo SystemInfo, sOpt appconfig.DeviceOptions) (SystemInfo, error) {
 	hierarchy, err := dcgmGetCpuHierarchy()
 	if err != nil {
 		return sysInfo, err
@@ -319,8 +326,8 @@ func InitializeCPUInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, erro
 	return sysInfo, nil
 }
 
-func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo, error) {
-	switches, err := dcgm.GetEntityGroupEntities(dcgm.FE_SWITCH)
+func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt appconfig.DeviceOptions) (SystemInfo, error) {
+	switches, err := dcgmprovider.Client().GetEntityGroupEntities(dcgm.FE_SWITCH)
 	if err != nil {
 		return sysInfo, err
 	}
@@ -329,7 +336,7 @@ func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo,
 		return sysInfo, fmt.Errorf("no switches to monitor")
 	}
 
-	links, err := dcgm.GetNvLinkLinkStatus()
+	links, err := dcgmprovider.Client().GetNvLinkLinkStatus()
 	if err != nil {
 		return sysInfo, err
 	}
@@ -359,7 +366,7 @@ func InitializeNvSwitchInfo(sysInfo SystemInfo, sOpt DeviceOptions) (SystemInfo,
 	return sysInfo, err
 }
 
-func InitializeGPUInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGPUs bool) (SystemInfo, error) {
+func InitializeGPUInfo(sysInfo SystemInfo, gOpt appconfig.DeviceOptions, useFakeGPUs bool) (SystemInfo, error) {
 	gpuCount, err := dcgmGetAllDeviceCount()
 	if err != nil {
 		return sysInfo, err
@@ -428,7 +435,8 @@ func InitializeGPUInfo(sysInfo SystemInfo, gOpt DeviceOptions, useFakeGPUs bool)
 }
 
 func InitializeSystemInfo(
-	gOpt DeviceOptions, sOpt DeviceOptions, cOpt DeviceOptions, useFakeGPUs bool, entityType dcgm.Field_Entity_Group,
+	gOpt appconfig.DeviceOptions, sOpt appconfig.DeviceOptions, cOpt appconfig.DeviceOptions, useFakeGPUs bool,
+	entityType dcgm.Field_Entity_Group,
 ) (SystemInfo, error) {
 	sysInfo := SystemInfo{}
 
@@ -473,7 +481,7 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 
 			// Create per-cpu core groups or after max number of CPU cores have been added to current group
 			if groupCoreCount%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
-				groupID, err = dcgm.CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+				groupID, err = dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
 				if err != nil {
 					return nil, cleanups, err
 				}
@@ -482,14 +490,14 @@ func CreateCoreGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 
 			groupCoreCount++
 
-			err = dcgm.AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
+			err = dcgmprovider.Client().AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
 
 			if err != nil {
 				return groups, cleanups, err
 			}
 
 			cleanups = append(cleanups, func() {
-				err := dcgm.DestroyGroup(groupID)
+				err := dcgmprovider.Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
 						LoggerGroupIDKey: groupID,
@@ -529,14 +537,14 @@ func CreateLinkGroupsFromSystemInfo(sysInfo SystemInfo) ([]dcgm.GroupHandle, []f
 				continue
 			}
 
-			err = dcgm.AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
+			err = dcgmprovider.Client().AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
 
 			if err != nil {
 				return groups, cleanups, err
 			}
 
 			cleanups = append(cleanups, func() {
-				err := dcgm.DestroyGroup(groupID)
+				err := dcgmprovider.Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
 						LoggerGroupIDKey: groupID,
@@ -561,7 +569,7 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 		err := dcgmAddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
 		if err != nil {
 			return groupID, func() {
-				err := dcgm.DestroyGroup(groupID)
+				err := dcgmprovider.Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
 						LoggerGroupIDKey: groupID,
@@ -573,7 +581,7 @@ func CreateGroupFromSystemInfo(sysInfo SystemInfo) (dcgm.GroupHandle, func(), er
 	}
 
 	return groupID, func() {
-		err := dcgm.DestroyGroup(groupID)
+		err := dcgmprovider.Client().DestroyGroup(groupID)
 		if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 			logrus.WithFields(logrus.Fields{
 				LoggerGroupIDKey: groupID,

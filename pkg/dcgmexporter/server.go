@@ -26,10 +26,11 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/sirupsen/logrus"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
 
-func NewMetricsServer(c *Config, metrics chan string, registry *Registry) (*MetricsServer, func(), error) {
+func NewMetricsServer(c *appconfig.Config, metrics chan string, registry *Registry) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
 		server: &http.Server{

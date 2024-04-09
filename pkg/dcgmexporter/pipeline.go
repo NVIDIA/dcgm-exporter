@@ -25,9 +25,12 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
-func NewMetricsPipeline(config *Config,
+func NewMetricsPipeline(
+	config *appconfig.Config,
 	counters []Counter,
 	hostname string,
 	newDCGMCollector DCGMCollectorConstructor,
@@ -117,7 +120,7 @@ func NewMetricsPipeline(config *Config,
 		}, nil
 }
 
-func getTransformations(c *Config) []Transform {
+func getTransformations(c *appconfig.Config) []Transform {
 	transformations := []Transform{}
 	if c.Kubernetes {
 		podMapper, err := NewPodMapper(c)
@@ -132,7 +135,8 @@ func getTransformations(c *Config) []Transform {
 }
 
 // Primarely for testing, caller expected to cleanup the collector
-func NewMetricsPipelineWithGPUCollector(c *Config, collector *DCGMCollector) (*MetricsPipeline, func(), error) {
+func NewMetricsPipelineWithGPUCollector(c *appconfig.Config, collector *DCGMCollector) (*MetricsPipeline, func(),
+	error) {
 	return &MetricsPipeline{
 		config: c,
 

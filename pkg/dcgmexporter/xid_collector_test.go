@@ -28,6 +28,9 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 func TestXIDCollector_Gather_Encode(t *testing.T) {
@@ -36,8 +39,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	runOnlyWithLiveGPUs(t)
 
 	hostname := "local-test"
-	config := &Config{
-		GPUDevices: DeviceOptions{
+	config := &appconfig.Config{
+		GPUDevices: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -46,7 +49,11 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	records := [][]string{
-		{"DCGM_EXP_XID_ERRORS_COUNT", "gauge", "Count of XID Errors within user-specified time window (see xid-count-window-size param)."},
+		{
+			"DCGM_EXP_XID_ERRORS_COUNT",
+			"gauge",
+			"Count of XID Errors within user-specified time window (see xid-count-window-size param).",
+		},
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
@@ -62,7 +69,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -75,12 +82,12 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
 
-	gpuIDs, err := dcgm.CreateFakeEntities(entityList)
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
 	for i, gpuID := range gpuIDs {
-		err = dcgm.InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -89,7 +96,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgm.InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -98,7 +105,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgm.InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -144,7 +151,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	// We inject new error
-	err = dcgm.InjectFieldValue(gpuIDs[0],
+	err = dcgmprovider.Client().InjectFieldValue(gpuIDs[0],
 		dcgm.DCGM_FI_DEV_XID_ERRORS,
 		dcgm.DCGM_FT_INT64,
 		0,
@@ -184,7 +191,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	metricFamily := mf[reflect.ValueOf(mf).MapKeys()[0].Interface().(string)]
 	require.NotNil(t, metricFamily.Name)
 	assert.Equal(t, "DCGM_EXP_XID_ERRORS_COUNT", *metricFamily.Name)
-	assert.Equal(t, "Count of XID Errors within user-specified time window (see xid-count-window-size param).", *metricFamily.Help)
+	assert.Equal(t, "Count of XID Errors within user-specified time window (see xid-count-window-size param).",
+		*metricFamily.Help)
 	assert.Equal(t, io_prometheus_client.MetricType_GAUGE, *metricFamily.Type)
 	require.Len(t, metricFamily.Metric, 6+1)
 	assert.Len(t, metricFamily.Metric[0].Label, 8)
@@ -200,8 +208,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 }
 
 func TestXIDCollector_NewXIDCollector(t *testing.T) {
-	config := &Config{
-		GPUDevices: DeviceOptions{
+	config := &appconfig.Config{
+		GPUDevices: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -247,9 +255,21 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	t.Run("Should Not Return Error When DCGM_EXP_XID_ERRORS_COUNT Present More Than Once", func(t *testing.T) {
 		records := [][]string{
 			{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
-			{"DCGM_EXP_XID_ERRORS_COUNT", "gauge", "Count of XID Errors within user-specified time window (see xid-count-window-size param)."},
-			{"DCGM_EXP_XID_ERRORS_COUNT", "gauge", "Count of XID Errors within user-specified time window (see xid-count-window-size param)."},
-			{"DCGM_EXP_XID_ERRORS_COUNT", "gauge", "Count of XID Errors within user-specified time window (see xid-count-window-size param)."},
+			{
+				"DCGM_EXP_XID_ERRORS_COUNT",
+				"gauge",
+				"Count of XID Errors within user-specified time window (see xid-count-window-size param).",
+			},
+			{
+				"DCGM_EXP_XID_ERRORS_COUNT",
+				"gauge",
+				"Count of XID Errors within user-specified time window (see xid-count-window-size param).",
+			},
+			{
+				"DCGM_EXP_XID_ERRORS_COUNT",
+				"gauge",
+				"Count of XID Errors within user-specified time window (see xid-count-window-size param).",
+			},
 		}
 		cc, err := extractCounters(records, config)
 		require.NoError(t, err)

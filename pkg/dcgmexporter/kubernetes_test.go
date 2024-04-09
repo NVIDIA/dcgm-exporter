@@ -30,6 +30,8 @@ import (
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
@@ -40,9 +42,12 @@ func TestProcessPodMapper(t *testing.T) {
 	tmpDir, cleanup := CreateTmpDir(t)
 	defer cleanup()
 
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+	config := &appconfig.Config{
+		UseRemoteHE: false,
+	}
+
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
 	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
 	defer cleanup()
@@ -62,7 +67,10 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup = StartMockServer(t, server, socketPath)
 	defer cleanup()
 
-	podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID, PodResourcesKubeletSocket: socketPath})
+	podMapper, err := NewPodMapper(&appconfig.Config{
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
 	require.NoError(t, err)
 	var sysInfo SystemInfo
 	err = podMapper.Process(out, sysInfo)
@@ -167,7 +175,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	type TestCase struct {
-		KubernetesGPUIDType KubernetesGPUIDType
+		KubernetesGPUIDType appconfig.KubernetesGPUIDType
 		GPUInstanceID       uint
 		ResourceName        string
 		MetricGPUID         string
@@ -178,20 +186,20 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 	testCases := []TestCase{
 		{
-			KubernetesGPUIDType: GPUUID,
+			KubernetesGPUIDType: appconfig.GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: GPUUID,
+			KubernetesGPUIDType: appconfig.GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 		},
 		{
-			KubernetesGPUIDType: GPUUID,
+			KubernetesGPUIDType: appconfig.GPUUID,
 			ResourceName:        nvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
@@ -199,32 +207,32 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: DeviceName,
+			KubernetesGPUIDType: appconfig.DeviceName,
 			ResourceName:        nvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
-			KubernetesGPUIDType: DeviceName,
+			KubernetesGPUIDType: appconfig.DeviceName,
 			ResourceName:        nvidiaResourceName,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "nvidia0/gi0",
 		},
 		{
-			KubernetesGPUIDType: DeviceName,
+			KubernetesGPUIDType: appconfig.DeviceName,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUDevice:     "0",
 			PODGPUID:            "0/vgpu",
 		},
 		{
-			KubernetesGPUIDType: GPUUID,
+			KubernetesGPUIDType: appconfig.GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5::",
 		},
 		{
-			KubernetesGPUIDType: GPUUID,
+			KubernetesGPUIDType: appconfig.GPUUID,
 			ResourceName:        "nvidia.com/mig-1g.10gb",
 			MetricMigProfile:    "1g.10gb",
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
@@ -247,12 +255,16 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				socketPath := tmpDir + "/kubelet.sock"
 				server := grpc.NewServer()
 
-				cleanup, err := dcgm.Init(dcgm.Embedded)
-				require.NoError(t, err)
-				defer cleanup()
+				config := &appconfig.Config{
+					UseRemoteHE: false,
+				}
+
+				dcgmprovider.Initialize(config)
+				defer dcgmprovider.Client().Cleanup()
 
 				gpus := []string{tc.PODGPUID}
-				podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(tc.ResourceName, gpus))
+				podresourcesapi.RegisterPodResourcesListerServer(server,
+					NewPodResourcesMockServer(tc.ResourceName, gpus))
 
 				cleanup = StartMockServer(t, server, socketPath)
 				defer cleanup()
@@ -269,7 +281,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					nvmlGetMIGDeviceInfoByIDHook = nvmlprovider.GetMIGDeviceInfoByID
 				}()
 
-				podMapper, err := NewPodMapper(&Config{
+				podMapper, err := NewPodMapper(&appconfig.Config{
 					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
 					PodResourcesKubeletSocket: socketPath,
 				})

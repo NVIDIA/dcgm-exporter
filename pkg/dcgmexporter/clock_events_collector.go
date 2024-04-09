@@ -22,6 +22,8 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 // IsDCGMExpClockEventsCountEnabled checks if the DCGM_EXP_CLOCK_EVENTS_COUNT counter exists
@@ -50,7 +52,7 @@ const (
 	DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN clockEventBitmask = 0x0000000000000008
 	// DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST Sync Boost
 	DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST clockEventBitmask = 0x0000000000000010
-	//SW Thermal Slowdown
+	// SW Thermal Slowdown
 	DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL clockEventBitmask = 0x0000000000000020
 	// DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL HW Thermal Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
 	DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL clockEventBitmask = 0x0000000000000040
@@ -82,10 +84,12 @@ func (c *clockEventsCollector) GetMetrics() (MetricsByCounter, error) {
 	return c.expCollector.getMetrics()
 }
 
-func NewClockEventsCollector(counters []Counter,
+func NewClockEventsCollector(
+	counters []Counter,
 	hostname string,
-	config *Config,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (Collector, error) {
+	config *appconfig.Config,
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+) (Collector, error) {
 	if !IsDCGMExpClockEventsCountEnabled(counters) {
 		logrus.Error(dcgmExpClockEventsCount + " collector is disabled")
 		return nil, fmt.Errorf(dcgmExpClockEventsCount + " collector is disabled")

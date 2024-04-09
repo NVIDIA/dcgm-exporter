@@ -22,6 +22,8 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 type xidCollector struct {
@@ -32,10 +34,12 @@ func (c *xidCollector) GetMetrics() (MetricsByCounter, error) {
 	return c.expCollector.getMetrics()
 }
 
-func NewXIDCollector(counters []Counter,
+func NewXIDCollector(
+	counters []Counter,
 	hostname string,
-	config *Config,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (Collector, error) {
+	config *appconfig.Config,
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+) (Collector, error) {
 	if !IsDCGMExpXIDErrorsCountEnabled(counters) {
 		logrus.Error(dcgmExpXIDErrorsCount + " collector is disabled")
 		return nil, fmt.Errorf(dcgmExpXIDErrorsCount + " collector is disabled")

@@ -29,6 +29,8 @@ import (
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
@@ -39,8 +41,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	hostname := "local-test"
-	config := &Config{
-		GPUDevices: DeviceOptions{
+	config := &appconfig.Config{
+		GPUDevices: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -65,7 +67,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -78,7 +80,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
 
-	gpuIDs, err := dcgm.CreateFakeEntities(entityList)
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
@@ -86,7 +88,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	expectations := map[string]clockEventsCountExpectation{}
 
 	for i, gpuID := range gpuIDs {
-		err = dcgm.InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -95,7 +97,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgm.InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -104,7 +106,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgm.InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -132,7 +134,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		gpuIDsAsString[i] = fmt.Sprint(g)
 	}
 
-	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpuIDsAsString))
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		NewPodResourcesMockServer(nvidiaResourceName, gpuIDsAsString))
 	// Tell that the app is running on K8S
 	config.Kubernetes = true
 	config.PodResourcesKubeletSocket = socketPath
@@ -189,8 +192,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 }
 
 func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
-	config := &Config{
-		GPUDevices: DeviceOptions{
+	config := &appconfig.Config{
+		GPUDevices: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -257,8 +260,8 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	runOnlyWithLiveGPUs(t)
 
 	hostname := "local-test"
-	config := &Config{
-		GPUDevices: DeviceOptions{
+	config := &appconfig.Config{
+		GPUDevices: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -283,7 +286,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	}
 
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -294,7 +297,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
 
-	gpuIDs, err := dcgm.CreateFakeEntities(entityList)
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
@@ -303,7 +306,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	require.Len(t, gpuIDs, 1)
 	gpuID := gpuIDs[0]
-	err = dcgm.InjectFieldValue(gpuID,
+	err = dcgmprovider.Client().InjectFieldValue(gpuID,
 		dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		dcgm.DCGM_FT_INT64,
 		0,
@@ -384,8 +387,8 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	runOnlyWithLiveGPUs(t)
 
 	hostname := "local-test"
-	config := &Config{
-		GPUDevices: DeviceOptions{
+	config := &appconfig.Config{
+		GPUDevices: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -403,7 +406,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	require.Len(t, cc.DCGMCounters, 0)
 
 	// Create fake GPU
-	numGPUs, err := dcgm.GetAllDeviceCount()
+	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
 	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
@@ -414,12 +417,12 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
 
-	gpuIDs, err := dcgm.CreateFakeEntities(entityList)
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
 
 	gpuID := gpuIDs[0]
-	err = dcgm.InjectFieldValue(gpuID,
+	err = dcgmprovider.Client().InjectFieldValue(gpuID,
 		dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		dcgm.DCGM_FT_INT64,
 		0,

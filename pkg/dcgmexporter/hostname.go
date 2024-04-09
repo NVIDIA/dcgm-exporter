@@ -18,23 +18,25 @@ package dcgmexporter
 
 import (
 	"net"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 // GetHostname return a hostname where metric was collected.
-func GetHostname(config *Config) (string, error) {
+func GetHostname(config *appconfig.Config) (string, error) {
 	if config.UseRemoteHE {
 		return parseRemoteHostname(config)
 	}
 	return getLocalHostname()
 }
 
-func parseRemoteHostname(config *Config) (string, error) {
-	// Extract the hostname or IP address part from the config.RemoteHEInfo
+func parseRemoteHostname(config *appconfig.Config) (string, error) {
+	// Extract the hostname or IP address part from the appconfig.RemoteHEInfo
 	// This handles inputs like "localhost:5555", "example.com:5555", or "192.168.1.1:5555"
 	host, _, err := net.SplitHostPort(config.RemoteHEInfo)
 	if err != nil {
-		// If there's an error, it might be because there's no port in the config.RemoteHEInfo
-		// In that case, use the config.RemoteHEInfo as is
+		// If there's an error, it might be because there's no port in the appconfig.RemoteHEInfo
+		// In that case, use the appconfig.RemoteHEInfo as is
 		host = config.RemoteHEInfo
 	}
 	return host, nil

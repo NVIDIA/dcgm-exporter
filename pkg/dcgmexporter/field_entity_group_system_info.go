@@ -20,6 +20,8 @@ import (
 	"fmt"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 // FieldEntityGroupTypeToMonitor supported entity group types
@@ -44,14 +46,14 @@ func (f FieldEntityGroupTypeSystemInfoItem) isEmpty() bool {
 type FieldEntityGroupTypeSystemInfo struct {
 	items         map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem
 	counters      []Counter
-	gpuDevices    DeviceOptions
-	switchDevices DeviceOptions
-	cpuDevices    DeviceOptions
+	gpuDevices    appconfig.DeviceOptions
+	switchDevices appconfig.DeviceOptions
+	cpuDevices    appconfig.DeviceOptions
 	useFakeGPUs   bool
 }
 
 // NewEntityGroupTypeSystemInfo creates a new instance of the FieldEntityGroupTypeSystemInfo
-func NewEntityGroupTypeSystemInfo(c []Counter, config *Config) *FieldEntityGroupTypeSystemInfo {
+func NewEntityGroupTypeSystemInfo(c []Counter, config *appconfig.Config) *FieldEntityGroupTypeSystemInfo {
 	return &FieldEntityGroupTypeSystemInfo{
 		items:         make(map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem),
 		counters:      c,
@@ -70,7 +72,7 @@ func (e *FieldEntityGroupTypeSystemInfo) Load(entityType dcgm.Field_Entity_Group
 		return fmt.Errorf("no fields to watch for device type: %d", entityType)
 	}
 
-	sysInfo, err := GetSystemInfo(&Config{
+	sysInfo, err := GetSystemInfo(&appconfig.Config{
 		GPUDevices:    e.gpuDevices,
 		SwitchDevices: e.switchDevices,
 		CPUDevices:    e.cpuDevices,
