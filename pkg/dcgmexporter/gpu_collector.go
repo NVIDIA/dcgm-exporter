@@ -26,6 +26,8 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 )
 
 type DCGMCollectorConstructor func(
@@ -46,7 +48,7 @@ func NewDCGMCollector(
 	collector := &DCGMCollector{
 		Counters:     c,
 		DeviceFields: fieldEntityGroupTypeSystemInfo.DeviceFields,
-		SysInfo:      fieldEntityGroupTypeSystemInfo.SystemInfo,
+		DeviceInfo:   fieldEntityGroupTypeSystemInfo.DeviceInfo,
 		Hostname:     hostname,
 	}
 
@@ -59,7 +61,7 @@ func NewDCGMCollector(
 	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
 	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
-		fieldEntityGroupTypeSystemInfo.SystemInfo,
+		fieldEntityGroupTypeSystemInfo.DeviceInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
 		logrus.Fatal("Failed to watch metrics: ", err)
@@ -70,15 +72,15 @@ func NewDCGMCollector(
 	return collector, func() { collector.Cleanup() }, nil
 }
 
-func GetSystemInfo(config *appconfig.Config, entityType dcgm.Field_Entity_Group) (*SystemInfo, error) {
-	sysInfo, err := InitializeSystemInfo(config.GPUDevices,
+func GetDeviceInfo(config *appconfig.Config, entityType dcgm.Field_Entity_Group) (deviceinfo.Provider, error) {
+	deviceInfo, err := deviceinfo.Initialize(config.GPUDevices,
 		config.SwitchDevices,
 		config.CPUDevices,
 		config.UseFakeGPUs, entityType)
 	if err != nil {
 		return nil, err
 	}
-	return &sysInfo, err
+	return deviceInfo, err
 }
 
 func (c *DCGMCollector) Cleanup() {
@@ -88,7 +90,7 @@ func (c *DCGMCollector) Cleanup() {
 }
 
 func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
-	monitoringInfo := GetMonitoredEntities(c.SysInfo)
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.DeviceInfo)
 
 	metrics := make(MetricsByCounter)
 
@@ -112,9 +114,9 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 
 		// InstanceInfo will be nil for GPUs
-		if c.SysInfo.InfoType == dcgm.FE_SWITCH || c.SysInfo.InfoType == dcgm.FE_LINK {
+		if c.DeviceInfo.InfoType() == dcgm.FE_SWITCH || c.DeviceInfo.InfoType() == dcgm.FE_LINK {
 			ToSwitchMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
-		} else if c.SysInfo.InfoType == dcgm.FE_CPU || c.SysInfo.InfoType == dcgm.FE_CPU_CORE {
+		} else if c.DeviceInfo.InfoType() == dcgm.FE_CPU || c.DeviceInfo.InfoType() == dcgm.FE_CPU_CORE {
 			ToCPUMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
 		} else {
 			ToMetric(metrics,
@@ -155,7 +157,7 @@ func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 
 func ToSwitchMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
 
@@ -200,7 +202,7 @@ func ToSwitchMetric(
 
 func ToCPUMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	var labels = map[string]string{}
 
@@ -248,7 +250,7 @@ func ToMetric(
 	values []dcgm.FieldValue_v1,
 	c []Counter,
 	d dcgm.Device,
-	instanceInfo *GPUInstanceInfo,
+	instanceInfo *deviceinfo.GPUInstanceInfo,
 	useOld bool,
 	hostname string,
 	replaceBlanksInModelName bool,

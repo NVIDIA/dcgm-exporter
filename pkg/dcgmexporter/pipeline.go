@@ -27,6 +27,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
 
 func NewMetricsPipeline(
@@ -197,7 +198,7 @@ func (m *MetricsPipeline) run() (string, error) {
 		}
 
 		for _, transform := range m.transformations {
-			err := transform.Process(metrics, m.gpuCollector.SysInfo)
+			err := transform.Process(metrics, m.gpuCollector.DeviceInfo)
 			if err != nil {
 				return "", fmt.Errorf("failed to transform metrics for transform '%s'; err: %w", transform.Name(), err)
 			}

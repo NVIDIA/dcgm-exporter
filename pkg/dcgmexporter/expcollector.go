@@ -30,6 +30,8 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 )
 
 var expMetricsFormat = `
@@ -70,7 +72,7 @@ func encodeExpMetrics(w io.Writer, metrics MetricsByCounter) error {
 var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
-	sysInfo             SystemInfo                     // Hardware system info
+	deviceInfo          deviceinfo.Provider            // Hardware device info
 	counter             Counter                        // Counter that collector
 	hostname            string                         // Hostname
 	config              *appconfig.Config              // Configuration settings
@@ -126,7 +128,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	labels := map[string]string{}
 	labels[windowSizeInMSLabel] = fmt.Sprint(c.windowSize)
 
-	monitoringInfo := GetMonitoredEntities(c.sysInfo)
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceInfo)
 	metrics := make(MetricsByCounter)
 	useOld := c.config.UseOldNamespace
 	uuid := "UUID"
@@ -176,7 +178,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	}
 
 	for _, transform := range c.transformations {
-		err := transform.Process(metrics, c.sysInfo)
+		err := transform.Process(metrics, c.deviceInfo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to transform metrics for transform '%s'; err: %v", transform.Name(), err)
 		}
@@ -185,7 +187,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func (c *expCollector) getLabelsFromCounters(mi MonitoringInfo, labels map[string]string) error {
+func (c *expCollector) getLabelsFromCounters(mi devicemonitoring.Info, labels map[string]string) error {
 	latestValues, err := dcgmprovider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
 		c.labelDeviceFields)
 	if err != nil {
@@ -250,12 +252,12 @@ func newExpCollector(
 		transformations: transformations,
 	}
 
-	collector.sysInfo = fieldEntityGroupTypeSystemInfo.SystemInfo
+	collector.deviceInfo = fieldEntityGroupTypeSystemInfo.DeviceInfo
 
 	var err error
 
 	collector.cleanups, err = SetupDcgmFieldsWatch(collector.counterDeviceFields,
-		collector.sysInfo,
+		collector.deviceInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
 		logrus.Fatal("Failed to watch metrics: ", err)

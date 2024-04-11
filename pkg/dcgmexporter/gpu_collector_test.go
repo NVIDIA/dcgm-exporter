@@ -27,6 +27,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
 var sampleCounters = []Counter{
@@ -92,11 +93,11 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		CollectInterval: 1,
 	}
 
-	dcgmGetAllDeviceCount = func() (uint, error) {
+	deviceinfo.DcgmGetAllDeviceCount = func() (uint, error) {
 		return 1, nil
 	}
 
-	dcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
+	deviceinfo.DcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
 		dev := dcgm.Device{
 			GPU:  0,
 			UUID: fmt.Sprintf("fake%d", gpuId),
@@ -105,20 +106,20 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return dev, nil
 	}
 
-	dcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
+	deviceinfo.DcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
 		hierarchy := dcgm.MigHierarchy_v2{
 			Count: 0,
 		}
 		return hierarchy, nil
 	}
 
-	dcgmAddEntityToGroup = func(
+	deviceinfo.DcgmAddEntityToGroup = func(
 		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
 	) (err error) {
 		return nil
 	}
 
-	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
+	deviceinfo.DcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
 		CPU := dcgm.CpuHierarchyCpu_v1{
 			CpuId:      0,
 			OwnedCores: []uint64{0},
@@ -133,10 +134,10 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}
 
 	defer func() {
-		dcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
-		dcgmGetDeviceInfo = dcgm.GetDeviceInfo
-		dcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-		dcgmAddEntityToGroup = dcgm.AddEntityToGroup
+		deviceinfo.DcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
+		deviceinfo.DcgmGetDeviceInfo = dcgm.GetDeviceInfo
+		deviceinfo.DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
+		deviceinfo.DcgmAddEntityToGroup = dcgm.AddEntityToGroup
 	}()
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
@@ -193,11 +194,11 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		UseFakeGPUs:     false,
 	}
 
-	dcgmGetAllDeviceCount = func() (uint, error) {
+	deviceinfo.DcgmGetAllDeviceCount = func() (uint, error) {
 		return 0, nil
 	}
 
-	dcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
+	deviceinfo.DcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
 		dev := dcgm.Device{
 			GPU:           0,
 			DCGMSupported: "No",
@@ -207,20 +208,20 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return dev, nil
 	}
 
-	dcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
+	deviceinfo.DcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
 		hierarchy := dcgm.MigHierarchy_v2{
 			Count: 0,
 		}
 		return hierarchy, nil
 	}
 
-	dcgmAddEntityToGroup = func(
+	deviceinfo.DcgmAddEntityToGroup = func(
 		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
 	) (err error) {
 		return nil
 	}
 
-	dcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
+	deviceinfo.DcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
 		CPU := dcgm.CpuHierarchyCpu_v1{
 			CpuId:      0,
 			OwnedCores: []uint64{0, 18446744073709551360, 65535},
@@ -235,10 +236,10 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 	}
 
 	defer func() {
-		dcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
-		dcgmGetDeviceInfo = dcgm.GetDeviceInfo
-		dcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-		dcgmAddEntityToGroup = dcgm.AddEntityToGroup
+		deviceinfo.DcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
+		deviceinfo.DcgmGetDeviceInfo = dcgm.GetDeviceInfo
+		deviceinfo.DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
+		deviceinfo.DcgmAddEntityToGroup = dcgm.AddEntityToGroup
 	}()
 
 	/* Test that only cpu metrics are collected for cpu entities. */
@@ -303,7 +304,7 @@ func TestToMetric(t *testing.T) {
 		},
 	}
 
-	var instanceInfo *GPUInstanceInfo = nil
+	var instanceInfo *deviceinfo.GPUInstanceInfo = nil
 
 	type testCase struct {
 		replaceBlanksInModelName bool

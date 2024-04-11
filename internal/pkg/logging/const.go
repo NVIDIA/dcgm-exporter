@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ *      http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,33 +14,11 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package logging
 
+// Constants for logging fields
 const (
-	DCGM_ST_NOT_CONFIGURED = "Setting not configured"
+	LoggerGroupIDKey = "groupID"
+	LoggerDumpKey    = "dump"
+	LoggerStackTrace = "stacktrace"
 )
-
-const (
-	windowSizeInMSLabel = "window_size_in_ms"
-)
-
-// DCGMDbgLvl is a DCGM library debug level.
-const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
-
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
-}

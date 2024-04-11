@@ -27,11 +27,14 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
+	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
@@ -72,8 +75,8 @@ func TestProcessPodMapper(t *testing.T) {
 		PodResourcesKubeletSocket: socketPath,
 	})
 	require.NoError(t, err)
-	var sysInfo SystemInfo
-	err = podMapper.Process(out, sysInfo)
+	var deviceInfo deviceinfo.Provider
+	err = podMapper.Process(out, deviceInfo)
 	require.NoError(t, err)
 
 	require.Len(t, out, len(original))
@@ -309,19 +312,20 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					Attributes: map[string]string{},
 				})
 
-				sysInfo := SystemInfo{
-					GPUCount: 1,
-					GPUs: [dcgm.MAX_NUM_DEVICES]GPUInfo{
-						{
-							DeviceInfo: dcgm.Device{
-								UUID: "00000000-0000-0000-0000-000000000000",
-								GPU:  0,
-							},
-							MigEnabled: true,
-						},
+				mockGPU := deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{
+						UUID: "00000000-0000-0000-0000-000000000000",
+						GPU:  0,
 					},
+					MigEnabled: true,
 				}
-				err = podMapper.Process(metrics, sysInfo)
+
+				ctrl := gomock.NewController(t)
+				mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+				mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+				mockSystemInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
+
+				err = podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
 				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)] {

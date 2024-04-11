@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
 var (
@@ -49,7 +50,7 @@ var (
 )
 
 type Transform interface {
-	Process(metrics MetricsByCounter, sysInfo SystemInfo) error
+	Process(metrics MetricsByCounter, deviceInfo deviceinfo.Provider) error
 	Name() string
 }
 
@@ -76,7 +77,7 @@ type DCGMCollector struct {
 	DeviceFields             []dcgm.Short
 	Cleanups                 []func()
 	UseOldNamespace          bool
-	SysInfo                  SystemInfo
+	DeviceInfo               deviceinfo.Provider
 	Hostname                 string
 	ReplaceBlanksInModelName bool
 }

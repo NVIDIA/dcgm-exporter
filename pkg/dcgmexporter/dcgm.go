@@ -19,11 +19,15 @@ package dcgmexporter
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
+	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
 
 func NewGroup() (dcgm.GroupHandle, func(), error) {
@@ -83,21 +87,25 @@ func WatchFieldGroup(
 	return nil
 }
 
-func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collectIntervalUsec int64) ([]func(), error) {
+func SetupDcgmFieldsWatch(
+	deviceFields []dcgm.Short, deviceInfo deviceinfo.Provider,
+	collectIntervalUsec int64,
+) ([]func(),
+	error) {
 	var err error
 	var cleanups []func()
 	var cleanup func()
 	var groups []dcgm.GroupHandle
 	var fieldGroup dcgm.FieldHandle
 
-	if sysInfo.InfoType == dcgm.FE_LINK {
+	if deviceInfo.InfoType() == dcgm.FE_LINK {
 		/* one group per-nvswitch is created for nvlinks */
-		groups, cleanups, err = CreateLinkGroupsFromSystemInfo(sysInfo)
-	} else if sysInfo.InfoType == dcgm.FE_CPU_CORE {
+		groups, cleanups, err = CreateLinkGroupsFromDeviceInfo(deviceInfo)
+	} else if deviceInfo.InfoType() == dcgm.FE_CPU_CORE {
 		/* one group per-CPU is created for cpu cores */
-		groups, cleanups, err = CreateCoreGroupsFromSystemInfo(sysInfo)
+		groups, cleanups, err = CreateCoreGroupsFromDeviceInfo(deviceInfo)
 	} else {
-		group, cleanup, err := CreateGroupFromSystemInfo(sysInfo)
+		group, cleanup, err := CreateGroupFromDeviceInfo(deviceInfo)
 		if err == nil {
 			groups = append(groups, group)
 			cleanups = append(cleanups, cleanup)
@@ -130,4 +138,133 @@ fail:
 	}
 
 	return nil, err
+}
+
+func CreateGroupFromDeviceInfo(deviceInfo deviceinfo.Provider) (dcgm.GroupHandle, func(), error) {
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(deviceInfo)
+	groupID, err := deviceinfo.DcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+	if err != nil {
+		return dcgm.GroupHandle{}, func() {}, err
+	}
+
+	for _, mi := range monitoringInfo {
+		err := deviceinfo.DcgmAddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
+		if err != nil {
+			return groupID, func() {
+				err := dcgmprovider.Client().DestroyGroup(groupID)
+				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
+					logrus.WithFields(logrus.Fields{
+						LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:  err,
+					}).Warn("can not destroy group")
+				}
+			}, err
+		}
+	}
+
+	return groupID, func() {
+		err := dcgmprovider.Client().DestroyGroup(groupID)
+		if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
+			logrus.WithFields(logrus.Fields{
+				LoggerGroupIDKey: groupID,
+				logrus.ErrorKey:  err,
+			}).Warn("can not destroy group")
+		}
+	}, nil
+}
+
+func CreateCoreGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, []func(), error) {
+	var groups []dcgm.GroupHandle
+	var cleanups []func()
+	var groupID dcgm.GroupHandle
+	var err error
+
+	for _, cpu := range deviceInfo.CPUs() {
+		if !deviceInfo.IsCPUWatched(cpu.EntityId) {
+			continue
+		}
+
+		var groupCoreCount int
+		for _, core := range cpu.Cores {
+			if !deviceInfo.IsCoreWatched(core, cpu.EntityId) {
+				continue
+			}
+
+			// Create per-cpu core groups or after max number of CPU cores have been added to current group
+			if groupCoreCount%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
+				groupID, err = dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+				if err != nil {
+					return nil, cleanups, err
+				}
+				groups = append(groups, groupID)
+			}
+
+			groupCoreCount++
+
+			err = dcgmprovider.Client().AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
+
+			if err != nil {
+				return groups, cleanups, err
+			}
+
+			cleanups = append(cleanups, func() {
+				err := dcgmprovider.Client().DestroyGroup(groupID)
+				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
+					logrus.WithFields(logrus.Fields{
+						LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:  err,
+					}).Warn("can not destroy group")
+				}
+			})
+		}
+	}
+
+	return groups, cleanups, nil
+}
+
+func CreateLinkGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, []func(), error) {
+	var groups []dcgm.GroupHandle
+	var cleanups []func()
+
+	/* Create per-switch link groups */
+	for _, sw := range deviceInfo.Switches() {
+		if !deviceInfo.IsSwitchWatched(sw.EntityId) {
+			continue
+		}
+
+		groupID, err := deviceinfo.DcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+		if err != nil {
+			return nil, cleanups, err
+		}
+
+		groups = append(groups, groupID)
+
+		for _, link := range sw.NvLinks {
+			if link.State != dcgm.LS_UP {
+				continue
+			}
+
+			if !deviceInfo.IsLinkWatched(link.Index, sw.EntityId) {
+				continue
+			}
+
+			err = dcgmprovider.Client().AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
+
+			if err != nil {
+				return groups, cleanups, err
+			}
+
+			cleanups = append(cleanups, func() {
+				err := dcgmprovider.Client().DestroyGroup(groupID)
+				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
+					logrus.WithFields(logrus.Fields{
+						LoggerGroupIDKey: groupID,
+						logrus.ErrorKey:  err,
+					}).Warn("can not destroy group")
+				}
+			})
+		}
+	}
+
+	return groups, cleanups, nil
 }

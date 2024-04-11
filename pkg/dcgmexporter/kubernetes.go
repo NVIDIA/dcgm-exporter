@@ -30,6 +30,7 @@ import (
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
@@ -53,7 +54,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error {
+func (p *PodMapper) Process(metrics MetricsByCounter, deviceInfo deviceinfo.Provider) error {
 	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
@@ -73,7 +74,7 @@ func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error 
 		return err
 	}
 
-	deviceToPod := p.toDeviceToPod(pods, sysInfo)
+	deviceToPod := p.toDeviceToPod(pods, deviceInfo)
 
 	logrus.Debugf("Device to pod mapping: %+v", deviceToPod)
 
@@ -140,7 +141,7 @@ func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodRes
 }
 
 func (p *PodMapper) toDeviceToPod(
-	devicePods *podresourcesapi.ListPodResourcesResponse, sysInfo SystemInfo,
+	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
 
@@ -166,7 +167,7 @@ func (p *PodMapper) toDeviceToPod(
 					if strings.HasPrefix(deviceID, MIG_UUID_PREFIX) {
 						migDevice, err := nvmlGetMIGDeviceInfoByIDHook(deviceID)
 						if err == nil {
-							giIdentifier := GetGPUInstanceIdentifier(sysInfo, migDevice.ParentUUID,
+							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
 								uint(migDevice.GPUInstanceID))
 							deviceToPodMap[giIdentifier] = podInfo
 						}

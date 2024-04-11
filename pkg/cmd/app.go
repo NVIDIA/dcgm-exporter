@@ -22,6 +22,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
@@ -268,7 +269,7 @@ func action(c *cli.Context) (err error) {
 		// during initialization and return an error.
 		defer func() {
 			if r := recover(); r != nil {
-				logrus.WithField(dcgmexporter.LoggerStackTrace, string(debug.Stack())).Error("Encountered a failure.")
+				logrus.WithField(LoggerStackTrace, string(debug.Stack())).Error("Encountered a failure.")
 				err = fmt.Errorf("encountered a failure; err: %v", r)
 			}
 		}()
@@ -496,7 +497,7 @@ func enableDebugLogging(config *appconfig.Config) {
 
 	logrus.Debugf("Command line: %s", strings.Join(os.Args, " "))
 
-	logrus.WithField(dcgmexporter.LoggerDumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
+	logrus.WithField(LoggerDumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
 }
 
 func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {

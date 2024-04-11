@@ -14,33 +14,17 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package devicemonitoring
 
-const (
-	DCGM_ST_NOT_CONFIGURED = "Setting not configured"
+import (
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
-const (
-	windowSizeInMSLabel = "window_size_in_ms"
-)
-
-// DCGMDbgLvl is a DCGM library debug level.
-const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
-
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
+type Info struct {
+	Entity       dcgm.GroupEntityPair
+	DeviceInfo   dcgm.Device
+	InstanceInfo *deviceinfo.GPUInstanceInfo
+	ParentId     uint
 }
