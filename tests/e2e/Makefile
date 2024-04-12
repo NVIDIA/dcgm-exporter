@@ -18,6 +18,7 @@ CHART ?= "./../../deployment/"
 IMAGE_REPOSITORY ?= "nvcr.io/nvidia/k8s/dcgm-exporter"
 IMAGE_TAG ?= "3.3.5-3.4.1-ubuntu22.04"
 KUBECONFIG ?= "~/.kube/config"
+RUNTIME_CLASS ?= ""
 
 define TEST_CMD
 	@if [ -z ${KUBECONFIG} ]; then \
@@ -32,7 +33,8 @@ define TEST_CMD
 		-chart="$(CHART)" \
 		-namespace=$(NAMESPACE) \
 		-image-repository=$(IMAGE_REPOSITORY) \
-		-image-tag=$(IMAGE_TAG)
+		-image-tag=$(IMAGE_TAG) \
+		-runtime-class=$(RUNTIME_CLASS)
 endef
 
 .PHONY: e2e-test

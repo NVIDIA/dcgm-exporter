@@ -87,7 +87,9 @@ func (c *KubeClient) DeleteNamespace(
 }
 
 // GetPodsByLabel returns a list of pods that matches with the label selector
-func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, labelMap map[string]string) ([]corev1.Pod, error) {
+func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, labelMap map[string]string) ([]corev1.Pod,
+	error,
+) {
 	podList, err := c.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labelMap).String(),
 	})
@@ -98,7 +100,8 @@ func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, label
 }
 
 // CheckPodStatus check pod status
-func (c *KubeClient) CheckPodStatus(ctx context.Context,
+func (c *KubeClient) CheckPodStatus(
+	ctx context.Context,
 	namespace, podName string,
 	condition func(namespace, podName string, status corev1.PodStatus) (bool, error),
 ) (bool, error) {
@@ -121,14 +124,23 @@ func (c *KubeClient) CheckPodStatus(ctx context.Context,
 }
 
 // CreatePod creates a new pod in the defined namespace
-func (c *KubeClient) CreatePod(ctx context.Context,
+func (c *KubeClient) CreatePod(
+	ctx context.Context,
 	namespace string,
 	labels map[string]string,
 	name string,
 	containerName string,
 	image string,
+	runtimeClassName string,
 ) (*corev1.Pod, error) {
+	// RuntimeClassName does not accept a reference to empty string, however nil is acceptable.
+	var runtimeClassNameRef *string
+	if runtimeClassName != "" {
+		runtimeClassNameRef = &runtimeClassName
+	}
+
 	quantity, _ := resource.ParseQuantity("1")
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -136,7 +148,8 @@ func (c *KubeClient) CreatePod(ctx context.Context,
 			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
+			RuntimeClassName: runtimeClassNameRef,
+			RestartPolicy:    corev1.RestartPolicyNever,
 			Containers: []corev1.Container{
 				{
 					Name:  containerName,
@@ -150,11 +163,13 @@ func (c *KubeClient) CreatePod(ctx context.Context,
 			},
 		},
 	}
+
 	return c.client.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 }
 
 // DeletePod deletes a pod in the defined namespace
-func (c *KubeClient) DeletePod(ctx context.Context,
+func (c *KubeClient) DeletePod(
+	ctx context.Context,
 	namespace string,
 	name string,
 ) error {
@@ -162,7 +177,8 @@ func (c *KubeClient) DeletePod(ctx context.Context,
 }
 
 // DoHTTPRequest makes http request to path on the pod
-func (c *KubeClient) DoHTTPRequest(ctx context.Context,
+func (c *KubeClient) DoHTTPRequest(
+	ctx context.Context,
 	namespace string,
 	name string,
 	port uint,
@@ -189,7 +205,8 @@ func (c *KubeClient) DoHTTPRequest(ctx context.Context,
 }
 
 // PortForward turn on port forwarding for the pod
-func (c *KubeClient) PortForward(ctx context.Context, namespace string,
+func (c *KubeClient) PortForward(
+	ctx context.Context, namespace string,
 	podName string,
 	targetPort int,
 ) (int, error) {
@@ -215,7 +232,8 @@ func (c *KubeClient) PortForward(ctx context.Context, namespace string,
 	localPort := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
-	fw, err := portforward.New(dialer, []string{fmt.Sprintf("%d:%d", localPort, targetPort)}, ctx.Done(), make(chan struct{}),
+	fw, err := portforward.New(dialer, []string{fmt.Sprintf("%d:%d", localPort, targetPort)}, ctx.Done(),
+		make(chan struct{}),
 		c.OutWriter,
 		c.ErrWriter)
 	if err != nil {

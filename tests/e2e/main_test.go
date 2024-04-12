@@ -68,6 +68,11 @@ func TestMain(m *testing.M) {
 		false,
 		`Skip clean up after tests execution`)
 
+	flag.StringVar(&testContext.runtimeClass,
+		"runtime-class",
+		"",
+		"Runtime Class to use for the DCGM-exporter deployment and workload pods")
+
 	flag.Parse()
 
 	os.Exit(m.Run())

@@ -23,13 +23,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 )
 
 func shouldCreateK8SConfig() *restclient.Config {
@@ -108,14 +109,17 @@ func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient
 	if kubeClient != nil {
 		err := kubeClient.DeleteNamespace(ctx, testContext.namespace)
 		if err != nil {
-			Fail(fmt.Sprintf("Namespace deletion: Failed to delete namespace %q with error: %v", testContext.namespace, err))
+			Fail(fmt.Sprintf("Namespace deletion: Failed to delete namespace %q with error: %v", testContext.namespace,
+				err))
 		} else {
 			By(fmt.Sprintf("Namespace deletion: %q namespace completed.\n", testContext.namespace))
 		}
 	}
 }
 
-func shouldCheckIfPodCreated(ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string) *corev1.Pod {
+func shouldCheckIfPodCreated(
+	ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string,
+) *corev1.Pod {
 	By("Pod creation verification: started")
 
 	var dcgmExpPod *corev1.Pod
@@ -152,8 +156,13 @@ func getDefaultHelmValues() []string {
 	if testContext.imageRepository != "" {
 		values = append(values, fmt.Sprintf("image.repository=%s", testContext.imageRepository))
 	}
+
 	if testContext.imageTag != "" {
 		values = append(values, fmt.Sprintf("image.tag=%s", testContext.imageTag))
+	}
+
+	if testContext.runtimeClass != "" {
+		values = append(values, fmt.Sprintf("runtimeClassName=%s", testContext.runtimeClass))
 	}
 
 	return values

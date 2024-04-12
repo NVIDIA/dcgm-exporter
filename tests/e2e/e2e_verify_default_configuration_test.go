@@ -24,16 +24,18 @@ import (
 	"slices"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/expfmt"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 )
 
 // VerifyDefaultHelmConfiguration tests the helm chart with default configuration
-var VerifyDefaultHelmConfiguration = func(kubeClient *framework.KubeClient,
+var VerifyDefaultHelmConfiguration = func(
+	kubeClient *framework.KubeClient,
 	helmClient *framework.HelmClient,
 	testRunLabels map[string]string,
 ) bool {
@@ -63,7 +65,8 @@ var VerifyDefaultHelmConfiguration = func(kubeClient *framework.KubeClient,
 				Wait:          true,
 				DryRun:        false,
 			}, framework.WithValues(values...))
-			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v", testContext.chart, err)
+			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v",
+				testContext.chart, err)
 
 			By(fmt.Sprintf("Helm chart installation: %q completed.",
 				testContext.chart))
@@ -90,6 +93,7 @@ var VerifyDefaultHelmConfiguration = func(kubeClient *framework.KubeClient,
 				workloadPodName,
 				workloadContainerName,
 				workloadImage,
+				testContext.runtimeClass,
 			)
 
 			Expect(err).ShouldNot(HaveOccurred(),
@@ -157,7 +161,8 @@ var VerifyDefaultHelmConfiguration = func(kubeClient *framework.KubeClient,
 						if slices.Contains(expectedLabels, labelName) {
 							actualLabels = append(actualLabels, labelName)
 							Expect(label.Value).ShouldNot(BeNil())
-							Expect(ptr.Deref(label.Value, "")).ShouldNot(BeEmpty(), "The %s metric contains a label named %q label with empty value.",
+							Expect(ptr.Deref(label.Value, "")).ShouldNot(BeEmpty(),
+								"The %s metric contains a label named %q label with empty value.",
 								ptr.Deref(metricFamily.Name, ""),
 								labelName,
 							)

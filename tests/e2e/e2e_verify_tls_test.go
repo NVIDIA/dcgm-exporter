@@ -25,14 +25,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 )
 
 // VerifyHelmConfigurationWhenTLSEnabled tests configuration when TLS is enabled
-var VerifyHelmConfigurationWhenTLSEnabled = func(kubeClient *framework.KubeClient,
+var VerifyHelmConfigurationWhenTLSEnabled = func(
+	kubeClient *framework.KubeClient,
 	helmClient *framework.HelmClient,
 	testRunLabels map[string]string,
 ) bool {
@@ -63,7 +65,8 @@ var VerifyHelmConfigurationWhenTLSEnabled = func(kubeClient *framework.KubeClien
 				Wait:          true,
 				DryRun:        false,
 			}, framework.WithValues(values...))
-			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v", testContext.chart, err)
+			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v",
+				testContext.chart, err)
 
 			By(fmt.Sprintf("Helm chart installation: %q completed.",
 				testContext.chart))

@@ -21,8 +21,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 )
 
 const (
@@ -53,6 +54,7 @@ type testContextType struct {
 	imageTag        string
 	arguments       string
 	namespace       string
+	runtimeClass    string
 	noCleanup       bool
 }
 
