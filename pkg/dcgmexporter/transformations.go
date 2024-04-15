@@ -14,45 +14,19 @@
  * limitations under the License.
  */
 
-package stdout
-
-/*
-#include <stdio.h>
-void printBoom() {
-	printf("Boom\n");
-	fflush(stdout);
-}
-*/
-import "C"
+package dcgmexporter
 
 import (
-	"bytes"
-	"context"
-	"strings"
-	"testing"
-	"time"
-
-	"github.com/sirupsen/logrus"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
-func testCaptureWithCGO(t *testing.T) {
-	t.Helper()
+// GetTransformations return list of transformation applicable for metrics
+func GetTransformations(c *appconfig.Config) []Transform {
+	var transformations []Transform
+	if c.Kubernetes {
+		podMapper := NewPodMapper(c)
+		transformations = append(transformations, podMapper)
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	buf := &bytes.Buffer{}
-	logrus.SetOutput(buf)
-
-	err := Capture(ctx, func() error {
-		C.printBoom()
-		return nil
-	})
-	assert.NoError(t, err)
-
-	time.Sleep(10 * time.Millisecond)
-	require.Equal(t, "Boom", strings.TrimSpace(buf.String()))
-
-	cancel()
+	return transformations
 }

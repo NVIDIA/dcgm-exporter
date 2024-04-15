@@ -91,7 +91,8 @@ func SetupDcgmFieldsWatch(
 	deviceFields []dcgm.Short, deviceInfo deviceinfo.Provider,
 	collectIntervalUsec int64,
 ) ([]func(),
-	error) {
+	error,
+) {
 	var err error
 	var cleanups []func()
 	var cleanup func()
@@ -105,7 +106,8 @@ func SetupDcgmFieldsWatch(
 		/* one group per-CPU is created for cpu cores */
 		groups, cleanups, err = CreateCoreGroupsFromDeviceInfo(deviceInfo)
 	} else {
-		group, cleanup, err := CreateGroupFromDeviceInfo(deviceInfo)
+		var group dcgm.GroupHandle
+		group, cleanup, err = CreateGroupFromDeviceInfo(deviceInfo)
 		if err == nil {
 			groups = append(groups, group)
 			cleanups = append(cleanups, cleanup)
@@ -154,8 +156,8 @@ func CreateGroupFromDeviceInfo(deviceInfo deviceinfo.Provider) (dcgm.GroupHandle
 				err := dcgmprovider.Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:  err,
+						GroupIDKey:      groupID,
+						logrus.ErrorKey: err,
 					}).Warn("can not destroy group")
 				}
 			}, err
@@ -166,8 +168,8 @@ func CreateGroupFromDeviceInfo(deviceInfo deviceinfo.Provider) (dcgm.GroupHandle
 		err := dcgmprovider.Client().DestroyGroup(groupID)
 		if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 			logrus.WithFields(logrus.Fields{
-				LoggerGroupIDKey: groupID,
-				logrus.ErrorKey:  err,
+				GroupIDKey:      groupID,
+				logrus.ErrorKey: err,
 			}).Warn("can not destroy group")
 		}
 	}, nil
@@ -202,7 +204,6 @@ func CreateCoreGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.Grou
 			groupCoreCount++
 
 			err = dcgmprovider.Client().AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
-
 			if err != nil {
 				return groups, cleanups, err
 			}
@@ -211,8 +212,8 @@ func CreateCoreGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.Grou
 				err := dcgmprovider.Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:  err,
+						GroupIDKey:      groupID,
+						logrus.ErrorKey: err,
 					}).Warn("can not destroy group")
 				}
 			})
@@ -249,7 +250,6 @@ func CreateLinkGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.Grou
 			}
 
 			err = dcgmprovider.Client().AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
-
 			if err != nil {
 				return groups, cleanups, err
 			}
@@ -258,8 +258,8 @@ func CreateLinkGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.Grou
 				err := dcgmprovider.Client().DestroyGroup(groupID)
 				if err != nil && !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 					logrus.WithFields(logrus.Fields{
-						LoggerGroupIDKey: groupID,
-						logrus.ErrorKey:  err,
+						GroupIDKey:      groupID,
+						logrus.ErrorKey: err,
 					}).Warn("can not destroy group")
 				}
 			})

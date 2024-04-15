@@ -131,7 +131,8 @@ func (d dcgmProvider) EntitiesGetLatestValues(
 func (d dcgmProvider) EntityGetLatestValues(
 	entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short,
 ) ([]dcgm.FieldValue_v1,
-	error) {
+	error,
+) {
 	return dcgm.EntityGetLatestValues(entityGroup, entityId, fields)
 }
 
@@ -200,7 +201,8 @@ func (d dcgmProvider) InjectFieldValue(
 }
 
 func (d dcgmProvider) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
-	error) {
+	error,
+) {
 	return dcgm.LinkGetLatestValues(index, parentId, fields)
 }
 

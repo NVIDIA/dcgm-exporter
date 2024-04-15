@@ -308,7 +308,6 @@ func (s *Info) PopulateMigProfileNames(entities []dcgm.GroupEntityPair) error {
 	fields = append(fields, dcgm.DCGM_FI_DEV_NAME)
 	flags := dcgm.DCGM_FV_FLAG_LIVE_DATA
 	values, err := dcgmprovider.Client().EntitiesGetLatestValues(entities, fields, flags)
-
 	if err != nil {
 		return err
 	}
@@ -452,7 +451,6 @@ func (s *Info) VerifySwitchDevicePresence(sOpt appconfig.DeviceOptions) error {
 }
 
 func (s *Info) IsCPUWatched(cpuID uint) bool {
-
 	if !slices.ContainsFunc(s.cpus, func(cpu CPUInfo) bool {
 		return cpu.EntityId == cpuID
 	}) {
@@ -537,7 +535,6 @@ func (s *Info) IsLinkWatched(linkIndex uint, switchID uint) bool {
 }
 
 func getCoreArray(bitmask []uint64) []uint {
-
 	var cores []uint
 	bits := make([]uint64, dcgm.MAX_CPU_CORE_BITMASK_COUNT)
 

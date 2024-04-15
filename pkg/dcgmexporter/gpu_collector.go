@@ -39,10 +39,9 @@ func NewDCGMCollector(
 	hostname string,
 	config *appconfig.Config,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
-) (*DCGMCollector, func(), error) {
-
+) (*DCGMCollector, error) {
 	if fieldEntityGroupTypeSystemInfo.isEmpty() {
-		return nil, func() {}, errors.New("fieldEntityGroupTypeSystemInfo is empty")
+		return nil, errors.New("fieldEntityGroupTypeSystemInfo is empty")
 	}
 
 	collector := &DCGMCollector{
@@ -54,7 +53,7 @@ func NewDCGMCollector(
 
 	if config == nil {
 		logrus.Warn("Config is empty")
-		return collector, func() { collector.Cleanup() }, nil
+		return collector, nil
 	}
 
 	collector.UseOldNamespace = config.UseOldNamespace
@@ -64,12 +63,12 @@ func NewDCGMCollector(
 		fieldEntityGroupTypeSystemInfo.DeviceInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
-		logrus.Fatal("Failed to watch metrics: ", err)
+		return nil, err
 	}
 
 	collector.Cleanups = cleanups
 
-	return collector, func() { collector.Cleanup() }, nil
+	return collector, nil
 }
 
 func GetDeviceInfo(config *appconfig.Config, entityType dcgm.Field_Entity_Group) (deviceinfo.Provider, error) {
@@ -204,7 +203,7 @@ func ToCPUMetric(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1, c []Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
-	var labels = map[string]string{}
+	labels := map[string]string{}
 
 	for _, val := range values {
 		v := ToString(val)
@@ -255,7 +254,7 @@ func ToMetric(
 	hostname string,
 	replaceBlanksInModelName bool,
 ) {
-	var labels = map[string]string{}
+	labels := map[string]string{}
 
 	for _, val := range values {
 		v := ToString(val)

@@ -97,7 +97,7 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 	res := CounterSet{}
 
 	for i, record := range records {
-		var useOld = false
+		useOld := false
 		if len(record) == 0 {
 			continue
 		}

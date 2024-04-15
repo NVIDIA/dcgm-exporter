@@ -123,7 +123,6 @@ func TestExtractCounters(t *testing.T) {
 			extractCountersHelper(t, tt.field, tt.valid)
 		})
 	}
-
 }
 
 func extractCountersHelper(t *testing.T, input string, valid bool) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,23 +14,12 @@
  * limitations under the License.
  */
 
-package main
+package dcgmexporter
 
-import (
-	"os"
+//go:generate go run -v go.uber.org/mock/mockgen  -destination=./mock_collector.go -package=dcgmexporter -copyright_file=../../hack/header.txt . Collector
 
-	"github.com/sirupsen/logrus"
-
-	_ "go.uber.org/automaxprocs"
-
-	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
-)
-
-var BuildVersion = "Filled by the build system"
-
-func main() {
-	app := cmd.NewApp(BuildVersion)
-	if err := app.Run(os.Args); err != nil {
-		logrus.Fatal(err)
-	}
+// Collector interface
+type Collector interface {
+	GetMetrics() (MetricsByCounter, error)
+	Cleanup()
 }

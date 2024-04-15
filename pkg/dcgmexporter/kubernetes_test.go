@@ -52,8 +52,8 @@ func TestProcessPodMapper(t *testing.T) {
 	dcgmprovider.Initialize(config)
 	defer dcgmprovider.Client().Cleanup()
 
-	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
-	defer cleanup()
+	c := testDCGMGPUCollector(t, sampleCounters)
+	defer c.Cleanup()
 
 	out, err := c.GetMetrics()
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestProcessPodMapper(t *testing.T) {
 	cleanup = StartMockServer(t, server, socketPath)
 	defer cleanup()
 
-	podMapper, err := NewPodMapper(&appconfig.Config{
+	podMapper := NewPodMapper(&appconfig.Config{
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
 	})
@@ -284,11 +284,10 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					nvmlGetMIGDeviceInfoByIDHook = nvmlprovider.GetMIGDeviceInfoByID
 				}()
 
-				podMapper, err := NewPodMapper(&appconfig.Config{
+				podMapper := NewPodMapper(&appconfig.Config{
 					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
 					PodResourcesKubeletSocket: socketPath,
 				})
-				require.NoError(t, err)
 				require.NotNil(t, podMapper)
 				metrics := MetricsByCounter{}
 				counter := Counter{
@@ -325,7 +324,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
 				mockSystemInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
 
-				err = podMapper.Process(metrics, mockSystemInfo)
+				err := podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
 				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)] {

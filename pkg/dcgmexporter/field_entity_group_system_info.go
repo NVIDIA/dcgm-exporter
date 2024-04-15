@@ -67,7 +67,7 @@ func NewEntityGroupTypeSystemInfo(c []Counter, config *appconfig.Config) *FieldE
 
 // Load loads Info for a provided Field_Entity_Group
 func (e *FieldEntityGroupTypeSystemInfo) Load(entityType dcgm.Field_Entity_Group) error {
-	var deviceFields = NewDeviceFields(e.counters, entityType)
+	deviceFields := NewDeviceFields(e.counters, entityType)
 
 	if !ShouldMonitorDeviceType(deviceFields, entityType) {
 		return fmt.Errorf("no fields to watch for device type: %d", entityType)

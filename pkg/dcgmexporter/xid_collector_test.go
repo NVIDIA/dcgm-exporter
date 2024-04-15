@@ -179,7 +179,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	// Now we check the metric rendering
 	var b bytes.Buffer
-	err = encodeExpMetrics(&b, metrics)
+	err = renderGroup(&b, dcgm.FE_GPU, metrics)
 	require.NoError(t, err)
 	require.NotEmpty(t, b)
 

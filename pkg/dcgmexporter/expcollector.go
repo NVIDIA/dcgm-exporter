@@ -18,11 +18,8 @@ package dcgmexporter
 
 import (
 	"fmt"
-	"io"
 	"maps"
-	"sync"
 	"sync/atomic"
-	"text/template"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -33,41 +30,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 )
-
-var expMetricsFormat = `
-
-{{- range $counter, $metrics := . -}}
-# HELP {{ $counter.FieldName }} {{ $counter.Help }}
-# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
-{{- range $metric := $metrics }}
-{{ $counter.FieldName }}{gpu="{{ $metric.GPU }}",{{ $metric.UUID }}="{{ $metric.GPUUUID }}",device="{{ $metric.GPUDevice }}",modelName="{{ $metric.GPUModelName }}"{{if $metric.MigProfile}},GPU_I_PROFILE="{{ $metric.MigProfile }}",GPU_I_ID="{{ $metric.GPUInstanceID }}"{{end}}{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
-
-{{- range $k, $v := $metric.Labels -}}
-	,{{ $k }}="{{ $v }}"
-{{- end -}}
-{{- range $k, $v := $metric.Attributes -}}
-	,{{ $k }}="{{ $v }}"
-{{- end -}}
-
-} {{ $metric.Value -}}
-{{- end }}
-{{ end }}`
-
-// Collector interface
-type Collector interface {
-	GetMetrics() (MetricsByCounter, error)
-	Cleanup()
-}
-
-var getExpMetricTemplate = sync.OnceValue(func() *template.Template {
-	return template.Must(template.New("expMetrics").Parse(expMetricsFormat))
-
-})
-
-func encodeExpMetrics(w io.Writer, metrics MetricsByCounter) error {
-	tmpl := getExpMetricTemplate()
-	return tmpl.Execute(w, metrics)
-}
 
 var expCollectorFieldGroupIdx atomic.Uint32
 
@@ -83,11 +45,9 @@ type expCollector struct {
 	fieldValueParser    func(val int64) []int64        // Function to parse the field value
 	labelFiller         func(map[string]string, int64) // Function to fill labels
 	windowSize          int                            // Window size
-	transformations     []Transform                    // Transformers for metric postprocessing
 }
 
 func (c *expCollector) getMetrics() (MetricsByCounter, error) {
-
 	fieldGroupIdx := expCollectorFieldGroupIdx.Add(1)
 
 	fieldGroupName := fmt.Sprintf("expCollectorFieldGroupName%d", fieldGroupIdx)
@@ -177,13 +137,6 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		}
 	}
 
-	for _, transform := range c.transformations {
-		err := transform.Process(metrics, c.deviceInfo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to transform metrics for transform '%s'; err: %v", transform.Name(), err)
-		}
-	}
-
 	return metrics, nil
 }
 
@@ -227,7 +180,7 @@ func newExpCollector(
 	counterDeviceFields []dcgm.Short,
 	config *appconfig.Config,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
-) expCollector {
+) (expCollector, error) {
 	var labelsCounters []Counter
 	for i := 0; i < len(counters); i++ {
 		if counters[i].PromType == "label" {
@@ -236,8 +189,6 @@ func newExpCollector(
 	}
 
 	labelDeviceFields := NewDeviceFields(labelsCounters, dcgm.FE_GPU)
-
-	transformations := getTransformations(config)
 
 	collector := expCollector{
 		hostname:            hostname,
@@ -248,8 +199,7 @@ func newExpCollector(
 		fieldValueParser: func(val int64) []int64 {
 			return []int64{val}
 		},
-		labelFiller:     func(metricValueLabels map[string]string, entityValue int64) {},
-		transformations: transformations,
+		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {},
 	}
 
 	collector.deviceInfo = fieldEntityGroupTypeSystemInfo.DeviceInfo
@@ -260,8 +210,9 @@ func newExpCollector(
 		collector.deviceInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
-		logrus.Fatal("Failed to watch metrics: ", err)
+		logrus.Warnf("Failed to watch metrics: %s", err)
+		return expCollector{}, err
 	}
 
-	return collector
+	return collector, nil
 }

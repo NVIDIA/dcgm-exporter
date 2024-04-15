@@ -94,10 +94,8 @@ func TestGetHostname(t *testing.T) {
 					os = osinterface.RealOS{}
 				}
 			},
-			want: "",
-			wantErr: func(t assert.TestingT, err error, opts ...interface{}) bool {
-				return assert.Error(t, err, opts...)
-			},
+			want:    "",
+			wantErr: assert.Error,
 		},
 		{
 			name: "When appconfig.UseRemoteHE is true and remote hostname is name",

@@ -96,13 +96,17 @@ func NewClockEventsCollector(
 	}
 
 	collector := clockEventsCollector{}
-	collector.expCollector = newExpCollector(
+	var err error
+	collector.expCollector, err = newExpCollector(
 		counters,
 		hostname,
 		[]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS},
 		config,
 		fieldEntityGroupTypeSystemInfo,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	collector.counter = counters[slices.IndexFunc(counters, func(c Counter) bool {
 		return c.FieldName == dcgmExpClockEventsCount

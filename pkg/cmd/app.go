@@ -269,7 +269,7 @@ func action(c *cli.Context) (err error) {
 		// during initialization and return an error.
 		defer func() {
 			if r := recover(); r != nil {
-				logrus.WithField(LoggerStackTrace, string(debug.Stack())).Error("Encountered a failure.")
+				logrus.WithField(StackTrace, string(debug.Stack())).Error("Encountered a failure.")
 				err = fmt.Errorf("encountered a failure; err: %v", r)
 			}
 		}()
@@ -305,22 +305,10 @@ restart:
 		return err
 	}
 
-	pipeline, cleanup, err := dcgmexporter.NewMetricsPipeline(config,
-		cs.DCGMCounters,
-		hostname,
-		dcgmexporter.NewDCGMCollector,
-		fieldEntityGroupTypeSystemInfo,
-	)
-	defer cleanup()
-	if err != nil {
-		logrus.Fatal(err)
-	}
-
 	cRegistry := dcgmexporter.NewRegistry()
 
-	enableDCGMExpXIDErrorsCountCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
-
-	enableDCGMExpClockEventsCount(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
+	cf := dcgmexporter.InitCollectorFactory()
+	cf.Register(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
 
 	defer func() {
 		cRegistry.Cleanup()
@@ -332,11 +320,8 @@ restart:
 	stop := make(chan interface{})
 
 	wg.Add(1)
-	go pipeline.Run(ch, stop, &wg)
 
-	wg.Add(1)
-
-	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, cRegistry)
+	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, fieldEntityGroupTypeSystemInfo, cRegistry)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -360,51 +345,7 @@ restart:
 	return nil
 }
 
-func enableDCGMExpClockEventsCount(
-	cs *dcgmexporter.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmexporter.FieldEntityGroupTypeSystemInfo,
-	hostname string, config *appconfig.Config, cRegistry *dcgmexporter.Registry,
-) {
-	if dcgmexporter.IsDCGMExpClockEventsCountEnabled(cs.ExporterCounters) {
-		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
-		if !exists {
-			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMClockEventsCount.String())
-		}
-		clocksThrottleReasonsCollector, err := dcgmexporter.NewClockEventsCollector(
-			cs.ExporterCounters, hostname, config, item)
-		if err != nil {
-			logrus.Fatal(err)
-		}
-
-		cRegistry.Register(clocksThrottleReasonsCollector)
-
-		logrus.Infof("%s collector initialized", dcgmexporter.DCGMClockEventsCount.String())
-	}
-}
-
-func enableDCGMExpXIDErrorsCountCollector(
-	cs *dcgmexporter.CounterSet, fieldEntityGroupTypeSystemInfo *dcgmexporter.FieldEntityGroupTypeSystemInfo,
-	hostname string, config *appconfig.Config, cRegistry *dcgmexporter.Registry,
-) {
-	if dcgmexporter.IsDCGMExpXIDErrorsCountEnabled(cs.ExporterCounters) {
-		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
-		if !exists {
-			logrus.Fatalf("%s collector cannot be initialized", dcgmexporter.DCGMXIDErrorsCount.String())
-		}
-
-		xidCollector, err := dcgmexporter.NewXIDCollector(cs.ExporterCounters, hostname, config, item)
-		if err != nil {
-			logrus.Fatal(err)
-		}
-
-		cRegistry.Register(xidCollector)
-
-		logrus.Infof("%s collector initialized", dcgmexporter.DCGMXIDErrorsCount.String())
-	}
-}
-
-func getFieldEntityGroupTypeSystemInfo(
-	cs *dcgmexporter.CounterSet, config *appconfig.Config,
-) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
+func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *appconfig.Config) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
 	var allCounters []dcgmexporter.Counter
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
@@ -497,7 +438,7 @@ func enableDebugLogging(config *appconfig.Config) {
 
 	logrus.Debugf("Command line: %s", strings.Join(os.Args, " "))
 
-	logrus.WithField(LoggerDumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
+	logrus.WithField(DumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
 }
 
 func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {

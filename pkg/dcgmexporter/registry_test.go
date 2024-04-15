@@ -20,6 +20,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +42,6 @@ func (m *mockCollector) Cleanup() {
 
 func TestRegistry_Gather(t *testing.T) {
 	collector := new(mockCollector)
-	reg := NewRegistry()
 
 	metrics := MetricsByCounter{}
 	counterA := Counter{
@@ -47,6 +49,7 @@ func TestRegistry_Gather(t *testing.T) {
 		FieldName: "DCGM_FI_DEV_POWER_USAGE",
 		PromType:  "gauge",
 	}
+
 	metrics[counterA] = append(metrics[counterA], Metric{
 		GPU:        "0",
 		Counter:    counterA,
@@ -68,41 +71,56 @@ func TestRegistry_Gather(t *testing.T) {
 	type test struct {
 		name           string
 		collectorState func() *mock.Call
-		assert         func(MetricsByCounter, error)
+		assert         func(MetricsByCounterGroup, error)
 	}
 
 	tests := []test{
 		{
 			name: "When collector return no errors",
 			collectorState: func() *mock.Call {
-				return collector.On("GetMetrics").Return(metrics, nil)
+				cs := collector.On("GetMetrics").Return(metrics, nil)
+				cs.On("Cleanup").Return()
+				return cs
 			},
-			assert: func(mbc MetricsByCounter, err error) {
+			assert: func(mbcg MetricsByCounterGroup, err error) {
 				require.NoError(t, err)
-				require.Len(t, mbc, 2)
+				require.Contains(t, mbcg, dcgm.FE_GPU)
+				require.Len(t, mbcg, 1)
+				require.Len(t, mbcg[dcgm.FE_GPU], 2)
 			},
 		},
 		{
 			name: "When collector return errors",
 			collectorState: func() *mock.Call {
-				return collector.On("GetMetrics").Return(MetricsByCounter{}, errors.New("Boom!"))
+				cs := collector.On("GetMetrics").Return(MetricsByCounter{}, errors.New("Boom!"))
+				cs.On("Cleanup").Return()
+				return cs
 			},
-			assert: func(mbc MetricsByCounter, err error) {
+			assert: func(mbcg MetricsByCounterGroup, err error) {
 				require.Error(t, err)
-				require.Len(t, mbc, 0)
+				require.Len(t, mbcg, 0)
 			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			reg.collectors = nil
-			reg.Register(collector)
+			reg := NewRegistry()
+			reg.Register(dcgm.FE_GPU, collector)
 			mockCall := tc.collectorState()
 			got, err := reg.Gather()
 			tc.assert(got, err)
 			mockCall.Unset()
+			reg.Cleanup()
 		})
-
 	}
+}
+
+func TestRegistry_Register_Accepts_Duplicates_(t *testing.T) {
+	reg := NewRegistry()
+	collector := new(mockCollector)
+	reg.Register(dcgm.FE_GPU, collector)
+	reg.Register(dcgm.FE_GPU, collector)
+	assert.Len(t, reg.collectorGroups, 1)
+	assert.Len(t, reg.collectorGroupsSeen, 1)
 }

@@ -42,12 +42,12 @@ var (
 	nvmlGetMIGDeviceInfoByIDHook   = nvmlprovider.GetMIGDeviceInfoByID
 )
 
-func NewPodMapper(c *appconfig.Config) (*PodMapper, error) {
+func NewPodMapper(c *appconfig.Config) *PodMapper {
 	logrus.Infof("Kubernetes metrics collection enabled!")
 
 	return &PodMapper{
 		Config: c,
-	}, nil
+	}
 }
 
 func (p *PodMapper) Name() string {
@@ -118,7 +118,6 @@ func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
 			return d.DialContext(ctx, "unix", addr)
 		}),
 	)
-
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("failure connecting to '%s'; err: %w", socket, err)
 	}

@@ -49,6 +49,8 @@ var (
 	undefinedConfigMapData = "none"
 )
 
+//go:generate go run -v go.uber.org/mock/mockgen  -destination=./mock_transformator.go -package=dcgmexporter -copyright_file=../../hack/header.txt . Transform
+
 type Transform interface {
 	Process(metrics MetricsByCounter, deviceInfo deviceinfo.Provider) error
 	Name() string
@@ -133,11 +135,14 @@ var promMetricType = map[string]bool{
 type MetricsServer struct {
 	sync.Mutex
 
-	server      *http.Server
-	webConfig   *web.FlagConfig
-	metrics     string
-	metricsChan chan string
-	registry    *Registry
+	server                         *http.Server
+	webConfig                      *web.FlagConfig
+	metrics                        string
+	metricsChan                    chan string
+	registry                       *Registry
+	config                         *appconfig.Config
+	transformations                []Transform
+	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo
 }
 
 type PodMapper struct {
@@ -158,3 +163,6 @@ type CounterSet struct {
 	DCGMCounters     []Counter
 	ExporterCounters []Counter
 }
+
+// MetricsByCounterGroup represents a group of metrics by specific counter groups
+type MetricsByCounterGroup map[dcgm.Field_Entity_Group]MetricsByCounter

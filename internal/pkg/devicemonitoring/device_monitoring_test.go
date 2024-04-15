@@ -68,7 +68,6 @@ func MockDeviceInfo(ctrl *gomock.Controller, gpuInstanceInfos [][]deviceinfo.GPU
 func MockSwitchDeviceInfo(
 	ctrl *gomock.Controller, infoType dcgm.Field_Entity_Group,
 ) *mockdeviceinfo.MockProvider {
-
 	mockSwitches := []deviceinfo.SwitchInfo{
 		{
 			EntityId: 0,

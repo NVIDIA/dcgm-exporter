@@ -17,7 +17,9 @@
 package dcgmexporter
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -30,7 +32,14 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
 
-func NewMetricsServer(c *appconfig.Config, metrics chan string, registry *Registry) (*MetricsServer, func(), error) {
+const internalServerError = "internal server error"
+
+func NewMetricsServer(
+	c *appconfig.Config,
+	metrics chan string,
+	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
+	registry *Registry,
+) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
 		server: &http.Server{
@@ -44,9 +53,12 @@ func NewMetricsServer(c *appconfig.Config, metrics chan string, registry *Regist
 			WebSystemdSocket:   &c.WebSystemdSocket,
 			WebConfigFile:      &c.WebConfigFile,
 		},
-		metricsChan: metrics,
-		metrics:     "",
-		registry:    registry,
+		metricsChan:                    metrics,
+		metrics:                        "",
+		registry:                       registry,
+		config:                         c,
+		transformations:                GetTransformations(c),
+		fieldEntityGroupTypeSystemInfo: fieldEntityGroupTypeSystemInfo,
 	}
 
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +73,7 @@ func NewMetricsServer(c *appconfig.Config, metrics chan string, registry *Regist
 			</html>`))
 		if err != nil {
 			logrus.WithError(err).Error("Failed to write response.")
-			http.Error(w, "failed to write response", http.StatusInternalServerError)
+			http.Error(w, internalServerError, http.StatusInternalServerError)
 			return
 		}
 	})
@@ -94,8 +106,6 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 			select {
 			case <-stop:
 				return
-			case m := <-s.metricsChan:
-				s.updateMetrics(m)
 			}
 		}
 	}()
@@ -110,58 +120,67 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	}
 }
 
-func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
+func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	metricGroups, err := s.registry.Gather()
+	if err != nil {
+		logrus.WithError(err).Error("Failed to gather metrics from collectors")
+		http.Error(w, internalServerError, http.StatusInternalServerError)
+		return
+	}
+	var buf bytes.Buffer
+	err = s.render(&buf, metricGroups)
+	if err != nil {
+		http.Error(w, internalServerError, http.StatusInternalServerError)
+		return
+	}
+	_, err = w.Write(buf.Bytes())
+	if err != nil {
+		logrus.WithError(err).Error("Failed to write response.")
+		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
-	_, err := w.Write([]byte(s.getMetrics()))
+}
+
+func (s *MetricsServer) render(w io.Writer, metricGroups MetricsByCounterGroup) error {
+	for group, metrics := range metricGroups {
+		feg, exists := s.fieldEntityGroupTypeSystemInfo.Get(group)
+		if exists {
+			for _, transformation := range s.transformations {
+				err := transformation.Process(metrics, feg.DeviceInfo)
+				if err != nil {
+					logrus.WithError(err).
+						WithFields(logrus.Fields{
+							logging.FieldEntityGroupKey: group.String(),
+							logging.MetricsKey:          metrics,
+							logging.DeviceInfoKey:       feg.DeviceInfo,
+						}).
+						Error("Failed to apply transformations on metrics")
+					return err
+				}
+			}
+
+			err := renderGroup(w, group, metrics)
+			if err != nil {
+				logrus.WithError(err).
+					WithFields(logrus.Fields{
+						logging.FieldEntityGroupKey: group.String(),
+						logging.MetricsKey:          metrics,
+					}).
+					Error("Failed to renderGroup metrics")
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, err := w.Write([]byte("KO"))
 	if err != nil {
 		logrus.WithError(err).Error("Failed to write response.")
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
-		return
 	}
-	metrics, err := s.registry.Gather()
-	if err != nil {
-		logrus.WithError(err).Error("Failed to write response.")
-		http.Error(w, "failed to write response", http.StatusInternalServerError)
-		return
-	}
-	err = encodeExpMetrics(w, metrics)
-	if err != nil {
-		http.Error(w, "failed to write response", http.StatusInternalServerError)
-		return
-	}
-}
-
-func (s *MetricsServer) Health(w http.ResponseWriter, r *http.Request) {
-	if s.getMetrics() == "" {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, err := w.Write([]byte("KO"))
-		if err != nil {
-			logrus.WithError(err).Error("Failed to write response.")
-			http.Error(w, "failed to write response", http.StatusInternalServerError)
-		}
-	} else {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("OK"))
-		if err != nil {
-			logrus.WithError(err).Error("Failed to write response.")
-			http.Error(w, "failed to write response", http.StatusInternalServerError)
-		}
-	}
-}
-
-func (s *MetricsServer) updateMetrics(m string) {
-	s.Lock()
-	defer s.Unlock()
-
-	s.metrics = m
-}
-
-func (s *MetricsServer) getMetrics() string {
-	s.Lock()
-	defer s.Unlock()
-
-	return s.metrics
 }

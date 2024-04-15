@@ -18,7 +18,10 @@ package logging
 
 // Constants for logging fields
 const (
-	LoggerGroupIDKey = "groupID"
-	LoggerDumpKey    = "dump"
-	LoggerStackTrace = "stacktrace"
+	GroupIDKey          = "groupID"
+	DumpKey             = "dump"
+	StackTrace          = "stacktrace"
+	FieldEntityGroupKey = "fieldEntityGroup"
+	MetricsKey          = "metrics"
+	DeviceInfoKey       = "deviceInfo"
 )

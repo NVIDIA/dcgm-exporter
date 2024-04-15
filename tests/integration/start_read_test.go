@@ -47,9 +47,6 @@ func TestStartAndReadMetrics(t *testing.T) {
 		require.NoError(t, err)
 	}(ctx)
 
-	t.Log("The dcgm-exporter is running, we wait for 30 seconds to read metrics")
-	<-time.After(30 * time.Second)
-
 	t.Logf("Read metrics from http://localhost:%d/metrics", port)
 
 	metricsResp, _ := retry.DoWithData(
