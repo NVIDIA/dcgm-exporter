@@ -28,19 +28,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
-// TODO (roarora): These functional substitutions aren't compatible and causes a panic if the dcgmprovider client is
-//
-//	 used, the problem goes away when test itself uses mocks instead of these functions substitutions.
-//		In the subsequent patch that refactors gpu_collector tests below issue would be resolved.
-var (
-	DcgmGetAllDeviceCount       = dcgm.GetAllDeviceCount
-	DcgmGetDeviceInfo           = dcgm.GetDeviceInfo
-	DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-	DcgmAddEntityToGroup        = dcgm.AddEntityToGroup
-	DcgmCreateGroup             = dcgm.CreateGroup
-	DcgmGetCpuHierarchy         = dcgm.GetCpuHierarchy
-)
-
 type Info struct {
 	gpuCount uint
 	gpus     [dcgm.MAX_NUM_DEVICES]GPUInfo
@@ -128,7 +115,7 @@ func Initialize(
 }
 
 func (s *Info) InitializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool) error {
-	gpuCount, err := DcgmGetAllDeviceCount()
+	gpuCount, err := dcgmprovider.Client().GetAllDeviceCount()
 	if err != nil {
 		return err
 	}
@@ -137,7 +124,7 @@ func (s *Info) InitializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 	for i := uint(0); i < s.gpuCount; i++ {
 		// Default mig enabled to false
 		s.gpus[i].MigEnabled = false
-		s.gpus[i].DeviceInfo, err = DcgmGetDeviceInfo(i)
+		s.gpus[i].DeviceInfo, err = dcgmprovider.Client().GetDeviceInfo(i)
 		if err != nil {
 			if useFakeGPUs {
 				s.gpus[i].DeviceInfo.GPU = i
@@ -148,7 +135,7 @@ func (s *Info) InitializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 		}
 	}
 
-	hierarchy, err := DcgmGetGpuInstanceHierarchy()
+	hierarchy, err := dcgmprovider.Client().GetGpuInstanceHierarchy()
 	if err != nil {
 		return err
 	}
@@ -196,7 +183,7 @@ func (s *Info) InitializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 }
 
 func (s *Info) InitializeCPUInfo(sOpt appconfig.DeviceOptions) error {
-	hierarchy, err := DcgmGetCpuHierarchy()
+	hierarchy, err := dcgmprovider.Client().GetCpuHierarchy()
 	if err != nil {
 		return err
 	}

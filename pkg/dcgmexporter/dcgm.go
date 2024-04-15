@@ -18,7 +18,6 @@ package dcgmexporter
 
 import (
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -29,20 +28,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
-
-func NewGroup() (dcgm.GroupHandle, func(), error) {
-	group, err := dcgmprovider.Client().NewDefaultGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
-	if err != nil {
-		return dcgm.GroupHandle{}, func() {}, err
-	}
-
-	return group, func() {
-		err := dcgmprovider.Client().DestroyGroup(group)
-		if err != nil {
-			logrus.WithError(err).Warn("Cannot destroy field group.")
-		}
-	}, nil
-}
 
 func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
@@ -62,7 +47,12 @@ func NewDeviceFields(counters []Counter, entityType dcgm.Field_Entity_Group) []d
 }
 
 func NewFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) {
-	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", rand.Uint64())
+	newFieldGroupNumber, err := RandUint64()
+	if err != nil {
+		return dcgm.FieldHandle{}, func() {}, err
+	}
+
+	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", newFieldGroupNumber)
 	fieldGroup, err := dcgmprovider.Client().FieldGroupCreate(name, deviceFields)
 	if err != nil {
 		return dcgm.FieldHandle{}, func() {}, err
@@ -144,13 +134,19 @@ fail:
 
 func CreateGroupFromDeviceInfo(deviceInfo deviceinfo.Provider) (dcgm.GroupHandle, func(), error) {
 	monitoringInfo := devicemonitoring.GetMonitoredEntities(deviceInfo)
-	groupID, err := deviceinfo.DcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+
+	newGroupNumber, err := RandUint64()
+	if err != nil {
+		return dcgm.GroupHandle{}, func() {}, err
+	}
+
+	groupID, err := dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", newGroupNumber))
 	if err != nil {
 		return dcgm.GroupHandle{}, func() {}, err
 	}
 
 	for _, mi := range monitoringInfo {
-		err := deviceinfo.DcgmAddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
+		err := dcgmprovider.Client().AddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
 		if err != nil {
 			return groupID, func() {
 				err := dcgmprovider.Client().DestroyGroup(groupID)
@@ -194,7 +190,12 @@ func CreateCoreGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.Grou
 
 			// Create per-cpu core groups or after max number of CPU cores have been added to current group
 			if groupCoreCount%dcgm.DCGM_GROUP_MAX_ENTITIES == 0 {
-				groupID, err = dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+				newGroupNumber, err := RandUint64()
+				if err != nil {
+					return nil, cleanups, err
+				}
+
+				groupID, err = dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", newGroupNumber))
 				if err != nil {
 					return nil, cleanups, err
 				}
@@ -233,7 +234,12 @@ func CreateLinkGroupsFromDeviceInfo(deviceInfo deviceinfo.Provider) ([]dcgm.Grou
 			continue
 		}
 
-		groupID, err := deviceinfo.DcgmCreateGroup(fmt.Sprintf("gpu-collector-group-%d", rand.Uint64()))
+		newGroupNumber, err := RandUint64()
+		if err != nil {
+			return nil, cleanups, err
+		}
+
+		groupID, err := dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu-collector-group-%d", newGroupNumber))
 		if err != nil {
 			return nil, cleanups, err
 		}

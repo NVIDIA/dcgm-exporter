@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
-
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
@@ -278,11 +276,6 @@ func Test_collectorFactory_Register(t *testing.T) {
 			if tt.setupDCGMMock != nil {
 				tt.setupDCGMMock(mockDCGMProvider)
 			}
-
-			deviceinfo.DcgmCreateGroup = dcgmprovider.Client().CreateGroup
-			defer func() {
-				deviceinfo.DcgmCreateGroup = dcgm.CreateGroup
-			}()
 
 			registry := NewRegistry()
 			if tt.wantsPanic {

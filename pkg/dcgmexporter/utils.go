@@ -17,6 +17,8 @@
 package dcgmexporter
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"sync"
 	"time"
@@ -34,4 +36,14 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("timeout waiting for WaitGroup")
 	}
+}
+
+func RandUint64() (uint64, error) {
+	var num uint64
+	err := binary.Read(rand.Reader, binary.BigEndian, &num)
+	if err != nil {
+		return 0, fmt.Errorf("failed to generate random 64-bit number; err: %w", err)
+	}
+
+	return num, nil
 }

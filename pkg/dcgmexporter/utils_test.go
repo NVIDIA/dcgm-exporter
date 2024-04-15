@@ -17,6 +17,8 @@
 package dcgmexporter
 
 import (
+	"crypto/rand"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -44,4 +46,34 @@ func TestWaitWithTimeout(t *testing.T) {
 		err := WaitWithTimeout(wg, timeout)
 		require.NoError(t, err)
 	})
+}
+
+func TestRandUint64_Success(t *testing.T) {
+	num, err := RandUint64()
+	assert.Nil(t, err, "Unexpected error: %v", err)
+	assert.NotZero(t, num, "Expected a non-zero uint64, but got 0")
+}
+
+// mockReader is a mock implementation of rand.Reader that always returns an error
+type mockReader struct {
+	err error
+}
+
+func (r *mockReader) Read(_ []byte) (n int, err error) {
+	return 0, r.err
+}
+
+func TestRandUint64_Failure(t *testing.T) {
+	// Simulate a failure in rand.Reader using mock rand.Reader
+	mockReader := &mockReader{err: fmt.Errorf("mock error")}
+
+	originalReader := rand.Reader
+	rand.Reader = mockReader
+	defer func() {
+		rand.Reader = originalReader
+	}()
+
+	num, err := RandUint64()
+	assert.NotNil(t, err, "Expected an error")
+	assert.Zero(t, num, fmt.Sprintf("Expected a uint64, but got %d", num))
 }

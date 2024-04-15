@@ -24,7 +24,9 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 
+	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
@@ -65,6 +67,50 @@ var expectedCPUMetrics = map[string]bool{
 	"DCGM_FI_DEV_CPU_UTIL_TOTAL": true,
 }
 
+func mockDCGM(ctrl *gomock.Controller) *mockdcgm.MockDCGM {
+	// Mock results outputs
+	mockDevice := dcgm.Device{
+		GPU:  0,
+		UUID: "fake1",
+	}
+
+	mockMigHierarchy := dcgm.MigHierarchy_v2{
+		Count: 0,
+	}
+
+	mockCPUHierarchy := dcgm.CpuHierarchy_v1{
+		Version: 0,
+		NumCpus: 1,
+		Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+			{
+				CpuId:      0,
+				OwnedCores: []uint64{0, 18446744073709551360, 65535},
+			},
+		},
+	}
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(1)
+
+	mockFieldHandle := dcgm.FieldHandle{}
+	mockFieldHandle.SetHandle(1)
+
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
+	mockDCGMProvider.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockMigHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(mockDevice, nil).AnyTimes()
+
+	return mockDCGMProvider
+}
+
 func TestDCGMCollector(t *testing.T) {
 	config := &appconfig.Config{
 		UseRemoteHE: false,
@@ -93,52 +139,28 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 		CollectInterval: 1,
 	}
 
-	deviceinfo.DcgmGetAllDeviceCount = func() (uint, error) {
-		return 1, nil
-	}
+	// Store actual dcgm provider
+	realDCGMProvider := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGMProvider)
 
-	deviceinfo.DcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
-		dev := dcgm.Device{
-			GPU:  0,
-			UUID: fmt.Sprintf("fake%d", gpuId),
-		}
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockDCGM(ctrl)
 
-		return dev, nil
-	}
+	// Calls where actual API calls and results are desirable
+	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).
+		DoAndReturn(func(fieldID dcgm.Short) dcgm.FieldMeta {
+			return realDCGMProvider.FieldGetById(fieldID)
+		}).AnyTimes()
 
-	deviceinfo.DcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
-		hierarchy := dcgm.MigHierarchy_v2{
-			Count: 0,
-		}
-		return hierarchy, nil
-	}
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+			error,
+		) {
+			return realDCGMProvider.EntityGetLatestValues(entityGroup, entityId, fields)
+		}).AnyTimes()
 
-	deviceinfo.DcgmAddEntityToGroup = func(
-		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
-	) (err error) {
-		return nil
-	}
-
-	deviceinfo.DcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
-		CPU := dcgm.CpuHierarchyCpu_v1{
-			CpuId:      0,
-			OwnedCores: []uint64{0},
-		}
-		hierarchy := dcgm.CpuHierarchy_v1{
-			Version: 0,
-			NumCpus: 1,
-			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{CPU},
-		}
-
-		return hierarchy, nil
-	}
-
-	defer func() {
-		deviceinfo.DcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
-		deviceinfo.DcgmGetDeviceInfo = dcgm.GetDeviceInfo
-		deviceinfo.DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-		deviceinfo.DcgmAddEntityToGroup = dcgm.AddEntityToGroup
-	}()
+	// Set mock DCGM provider
+	dcgmprovider.SetClient(mockDCGMProvider)
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
 
@@ -168,7 +190,7 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 	out, err := g.GetMetrics()
 	require.NoError(t, err)
 	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
-	require.Len(t, out, len(expectedMetrics))
+	require.Len(t, out, len(expectedMetrics), fmt.Sprintf("Expected: %+v \nGot: %+v", expectedMetrics, out))
 
 	seenMetrics := map[string]bool{}
 	for _, metrics := range out {
@@ -186,7 +208,7 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 }
 
 func testDCGMCPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
-	dOpt := appconfig.DeviceOptions{true, []int{-1}, []int{-1}}
+	dOpt := appconfig.DeviceOptions{Flex: true, MajorRange: []int{-1}, MinorRange: []int{-1}}
 	config := appconfig.Config{
 		CPUDevices:      dOpt,
 		NoHostname:      false,
@@ -194,53 +216,26 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 		UseFakeGPUs:     false,
 	}
 
-	deviceinfo.DcgmGetAllDeviceCount = func() (uint, error) {
-		return 0, nil
-	}
+	realDCGMProvider := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGMProvider)
 
-	deviceinfo.DcgmGetDeviceInfo = func(gpuId uint) (dcgm.Device, error) {
-		dev := dcgm.Device{
-			GPU:           0,
-			DCGMSupported: "No",
-			UUID:          fmt.Sprintf("fake%d", gpuId),
-		}
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockDCGM(ctrl)
 
-		return dev, nil
-	}
+	// Calls where actual API calls and results are desirable
+	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).
+		DoAndReturn(func(fieldID dcgm.Short) dcgm.FieldMeta {
+			return realDCGMProvider.FieldGetById(fieldID)
+		}).AnyTimes()
 
-	deviceinfo.DcgmGetGpuInstanceHierarchy = func() (dcgm.MigHierarchy_v2, error) {
-		hierarchy := dcgm.MigHierarchy_v2{
-			Count: 0,
-		}
-		return hierarchy, nil
-	}
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+			error,
+		) {
+			return realDCGMProvider.EntityGetLatestValues(entityGroup, entityId, fields)
+		}).AnyTimes()
 
-	deviceinfo.DcgmAddEntityToGroup = func(
-		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
-	) (err error) {
-		return nil
-	}
-
-	deviceinfo.DcgmGetCpuHierarchy = func() (dcgm.CpuHierarchy_v1, error) {
-		CPU := dcgm.CpuHierarchyCpu_v1{
-			CpuId:      0,
-			OwnedCores: []uint64{0, 18446744073709551360, 65535},
-		}
-		hierarchy := dcgm.CpuHierarchy_v1{
-			Version: 0,
-			NumCpus: 1,
-			Cpus:    [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{CPU},
-		}
-
-		return hierarchy, nil
-	}
-
-	defer func() {
-		deviceinfo.DcgmGetAllDeviceCount = dcgm.GetAllDeviceCount
-		deviceinfo.DcgmGetDeviceInfo = dcgm.GetDeviceInfo
-		deviceinfo.DcgmGetGpuInstanceHierarchy = dcgm.GetGpuInstanceHierarchy
-		deviceinfo.DcgmAddEntityToGroup = dcgm.AddEntityToGroup
-	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
 
 	/* Test that only cpu metrics are collected for cpu entities. */
 
