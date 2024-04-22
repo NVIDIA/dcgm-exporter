@@ -36,21 +36,6 @@ type Provider interface {
 	SOpts() appconfig.DeviceOptions
 	COpts() appconfig.DeviceOptions
 	InfoType() dcgm.Field_Entity_Group
-	InitializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool) error
-	InitializeCPUInfo(sOpt appconfig.DeviceOptions) error
-	InitializeNvSwitchInfo(sOpt appconfig.DeviceOptions) error
-	SetGPUInstanceProfileName(entityId uint, profileName string) bool
-	SetMigProfileNames(values []dcgm.FieldValue_v2) error
-	PopulateMigProfileNames(entities []dcgm.GroupEntityPair) error
-	GPUIDExists(gpuId int) bool
-	GPUInstanceIDExists(gpuInstanceId int) bool
-	CPUIDExists(cpuId int) bool
-	CPUCoreIDExists(coreId int) bool
-	SwitchIDExists(switchId int) bool
-	LinkIDExists(linkId int) bool
-	VerifyDevicePresence(gOpt appconfig.DeviceOptions) error
-	VerifyCPUDevicePresence(sOpt appconfig.DeviceOptions) error
-	VerifySwitchDevicePresence(sOpt appconfig.DeviceOptions) error
 	IsCPUWatched(cpuID uint) bool
 	IsCoreWatched(coreID uint, cpuID uint) bool
 	IsSwitchWatched(switchID uint) bool

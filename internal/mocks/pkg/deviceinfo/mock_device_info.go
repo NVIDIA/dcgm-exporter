@@ -27,11 +27,10 @@ package deviceinfo
 import (
 	reflect "reflect"
 
-	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	gomock "go.uber.org/mock/gomock"
-
 	appconfig "github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockProvider is a mock of Provider interface.
@@ -83,34 +82,6 @@ func (m *MockProvider) CPU(arg0 uint) deviceinfo.CPUInfo {
 func (mr *MockProviderMockRecorder) CPU(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CPU", reflect.TypeOf((*MockProvider)(nil).CPU), arg0)
-}
-
-// CPUCoreIDExists mocks base method.
-func (m *MockProvider) CPUCoreIDExists(arg0 int) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CPUCoreIDExists", arg0)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// CPUCoreIDExists indicates an expected call of CPUCoreIDExists.
-func (mr *MockProviderMockRecorder) CPUCoreIDExists(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CPUCoreIDExists", reflect.TypeOf((*MockProvider)(nil).CPUCoreIDExists), arg0)
-}
-
-// CPUIDExists mocks base method.
-func (m *MockProvider) CPUIDExists(arg0 int) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CPUIDExists", arg0)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// CPUIDExists indicates an expected call of CPUIDExists.
-func (mr *MockProviderMockRecorder) CPUIDExists(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CPUIDExists", reflect.TypeOf((*MockProvider)(nil).CPUIDExists), arg0)
 }
 
 // CPUs mocks base method.
@@ -169,34 +140,6 @@ func (mr *MockProviderMockRecorder) GPUCount() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GPUCount", reflect.TypeOf((*MockProvider)(nil).GPUCount))
 }
 
-// GPUIDExists mocks base method.
-func (m *MockProvider) GPUIDExists(arg0 int) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GPUIDExists", arg0)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// GPUIDExists indicates an expected call of GPUIDExists.
-func (mr *MockProviderMockRecorder) GPUIDExists(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GPUIDExists", reflect.TypeOf((*MockProvider)(nil).GPUIDExists), arg0)
-}
-
-// GPUInstanceIDExists mocks base method.
-func (m *MockProvider) GPUInstanceIDExists(arg0 int) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GPUInstanceIDExists", arg0)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// GPUInstanceIDExists indicates an expected call of GPUInstanceIDExists.
-func (mr *MockProviderMockRecorder) GPUInstanceIDExists(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GPUInstanceIDExists", reflect.TypeOf((*MockProvider)(nil).GPUInstanceIDExists), arg0)
-}
-
 // GPUs mocks base method.
 func (m *MockProvider) GPUs() []deviceinfo.GPUInfo {
 	m.ctrl.T.Helper()
@@ -223,48 +166,6 @@ func (m *MockProvider) InfoType() dcgm.Field_Entity_Group {
 func (mr *MockProviderMockRecorder) InfoType() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InfoType", reflect.TypeOf((*MockProvider)(nil).InfoType))
-}
-
-// InitializeCPUInfo mocks base method.
-func (m *MockProvider) InitializeCPUInfo(arg0 appconfig.DeviceOptions) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InitializeCPUInfo", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// InitializeCPUInfo indicates an expected call of InitializeCPUInfo.
-func (mr *MockProviderMockRecorder) InitializeCPUInfo(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitializeCPUInfo", reflect.TypeOf((*MockProvider)(nil).InitializeCPUInfo), arg0)
-}
-
-// InitializeGPUInfo mocks base method.
-func (m *MockProvider) InitializeGPUInfo(arg0 appconfig.DeviceOptions, arg1 bool) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InitializeGPUInfo", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// InitializeGPUInfo indicates an expected call of InitializeGPUInfo.
-func (mr *MockProviderMockRecorder) InitializeGPUInfo(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitializeGPUInfo", reflect.TypeOf((*MockProvider)(nil).InitializeGPUInfo), arg0, arg1)
-}
-
-// InitializeNvSwitchInfo mocks base method.
-func (m *MockProvider) InitializeNvSwitchInfo(arg0 appconfig.DeviceOptions) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InitializeNvSwitchInfo", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// InitializeNvSwitchInfo indicates an expected call of InitializeNvSwitchInfo.
-func (mr *MockProviderMockRecorder) InitializeNvSwitchInfo(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitializeNvSwitchInfo", reflect.TypeOf((*MockProvider)(nil).InitializeNvSwitchInfo), arg0)
 }
 
 // IsCPUWatched mocks base method.
@@ -323,34 +224,6 @@ func (mr *MockProviderMockRecorder) IsSwitchWatched(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSwitchWatched", reflect.TypeOf((*MockProvider)(nil).IsSwitchWatched), arg0)
 }
 
-// LinkIDExists mocks base method.
-func (m *MockProvider) LinkIDExists(arg0 int) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LinkIDExists", arg0)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// LinkIDExists indicates an expected call of LinkIDExists.
-func (mr *MockProviderMockRecorder) LinkIDExists(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LinkIDExists", reflect.TypeOf((*MockProvider)(nil).LinkIDExists), arg0)
-}
-
-// PopulateMigProfileNames mocks base method.
-func (m *MockProvider) PopulateMigProfileNames(arg0 []dcgm.GroupEntityPair) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PopulateMigProfileNames", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// PopulateMigProfileNames indicates an expected call of PopulateMigProfileNames.
-func (mr *MockProviderMockRecorder) PopulateMigProfileNames(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PopulateMigProfileNames", reflect.TypeOf((*MockProvider)(nil).PopulateMigProfileNames), arg0)
-}
-
 // SOpts mocks base method.
 func (m *MockProvider) SOpts() appconfig.DeviceOptions {
 	m.ctrl.T.Helper()
@@ -363,34 +236,6 @@ func (m *MockProvider) SOpts() appconfig.DeviceOptions {
 func (mr *MockProviderMockRecorder) SOpts() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SOpts", reflect.TypeOf((*MockProvider)(nil).SOpts))
-}
-
-// SetGPUInstanceProfileName mocks base method.
-func (m *MockProvider) SetGPUInstanceProfileName(arg0 uint, arg1 string) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetGPUInstanceProfileName", arg0, arg1)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// SetGPUInstanceProfileName indicates an expected call of SetGPUInstanceProfileName.
-func (mr *MockProviderMockRecorder) SetGPUInstanceProfileName(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetGPUInstanceProfileName", reflect.TypeOf((*MockProvider)(nil).SetGPUInstanceProfileName), arg0, arg1)
-}
-
-// SetMigProfileNames mocks base method.
-func (m *MockProvider) SetMigProfileNames(arg0 []dcgm.FieldValue_v2) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetMigProfileNames", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// SetMigProfileNames indicates an expected call of SetMigProfileNames.
-func (mr *MockProviderMockRecorder) SetMigProfileNames(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetMigProfileNames", reflect.TypeOf((*MockProvider)(nil).SetMigProfileNames), arg0)
 }
 
 // Switch mocks base method.
@@ -407,20 +252,6 @@ func (mr *MockProviderMockRecorder) Switch(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Switch", reflect.TypeOf((*MockProvider)(nil).Switch), arg0)
 }
 
-// SwitchIDExists mocks base method.
-func (m *MockProvider) SwitchIDExists(arg0 int) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SwitchIDExists", arg0)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// SwitchIDExists indicates an expected call of SwitchIDExists.
-func (mr *MockProviderMockRecorder) SwitchIDExists(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchIDExists", reflect.TypeOf((*MockProvider)(nil).SwitchIDExists), arg0)
-}
-
 // Switches mocks base method.
 func (m *MockProvider) Switches() []deviceinfo.SwitchInfo {
 	m.ctrl.T.Helper()
@@ -433,46 +264,4 @@ func (m *MockProvider) Switches() []deviceinfo.SwitchInfo {
 func (mr *MockProviderMockRecorder) Switches() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Switches", reflect.TypeOf((*MockProvider)(nil).Switches))
-}
-
-// VerifyCPUDevicePresence mocks base method.
-func (m *MockProvider) VerifyCPUDevicePresence(arg0 appconfig.DeviceOptions) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "VerifyCPUDevicePresence", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// VerifyCPUDevicePresence indicates an expected call of VerifyCPUDevicePresence.
-func (mr *MockProviderMockRecorder) VerifyCPUDevicePresence(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyCPUDevicePresence", reflect.TypeOf((*MockProvider)(nil).VerifyCPUDevicePresence), arg0)
-}
-
-// VerifyDevicePresence mocks base method.
-func (m *MockProvider) VerifyDevicePresence(arg0 appconfig.DeviceOptions) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "VerifyDevicePresence", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// VerifyDevicePresence indicates an expected call of VerifyDevicePresence.
-func (mr *MockProviderMockRecorder) VerifyDevicePresence(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyDevicePresence", reflect.TypeOf((*MockProvider)(nil).VerifyDevicePresence), arg0)
-}
-
-// VerifySwitchDevicePresence mocks base method.
-func (m *MockProvider) VerifySwitchDevicePresence(arg0 appconfig.DeviceOptions) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "VerifySwitchDevicePresence", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// VerifySwitchDevicePresence indicates an expected call of VerifySwitchDevicePresence.
-func (mr *MockProviderMockRecorder) VerifySwitchDevicePresence(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifySwitchDevicePresence", reflect.TypeOf((*MockProvider)(nil).VerifySwitchDevicePresence), arg0)
 }
