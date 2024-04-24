@@ -32,8 +32,8 @@ type DCGMCollectorConstructor func([]Counter, string, *Config, FieldEntityGroupT
 func NewDCGMCollector(c []Counter,
 	hostname string,
 	config *Config,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
-
+	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+) (*DCGMCollector, func(), error) {
 	if fieldEntityGroupTypeSystemInfo.isEmpty() {
 		return nil, func() {}, errors.New("fieldEntityGroupTypeSystemInfo is empty")
 	}
@@ -164,7 +164,8 @@ func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
 }
 
 func ToSwitchMetric(metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
+) {
 	labels := map[string]string{}
 
 	for _, val := range values {
@@ -207,8 +208,9 @@ func ToSwitchMetric(metrics MetricsByCounter,
 }
 
 func ToCPUMetric(metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string) {
-	var labels = map[string]string{}
+	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
+) {
+	labels := map[string]string{}
 
 	for _, val := range values {
 		v := ToString(val)
@@ -259,7 +261,7 @@ func ToMetric(
 	hostname string,
 	replaceBlanksInModelName bool,
 ) {
-	var labels = map[string]string{}
+	labels := map[string]string{}
 
 	for _, val := range values {
 		v := ToString(val)
@@ -285,7 +287,7 @@ func ToMetric(
 		gpuModel := getGPUModel(d, replaceBlanksInModelName)
 
 		attrs := map[string]string{}
-		if counter.FieldName == "DCGM_FI_DEV_XID_ERRORS" {
+		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
 			attrs["err_code"] = strconv.Itoa(int(val.Int64()))
 			if v := int(val.Int64()); 0 < v && v < len(xidErrCodeToText) && xidErrCodeToText[v] != "" {
 				attrs["err_msg"] = xidErrCodeToText[val.Int64()]
