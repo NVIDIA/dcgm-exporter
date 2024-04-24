@@ -288,9 +288,10 @@ func ToMetric(
 
 		attrs := map[string]string{}
 		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
-			attrs["err_code"] = strconv.Itoa(int(val.Int64()))
-			if v := int(val.Int64()); 0 < v && v < len(xidErrCodeToText) && xidErrCodeToText[v] != "" {
-				attrs["err_msg"] = xidErrCodeToText[val.Int64()]
+			errCode := int(val.Int64())
+			attrs["err_code"] = strconv.Itoa(errCode)
+			if 0 < errCode && errCode < len(xidErrCodeToText) {
+				attrs["err_msg"] = xidErrCodeToText[errCode]
 			} else {
 				attrs["err_msg"] = "Unknown Error"
 			}
