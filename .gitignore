@@ -10,6 +10,7 @@ vendor/
 tests.cov
 test_results.json
 .scannerwork
+dist/
 
 ###############################################################################
 # JetBrains

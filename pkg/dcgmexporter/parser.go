@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -96,7 +95,7 @@ func extractCounters(records [][]string, c *Config) (*CounterSet, error) {
 	res := CounterSet{}
 
 	for i, record := range records {
-		var useOld = false
+		useOld := false
 		if len(record) == 0 {
 			continue
 		}

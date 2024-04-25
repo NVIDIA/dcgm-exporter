@@ -33,7 +33,6 @@ func NewMetricsPipeline(config *Config,
 	newDCGMCollector DCGMCollectorConstructor,
 	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
 ) (*MetricsPipeline, func(), error) {
-
 	logrus.WithField(LoggerDumpKey, fmt.Sprintf("%+v", counters)).Debug("Counters are initialized")
 
 	cleanups := []func(){}
@@ -126,6 +125,11 @@ func getTransformations(c *Config) []Transform {
 		} else {
 			transformations = append(transformations, podMapper)
 		}
+	}
+
+	if c.HPCJobMappingDir != "" {
+		hpcMapper := newHPCMapper(c)
+		transformations = append(transformations, hpcMapper)
 	}
 
 	return transformations
