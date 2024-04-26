@@ -1,5 +1,5 @@
 FROM nvcr.io/nvidia/cuda:12.3.2-base-ubuntu22.04 AS builder
-ARG GOLANG_VERSION=1.21.5
+ARG GOLANG_VERSION=1.22.2
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN set -eux; \
 	apt-get update; \

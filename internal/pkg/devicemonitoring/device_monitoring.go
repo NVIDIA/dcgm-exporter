@@ -25,33 +25,49 @@ import (
 func GetMonitoredEntities(deviceInfo deviceinfo.Provider) []Info {
 	var monitoring []Info
 
-	if deviceInfo.InfoType() == dcgm.FE_SWITCH {
+	switch deviceInfo.InfoType() {
+	case dcgm.FE_SWITCH:
 		monitoring = monitorAllSwitches(deviceInfo)
-	} else if deviceInfo.InfoType() == dcgm.FE_LINK {
+	case dcgm.FE_LINK:
 		monitoring = monitorAllLinks(deviceInfo)
-	} else if deviceInfo.InfoType() == dcgm.FE_CPU {
+	case dcgm.FE_CPU:
 		monitoring = monitorAllCPUs(deviceInfo)
-	} else if deviceInfo.InfoType() == dcgm.FE_CPU_CORE {
+	case dcgm.FE_CPU_CORE:
 		monitoring = monitorAllCPUCores(deviceInfo)
-	} else if deviceInfo.GOpts().Flex {
-		monitoring = monitorAllGPUInstances(deviceInfo, true)
-	} else {
-		if len(deviceInfo.GOpts().MajorRange) > 0 && deviceInfo.GOpts().MajorRange[0] == -1 {
-			monitoring = monitorAllGPUs(deviceInfo)
+	default:
+		if deviceInfo.GOpts().Flex {
+			monitoring = monitorAllGPUInstances(deviceInfo, true)
 		} else {
-			for _, gpuID := range deviceInfo.GOpts().MajorRange {
-				// We've already verified that everything in the options list exists
-				monitoring = append(monitoring, *monitorGPU(deviceInfo, gpuID))
-			}
+			monitoring = handleGPUOptions(deviceInfo)
 		}
+	}
 
-		if len(deviceInfo.GOpts().MinorRange) > 0 && deviceInfo.GOpts().MinorRange[0] == -1 {
-			monitoring = monitorAllGPUInstances(deviceInfo, false)
-		} else {
-			for _, gpuInstanceID := range deviceInfo.GOpts().MinorRange {
-				// We've already verified that everything in the options list exists
-				monitoring = append(monitoring, *monitorGPUInstance(deviceInfo, gpuInstanceID))
-			}
+	return monitoring
+}
+
+func handleGPUOptions(deviceInfo deviceinfo.Provider) []Info {
+	var monitoring []Info
+
+	// Current logic:
+	// if MajorRange -1, MinorRange -1: Monitor all GPUs and GPU Instances
+	// if MajorRange -1, MinorRange <Some Range>: Monitor all GPU and specific GPU Instances
+	// if MajorRange  <Some Range>, MinorRange -1: Monitor specific GPU and all GPU Instances
+	// if MajorRange  <Some Range>, MinorRange <Some Range>: Monitor specific GPUs and specific GPU Instances
+	if len(deviceInfo.GOpts().MajorRange) > 0 && deviceInfo.GOpts().MajorRange[0] == -1 {
+		monitoring = monitorAllGPUs(deviceInfo)
+	} else {
+		for _, gpuID := range deviceInfo.GOpts().MajorRange {
+			// We've already verified that everything in the options list exists
+			monitoring = append(monitoring, *monitorGPU(deviceInfo, gpuID))
+		}
+	}
+
+	if len(deviceInfo.GOpts().MinorRange) > 0 && deviceInfo.GOpts().MinorRange[0] == -1 {
+		monitoring = append(monitoring, monitorAllGPUInstances(deviceInfo, false)...)
+	} else {
+		for _, gpuInstanceID := range deviceInfo.GOpts().MinorRange {
+			// We've already verified that everything in the options list exists
+			monitoring = append(monitoring, *monitorGPUInstance(deviceInfo, gpuInstanceID))
 		}
 	}
 
@@ -78,6 +94,7 @@ func monitorAllGPUInstances(deviceInfo deviceinfo.Provider, addFlexibly bool) []
 	var monitoring []Info
 
 	for i := uint(0); i < deviceInfo.GPUCount(); i++ {
+		// If the GPU Instance count is 0, addFlexibly allows adding GPU to the monitoring list.
 		if addFlexibly && len(deviceInfo.GPU(i).GPUInstances) == 0 {
 			mi := Info{
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: deviceInfo.GPU(i).DeviceInfo.GPU},
@@ -175,12 +192,12 @@ func monitorAllLinks(deviceInfo deviceinfo.Provider) []Info {
 	var monitoring []Info
 
 	for _, sw := range deviceInfo.Switches() {
+		if !deviceInfo.IsSwitchWatched(sw.EntityId) {
+			continue
+		}
+
 		for _, link := range sw.NvLinks {
 			if link.State != dcgm.LS_UP {
-				continue
-			}
-
-			if !deviceInfo.IsSwitchWatched(sw.EntityId) {
 				continue
 			}
 

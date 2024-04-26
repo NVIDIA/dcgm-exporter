@@ -1,6 +1,6 @@
 module github.com/NVIDIA/dcgm-exporter
 
-go 1.21.6
+go 1.22
 
 require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20240315184911-5e46e1bcb05a
@@ -21,6 +21,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/urfave/cli/v2 v2.27.1
 	go.uber.org/automaxprocs v1.5.3
+	go.uber.org/mock v0.4.0
 	golang.org/x/sync v0.6.0
 	google.golang.org/grpc v1.63.0
 	k8s.io/api v0.29.3
@@ -140,7 +141,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.21.0 // indirect
 	go.opentelemetry.io/otel/trace v1.21.0 // indirect
 	go.starlark.net v0.0.0-20231121155337-90ade8b19d09 // indirect
-	go.uber.org/mock v0.4.0 // indirect
 	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/exp v0.0.0-20240103183307-be819d1f06fc // indirect
 	golang.org/x/net v0.22.0 // indirect
