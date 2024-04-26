@@ -144,14 +144,14 @@ func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_G
 	return true
 }
 
-func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
+func FindCounterField(c []Counter, fieldID uint) (Counter, error) {
 	for i := 0; i < len(c); i++ {
-		if uint(c[i].FieldID) == fieldId {
+		if uint(c[i].FieldID) == fieldID {
 			return c[i], nil
 		}
 	}
 
-	return c[0], fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldId)
+	return Counter{}, fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldID)
 }
 
 func ToSwitchMetric(

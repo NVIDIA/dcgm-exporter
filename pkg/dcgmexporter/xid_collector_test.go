@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -28,6 +29,8 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"k8s.io/utils/ptr"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -68,11 +71,11 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		}
 	}
 
-	// Create fake GPU
-	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
+	// Get a number of hardware GPUs
+	hardwareGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
-	if numGPUs+1 > dcgm.MAX_NUM_DEVICES {
+	if hardwareGPUs+1 > dcgm.MAX_NUM_DEVICES {
 		t.Skipf("Unable to add fake GPU with more than %d gpus", dcgm.MAX_NUM_DEVICES)
 	}
 
@@ -82,11 +85,12 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
 
-	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
+	// Create fake GPU
+	fakeGPUIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
-	require.NotEmpty(t, gpuIDs)
+	require.NotEmpty(t, fakeGPUIDs)
 
-	for i, gpuID := range gpuIDs {
+	for i, gpuID := range fakeGPUIDs {
 		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
@@ -143,15 +147,15 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
-	// We expect 6 records, because we have 3 fake GPU and each GPU experienced 2 XID errors: 42 and 46
-	require.Len(t, metricValues, 6)
+	// We expect 7 records, because we have 3 fake GPU and each GPU experienced 2 XID errors: 42 and 46, plus we have 1 hardware GPUs
+	require.Len(t, metricValues, len(fakeGPUIDs)*2+int(hardwareGPUs))
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
 		require.Equal(t, fmt.Sprint(config.XIDCountWindowSize), val.Labels["window_size_in_ms"])
 	}
 
 	// We inject new error
-	err = dcgmprovider.Client().InjectFieldValue(gpuIDs[0],
+	err = dcgmprovider.Client().InjectFieldValue(fakeGPUIDs[0],
 		dcgm.DCGM_FI_DEV_XID_ERRORS,
 		dcgm.DCGM_FT_INT64,
 		0,
@@ -171,7 +175,9 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.Len(t, metrics, 1)
 	// We get metric value with the last index
 	metricValues = metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
-	require.Len(t, metricValues, 6+1)
+	// We expect 8 records, because we have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46,
+	// plus we added 1 XID error: 19, plus we have 1 hardware GPUs
+	require.Len(t, metricValues, len(fakeGPUIDs)*2+int(hardwareGPUs)+1)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
 		require.Equal(t, fmt.Sprint(config.XIDCountWindowSize), val.Labels["window_size_in_ms"])
@@ -194,17 +200,30 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	assert.Equal(t, "Count of XID Errors within user-specified time window (see xid-count-window-size param).",
 		*metricFamily.Help)
 	assert.Equal(t, io_prometheus_client.MetricType_GAUGE, *metricFamily.Type)
-	require.Len(t, metricFamily.Metric, 6+1)
-	assert.Len(t, metricFamily.Metric[0].Label, 8)
-	assert.Equal(t, "gpu", *metricFamily.Metric[0].Label[0].Name)
-	assert.Equal(t, "UUID", *metricFamily.Metric[0].Label[1].Name)
-	assert.Equal(t, "device", *metricFamily.Metric[0].Label[2].Name)
-	assert.Equal(t, "modelName", *metricFamily.Metric[0].Label[3].Name)
-	assert.Equal(t, "Hostname", *metricFamily.Metric[0].Label[4].Name)
-	assert.Equal(t, "DCGM_FI_DRIVER_VERSION", *metricFamily.Metric[0].Label[5].Name)
-	assert.Equal(t, "window_size_in_ms", *metricFamily.Metric[0].Label[6].Name)
-	assert.Equal(t, "xid", *metricFamily.Metric[0].Label[7].Name)
-	assert.NotEmpty(t, *metricFamily.Metric[0].Label[7].Value)
+	// We expect 8 records, because we have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46,
+	// plus we added 1 XID error: 19, plus we have 1 hardware GPUs
+	require.Len(t, metricFamily.Metric, len(fakeGPUIDs)*2+int(hardwareGPUs)+1)
+	for _, mv := range metricFamily.Metric {
+		require.NotNil(t, mv.Gauge.Value)
+		if *(mv.Gauge.Value) == 0 {
+			// We don't inject XID errors into the hardware GPU, so we do not expect XID label
+			assert.Len(t, mv.Label, 7)
+			assert.False(t, slices.ContainsFunc(mv.Label, func(lp *io_prometheus_client.LabelPair) bool {
+				return ptr.Deref(lp.Name, "") == "xid"
+			}))
+			continue
+		}
+		assert.Len(t, mv.Label, 8)
+		assert.Equal(t, "gpu", *mv.Label[0].Name)
+		assert.Equal(t, "UUID", *mv.Label[1].Name)
+		assert.Equal(t, "device", *mv.Label[2].Name)
+		assert.Equal(t, "modelName", *mv.Label[3].Name)
+		assert.Equal(t, "Hostname", *mv.Label[4].Name)
+		assert.Equal(t, "DCGM_FI_DRIVER_VERSION", *mv.Label[5].Name)
+		assert.Equal(t, "window_size_in_ms", *mv.Label[6].Name)
+		assert.Equal(t, "xid", *mv.Label[7].Name)
+		assert.NotEmpty(t, *mv.Label[7].Value)
+	}
 }
 
 func TestXIDCollector_NewXIDCollector(t *testing.T) {

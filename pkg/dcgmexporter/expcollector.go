@@ -109,35 +109,44 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 				metricValueLabels := maps.Clone(labels)
 				c.labelFiller(metricValueLabels, entityValue)
 
-				gpuModel := getGPUModel(mi.DeviceInfo, c.config.ReplaceBlanksInModelName)
-
-				m := Metric{
-					Counter:      c.counter,
-					Value:        fmt.Sprint(val),
-					UUID:         uuid,
-					GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
-					GPUUUID:      mi.DeviceInfo.UUID,
-					GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
-					GPUModelName: gpuModel,
-					Hostname:     c.hostname,
-
-					Labels:     metricValueLabels,
-					Attributes: map[string]string{},
-				}
-				if mi.InstanceInfo != nil {
-					m.MigProfile = mi.InstanceInfo.ProfileName
-					m.GPUInstanceID = fmt.Sprintf("%d", mi.InstanceInfo.Info.NvmlInstanceId)
-				} else {
-					m.MigProfile = ""
-					m.GPUInstanceID = ""
-				}
+				m := c.createMetric(metricValueLabels, mi, uuid, val)
 
 				metrics[c.counter] = append(metrics[c.counter], m)
 			}
+		} else {
+			// Create metric with Zero value if group (mapEntityIDToValues) is empty
+			m := c.createMetric(labels, mi, uuid, 0)
+			metrics[c.counter] = append(metrics[c.counter], m)
 		}
 	}
 
 	return metrics, nil
+}
+
+func (c *expCollector) createMetric(labels map[string]string, mi devicemonitoring.Info, uuid string, val int) Metric {
+	gpuModel := getGPUModel(mi.DeviceInfo, c.config.ReplaceBlanksInModelName)
+
+	m := Metric{
+		Counter:      c.counter,
+		Value:        fmt.Sprint(val),
+		UUID:         uuid,
+		GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
+		GPUUUID:      mi.DeviceInfo.UUID,
+		GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
+		GPUModelName: gpuModel,
+		Hostname:     c.hostname,
+
+		Labels:     labels,
+		Attributes: map[string]string{},
+	}
+	if mi.InstanceInfo != nil {
+		m.MigProfile = mi.InstanceInfo.ProfileName
+		m.GPUInstanceID = fmt.Sprintf("%d", mi.InstanceInfo.Info.NvmlInstanceId)
+	} else {
+		m.MigProfile = ""
+		m.GPUInstanceID = ""
+	}
+	return m
 }
 
 func (c *expCollector) getLabelsFromCounters(mi devicemonitoring.Info, labels map[string]string) error {

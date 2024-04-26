@@ -140,7 +140,6 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 }
 
 func (s *MetricsServer) render(w io.Writer, metricGroups MetricsByCounterGroup) error {
