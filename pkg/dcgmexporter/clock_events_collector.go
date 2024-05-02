@@ -24,7 +24,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 // IsDCGMExpClockEventsCountEnabled checks if the DCGM_EXP_CLOCK_EVENTS_COUNT counter exists
@@ -86,11 +86,10 @@ func (c *clockEventsCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func NewClockEventsCollector(
-	counters []appconfig.Counter,
+	counters appconfig.CounterList,
 	hostname string,
 	config *appconfig.Config,
-	watcher devicewatcher.Watcher,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
 	if !IsDCGMExpClockEventsCountEnabled(counters) {
 		logrus.Error(dcgmExpClockEventsCount + " collector is disabled")
@@ -99,13 +98,13 @@ func NewClockEventsCollector(
 
 	collector := clockEventsCollector{}
 	var err error
+	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
+
 	collector.expCollector, err = newExpCollector(
-		counters,
+		counters.LabelCounters(),
 		hostname,
-		[]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS},
 		config,
-		watcher,
-		fieldEntityGroupTypeSystemInfo,
+		deviceWatchList,
 	)
 	if err != nil {
 		return nil, err

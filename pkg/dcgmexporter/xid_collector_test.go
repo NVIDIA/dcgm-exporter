@@ -34,6 +34,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 func TestXIDCollector_Gather_Encode(t *testing.T) {
@@ -43,7 +44,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	hostname := "local-test"
 	config := &appconfig.Config{
-		GPUDevices: appconfig.DeviceOptions{
+		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -126,14 +127,16 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	allCounters = append(allCounters, cc.ExporterCounters.LabelCounters()...)
+
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(allCounters, config)
+	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	item, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
+	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -255,7 +258,7 @@ func filterMetrics(metricValues []Metric, condition func(Metric) bool) []Metric 
 
 func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	config := &appconfig.Config{
-		GPUDevices: appconfig.DeviceOptions{
+		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -271,11 +274,11 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(allCounters, config)
+	err := deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	item, _ := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 
 	t.Run("Should Return Error When DCGM_EXP_XID_ERRORS_COUNT is not present", func(t *testing.T) {
 		records := [][]string{
@@ -286,14 +289,14 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
 
-		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", config, deviceWatcher, item)
+		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
 
 	t.Run("Should Return Error When Counters Param Is Empty", func(t *testing.T) {
 		counters := make([]appconfig.Counter, 0)
-		xidCollector, err := NewXIDCollector(counters, "", config, deviceWatcher, item)
+		xidCollector, err := NewXIDCollector(counters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
@@ -324,7 +327,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", config, deviceWatcher, item)
+		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", config, item)
 		require.NoError(t, err)
 		require.NotNil(t, xidCollector)
 	})

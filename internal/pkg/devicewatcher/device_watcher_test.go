@@ -672,7 +672,7 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 			mockFieldGroupIDs := tt.expectFieldGroupID()
 			tt.mockDCGMFunc(mockGroupIDs, mockFieldGroupIDs)
 
-			d := &DeviceWatcher{}
+			d := NewDeviceWatcher()
 			inputFields := []dcgm.Short{1, 2, 3, 4}
 			gotFuncs, err := d.WatchDeviceFields(inputFields, mockDeviceInfo, 1000000)
 			// Ensure DestroyGroup functions gets called

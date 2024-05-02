@@ -32,6 +32,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
@@ -45,7 +46,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 
 	hostname := "local-test"
 	config := &appconfig.Config{
-		GPUDevices: appconfig.DeviceOptions{
+		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -63,11 +64,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	require.Len(t, cc.ExporterCounters, 1)
 	require.Len(t, cc.DCGMCounters, 1)
 
-	for i := range cc.DCGMCounters {
-		if cc.DCGMCounters[i].PromType == "label" {
-			cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
-		}
-	}
+	cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters.LabelCounters()...)
 
 	// Create fake GPU
 	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
@@ -149,13 +146,15 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	allCounters = append(allCounters, cc.ExporterCounters.LabelCounters()...)
+
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(allCounters, config)
+	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	item, _ := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 
-	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -196,7 +195,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 
 func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	config := &appconfig.Config{
-		GPUDevices: appconfig.DeviceOptions{
+		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -212,10 +211,10 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(allCounters, config)
+	err := deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
-	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	item, _ := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 
 	t.Run("Should Return Error When DCGM_EXP_CLOCK_EVENTS_COUNT is not present", func(t *testing.T) {
 		records := [][]string{
@@ -225,14 +224,14 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
-		collector, err := NewClockEventsCollector(cc.DCGMCounters, "", config, deviceWatcher, item)
+		collector, err := NewClockEventsCollector(cc.DCGMCounters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
 
 	t.Run("Should Return Error When Counter Param Is Empty", func(t *testing.T) {
 		counters := make([]appconfig.Counter, 0)
-		collector, err := NewClockEventsCollector(counters, "", config, deviceWatcher, item)
+		collector, err := NewClockEventsCollector(counters, "", config, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
@@ -251,7 +250,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		collector, err := NewClockEventsCollector(cc.ExporterCounters, "", config, deviceWatcher, item)
+		collector, err := NewClockEventsCollector(cc.ExporterCounters, "", config, item)
 		require.NoError(t, err)
 		require.NotNil(t, collector)
 	})
@@ -264,7 +263,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	hostname := "local-test"
 	config := &appconfig.Config{
-		GPUDevices: appconfig.DeviceOptions{
+		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -345,14 +344,16 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
+	allCounters = append(allCounters, cc.ExporterCounters.LabelCounters()...)
 
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(allCounters, config)
+
+	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	item, _ := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 
-	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -391,7 +392,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 
 	hostname := "local-test"
 	config := &appconfig.Config{
-		GPUDevices: appconfig.DeviceOptions{
+		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
 			MinorRange: []int{-1},
@@ -449,14 +450,14 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 		},
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(allCounters, config)
 
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	item, _ := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 
-	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
 	defer func() {

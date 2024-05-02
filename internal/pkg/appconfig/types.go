@@ -41,9 +41,9 @@ type Config struct {
 	UseOldNamespace            bool
 	UseRemoteHE                bool
 	RemoteHEInfo               string
-	GPUDevices                 DeviceOptions
-	SwitchDevices              DeviceOptions
-	CPUDevices                 DeviceOptions
+	GPUDeviceOptions           DeviceOptions
+	SwitchDeviceOptions        DeviceOptions
+	CPUDeviceOptions           DeviceOptions
 	NoHostname                 bool
 	UseFakeGPUs                bool
 	ConfigMapData              string
@@ -65,4 +65,21 @@ type Counter struct {
 	FieldName string
 	PromType  string
 	Help      string
+}
+
+func (c Counter) IsLabel() bool {
+	return c.PromType == "label"
+}
+
+type CounterList []Counter
+
+func (c CounterList) LabelCounters() CounterList {
+	var labelsCounters CounterList
+	for _, counter := range c {
+		if counter.IsLabel() {
+			labelsCounters = append(labelsCounters, counter)
+		}
+	}
+
+	return labelsCounters
 }

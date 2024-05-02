@@ -19,7 +19,7 @@ package dcgmexporter
 import (
 	"fmt"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -34,29 +34,26 @@ type CollectorFactory interface {
 
 // ToDo: When we move collectors to dedicated package like "collectors", we can replace the factory with something like "collectors.Register". Today, the collectorFactory plays a role of a package.
 type collectorFactory struct {
-	counterSet                     *CounterSet
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo
-	hostname                       string
-	config                         *appconfig.Config
-	cRegistry                      *Registry
-	watcher                        devicewatcher.Watcher
+	counterSet             *CounterSet
+	deviceWatchListManager devicewatchlistmanager.Manager
+	hostname               string
+	config                 *appconfig.Config
+	cRegistry              *Registry
 }
 
 func InitCollectorFactory(
 	counterSet *CounterSet,
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
+	deviceWatchListManager devicewatchlistmanager.Manager,
 	hostname string,
 	config *appconfig.Config,
 	cRegistry *Registry,
-	watcher devicewatcher.Watcher,
 ) CollectorFactory {
 	return &collectorFactory{
-		counterSet:                     counterSet,
-		fieldEntityGroupTypeSystemInfo: fieldEntityGroupTypeSystemInfo,
-		hostname:                       hostname,
-		config:                         config,
-		cRegistry:                      cRegistry,
-		watcher:                        watcher,
+		counterSet:             counterSet,
+		deviceWatchListManager: deviceWatchListManager,
+		hostname:               hostname,
+		config:                 config,
+		cRegistry:              cRegistry,
 	}
 }
 
@@ -74,8 +71,8 @@ func (cf *collectorFactory) Register() {
 
 func (cf *collectorFactory) enableDCGMCollector(group dcgm.Field_Entity_Group) {
 	if len(cf.counterSet.DCGMCounters) > 0 {
-		if item, exists := cf.fieldEntityGroupTypeSystemInfo.Get(group); exists {
-			collector, err := NewDCGMCollector(cf.counterSet.DCGMCounters, cf.hostname, cf.config, cf.watcher, item)
+		if item, exists := cf.deviceWatchListManager.EntityWatchList(group); exists {
+			collector, err := NewDCGMCollector(cf.counterSet.DCGMCounters, cf.hostname, cf.config, item)
 			if err != nil {
 				logrus.Fatalf("Cannot create DCGMCollector for %s: %s", group.String(), err)
 			}
@@ -86,12 +83,14 @@ func (cf *collectorFactory) enableDCGMCollector(group dcgm.Field_Entity_Group) {
 
 func (cf *collectorFactory) enableDCGMExpClockEventsCount() {
 	if IsDCGMExpClockEventsCountEnabled(cf.counterSet.ExporterCounters) {
-		item, exists := cf.fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+		item, exists := cf.deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 		if !exists {
 			logrus.Fatalf("%s collector cannot be initialized", DCGMClockEventsCount.String())
 		}
-		clocksThrottleReasonsCollector, err := NewClockEventsCollector(cf.counterSet.ExporterCounters, cf.hostname,
-			cf.config, cf.watcher, item)
+
+		clocksThrottleReasonsCollector, err := NewClockEventsCollector(cf.counterSet.ExporterCounters,
+			cf.hostname,
+			cf.config, item)
 		if err != nil {
 			logrus.Fatalf("%s collector cannot be initialized. Error: %s", DCGMClockEventsCount.String(), err)
 		}
@@ -104,12 +103,13 @@ func (cf *collectorFactory) enableDCGMExpClockEventsCount() {
 
 func (cf *collectorFactory) enableDCGMExpXIDErrorsCountCollector() {
 	if IsDCGMExpXIDErrorsCountEnabled(cf.counterSet.ExporterCounters) {
-		item, exists := cf.fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+		item, exists := cf.deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 		if !exists {
 			logrus.Fatalf("%s collector cannot be initialized", DCGMXIDErrorsCount.String())
 		}
 
-		xidCollector, err := NewXIDCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config, cf.watcher, item)
+		xidCollector, err := NewXIDCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config,
+			item)
 		if err != nil {
 			logrus.Fatal(err)
 		}

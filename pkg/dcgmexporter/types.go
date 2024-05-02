@@ -26,6 +26,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 var (
@@ -59,10 +60,9 @@ type Transform interface {
 
 type DCGMCollector struct {
 	Counters                 []appconfig.Counter
-	DeviceFields             []dcgm.Short
 	Cleanups                 []func()
 	UseOldNamespace          bool
-	DeviceInfo               deviceinfo.Provider
+	DeviceWatchList          devicewatchlistmanager.WatchList
 	Hostname                 string
 	ReplaceBlanksInModelName bool
 }
@@ -111,14 +111,14 @@ var promMetricType = map[string]bool{
 type MetricsServer struct {
 	sync.Mutex
 
-	server                         *http.Server
-	webConfig                      *web.FlagConfig
-	metrics                        string
-	metricsChan                    chan string
-	registry                       *Registry
-	config                         *appconfig.Config
-	transformations                []Transform
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo
+	server                 *http.Server
+	webConfig              *web.FlagConfig
+	metrics                string
+	metricsChan            chan string
+	registry               *Registry
+	config                 *appconfig.Config
+	transformations        []Transform
+	deviceWatchListManager devicewatchlistmanager.Manager
 }
 
 type PodMapper struct {
@@ -136,8 +136,8 @@ type MetricsByCounter map[appconfig.Counter][]Metric
 
 // CounterSet return
 type CounterSet struct {
-	DCGMCounters     []appconfig.Counter
-	ExporterCounters []appconfig.Counter
+	DCGMCounters     appconfig.CounterList
+	ExporterCounters appconfig.CounterList
 }
 
 // MetricsByCounterGroup represents a group of metrics by specific counter groups

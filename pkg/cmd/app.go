@@ -23,6 +23,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
@@ -314,9 +315,8 @@ restart:
 	fillConfigMetricGroups(config)
 
 	cs := getCounters(config)
-	deviceFieldWatcher := devicewatcher.NewDeviceWatcher()
 
-	fieldEntityGroupTypeSystemInfo := getFieldEntityGroupTypeSystemInfo(cs, config, deviceFieldWatcher)
+	deviceWatchListManager := startDeviceWatchListManager(cs, config)
 
 	hostname, err := dcgmexporter.GetHostname(config)
 	if err != nil {
@@ -325,8 +325,7 @@ restart:
 
 	cRegistry := dcgmexporter.NewRegistry()
 
-	cf := dcgmexporter.InitCollectorFactory(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry,
-		deviceFieldWatcher)
+	cf := dcgmexporter.InitCollectorFactory(cs, deviceWatchListManager, hostname, config, cRegistry)
 	cf.Register()
 
 	defer func() {
@@ -340,7 +339,7 @@ restart:
 
 	wg.Add(1)
 
-	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, fieldEntityGroupTypeSystemInfo, cRegistry)
+	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -364,25 +363,28 @@ restart:
 	return nil
 }
 
-func getFieldEntityGroupTypeSystemInfo(
-	cs *dcgmexporter.CounterSet, config *appconfig.Config, watcher devicewatcher.Watcher,
-) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
-	var allCounters []appconfig.Counter
+func startDeviceWatchListManager(
+	cs *dcgmexporter.CounterSet, config *appconfig.Config,
+) devicewatchlistmanager.Manager {
+	// Create a list containing DCGM Collector, Exp Collectors and all the label Collectors
+	var allCounters appconfig.CounterList
+	var deviceWatchListManager devicewatchlistmanager.Manager
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
 
 	allCounters = appendDCGMXIDErrorsCountDependency(allCounters, cs)
 	allCounters = appendDCGMClockEventsCountDependency(cs, allCounters)
 
-	fieldEntityGroupTypeSystemInfo := dcgmexporter.NewEntityGroupTypeSystemInfo(allCounters, config)
+	deviceWatchListManager = devicewatchlistmanager.NewWatchListManager(allCounters, config)
+	deviceWatcher := devicewatcher.NewDeviceWatcher()
 
-	for _, egt := range dcgmexporter.FieldEntityGroupTypeToMonitor {
-		err := fieldEntityGroupTypeSystemInfo.Load(egt, watcher)
+	for _, deviceType := range devicewatchlistmanager.DeviceTypesToWatch {
+		err := deviceWatchListManager.CreateEntityWatchList(deviceType, deviceWatcher, int64(config.CollectInterval))
 		if err != nil {
-			logrus.Infof("Not collecting %s metrics; %s", egt.String(), err)
+			logrus.Infof("Not collecting %s metrics; %s", deviceType.String(), err)
 		}
 	}
-	return fieldEntityGroupTypeSystemInfo
+	return deviceWatchListManager
 }
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
@@ -556,9 +558,9 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
 		UseRemoteHE:                c.IsSet(CLIRemoteHEInfo),
 		RemoteHEInfo:               c.String(CLIRemoteHEInfo),
-		GPUDevices:                 gOpt,
-		SwitchDevices:              sOpt,
-		CPUDevices:                 cOpt,
+		GPUDeviceOptions:           gOpt,
+		SwitchDeviceOptions:        sOpt,
+		CPUDeviceOptions:           cOpt,
 		NoHostname:                 c.Bool(CLINoHostname),
 		UseFakeGPUs:                c.Bool(CLIUseFakeGPUs),
 		ConfigMapData:              c.String(CLIConfigMapData),

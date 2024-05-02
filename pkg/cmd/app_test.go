@@ -25,23 +25,23 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 )
 
-func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
+func Test_getDeviceWatchListManager(t *testing.T) {
 	config := &appconfig.Config{
-		GPUDevices:    appconfig.DeviceOptions{},
-		SwitchDevices: appconfig.DeviceOptions{},
-		CPUDevices:    appconfig.DeviceOptions{},
-		UseFakeGPUs:   true,
+		GPUDeviceOptions:    appconfig.DeviceOptions{},
+		SwitchDeviceOptions: appconfig.DeviceOptions{},
+		CPUDeviceOptions:    appconfig.DeviceOptions{},
+		UseFakeGPUs:         true,
 	}
 
 	tests := []struct {
 		name       string
 		counterSet *dcgmexporter.CounterSet
-		assertion  func(*testing.T, *dcgmexporter.FieldEntityGroupTypeSystemInfo)
+		assertion  func(*testing.T, devicewatchlistmanager.Manager)
 	}{
 		{
 			name: "When DCGM_FI_DEV_XID_ERRORS and DCGM_EXP_XID_ERRORS_COUNT enabled",
@@ -63,7 +63,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
 				require.Len(t, values, 1)
@@ -82,7 +82,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
 				require.Len(t, values, 1)
@@ -101,7 +101,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
 				require.Len(t, values, 1)
@@ -111,7 +111,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 		{
 			name:       "When no counters",
 			counterSet: &dcgmexporter.CounterSet{},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
 				require.Len(t, values, 0)
@@ -136,7 +136,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
@@ -155,7 +155,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
 				require.Len(t, values, 1)
@@ -174,7 +174,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
 				require.Len(t, values, 1)
@@ -188,7 +188,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getFieldEntityGroupTypeSystemInfo(tt.counterSet, config, devicewatcher.NewDeviceWatcher())
+			got := startDeviceWatchListManager(tt.counterSet, config)
 			if tt.assertion == nil {
 				t.Skip(tt.name)
 			}

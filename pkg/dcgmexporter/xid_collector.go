@@ -24,7 +24,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 type xidCollector struct {
@@ -36,11 +36,10 @@ func (c *xidCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func NewXIDCollector(
-	counters []appconfig.Counter,
+	counters appconfig.CounterList,
 	hostname string,
 	config *appconfig.Config,
-	watcher devicewatcher.Watcher,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
 	if !IsDCGMExpXIDErrorsCountEnabled(counters) {
 		logrus.Error(dcgmExpXIDErrorsCount + " collector is disabled")
@@ -49,12 +48,13 @@ func NewXIDCollector(
 
 	collector := xidCollector{}
 	var err error
-	collector.expCollector, err = newExpCollector(counters,
+	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+
+	collector.expCollector, err = newExpCollector(
+		counters.LabelCounters(),
 		hostname,
-		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
 		config,
-		watcher,
-		fieldEntityGroupTypeSystemInfo,
+		deviceWatchList,
 	)
 	if err != nil {
 		return nil, err

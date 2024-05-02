@@ -29,31 +29,29 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 const unknownErr = "Unknown Error"
 
 type DCGMCollectorConstructor func(
-	[]appconfig.Counter, string, *appconfig.Config, FieldEntityGroupTypeSystemInfoItem,
+	[]appconfig.Counter, string, *appconfig.Config, devicewatchlistmanager.WatchList,
 ) (*DCGMCollector, func(), error)
 
 func NewDCGMCollector(
 	c []appconfig.Counter,
 	hostname string,
 	config *appconfig.Config,
-	watcher devicewatcher.Watcher,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+	deviceWatchList devicewatchlistmanager.WatchList,
 ) (*DCGMCollector, error) {
-	if fieldEntityGroupTypeSystemInfo.isEmpty() {
-		return nil, errors.New("fieldEntityGroupTypeSystemInfo is empty")
+	if deviceWatchList.IsEmpty() {
+		return nil, errors.New("deviceWatchList is empty")
 	}
 
 	collector := &DCGMCollector{
-		Counters:     c,
-		DeviceFields: fieldEntityGroupTypeSystemInfo.DeviceFields,
-		DeviceInfo:   fieldEntityGroupTypeSystemInfo.DeviceInfo,
-		Hostname:     hostname,
+		Counters:        c,
+		DeviceWatchList: deviceWatchList,
+		Hostname:        hostname,
 	}
 
 	if config == nil {
@@ -64,8 +62,7 @@ func NewDCGMCollector(
 	collector.UseOldNamespace = config.UseOldNamespace
 	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
-	cleanups, err := watcher.WatchDeviceFields(collector.DeviceFields, fieldEntityGroupTypeSystemInfo.DeviceInfo,
-		int64(config.CollectInterval)*1000)
+	cleanups, err := deviceWatchList.Watch()
 	if err != nil {
 		return nil, err
 	}
@@ -75,17 +72,6 @@ func NewDCGMCollector(
 	return collector, nil
 }
 
-func GetDeviceInfo(config *appconfig.Config, entityType dcgm.Field_Entity_Group) (deviceinfo.Provider, error) {
-	deviceInfo, err := deviceinfo.Initialize(config.GPUDevices,
-		config.SwitchDevices,
-		config.CPUDevices,
-		config.UseFakeGPUs, entityType)
-	if err != nil {
-		return nil, err
-	}
-	return deviceInfo, err
-}
-
 func (c *DCGMCollector) Cleanup() {
 	for _, c := range c.Cleanups {
 		c()
@@ -93,7 +79,7 @@ func (c *DCGMCollector) Cleanup() {
 }
 
 func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.DeviceInfo)
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.DeviceWatchList.DeviceInfo())
 
 	metrics := make(MetricsByCounter)
 
@@ -101,10 +87,11 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		var vals []dcgm.FieldValue_v1
 		var err error
 		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
-			vals, err = dcgmprovider.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId, c.DeviceFields)
+			vals, err = dcgmprovider.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId,
+				c.DeviceWatchList.DeviceFields())
 		} else {
 			vals, err = dcgmprovider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
-				c.DeviceFields)
+				c.DeviceWatchList.DeviceFields())
 		}
 
 		if err != nil {
@@ -117,11 +104,12 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 
 		// InstanceInfo will be nil for GPUs
-		if c.DeviceInfo.InfoType() == dcgm.FE_SWITCH || c.DeviceInfo.InfoType() == dcgm.FE_LINK {
+		switch c.DeviceWatchList.DeviceInfo().InfoType() {
+		case dcgm.FE_SWITCH, dcgm.FE_LINK:
 			ToSwitchMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
-		} else if c.DeviceInfo.InfoType() == dcgm.FE_CPU || c.DeviceInfo.InfoType() == dcgm.FE_CPU_CORE {
+		case dcgm.FE_CPU, dcgm.FE_CPU_CORE:
 			ToCPUMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
-		} else {
+		default:
 			ToMetric(metrics,
 				vals,
 				c.Counters,
@@ -134,18 +122,6 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 	}
 
 	return metrics, nil
-}
-
-func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_Group) bool {
-	if len(fields) == 0 {
-		return false
-	}
-
-	if len(fields) == 1 && fields[0] == dcgm.DCGM_FI_DRIVER_VERSION {
-		return false
-	}
-
-	return true
 }
 
 func FindCounterField(c []appconfig.Counter, fieldID uint) (appconfig.Counter, error) {
@@ -173,7 +149,7 @@ func ToSwitchMetric(
 			continue
 		}
 
-		if counter.PromType == "label" {
+		if counter.IsLabel() {
 			labels[counter.FieldName] = v
 			continue
 		}
@@ -218,7 +194,7 @@ func ToCPUMetric(
 			continue
 		}
 
-		if counter.PromType == "label" {
+		if counter.IsLabel() {
 			labels[counter.FieldName] = v
 			continue
 		}
@@ -272,7 +248,7 @@ func ToMetric(
 			continue
 		}
 
-		if counter.PromType == "label" {
+		if counter.IsLabel() {
 			labels[counter.FieldName] = v
 			continue
 		}

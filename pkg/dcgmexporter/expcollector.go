@@ -22,37 +22,33 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
-	deviceInfo          deviceinfo.Provider            // Hardware device info
-	counter             appconfig.Counter              // Counter that collector
-	hostname            string                         // Hostname
-	config              *appconfig.Config              // Configuration settings
-	labelDeviceFields   []dcgm.Short                   // Fields used for labels
-	counterDeviceFields []dcgm.Short                   // Fields used for the counter
-	labelsCounters      []appconfig.Counter            // Counters used for labels
-	cleanups            []func()                       // Cleanup functions
-	fieldValueParser    func(val int64) []int64        // Function to parse the field value
-	labelFiller         func(map[string]string, int64) // Function to fill labels
-	windowSize          int                            // Window size
+	deviceWatchList  devicewatchlistmanager.WatchList // Device info and fields used for counters and labels
+	counter          appconfig.Counter                // Counter for a specific collector type
+	labelsCounters   []appconfig.Counter              // Counters used for labels
+	hostname         string                           // Hostname
+	config           *appconfig.Config                // Configuration settings
+	cleanups         []func()                         // Cleanup functions
+	fieldValueParser func(val int64) []int64          // Function to parse the field value
+	labelFiller      func(map[string]string, int64)   // Function to fill labels
+	windowSize       int                              // Window size
 }
 
 func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	fieldGroupIdx := expCollectorFieldGroupIdx.Add(1)
 
 	fieldGroupName := fmt.Sprintf("expCollectorFieldGroupName%d", fieldGroupIdx)
-	fieldsGroup, err := dcgmprovider.Client().FieldGroupCreate(fieldGroupName, c.counterDeviceFields)
+	fieldsGroup, err := dcgmprovider.Client().FieldGroupCreate(fieldGroupName, c.deviceWatchList.DeviceFields())
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +85,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	labels := map[string]string{}
 	labels[windowSizeInMSLabel] = fmt.Sprint(c.windowSize)
 
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceInfo)
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
 	metrics := make(MetricsByCounter)
 	useOld := c.config.UseOldNamespace
 	uuid := "UUID"
@@ -97,7 +93,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		uuid = "uuid"
 	}
 	for _, mi := range monitoringInfo {
-		if len(c.labelsCounters) > 0 {
+		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
 			err := c.getLabelsFromCounters(mi, labels)
 			if err != nil {
 				return nil, err
@@ -152,7 +148,7 @@ func (c *expCollector) createMetric(labels map[string]string, mi devicemonitorin
 
 func (c *expCollector) getLabelsFromCounters(mi devicemonitoring.Info, labels map[string]string) error {
 	latestValues, err := dcgmprovider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
-		c.labelDeviceFields)
+		c.deviceWatchList.LabelDeviceFields())
 	if err != nil {
 		return err
 	}
@@ -169,7 +165,7 @@ func (c *expCollector) getLabelsFromCounters(mi devicemonitoring.Info, labels ma
 			continue
 		}
 
-		if counter.PromType == "label" {
+		if counter.IsLabel() {
 			labels[counter.FieldName] = v
 			continue
 		}
@@ -185,41 +181,25 @@ func (c *expCollector) Cleanup() {
 
 // newExpCollector is a constructor for the expCollector
 func newExpCollector(
-	counters []appconfig.Counter,
+	labelsCounters []appconfig.Counter,
 	hostname string,
-	counterDeviceFields []dcgm.Short,
 	config *appconfig.Config,
-	watcher devicewatcher.Watcher,
-	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+	deviceWatchList devicewatchlistmanager.WatchList,
 ) (expCollector, error) {
-	var labelsCounters []appconfig.Counter
-	for i := 0; i < len(counters); i++ {
-		if counters[i].PromType == "label" {
-			labelsCounters = append(labelsCounters, counters[i])
-		}
-	}
-
-	labelDeviceFields := watcher.GetDeviceFields(labelsCounters, dcgm.FE_GPU)
-
 	collector := expCollector{
-		hostname:            hostname,
-		config:              config,
-		labelDeviceFields:   labelDeviceFields,
-		labelsCounters:      labelsCounters,
-		counterDeviceFields: counterDeviceFields,
+		deviceWatchList: deviceWatchList,
+		hostname:        hostname,
+		config:          config,
+		labelsCounters:  labelsCounters,
 		fieldValueParser: func(val int64) []int64 {
 			return []int64{val}
 		},
 		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {},
 	}
 
-	collector.deviceInfo = fieldEntityGroupTypeSystemInfo.DeviceInfo
-
 	var err error
 
-	collector.cleanups, err = watcher.WatchDeviceFields(collector.counterDeviceFields,
-		collector.deviceInfo,
-		int64(config.CollectInterval)*1000)
+	collector.cleanups, err = deviceWatchList.Watch()
 	if err != nil {
 		logrus.Warnf("Failed to watch metrics: %s", err)
 		return expCollector{}, err

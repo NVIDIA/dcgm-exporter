@@ -30,7 +30,9 @@ import (
 	"go.uber.org/mock/gomock"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
+	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 const expectedResponse = `# HELP TEST_METRIC 
@@ -131,18 +133,21 @@ func TestMetrics(t *testing.T) {
 			mockDeviceInfo.EXPECT().InfoType().Return(tt.group).AnyTimes()
 			mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
 
-			defaultFieldEntityGroupTypeSystemInfoItem := FieldEntityGroupTypeSystemInfoItem{
-				DeviceFields: []dcgm.Short{42},
-				DeviceInfo:   mockDeviceInfo,
-			}
+			defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(
+				mockDeviceInfo,
+				[]dcgm.Short{42},
+				nil,
+				deviceWatcher,
+				1,
+			)
 
 			metricServer := &MetricsServer{
 				registry: reg,
-				fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-					items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-						tt.group: defaultFieldEntityGroupTypeSystemInfoItem,
-					},
-				},
+				deviceWatchListManager: func(group dcgm.Field_Entity_Group) devicewatchlistmanager.Manager {
+					mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+					mockDeviceWatchListManager.EXPECT().WatchList(group).Return(defaultDeviceWatchList, true).AnyTimes()
+					return mockDeviceWatchListManager
+				}(tt.group),
 				transformations: []Transform{
 					tt.transformer(),
 				},
@@ -188,18 +193,23 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_CPU).AnyTimes()
 	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
 
-	defaultFieldEntityGroupTypeSystemInfoItem := FieldEntityGroupTypeSystemInfoItem{
-		DeviceFields: []dcgm.Short{42},
-		DeviceInfo:   mockDeviceInfo,
-	}
+	defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(
+		mockDeviceInfo,
+		[]dcgm.Short{42},
+		nil,
+		deviceWatcher,
+		1,
+	)
 
 	metricServer := &MetricsServer{
 		registry: reg,
-		fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-			items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-				dcgm.FE_CPU: defaultFieldEntityGroupTypeSystemInfoItem,
-			},
-		},
+		deviceWatchListManager: func() devicewatchlistmanager.Manager {
+			mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+			mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_CPU).Return(defaultDeviceWatchList, true).AnyTimes()
+			mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+				false).AnyTimes()
+			return mockDeviceWatchListManager
+		}(),
 		transformations: []Transform{},
 	}
 	recorder := &mockResponseWriter{}

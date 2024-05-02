@@ -28,9 +28,11 @@ import (
 
 	dcgmmock "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
+	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 var mockGPU = deviceinfo.GPUInfo{
@@ -56,30 +58,31 @@ func Test_collectorFactory_Register(t *testing.T) {
 	mockDeviceInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
 	mockDeviceInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
 
-	defaultFieldEntityGroupTypeSystemInfoItem := FieldEntityGroupTypeSystemInfoItem{
-		DeviceFields: []dcgm.Short{42},
-		DeviceInfo:   mockDeviceInfo,
-	}
+	defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(mockDeviceInfo, []dcgm.Short{42}, nil, deviceWatcher,
+		int64(1))
 
 	tests := []struct {
-		name                           string
-		cs                             *CounterSet
-		fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo
-		hostname                       string
-		config                         *appconfig.Config
-		setupDCGMMock                  func(*dcgmmock.MockDCGM)
-		assert                         func(*testing.T, *Registry)
-		wantsPanic                     bool
+		name                      string
+		cs                        *CounterSet
+		getDeviceWatchListManager func() devicewatchlistmanager.Manager
+		hostname                  string
+		config                    *appconfig.Config
+		setupDCGMMock             func(*dcgmmock.MockDCGM)
+		assert                    func(*testing.T, *Registry)
+		wantsPanic                bool
 	}{
 		{
 			name: fmt.Sprintf("Collector enabled for the %s", dcgm.FE_GPU.String()),
 			cs: &CounterSet{
 				DCGMCounters: []appconfig.Counter{dcgmCounter},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-					dcgm.FE_GPU: defaultFieldEntityGroupTypeSystemInfoItem,
-				},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+					false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			hostname: "testhost",
 			config:   &appconfig.Config{},
@@ -114,10 +117,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 			cs: &CounterSet{
 				DCGMCounters: []appconfig.Counter{dcgmCounter},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-					dcgm.FE_GPU: defaultFieldEntityGroupTypeSystemInfoItem,
-				},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+					false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			hostname: "testhost",
 			config:   &appconfig.Config{},
@@ -137,10 +143,11 @@ func Test_collectorFactory_Register(t *testing.T) {
 					},
 				},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-					dcgm.FE_GPU: defaultFieldEntityGroupTypeSystemInfoItem,
-				},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			hostname:      "testhost",
 			config:        &appconfig.Config{},
@@ -162,8 +169,11 @@ func Test_collectorFactory_Register(t *testing.T) {
 					},
 				},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.
+					WatchList{}, false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			hostname:   "testhost",
 			config:     &appconfig.Config{},
@@ -182,10 +192,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 					},
 				},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-					dcgm.FE_GPU: defaultFieldEntityGroupTypeSystemInfoItem,
-				},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+					false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			setupDCGMMock: func(mockDCGM *dcgmmock.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
@@ -205,10 +218,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 					},
 				},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-					dcgm.FE_GPU: defaultFieldEntityGroupTypeSystemInfoItem,
-				},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+					false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			hostname:      "testhost",
 			config:        &appconfig.Config{},
@@ -230,8 +246,11 @@ func Test_collectorFactory_Register(t *testing.T) {
 					},
 				},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.
+					WatchList{}, false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			hostname:   "testhost",
 			config:     &appconfig.Config{},
@@ -250,10 +269,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 					},
 				},
 			},
-			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
-				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
-					dcgm.FE_GPU: defaultFieldEntityGroupTypeSystemInfoItem,
-				},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+					false).AnyTimes()
+				return mockDeviceWatchListManager
 			},
 			setupDCGMMock: func(mockDCGM *dcgmmock.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
@@ -292,13 +314,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 			registry := NewRegistry()
 			if tt.wantsPanic {
 				require.PanicsWithValue(t, "logrus.Fatal", func() {
-					InitCollectorFactory(tt.cs, tt.fieldEntityGroupTypeSystemInfo, tt.hostname, tt.config,
-						registry, deviceWatcher).Register()
+					InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname, tt.config,
+						registry).Register()
 				})
 				return
 			}
-			InitCollectorFactory(tt.cs, tt.fieldEntityGroupTypeSystemInfo, tt.hostname, tt.config,
-				registry, deviceWatcher).Register()
+			InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname, tt.config,
+				registry).Register()
 			if tt.assert != nil {
 				tt.assert(t, registry)
 			}

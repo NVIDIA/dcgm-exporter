@@ -30,6 +30,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
@@ -109,11 +110,11 @@ func testDCGMGPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMColle
 		MinorRange: []int{-1},
 	}
 	config := appconfig.Config{
-		GPUDevices:      dOpt,
-		NoHostname:      false,
-		UseOldNamespace: false,
-		UseFakeGPUs:     false,
-		CollectInterval: 1,
+		GPUDeviceOptions: dOpt,
+		NoHostname:       false,
+		UseOldNamespace:  false,
+		UseFakeGPUs:      false,
+		CollectInterval:  1,
 	}
 
 	// Store actual dcgm provider
@@ -139,29 +140,29 @@ func testDCGMGPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMColle
 	// Set mock DCGM provider
 	dcgmprovider.SetClient(mockDCGMProvider)
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(counters, &config)
 
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	err := deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	gpuItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	gpuItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	g, err := NewDCGMCollector(counters, "", &config, deviceWatcher, gpuItem)
+	g, err := NewDCGMCollector(counters, "", &config, gpuItem)
 	require.NoError(t, err)
 
 	/* Test for error when no switches are available to monitor. */
-	switchItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH)
+	switchItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_SWITCH)
 	assert.False(t, exists, "dcgm.FE_SWITCH should not be available")
 
-	_, err = NewDCGMCollector(counters, "", &config, deviceWatcher, switchItem)
+	_, err = NewDCGMCollector(counters, "", &config, switchItem)
 	require.Error(t, err, "NewDCGMCollector should return error")
 
 	/* Test for error when no cpus are available to monitor. */
-	cpuItem, exist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
+	cpuItem, exist := deviceWatchListManager.EntityWatchList(dcgm.FE_CPU)
 	require.False(t, exist, "dcgm.FE_CPU should not be available")
 
-	_, err = NewDCGMCollector(counters, "", &config, deviceWatcher, cpuItem)
+	_, err = NewDCGMCollector(counters, "", &config, cpuItem)
 	require.Error(t, err, "NewDCGMCollector should return error")
 
 	out, err := g.GetMetrics()
@@ -187,10 +188,10 @@ func testDCGMGPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMColle
 func testDCGMCPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMCollector {
 	dOpt := appconfig.DeviceOptions{Flex: true, MajorRange: []int{-1}, MinorRange: []int{-1}}
 	config := appconfig.Config{
-		CPUDevices:      dOpt,
-		NoHostname:      false,
-		UseOldNamespace: false,
-		UseFakeGPUs:     false,
+		CPUDeviceOptions: dOpt,
+		NoHostname:       false,
+		UseOldNamespace:  false,
+		UseFakeGPUs:      false,
 	}
 
 	realDCGMProvider := dcgmprovider.Client()
@@ -215,18 +216,17 @@ func testDCGMCPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMColle
 	dcgmprovider.SetClient(mockDCGMProvider)
 
 	/* Test that only cpu metrics are collected for cpu entities. */
-
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU, deviceWatcher)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(counters, &config)
+	err := deviceWatchListManager.CreateEntityWatchList(dcgm.FE_CPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU, deviceWatcher)
+	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_CPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	cpuItem, cpuItemExist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
+	cpuItem, cpuItemExist := deviceWatchListManager.EntityWatchList(dcgm.FE_CPU)
 	require.True(t, cpuItemExist)
 
-	c, err := NewDCGMCollector(counters, "", &config, deviceWatcher, cpuItem)
+	c, err := NewDCGMCollector(counters, "", &config, cpuItem)
 	require.NoError(t, err)
 
 	out, err := c.GetMetrics()
@@ -416,20 +416,20 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		MinorRange: []int{-1},
 	}
 	config := appconfig.Config{
-		GPUDevices:      dOpt,
-		NoHostname:      false,
-		UseOldNamespace: false,
-		UseFakeGPUs:     false,
+		GPUDeviceOptions: dOpt,
+		NoHostname:       false,
+		UseOldNamespace:  false,
+		UseFakeGPUs:      false,
 	}
 
-	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(counters, &config)
+	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher, int64(config.CollectInterval))
 	require.NoError(t, err)
 
-	gpuItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+	gpuItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	c, err := NewDCGMCollector(counters, "", &config, deviceWatcher, gpuItem)
+	c, err := NewDCGMCollector(counters, "", &config, gpuItem)
 	require.NoError(t, err)
 
 	defer c.Cleanup()

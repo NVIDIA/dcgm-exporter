@@ -29,6 +29,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
@@ -38,7 +39,7 @@ const internalServerError = "internal server error"
 func NewMetricsServer(
 	c *appconfig.Config,
 	metrics chan string,
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
+	deviceWatchListManager devicewatchlistmanager.Manager,
 	registry *Registry,
 ) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
@@ -54,12 +55,12 @@ func NewMetricsServer(
 			WebSystemdSocket:   &c.WebSystemdSocket,
 			WebConfigFile:      &c.WebConfigFile,
 		},
-		metricsChan:                    metrics,
-		metrics:                        "",
-		registry:                       registry,
-		config:                         c,
-		transformations:                GetTransformations(c),
-		fieldEntityGroupTypeSystemInfo: fieldEntityGroupTypeSystemInfo,
+		metricsChan:            metrics,
+		metrics:                "",
+		registry:               registry,
+		config:                 c,
+		transformations:        GetTransformations(c),
+		deviceWatchListManager: deviceWatchListManager,
 	}
 
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -145,16 +146,16 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 
 func (s *MetricsServer) render(w io.Writer, metricGroups MetricsByCounterGroup) error {
 	for group, metrics := range metricGroups {
-		feg, exists := s.fieldEntityGroupTypeSystemInfo.Get(group)
+		deviceWatchList, exists := s.deviceWatchListManager.EntityWatchList(group)
 		if exists {
 			for _, transformation := range s.transformations {
-				err := transformation.Process(metrics, feg.DeviceInfo)
+				err := transformation.Process(metrics, deviceWatchList.DeviceInfo())
 				if err != nil {
 					logrus.WithError(err).
 						WithFields(logrus.Fields{
 							logging.FieldEntityGroupKey: group.String(),
 							logging.MetricsKey:          metrics,
-							logging.DeviceInfoKey:       feg.DeviceInfo,
+							logging.DeviceInfoKey:       deviceWatchList.DeviceInfo,
 						}).
 						Error("Failed to apply transformations on metrics")
 					return err
