@@ -32,6 +32,7 @@ import (
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
+	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
@@ -272,17 +273,16 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				cleanup = StartMockServer(t, server, socketPath)
 				defer cleanup()
 
-				nvmlGetMIGDeviceInfoByIDHook = func(uuid string) (*nvmlprovider.MIGDeviceInfo, error) {
-					return &nvmlprovider.MIGDeviceInfo{
-						ParentUUID:        "00000000-0000-0000-0000-000000000000",
-						GPUInstanceID:     3,
-						ComputeInstanceID: 0,
-					}, nil
+				migDeviceInfo := &nvmlprovider.MIGDeviceInfo{
+					ParentUUID:        "00000000-0000-0000-0000-000000000000",
+					GPUInstanceID:     3,
+					ComputeInstanceID: 0,
 				}
 
-				defer func() {
-					nvmlGetMIGDeviceInfoByIDHook = nvmlprovider.GetMIGDeviceInfoByID
-				}()
+				ctrl := gomock.NewController(t)
+				mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+				mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil).AnyTimes()
+				nvmlprovider.SetClient(mockNVMLProvider)
 
 				podMapper := NewPodMapper(&appconfig.Config{
 					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
@@ -319,7 +319,6 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					MigEnabled: true,
 				}
 
-				ctrl := gomock.NewController(t)
 				mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
 				mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
 				mockSystemInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()

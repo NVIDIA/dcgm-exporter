@@ -39,7 +39,6 @@ var (
 
 	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
 	gkeVirtualGPUDeviceIDSeparator = "/vgpu"
-	nvmlGetMIGDeviceInfoByIDHook   = nvmlprovider.GetMIGDeviceInfoByID
 )
 
 func NewPodMapper(c *appconfig.Config) *PodMapper {
@@ -164,7 +163,7 @@ func (p *PodMapper) toDeviceToPod(
 
 				for _, deviceID := range device.GetDeviceIds() {
 					if strings.HasPrefix(deviceID, MIG_UUID_PREFIX) {
-						migDevice, err := nvmlGetMIGDeviceInfoByIDHook(deviceID)
+						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
 						if err == nil {
 							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
 								uint(migDevice.GPUInstanceID))

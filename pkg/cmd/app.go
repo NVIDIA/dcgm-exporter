@@ -23,6 +23,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
@@ -289,10 +290,17 @@ restart:
 
 	enableDebugLogging(config)
 
+	// Initialize DCGM Provider Instance
 	dcgmprovider.Initialize(config)
 	defer dcgmprovider.Client().Cleanup()
 
 	logrus.Info("DCGM successfully initialized!")
+
+	// Initialize NVML Provider Instance
+	nvmlprovider.Initialize()
+	defer nvmlprovider.Client().Cleanup()
+
+	logrus.Info("NVML provider successfully initialized!")
 
 	fillConfigMetricGroups(config)
 
@@ -345,7 +353,9 @@ restart:
 	return nil
 }
 
-func getFieldEntityGroupTypeSystemInfo(cs *dcgmexporter.CounterSet, config *appconfig.Config) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
+func getFieldEntityGroupTypeSystemInfo(
+	cs *dcgmexporter.CounterSet, config *appconfig.Config,
+) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
 	var allCounters []dcgmexporter.Counter
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
