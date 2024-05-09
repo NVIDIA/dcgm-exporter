@@ -257,7 +257,6 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 }
 
 func TestToMetric(t *testing.T) {
-
 	fieldValue := [4096]byte{}
 	fieldValue[0] = 42
 	values := []dcgm.FieldValue_v1{
@@ -311,6 +310,70 @@ func TestToMetric(t *testing.T) {
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
 			assert.Equal(t, "42", metricValues[0].Value)
 			assert.Equal(t, tc.expectedGPUModelName, metricValues[0].GPUModelName)
+		})
+	}
+}
+
+func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
+	c := []Counter{
+		{
+			FieldID:   dcgm.DCGM_FI_DEV_XID_ERRORS,
+			FieldName: "DCGM_FI_DEV_GPU_TEMP",
+			PromType:  "gauge",
+			Help:      "Temperature Help info",
+		},
+	}
+
+	d := dcgm.Device{
+		UUID: "fake0",
+		Identifiers: dcgm.DeviceIdentifiers{
+			Model: "NVIDIA T400 4GB",
+		},
+	}
+
+	var instanceInfo *GPUInstanceInfo = nil
+
+	type testCase struct {
+		name        string
+		fieldValue  byte
+		expectedErr string
+	}
+
+	testCases := []testCase{
+		{
+			name:        "when DCGM_FI_DEV_XID_ERRORS has known value",
+			fieldValue:  42,
+			expectedErr: "Video processor exception",
+		},
+		{
+			name:        "when DCGM_FI_DEV_XID_ERRORS has unknown value",
+			fieldValue:  255,
+			expectedErr: "Unknown Error",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fieldValue := [4096]byte{}
+			fieldValue[0] = tc.fieldValue
+			values := []dcgm.FieldValue_v1{
+				{
+					FieldId:   dcgm.DCGM_FI_DEV_XID_ERRORS,
+					FieldType: dcgm.DCGM_FT_INT64,
+					Value:     fieldValue,
+				},
+			}
+
+			metrics := make(map[Counter][]Metric)
+			ToMetric(metrics, values, c, d, instanceInfo, false, "", false)
+			assert.Len(t, metrics, 1)
+			// We get metric value with 0 index
+			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+			assert.Equal(t, fmt.Sprint(tc.fieldValue), metricValues[0].Value)
+			assert.Contains(t, metricValues[0].Attributes, "err_code")
+			assert.Equal(t, fmt.Sprint(tc.fieldValue), metricValues[0].Attributes["err_code"])
+			assert.Contains(t, metricValues[0].Attributes, "err_msg")
+			assert.Equal(t, tc.expectedErr, metricValues[0].Attributes["err_msg"])
 		})
 	}
 }
