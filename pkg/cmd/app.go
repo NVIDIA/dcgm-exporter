@@ -77,6 +77,7 @@ const (
 	CLIEnableDCGMLog              = "enable-dcgm-log"
 	CLIDCGMLogLevel               = "dcgm-log-level"
 	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
+	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -231,8 +232,14 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.StringFlag{
 			Name:    CLIPodResourcesKubeletSocket,
 			Value:   "/var/lib/kubelet/pod-resources/kubelet.sock",
-			Usage:   "Path to the kubelet pod-resources socket file",
+			Usage:   "Path to the kubelet pod-resources socket file.",
 			EnvVars: []string{"DCGM_POD_RESOURCES_KUBELET_SOCKET"},
+		},
+		&cli.StringFlag{
+			Name:    CLIHPCJobMappingDir,
+			Value:   "",
+			Usage:   "Path to HPC job mapping file directory used for mapping GPUs to jobs.",
+			EnvVars: []string{"DCGM_HPC_JOB_MAPPING_DIR"},
 		},
 	}
 
@@ -560,5 +567,6 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		EnableDCGMLog:              c.Bool(CLIEnableDCGMLog),
 		DCGMLogLevel:               dcgmLogLevel,
 		PodResourcesKubeletSocket:  c.String(CLIPodResourcesKubeletSocket),
+		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
 	}, nil
 }

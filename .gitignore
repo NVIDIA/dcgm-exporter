@@ -11,6 +11,7 @@ tests.cov
 test_results.json
 .scannerwork
 .run
+dist/
 
 ###############################################################################
 # JetBrains

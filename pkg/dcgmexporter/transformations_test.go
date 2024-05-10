@@ -32,6 +32,15 @@ func TestGetTransformations(t *testing.T) {
 				assert.Len(t, transforms, 1)
 			},
 		},
+		{
+			name: "The environment is HPC cluster",
+			config: &appconfig.Config{
+				HPCJobMappingDir: "/var/run/nvidia/slurm",
+			},
+			assert: func(t *testing.T, transforms []Transform) {
+				assert.Len(t, transforms, 1)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

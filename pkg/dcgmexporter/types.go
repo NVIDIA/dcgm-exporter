@@ -42,6 +42,8 @@ var (
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
 
+	hpcJobAttribute = "hpc_job"
+
 	oldPodAttribute       = "pod_name"
 	oldNamespaceAttribute = "pod_namespace"
 	oldContainerAttribute = "container_name"

@@ -28,5 +28,10 @@ func GetTransformations(c *appconfig.Config) []Transform {
 		transformations = append(transformations, podMapper)
 	}
 
+	if c.HPCJobMappingDir != "" {
+		hpcMapper := newHPCMapper(c)
+		transformations = append(transformations, hpcMapper)
+	}
+
 	return transformations
 }

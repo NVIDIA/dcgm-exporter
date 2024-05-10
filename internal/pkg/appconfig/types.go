@@ -57,4 +57,5 @@ type Config struct {
 	EnableDCGMLog              bool
 	DCGMLogLevel               string
 	PodResourcesKubeletSocket  string
+	HPCJobMappingDir           string
 }
