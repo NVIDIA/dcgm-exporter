@@ -356,14 +356,19 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 
 	testCases := []testCase{
 		{
+			name:        "when DCGM_FI_DEV_XID_ERRORS has no error",
+			fieldValue:  0,
+			expectedErr: xidErrCodeToText[0],
+		},
+		{
 			name:        "when DCGM_FI_DEV_XID_ERRORS has known value",
 			fieldValue:  42,
-			expectedErr: "Video processor exception",
+			expectedErr: xidErrCodeToText[42],
 		},
 		{
 			name:        "when DCGM_FI_DEV_XID_ERRORS has unknown value",
 			fieldValue:  255,
-			expectedErr: "Unknown Error",
+			expectedErr: unknownErr,
 		},
 	}
 

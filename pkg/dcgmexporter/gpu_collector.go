@@ -31,6 +31,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 )
 
+const unknownErr = "Unknown Error"
+
 type DCGMCollectorConstructor func(
 	[]Counter, string, *appconfig.Config, FieldEntityGroupTypeSystemInfoItem,
 ) (*DCGMCollector, func(), error)
@@ -284,10 +286,10 @@ func ToMetric(
 		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
 			errCode := int(val.Int64())
 			attrs["err_code"] = strconv.Itoa(errCode)
-			if 0 < errCode && errCode < len(xidErrCodeToText) {
+			if 0 <= errCode && errCode < len(xidErrCodeToText) {
 				attrs["err_msg"] = xidErrCodeToText[errCode]
 			} else {
-				attrs["err_msg"] = "Unknown Error"
+				attrs["err_msg"] = unknownErr
 			}
 		}
 
