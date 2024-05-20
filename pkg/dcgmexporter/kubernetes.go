@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -117,7 +116,6 @@ func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
 			return d.DialContext(ctx, "unix", addr)
 		}),
 	)
-
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("failure connecting to '%s'; err: %w", socket, err)
 	}

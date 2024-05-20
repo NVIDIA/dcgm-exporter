@@ -19,7 +19,6 @@ package dcgmexporter
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -27,9 +26,13 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type DCGMCollectorConstructor func([]Counter, string, *Config, FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error)
+const unknownErr = "Unknown Error"
 
-func NewDCGMCollector(c []Counter,
+type DCGMCollectorConstructor func([]Counter, string, *Config, FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector,
+	func(), error)
+
+func NewDCGMCollector(
+	c []Counter,
 	hostname string,
 	config *Config,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
@@ -153,17 +156,18 @@ func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_G
 	return true
 }
 
-func FindCounterField(c []Counter, fieldId uint) (Counter, error) {
+func FindCounterField(c []Counter, fieldID uint) (Counter, error) {
 	for i := 0; i < len(c); i++ {
-		if uint(c[i].FieldID) == fieldId {
+		if uint(c[i].FieldID) == fieldID {
 			return c[i], nil
 		}
 	}
 
-	return c[0], fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldId)
+	return Counter{}, fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldID)
 }
 
-func ToSwitchMetric(metrics MetricsByCounter,
+func ToSwitchMetric(
+	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
@@ -207,7 +211,8 @@ func ToSwitchMetric(metrics MetricsByCounter,
 	}
 }
 
-func ToCPUMetric(metrics MetricsByCounter,
+func ToCPUMetric(
+	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1, c []Counter, mi MonitoringInfo, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
@@ -290,10 +295,10 @@ func ToMetric(
 		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
 			errCode := int(val.Int64())
 			attrs["err_code"] = strconv.Itoa(errCode)
-			if 0 < errCode && errCode < len(xidErrCodeToText) {
+			if 0 <= errCode && errCode < len(xidErrCodeToText) {
 				attrs["err_msg"] = xidErrCodeToText[errCode]
 			} else {
-				attrs["err_msg"] = "Unknown Error"
+				attrs["err_msg"] = unknownErr
 			}
 		}
 

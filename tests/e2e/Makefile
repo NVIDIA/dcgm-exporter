@@ -16,7 +16,7 @@ GO_CMD ?= go
 NAMESPACE ?= "dcgm-exporter"
 CHART ?= "./../../deployment/"
 IMAGE_REPOSITORY ?= "nvcr.io/nvidia/k8s/dcgm-exporter"
-IMAGE_TAG ?= "3.3.5-3.4.1-ubuntu22.04"
+IMAGE_TAG ?= "3.3.6-3.4.2-ubuntu22.04"
 KUBECONFIG ?= "~/.kube/config"
 
 define TEST_CMD

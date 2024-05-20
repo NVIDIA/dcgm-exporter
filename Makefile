@@ -14,30 +14,32 @@
 
 include hack/VERSION
 
-MKDIR    ?= mkdir
-REGISTRY ?= nvidia
+REGISTRY             ?= nvidia
+GO                   ?= go
+MKDIR                ?= mkdir
 GOLANGCILINT_TIMEOUT ?= 10m
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
 GOLANG_VERSION := 1.21.5
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
-OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
+OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
+
 .PHONY: all binary install check-format local
 all: update-version ubuntu22.04 ubi9
 
-binary: update-version
-	cd cmd/dcgm-exporter; go build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
+binary: generate update-version
+	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main:
-	go test ./... -short
+	$(GO) test ./... -short
 
 install: binary
-	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
+	install -m 755 $(DIST_DIR)/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
 	install -m 644 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
@@ -56,24 +58,20 @@ else
 	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
-ubuntu22.04:
-	$(DOCKERCMD) --pull \
-		--output $(OUTPUT) \
-		--platform $(PLATFORMS) \
-		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
-		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubuntu22.04" \
-		--file docker/Dockerfile.ubuntu22.04 .
+TARGETS = ubuntu22.04 ubi9
 
-ubi9:
+DOCKERFILE.ubuntu22.04 = docker/Dockerfile.ubuntu22.04
+DOCKERFILE.ubi9 = docker/Dockerfile.ubi9
+
+$(TARGETS):
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
 		--platform $(PLATFORMS) \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
-		--build-arg "VERSION=$(FULL_VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-ubi9" \
-		--file docker/Dockerfile.ubi9 .
+		--build-arg "VERSION=$(VERSION)" \
+		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$@" \
+		--file $(DOCKERFILE.$@) .
 
 .PHONY: integration
 test-integration:
@@ -84,7 +82,7 @@ test-coverage:
 
 .PHONY: lint
 lint:
-	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1 --verbose
+	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1 --fix
 
 .PHONY: validate-modules
 validate-modules:
@@ -132,3 +130,8 @@ update-version:
 
 # Update DCGM and DCGM Exporter versions
 update-versions: update-version
+
+.PHONY: generate
+# Generate code (Mocks)
+generate:
+	go generate ./...

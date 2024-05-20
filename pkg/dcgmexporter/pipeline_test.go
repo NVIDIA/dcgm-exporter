@@ -18,7 +18,6 @@ package dcgmexporter
 
 import (
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -58,7 +57,8 @@ func testNewDCGMCollector(t *testing.T,
 	return func(c []Counter,
 		hostname string,
 		config *Config,
-		fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem) (*DCGMCollector, func(), error) {
+		fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
+	) (*DCGMCollector, func(), error) {
 		// should always create GPU Collector
 		if fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType != dcgm.FE_GPU {
 			if _, ok := enabledCollector[fieldEntityGroupTypeSystemInfo.SystemInfo.InfoType]; !ok {
@@ -134,7 +134,6 @@ func TestCountPipelineCleanup(t *testing.T) {
 			dcgm.FE_CPU_CORE: {},
 		},
 	}} {
-
 		t.Run(c.name, func(t *testing.T) {
 			cleanupCounter := 0
 

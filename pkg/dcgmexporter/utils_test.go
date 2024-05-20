@@ -45,3 +45,18 @@ func TestWaitWithTimeout(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestDeepCopy(t *testing.T) {
+	t.Run("Return error when pointer value is nil", func(t *testing.T) {
+		got, err := deepCopy[*struct{}](nil)
+		assert.Nil(t, got)
+		assert.Error(t, err)
+	})
+
+	t.Run("Return error when src is unsupported type", func(t *testing.T) {
+		ch := make(chan int)
+		got, err := deepCopy(ch)
+		assert.Nil(t, got)
+		assert.Error(t, err)
+	})
+}

@@ -32,8 +32,18 @@ var sampleCounters = []Counter{
 	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
 	{dcgm.DCGM_FI_DRIVER_VERSION, "DCGM_FI_DRIVER_VERSION", "label", "Driver version"},
 	/* test that switch and link metrics are filtered out automatically when devices are not detected */
-	{dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT, "DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT", "gauge", "switch temperature"},
-	{dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS, "DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS", "gauge", "per-link flit errors"},
+	{
+		dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT,
+		"DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT",
+		"gauge",
+		"switch temperature",
+	},
+	{
+		dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS,
+		"DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS",
+		"gauge",
+		"per-link flit errors",
+	},
 	/* test that vgpu metrics are not filtered out */
 	{dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS, "DCGM_FI_DEV_VGPU_LICENSE_STATUS", "gauge", "vgpu license status"},
 	/* test that cpu and cpu core metrics are filtered out automatically when devices are not detected */
@@ -97,7 +107,9 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return hierarchy, nil
 	}
 
-	dcgmAddEntityToGroup = func(groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint) (err error) {
+	dcgmAddEntityToGroup = func(
+		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
+	) (err error) {
 		return nil
 	}
 
@@ -197,7 +209,9 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) (*DCGMCollector, fun
 		return hierarchy, nil
 	}
 
-	dcgmAddEntityToGroup = func(groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint) (err error) {
+	dcgmAddEntityToGroup = func(
+		groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group, entityId uint,
+	) (err error) {
 		return nil
 	}
 
@@ -341,14 +355,19 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 
 	testCases := []testCase{
 		{
+			name:        "when DCGM_FI_DEV_XID_ERRORS has no error",
+			fieldValue:  0,
+			expectedErr: xidErrCodeToText[0],
+		},
+		{
 			name:        "when DCGM_FI_DEV_XID_ERRORS has known value",
 			fieldValue:  42,
-			expectedErr: "Video processor exception",
+			expectedErr: xidErrCodeToText[42],
 		},
 		{
 			name:        "when DCGM_FI_DEV_XID_ERRORS has unknown value",
 			fieldValue:  255,
-			expectedErr: "Unknown Error",
+			expectedErr: unknownErr,
 		},
 	}
 
