@@ -147,8 +147,21 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
-	// We expect 7 records, because we have 3 fake GPU and each GPU experienced 2 XID errors: 42 and 46, plus we have 1 hardware GPUs
-	require.Len(t, metricValues, len(fakeGPUIDs)*2+int(hardwareGPUs))
+
+	fakeGPUIDMap := map[string]struct{}{}
+	for _, fakeGPUID := range fakeGPUIDs {
+		fakeGPUIDMap[fmt.Sprint(fakeGPUID)] = struct{}{}
+	}
+
+	conditionFakeGPUOnly := func(m Metric) bool {
+		_, exists := fakeGPUIDMap[m.GPU]
+		return exists
+	}
+
+	// We want to filter out physical GPU and keep fake only
+	metricValues = filterMetrics(metricValues, conditionFakeGPUOnly)
+
+	require.Len(t, metricValues, len(fakeGPUIDs)*2)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
 		require.Equal(t, fmt.Sprint(config.XIDCountWindowSize), val.Labels["window_size_in_ms"])
@@ -173,11 +186,16 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	// We expect 1 metric: DCGM_EXP_XID_ERRORS_COUNT
 	require.Len(t, metrics, 1)
+
 	// We get metric value with the last index
 	metricValues = metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
-	// We expect 8 records, because we have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46,
-	// plus we added 1 XID error: 19, plus we have 1 hardware GPUs
-	require.Len(t, metricValues, len(fakeGPUIDs)*2+int(hardwareGPUs)+1)
+	// We want to filter out physical GPU and keep fake only
+	metricValues = filterMetrics(metricValues, conditionFakeGPUOnly)
+	// We update metrics with slice, that doesn't contain physical GPU
+	metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)] = metricValues
+
+	// We have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46, 19 to GPU0
+	require.Len(t, metricValues, 1+(len(fakeGPUIDs)*2))
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
 		require.Equal(t, fmt.Sprint(config.XIDCountWindowSize), val.Labels["window_size_in_ms"])
@@ -200,9 +218,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	assert.Equal(t, "Count of XID Errors within user-specified time window (see xid-count-window-size param).",
 		*metricFamily.Help)
 	assert.Equal(t, io_prometheus_client.MetricType_GAUGE, *metricFamily.Type)
-	// We expect 8 records, because we have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46,
-	// plus we added 1 XID error: 19, plus we have 1 hardware GPUs
-	require.Len(t, metricFamily.Metric, len(fakeGPUIDs)*2+int(hardwareGPUs)+1)
+	// We have 3 fake GPU and each GPU, except the one experienced XID errors: 42, 46, 19
+	require.Len(t, metricFamily.Metric, 1+(len(fakeGPUIDs)*2))
 	for _, mv := range metricFamily.Metric {
 		require.NotNil(t, mv.Gauge.Value)
 		if *(mv.Gauge.Value) == 0 {
@@ -224,6 +241,16 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		assert.Equal(t, "xid", *mv.Label[7].Name)
 		assert.NotEmpty(t, *mv.Label[7].Value)
 	}
+}
+
+func filterMetrics(metricValues []Metric, condition func(Metric) bool) []Metric {
+	var result []Metric
+	for _, metricValue := range metricValues {
+		if condition(metricValue) {
+			result = append(result, metricValue)
+		}
+	}
+	return result
 }
 
 func TestXIDCollector_NewXIDCollector(t *testing.T) {

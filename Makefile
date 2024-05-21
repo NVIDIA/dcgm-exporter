@@ -23,12 +23,11 @@ DCGM_VERSION   := $(NEW_DCGM_VERSION)
 GOLANG_VERSION := 1.22.2
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
-OUTPUT         := type=oci,dest=/tmp/dcgm-exporter.tar
+OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
-OS             := $(shell . /etc/os-release;echo $$ID$$VERSION_ID)
-ARCH           := $(shell go env GOARCH)
+
 
 .PHONY: all binary install check-format local
 all: update-version ubuntu20.04 ubuntu22.04 ubi9
@@ -49,7 +48,6 @@ check-format:
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
 push: update-version
-	$(MAKE) ubuntu20.04 OUTPUT=type=registry
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
 
@@ -60,9 +58,8 @@ else
 	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
-TARGETS = ubuntu20.04 ubuntu22.04 ubi9
+TARGETS = ubuntu22.04 ubi9
 
-DOCKERFILE.ubuntu20.04 = docker/Dockerfile.ubuntu20.04
 DOCKERFILE.ubuntu22.04 = docker/Dockerfile.ubuntu22.04
 DOCKERFILE.ubi9 = docker/Dockerfile.ubi9
 
@@ -75,29 +72,6 @@ $(TARGETS):
 		--build-arg "VERSION=$(VERSION)" \
 		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$@" \
 		--file $(DOCKERFILE.$@) .
-
-.PHONY: $(TARGETS)
-%.tar.gz:
-	@target_base=`echo "$@" | sed 's/\.tar\.gz$$//'`; \
-	arch=`echo $(PLATFORMS) | cut -d'/' -f2)`; \
-	export DIST_NAME="dcgm-exporter-$$target_base-$(ARCH)"; \
-	if echo "$(TARGETS)" | grep -wq "$$target_base"; then \
-		echo "Creating $@ from $$target_base"; \
-		$(MAKE) $$target_base OUTPUT=type=docker DOCKERCMD='docker build' && \
-		$(MKDIR) -p /tmp/$$DIST_NAME && \
-		$(MKDIR) -p /tmp/$$DIST_NAME/usr/bin && \
-		$(MKDIR) -p /tmp/$$DIST_NAME/etc/dcgm-exporter && \
-		I=`docker create $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$$target_base` && \
-		docker cp $$I:/usr/bin/dcgm-exporter /tmp/$$DIST_NAME/usr/bin/ && \
-		docker cp $$I:/etc/dcgm-exporter /tmp/$$DIST_NAME/etc/dcgm-exporter/ && \
-		cp ./LICENSE /tmp/$$DIST_NAME && \
-		docker rm -f $$I &&\
-		$(MKDIR) -p $(CURDIR)/dist && \
-		cd "/tmp/$$DIST_NAME" && tar -czvf $(CURDIR)/dist/$$DIST_NAME-archive.tar.gz `ls -A` && \
-		rm -rf "/tmp/$$DIST_NAME"; \
-	else \
-		echo "Skipping $@ as it is not in the TARGETS list"; \
-	fi
 
 .PHONY: integration
 test-integration:
