@@ -29,18 +29,20 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
 const unknownErr = "Unknown Error"
 
 type DCGMCollectorConstructor func(
-	[]Counter, string, *appconfig.Config, FieldEntityGroupTypeSystemInfoItem,
+	[]appconfig.Counter, string, *appconfig.Config, FieldEntityGroupTypeSystemInfoItem,
 ) (*DCGMCollector, func(), error)
 
 func NewDCGMCollector(
-	c []Counter,
+	c []appconfig.Counter,
 	hostname string,
 	config *appconfig.Config,
+	watcher devicewatcher.Watcher,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
 ) (*DCGMCollector, error) {
 	if fieldEntityGroupTypeSystemInfo.isEmpty() {
@@ -62,8 +64,7 @@ func NewDCGMCollector(
 	collector.UseOldNamespace = config.UseOldNamespace
 	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
-		fieldEntityGroupTypeSystemInfo.DeviceInfo,
+	cleanups, err := watcher.WatchDeviceFields(collector.DeviceFields, fieldEntityGroupTypeSystemInfo.DeviceInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
 		return nil, err
@@ -147,19 +148,19 @@ func ShouldMonitorDeviceType(fields []dcgm.Short, entityType dcgm.Field_Entity_G
 	return true
 }
 
-func FindCounterField(c []Counter, fieldID uint) (Counter, error) {
+func FindCounterField(c []appconfig.Counter, fieldID uint) (appconfig.Counter, error) {
 	for i := 0; i < len(c); i++ {
 		if uint(c[i].FieldID) == fieldID {
 			return c[i], nil
 		}
 	}
 
-	return Counter{}, fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldID)
+	return appconfig.Counter{}, fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldID)
 }
 
 func ToSwitchMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi devicemonitoring.Info, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []appconfig.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
 
@@ -204,7 +205,7 @@ func ToSwitchMetric(
 
 func ToCPUMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []Counter, mi devicemonitoring.Info, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []appconfig.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
 
@@ -250,7 +251,7 @@ func ToCPUMetric(
 func ToMetric(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
-	c []Counter,
+	c []appconfig.Counter,
 	d dcgm.Device,
 	instanceInfo *deviceinfo.GPUInstanceInfo,
 	useOld bool,

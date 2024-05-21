@@ -121,7 +121,7 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				return nil, fmt.Errorf("could not find DCGM field; err: %w", err)
 			} else if expField != DCGMFIUnknown {
 				res.ExporterCounters = append(res.ExporterCounters,
-					Counter{dcgm.Short(expField), record[0], record[1], record[2]})
+					appconfig.Counter{FieldID: dcgm.Short(expField), FieldName: record[0], PromType: record[1], Help: record[2]})
 				continue
 			}
 		}
@@ -140,7 +140,7 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 			}
 
-			res.DCGMCounters = append(res.DCGMCounters, Counter{fieldID, record[0], record[1], record[2]})
+			res.DCGMCounters = append(res.DCGMCounters, appconfig.Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		} else {
 			if !fieldIsSupported(uint(oldFieldID), c) {
 				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
@@ -151,7 +151,7 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 			}
 
-			res.DCGMCounters = append(res.DCGMCounters, Counter{oldFieldID, record[0], record[1], record[2]})
+			res.DCGMCounters = append(res.DCGMCounters, appconfig.Counter{FieldID: oldFieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		}
 	}
 

@@ -23,6 +23,8 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 func getMetricsByCounterWithTestMetric() MetricsByCounter {
@@ -43,8 +45,8 @@ func getMetricsByCounterWithTestMetric() MetricsByCounter {
 	return metrics
 }
 
-func getTestMetric() Counter {
-	counter := Counter{
+func getTestMetric() appconfig.Counter {
+	counter := appconfig.Counter{
 		FieldID:   2000,
 		FieldName: "TEST_METRIC",
 		PromType:  "gauge",

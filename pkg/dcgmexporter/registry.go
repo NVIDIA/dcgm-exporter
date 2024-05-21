@@ -22,6 +22,8 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 // groupCollectorTuple represents a composite key, that consists Group and Collector.
@@ -35,7 +37,7 @@ type groupCollectorTuple struct {
 // The groupCounterTuple is necessary to maintain uniqueness of Group and Counter pairs.
 type groupCounterTuple struct {
 	Group   dcgm.Field_Entity_Group
-	Counter Counter
+	Counter appconfig.Counter
 }
 
 type Registry struct {
@@ -104,7 +106,7 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 	sm.Range(func(key, value interface{}) bool {
 		tuple := key.(groupCounterTuple)
 		if _, exists := output[tuple.Group]; !exists {
-			output[tuple.Group] = map[Counter][]Metric{}
+			output[tuple.Group] = map[appconfig.Counter][]Metric{}
 		}
 		output[tuple.Group][tuple.Counter] = value.([]Metric)
 		return true // continue iteration

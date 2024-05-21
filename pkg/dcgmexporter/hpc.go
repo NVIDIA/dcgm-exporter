@@ -24,6 +24,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 
 	"github.com/sirupsen/logrus"
 )
@@ -79,7 +80,7 @@ func (p *hpcMapper) Process(metrics MetricsByCounter, _ deviceinfo.Provider) err
 			jobs, exists := gpuToJobMap[metric.GPU]
 			if exists {
 				for _, job := range jobs {
-					modifiedMetric, err := deepCopy(metric)
+					modifiedMetric, err := utils.DeepCopy(metric)
 					if err != nil {
 						logrus.WithError(err).Errorf("Can not create deepCopy for the value: %v", metric)
 						continue

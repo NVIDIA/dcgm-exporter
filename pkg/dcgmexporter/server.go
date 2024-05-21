@@ -30,6 +30,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 const internalServerError = "internal server error"
@@ -115,7 +116,7 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 		logrus.WithError(err).Fatal("Failed to shutdown HTTP server.")
 	}
 
-	if err := WaitWithTimeout(&httpwg, 3*time.Second); err != nil {
+	if err := utils.WaitWithTimeout(&httpwg, 3*time.Second); err != nil {
 		logrus.WithError(err).Fatal("Failed waiting for HTTP server to shutdown.")
 	}
 }

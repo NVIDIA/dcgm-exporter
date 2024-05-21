@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
-	"text/template"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/prometheus/exporter-toolkit/web"
@@ -58,26 +57,8 @@ type Transform interface {
 	Name() string
 }
 
-type MetricsPipeline struct {
-	config *appconfig.Config
-
-	transformations      []Transform
-	migMetricsFormat     *template.Template
-	switchMetricsFormat  *template.Template
-	linkMetricsFormat    *template.Template
-	cpuMetricsFormat     *template.Template
-	cpuCoreMetricsFormat *template.Template
-
-	counters        []Counter
-	gpuCollector    *DCGMCollector
-	switchCollector *DCGMCollector
-	linkCollector   *DCGMCollector
-	cpuCollector    *DCGMCollector
-	coreCollector   *DCGMCollector
-}
-
 type DCGMCollector struct {
-	Counters                 []Counter
+	Counters                 []appconfig.Counter
 	DeviceFields             []dcgm.Short
 	Cleanups                 []func()
 	UseOldNamespace          bool
@@ -86,15 +67,8 @@ type DCGMCollector struct {
 	ReplaceBlanksInModelName bool
 }
 
-type Counter struct {
-	FieldID   dcgm.Short
-	FieldName string
-	PromType  string
-	Help      string
-}
-
 type Metric struct {
-	Counter Counter
+	Counter appconfig.Counter
 	Value   string
 
 	GPU          string
@@ -158,12 +132,12 @@ type PodInfo struct {
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
-type MetricsByCounter map[Counter][]Metric
+type MetricsByCounter map[appconfig.Counter][]Metric
 
 // CounterSet return
 type CounterSet struct {
-	DCGMCounters     []Counter
-	ExporterCounters []Counter
+	DCGMCounters     []appconfig.Counter
+	ExporterCounters []appconfig.Counter
 }
 
 // MetricsByCounterGroup represents a group of metrics by specific counter groups

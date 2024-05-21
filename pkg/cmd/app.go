@@ -22,8 +22,10 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
@@ -312,8 +314,9 @@ restart:
 	fillConfigMetricGroups(config)
 
 	cs := getCounters(config)
+	deviceFieldWatcher := devicewatcher.NewDeviceWatcher()
 
-	fieldEntityGroupTypeSystemInfo := getFieldEntityGroupTypeSystemInfo(cs, config)
+	fieldEntityGroupTypeSystemInfo := getFieldEntityGroupTypeSystemInfo(cs, config, deviceFieldWatcher)
 
 	hostname, err := dcgmexporter.GetHostname(config)
 	if err != nil {
@@ -322,8 +325,9 @@ restart:
 
 	cRegistry := dcgmexporter.NewRegistry()
 
-	cf := dcgmexporter.InitCollectorFactory()
-	cf.Register(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
+	cf := dcgmexporter.InitCollectorFactory(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry,
+		deviceFieldWatcher)
+	cf.Register()
 
 	defer func() {
 		cRegistry.Cleanup()
@@ -348,7 +352,7 @@ restart:
 	sig := <-sigs
 	close(stop)
 	cancel()
-	err = dcgmexporter.WaitWithTimeout(&wg, time.Second*2)
+	err = utils.WaitWithTimeout(&wg, time.Second*2)
 	if err != nil {
 		logrus.Fatal(err)
 	}
@@ -361,9 +365,9 @@ restart:
 }
 
 func getFieldEntityGroupTypeSystemInfo(
-	cs *dcgmexporter.CounterSet, config *appconfig.Config,
+	cs *dcgmexporter.CounterSet, config *appconfig.Config, watcher devicewatcher.Watcher,
 ) *dcgmexporter.FieldEntityGroupTypeSystemInfo {
-	var allCounters []dcgmexporter.Counter
+	var allCounters []appconfig.Counter
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
 
@@ -373,7 +377,7 @@ func getFieldEntityGroupTypeSystemInfo(
 	fieldEntityGroupTypeSystemInfo := dcgmexporter.NewEntityGroupTypeSystemInfo(allCounters, config)
 
 	for _, egt := range dcgmexporter.FieldEntityGroupTypeToMonitor {
-		err := fieldEntityGroupTypeSystemInfo.Load(egt)
+		err := fieldEntityGroupTypeSystemInfo.Load(egt, watcher)
 		if err != nil {
 			logrus.Infof("Not collecting %s metrics; %s", egt.String(), err)
 		}
@@ -383,13 +387,13 @@ func getFieldEntityGroupTypeSystemInfo(
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
 func appendDCGMClockEventsCountDependency(
-	cs *dcgmexporter.CounterSet, allCounters []dcgmexporter.Counter,
-) []dcgmexporter.Counter {
+	cs *dcgmexporter.CounterSet, allCounters []appconfig.Counter,
+) []appconfig.Counter {
 	if len(cs.ExporterCounters) > 0 {
 		if containsField(cs.ExporterCounters, dcgmexporter.DCGMClockEventsCount) &&
 			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
 			allCounters = append(allCounters,
-				dcgmexporter.Counter{
+				appconfig.Counter{
 					FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 				})
 		}
@@ -399,13 +403,13 @@ func appendDCGMClockEventsCountDependency(
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_XID_ERRORS_COUNT metric
 func appendDCGMXIDErrorsCountDependency(
-	allCounters []dcgmexporter.Counter, cs *dcgmexporter.CounterSet,
-) []dcgmexporter.Counter {
+	allCounters []appconfig.Counter, cs *dcgmexporter.CounterSet,
+) []appconfig.Counter {
 	if len(cs.ExporterCounters) > 0 {
 		if containsField(cs.ExporterCounters, dcgmexporter.DCGMXIDErrorsCount) &&
 			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
 			allCounters = append(allCounters,
-				dcgmexporter.Counter{
+				appconfig.Counter{
 					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
 				})
 		}
@@ -413,8 +417,8 @@ func appendDCGMXIDErrorsCountDependency(
 	return allCounters
 }
 
-func containsField(slice []dcgmexporter.Counter, fieldID dcgmexporter.ExporterCounter) bool {
-	return slices.ContainsFunc(slice, func(counter dcgmexporter.Counter) bool {
+func containsField(slice []appconfig.Counter, fieldID dcgmexporter.ExporterCounter) bool {
+	return slices.ContainsFunc(slice, func(counter appconfig.Counter) bool {
 		return counter.FieldID == dcgm.Short(fieldID)
 	})
 }

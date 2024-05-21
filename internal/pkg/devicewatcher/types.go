@@ -14,29 +14,18 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/devicewatcher/mock_device_watcher.go -package=devicewatcher -copyright_file=../../../hack/header.txt . Watcher
 
-const (
-	windowSizeInMSLabel = "window_size_in_ms"
+package devicewatcher
+
+import (
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
-// DCGMDbgLvl is a DCGM library debug level.
-const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
-
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
+type Watcher interface {
+	GetDeviceFields([]appconfig.Counter, dcgm.Field_Entity_Group) []dcgm.Short
+	WatchDeviceFields([]dcgm.Short, deviceinfo.Provider, int64) ([]func(), error)
 }

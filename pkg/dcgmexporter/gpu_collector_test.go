@@ -30,41 +30,18 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
-var sampleCounters = []Counter{
-	{dcgm.DCGM_FI_DEV_GPU_TEMP, "DCGM_FI_DEV_GPU_TEMP", "gauge", "Temperature Help info"},
-	{dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "gauge", "Energy help info"},
-	{dcgm.DCGM_FI_DEV_POWER_USAGE, "DCGM_FI_DEV_POWER_USAGE", "gauge", "Power help info"},
-	{dcgm.DCGM_FI_DRIVER_VERSION, "DCGM_FI_DRIVER_VERSION", "label", "Driver version"},
-	/* test that switch and link metrics are filtered out automatically when devices are not detected */
-	{
-		dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT,
-		"DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT",
-		"gauge",
-		"switch temperature",
-	},
-	{
-		dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS,
-		"DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS",
-		"gauge",
-		"per-link flit errors",
-	},
-	/* test that vgpu metrics are not filtered out */
-	{dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS, "DCGM_FI_DEV_VGPU_LICENSE_STATUS", "gauge", "vgpu license status"},
-	/* test that cpu and cpu core metrics are filtered out automatically when devices are not detected */
-	{dcgm.DCGM_FI_DEV_CPU_UTIL_TOTAL, "DCGM_FI_DEV_CPU_UTIL_TOTAL", "gauge", "Total CPU utilization"},
-}
-
-var expectedMetrics = map[string]bool{
-	"DCGM_FI_DEV_GPU_TEMP":                 true,
-	"DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": true,
-	"DCGM_FI_DEV_POWER_USAGE":              true,
-	"DCGM_FI_DEV_VGPU_LICENSE_STATUS":      true,
+var expectedGPUMetrics = map[string]bool{
+	testutils.SampleGPUTempCounter.FieldName:           true,
+	testutils.SampleGPUTotalEnergyCounter.FieldName:    true,
+	testutils.SampleGPUPowerUsageCounter.FieldName:     true,
+	testutils.SampleVGPULicenseStatusCounter.FieldName: true,
 }
 
 var expectedCPUMetrics = map[string]bool{
-	"DCGM_FI_DEV_CPU_UTIL_TOTAL": true,
+	testutils.SampleCPUUtilTotalCounter.FieldName: true,
 }
 
 func mockDCGM(ctrl *gomock.Controller) *mockdcgm.MockDCGM {
@@ -118,14 +95,14 @@ func TestDCGMCollector(t *testing.T) {
 	dcgmprovider.Initialize(config)
 	defer dcgmprovider.Client().Cleanup()
 
-	collector := testDCGMGPUCollector(t, sampleCounters)
+	collector := testDCGMGPUCollector(t, testutils.SampleCounters)
 	collector.Cleanup()
 
-	collector = testDCGMCPUCollector(t, sampleCounters)
+	collector = testDCGMCPUCollector(t, testutils.SampleCounters)
 	collector.Cleanup()
 }
 
-func testDCGMGPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
+func testDCGMGPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMCollector {
 	dOpt := appconfig.DeviceOptions{
 		Flex:       true,
 		MajorRange: []int{-1},
@@ -164,33 +141,33 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
 
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	gpuItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	g, err := NewDCGMCollector(counters, "", &config, gpuItem)
+	g, err := NewDCGMCollector(counters, "", &config, deviceWatcher, gpuItem)
 	require.NoError(t, err)
 
 	/* Test for error when no switches are available to monitor. */
 	switchItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_SWITCH)
 	assert.False(t, exists, "dcgm.FE_SWITCH should not be available")
 
-	_, err = NewDCGMCollector(counters, "", &config, switchItem)
+	_, err = NewDCGMCollector(counters, "", &config, deviceWatcher, switchItem)
 	require.Error(t, err, "NewDCGMCollector should return error")
 
 	/* Test for error when no cpus are available to monitor. */
 	cpuItem, exist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
 	require.False(t, exist, "dcgm.FE_CPU should not be available")
 
-	_, err = NewDCGMCollector(counters, "", &config, cpuItem)
+	_, err = NewDCGMCollector(counters, "", &config, deviceWatcher, cpuItem)
 	require.Error(t, err, "NewDCGMCollector should return error")
 
 	out, err := g.GetMetrics()
 	require.NoError(t, err)
 	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
-	require.Len(t, out, len(expectedMetrics), fmt.Sprintf("Expected: %+v \nGot: %+v", expectedMetrics, out))
+	require.Len(t, out, len(expectedGPUMetrics), fmt.Sprintf("Expected: %+v \nGot: %+v", expectedGPUMetrics, out))
 
 	seenMetrics := map[string]bool{}
 	for _, metrics := range out {
@@ -202,12 +179,12 @@ func testDCGMGPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 			require.NotEqual(t, metric.Value, FailedToConvert)
 		}
 	}
-	require.Equal(t, seenMetrics, expectedMetrics)
+	require.Equal(t, seenMetrics, expectedGPUMetrics)
 
 	return g
 }
 
-func testDCGMCPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
+func testDCGMCPUCollector(t *testing.T, counters []appconfig.Counter) *DCGMCollector {
 	dOpt := appconfig.DeviceOptions{Flex: true, MajorRange: []int{-1}, MinorRange: []int{-1}}
 	config := appconfig.Config{
 		CPUDevices:      dOpt,
@@ -240,16 +217,16 @@ func testDCGMCPUCollector(t *testing.T, counters []Counter) *DCGMCollector {
 	/* Test that only cpu metrics are collected for cpu entities. */
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU, deviceWatcher)
 	require.NoError(t, err)
 
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_CPU, deviceWatcher)
 	require.NoError(t, err)
 
 	cpuItem, cpuItemExist := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_CPU)
 	require.True(t, cpuItemExist)
 
-	c, err := NewDCGMCollector(counters, "", &config, cpuItem)
+	c, err := NewDCGMCollector(counters, "", &config, deviceWatcher, cpuItem)
 	require.NoError(t, err)
 
 	out, err := c.GetMetrics()
@@ -282,7 +259,7 @@ func TestToMetric(t *testing.T) {
 		},
 	}
 
-	c := []Counter{
+	c := []appconfig.Counter{
 		{
 			FieldID:   150,
 			FieldName: "DCGM_FI_DEV_GPU_TEMP",
@@ -318,11 +295,11 @@ func TestToMetric(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("When replaceBlanksInModelName is %t", tc.replaceBlanksInModelName), func(t *testing.T) {
-			metrics := make(map[Counter][]Metric)
+			metrics := make(map[appconfig.Counter][]Metric)
 			ToMetric(metrics, values, c, d, instanceInfo, false, "", tc.replaceBlanksInModelName)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
-			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 			assert.Equal(t, "42", metricValues[0].Value)
 			assert.Equal(t, tc.expectedGPUModelName, metricValues[0].GPUModelName)
 		})
@@ -330,7 +307,7 @@ func TestToMetric(t *testing.T) {
 }
 
 func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
-	c := []Counter{
+	c := []appconfig.Counter{
 		{
 			FieldID:   dcgm.DCGM_FI_DEV_XID_ERRORS,
 			FieldName: "DCGM_FI_DEV_GPU_TEMP",
@@ -384,11 +361,11 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 				},
 			}
 
-			metrics := make(map[Counter][]Metric)
+			metrics := make(map[appconfig.Counter][]Metric)
 			ToMetric(metrics, values, c, d, instanceInfo, false, "", false)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
-			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 			assert.Equal(t, fmt.Sprint(tc.fieldValue), metricValues[0].Value)
 			assert.Contains(t, metricValues[0].Attributes, "err_code")
 			assert.Equal(t, fmt.Sprint(tc.fieldValue), metricValues[0].Attributes["err_code"])
@@ -424,7 +401,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	numGPUs, err = dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
-	counters := []Counter{
+	counters := []appconfig.Counter{
 		{
 			FieldID:   100,
 			FieldName: "DCGM_FI_DEV_SM_CLOCK",
@@ -446,13 +423,13 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	}
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(counters, &config)
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	gpuItem, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	c, err := NewDCGMCollector(counters, "", &config, gpuItem)
+	c, err := NewDCGMCollector(counters, "", &config, deviceWatcher, gpuItem)
 	require.NoError(t, err)
 
 	defer c.Cleanup()

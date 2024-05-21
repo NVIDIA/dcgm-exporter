@@ -24,12 +24,13 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
 // IsDCGMExpClockEventsCountEnabled checks if the DCGM_EXP_CLOCK_EVENTS_COUNT counter exists
-func IsDCGMExpClockEventsCountEnabled(counters []Counter) bool {
+func IsDCGMExpClockEventsCountEnabled(counters []appconfig.Counter) bool {
 	return slices.ContainsFunc(counters,
-		func(c Counter) bool {
+		func(c appconfig.Counter) bool {
 			return c.FieldName == dcgmExpClockEventsCount
 		})
 }
@@ -85,9 +86,10 @@ func (c *clockEventsCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func NewClockEventsCollector(
-	counters []Counter,
+	counters []appconfig.Counter,
 	hostname string,
 	config *appconfig.Config,
+	watcher devicewatcher.Watcher,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
 ) (Collector, error) {
 	if !IsDCGMExpClockEventsCountEnabled(counters) {
@@ -102,13 +104,14 @@ func NewClockEventsCollector(
 		hostname,
 		[]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS},
 		config,
+		watcher,
 		fieldEntityGroupTypeSystemInfo,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	collector.counter = counters[slices.IndexFunc(counters, func(c Counter) bool {
+	collector.counter = counters[slices.IndexFunc(counters, func(c appconfig.Counter) bool {
 		return c.FieldName == dcgmExpClockEventsCount
 	})]
 

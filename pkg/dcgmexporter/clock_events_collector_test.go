@@ -31,8 +31,11 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
+
+var deviceWatcher = devicewatcher.NewDeviceWatcher()
 
 func TestClockEventsCollector_Gather(t *testing.T) {
 	teardownTest := setupTest(t)
@@ -140,19 +143,19 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	config.Kubernetes = true
 	config.PodResourcesKubeletSocket = socketPath
 
-	allCounters := []Counter{
+	allCounters := []appconfig.Counter{
 		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -165,7 +168,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	// We expect 1 metric: DCGM_EXP_CLOCK_EVENTS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
-	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 
 	for i := 0; i < len(metricValues); i++ {
 		gpuID, err := strconv.ParseUint(metricValues[i].GPU, 10, 64)
@@ -203,14 +206,14 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest(t)
 
-	allCounters := []Counter{
+	allCounters := []appconfig.Counter{
 		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
@@ -222,14 +225,14 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
-		collector, err := NewClockEventsCollector(cc.DCGMCounters, "", config, item)
+		collector, err := NewClockEventsCollector(cc.DCGMCounters, "", config, deviceWatcher, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
 
 	t.Run("Should Return Error When Counter Param Is Empty", func(t *testing.T) {
-		counters := make([]Counter, 0)
-		collector, err := NewClockEventsCollector(counters, "", config, item)
+		counters := make([]appconfig.Counter, 0)
+		collector, err := NewClockEventsCollector(counters, "", config, deviceWatcher, item)
 		require.Error(t, err)
 		require.Nil(t, collector)
 	})
@@ -248,7 +251,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		collector, err := NewClockEventsCollector(cc.ExporterCounters, "", config, item)
+		collector, err := NewClockEventsCollector(cc.ExporterCounters, "", config, deviceWatcher, item)
 		require.NoError(t, err)
 		require.NotNil(t, collector)
 	})
@@ -336,7 +339,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 		DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS.String(): "1",
 	}
 
-	allCounters := []Counter{
+	allCounters := []appconfig.Counter{
 		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
@@ -344,12 +347,12 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
 
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -362,7 +365,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	// We expect 1 metric: DCGM_EXP_CLOCK_EVENTS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
-	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 
 	metricValues = getFakeGPUMetrics(metricValues, gpuIDs)
 
@@ -440,7 +443,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 
 	require.NoError(t, err)
 
-	allCounters := []Counter{
+	allCounters := []appconfig.Counter{
 		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
@@ -448,12 +451,12 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
 
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 
-	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
+	collector, err := NewClockEventsCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -466,7 +469,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	// We expect 1 metric: DCGM_EXP_CLOCK_EVENTS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
-	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 	// Exclude the real GPU from the test
 	metricValues = getFakeGPUMetrics(metricValues, gpuIDs)
 	// Expected 9 metric values, because we injected 9 reasons

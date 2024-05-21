@@ -120,20 +120,20 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	}
 
-	allCounters := []Counter{
+	allCounters := []appconfig.Counter{
 		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err = fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, config, item)
+	xidCollector, err := NewXIDCollector(cc.ExporterCounters, hostname, config, deviceWatcher, item)
 	require.NoError(t, err)
 
 	defer func() {
@@ -146,7 +146,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	// We expect 1 metric: DCGM_EXP_XID_ERRORS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with 0 index
-	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 	// We expect 7 records, because we have 3 fake GPU and each GPU experienced 2 XID errors: 42 and 46, plus we have 1 hardware GPUs
 	require.Len(t, metricValues, len(fakeGPUIDs)*2+int(hardwareGPUs))
 	for _, val := range metricValues {
@@ -174,7 +174,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	// We expect 1 metric: DCGM_EXP_XID_ERRORS_COUNT
 	require.Len(t, metrics, 1)
 	// We get metric value with the last index
-	metricValues = metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)]
+	metricValues = metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)]
 	// We expect 8 records, because we have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46,
 	// plus we added 1 XID error: 19, plus we have 1 hardware GPUs
 	require.Len(t, metricValues, len(fakeGPUIDs)*2+int(hardwareGPUs)+1)
@@ -238,14 +238,14 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest(t)
 
-	allCounters := []Counter{
+	allCounters := []appconfig.Counter{
 		{
 			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 		},
 	}
 
 	fieldEntityGroupTypeSystemInfo := NewEntityGroupTypeSystemInfo(allCounters, config)
-	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU)
+	err := fieldEntityGroupTypeSystemInfo.Load(dcgm.FE_GPU, deviceWatcher)
 	require.NoError(t, err)
 
 	item, _ := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
@@ -259,14 +259,14 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
 
-		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", config, item)
+		xidCollector, err := NewXIDCollector(cc.DCGMCounters, "", config, deviceWatcher, item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
 
 	t.Run("Should Return Error When Counters Param Is Empty", func(t *testing.T) {
-		counters := make([]Counter, 0)
-		xidCollector, err := NewXIDCollector(counters, "", config, item)
+		counters := make([]appconfig.Counter, 0)
+		xidCollector, err := NewXIDCollector(counters, "", config, deviceWatcher, item)
 		require.Error(t, err)
 		require.Nil(t, xidCollector)
 	})
@@ -297,7 +297,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 				cc.ExporterCounters = append(cc.ExporterCounters, cc.DCGMCounters[i])
 			}
 		}
-		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", config, item)
+		xidCollector, err := NewXIDCollector(cc.ExporterCounters, "", config, deviceWatcher, item)
 		require.NoError(t, err)
 		require.NotNil(t, xidCollector)
 	})

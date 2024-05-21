@@ -29,18 +29,19 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
 var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
 	deviceInfo          deviceinfo.Provider            // Hardware device info
-	counter             Counter                        // Counter that collector
+	counter             appconfig.Counter              // Counter that collector
 	hostname            string                         // Hostname
 	config              *appconfig.Config              // Configuration settings
 	labelDeviceFields   []dcgm.Short                   // Fields used for labels
 	counterDeviceFields []dcgm.Short                   // Fields used for the counter
-	labelsCounters      []Counter                      // Counters used for labels
+	labelsCounters      []appconfig.Counter            // Counters used for labels
 	cleanups            []func()                       // Cleanup functions
 	fieldValueParser    func(val int64) []int64        // Function to parse the field value
 	labelFiller         func(map[string]string, int64) // Function to fill labels
@@ -184,20 +185,21 @@ func (c *expCollector) Cleanup() {
 
 // newExpCollector is a constructor for the expCollector
 func newExpCollector(
-	counters []Counter,
+	counters []appconfig.Counter,
 	hostname string,
 	counterDeviceFields []dcgm.Short,
 	config *appconfig.Config,
+	watcher devicewatcher.Watcher,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
 ) (expCollector, error) {
-	var labelsCounters []Counter
+	var labelsCounters []appconfig.Counter
 	for i := 0; i < len(counters); i++ {
 		if counters[i].PromType == "label" {
 			labelsCounters = append(labelsCounters, counters[i])
 		}
 	}
 
-	labelDeviceFields := NewDeviceFields(labelsCounters, dcgm.FE_GPU)
+	labelDeviceFields := watcher.GetDeviceFields(labelsCounters, dcgm.FE_GPU)
 
 	collector := expCollector{
 		hostname:            hostname,
@@ -215,7 +217,7 @@ func newExpCollector(
 
 	var err error
 
-	collector.cleanups, err = SetupDcgmFieldsWatch(collector.counterDeviceFields,
+	collector.cleanups, err = watcher.WatchDeviceFields(collector.counterDeviceFields,
 		collector.deviceInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {

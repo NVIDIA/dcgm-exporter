@@ -24,6 +24,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
 type xidCollector struct {
@@ -35,9 +36,10 @@ func (c *xidCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func NewXIDCollector(
-	counters []Counter,
+	counters []appconfig.Counter,
 	hostname string,
 	config *appconfig.Config,
+	watcher devicewatcher.Watcher,
 	fieldEntityGroupTypeSystemInfo FieldEntityGroupTypeSystemInfoItem,
 ) (Collector, error) {
 	if !IsDCGMExpXIDErrorsCountEnabled(counters) {
@@ -51,12 +53,14 @@ func NewXIDCollector(
 		hostname,
 		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
 		config,
-		fieldEntityGroupTypeSystemInfo)
+		watcher,
+		fieldEntityGroupTypeSystemInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	collector.counter = counters[slices.IndexFunc(counters, func(c Counter) bool {
+	collector.counter = counters[slices.IndexFunc(counters, func(c appconfig.Counter) bool {
 		return c.FieldName == dcgmExpXIDErrorsCount
 	})]
 
@@ -69,8 +73,8 @@ func NewXIDCollector(
 	return &collector, nil
 }
 
-func IsDCGMExpXIDErrorsCountEnabled(counters []Counter) bool {
-	return slices.ContainsFunc(counters, func(c Counter) bool {
+func IsDCGMExpXIDErrorsCountEnabled(counters []appconfig.Counter) bool {
+	return slices.ContainsFunc(counters, func(c appconfig.Counter) bool {
 		return c.FieldName == dcgmExpXIDErrorsCount
 	})
 }

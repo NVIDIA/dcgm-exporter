@@ -111,7 +111,7 @@ func TestHPCProcess(t *testing.T) {
 			assertion: func(t *testing.T, mbc MetricsByCounter) {
 				require.Len(t, mbc, 1, "metrics are expected for a single counter only.")
 				// We get metric value with 0 index
-				metricValues := mbc[reflect.ValueOf(mbc).MapKeys()[0].Interface().(Counter)]
+				metricValues := mbc[reflect.ValueOf(mbc).MapKeys()[0].Interface().(appconfig.Counter)]
 				require.Len(t, metricValues, 4, "received unexpected number of metric values.")
 				// Sort metrics by GPU ID
 				slices.SortFunc(metricValues, func(a, b Metric) int {
@@ -143,7 +143,7 @@ func TestHPCProcess(t *testing.T) {
 			}
 
 			metrics := MetricsByCounter{}
-			counter := Counter{
+			counter := appconfig.Counter{
 				FieldID:   155,
 				FieldName: "DCGM_FI_DEV_POWER_USAGE",
 				PromType:  "gauge",
@@ -155,7 +155,7 @@ func TestHPCProcess(t *testing.T) {
 				GPUDevice:     "nvidia0",
 				GPUInstanceID: "",
 				Value:         "42",
-				Counter: Counter{
+				Counter: appconfig.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -169,7 +169,7 @@ func TestHPCProcess(t *testing.T) {
 				GPUDevice:     "nvidia1",
 				GPUInstanceID: "1",
 				Value:         "451",
-				Counter: Counter{
+				Counter: appconfig.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -183,7 +183,7 @@ func TestHPCProcess(t *testing.T) {
 				GPUDevice:     "nvidia3",
 				GPUInstanceID: "2",
 				Value:         "1984",
-				Counter: Counter{
+				Counter: appconfig.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",

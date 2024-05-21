@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package utils
 
 import (
 	"bytes"
@@ -50,7 +50,7 @@ func RandUint64() (uint64, error) {
 	return num, nil
 }
 
-func deepCopy[T any](src T) (dst T, err error) {
+func DeepCopy[T any](src T) (dst T, err error) {
 	var buf bytes.Buffer
 
 	defer func() {
@@ -74,4 +74,12 @@ func deepCopy[T any](src T) (dst T, err error) {
 	}
 
 	return dst, nil
+}
+
+func CleanupOnError(cleanups []func()) []func() {
+	for _, cleanup := range cleanups {
+		cleanup()
+	}
+
+	return nil
 }

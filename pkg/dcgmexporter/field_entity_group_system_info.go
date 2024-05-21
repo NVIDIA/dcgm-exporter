@@ -23,6 +23,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
 // FieldEntityGroupTypeToMonitor supported entity group types
@@ -46,7 +47,7 @@ func (f FieldEntityGroupTypeSystemInfoItem) isEmpty() bool {
 // FieldEntityGroupTypeSystemInfo represents a mapping between FieldEntityGroupType and Info
 type FieldEntityGroupTypeSystemInfo struct {
 	items         map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem
-	counters      []Counter
+	counters      []appconfig.Counter
 	gpuDevices    appconfig.DeviceOptions
 	switchDevices appconfig.DeviceOptions
 	cpuDevices    appconfig.DeviceOptions
@@ -54,7 +55,7 @@ type FieldEntityGroupTypeSystemInfo struct {
 }
 
 // NewEntityGroupTypeSystemInfo creates a new instance of the FieldEntityGroupTypeSystemInfo
-func NewEntityGroupTypeSystemInfo(c []Counter, config *appconfig.Config) *FieldEntityGroupTypeSystemInfo {
+func NewEntityGroupTypeSystemInfo(c []appconfig.Counter, config *appconfig.Config) *FieldEntityGroupTypeSystemInfo {
 	return &FieldEntityGroupTypeSystemInfo{
 		items:         make(map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem),
 		counters:      c,
@@ -66,8 +67,10 @@ func NewEntityGroupTypeSystemInfo(c []Counter, config *appconfig.Config) *FieldE
 }
 
 // Load loads Info for a provided Field_Entity_Group
-func (e *FieldEntityGroupTypeSystemInfo) Load(entityType dcgm.Field_Entity_Group) error {
-	deviceFields := NewDeviceFields(e.counters, entityType)
+func (e *FieldEntityGroupTypeSystemInfo) Load(
+	entityType dcgm.Field_Entity_Group, watcher devicewatcher.Watcher,
+) error {
+	deviceFields := watcher.GetDeviceFields(e.counters, entityType)
 
 	if !ShouldMonitorDeviceType(deviceFields, entityType) {
 		return fmt.Errorf("no fields to watch for device type: %d", entityType)

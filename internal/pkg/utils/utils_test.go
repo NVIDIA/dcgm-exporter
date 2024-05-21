@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package utils
 
 import (
 	"crypto/rand"
@@ -25,6 +25,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
 func TestWaitWithTimeout(t *testing.T) {
@@ -54,18 +56,9 @@ func TestRandUint64_Success(t *testing.T) {
 	assert.NotZero(t, num, "Expected a non-zero uint64, but got 0")
 }
 
-// mockReader is a mock implementation of rand.Reader that always returns an error
-type mockReader struct {
-	err error
-}
-
-func (r *mockReader) Read(_ []byte) (n int, err error) {
-	return 0, r.err
-}
-
 func TestRandUint64_Failure(t *testing.T) {
 	// Simulate a failure in rand.Reader using mock rand.Reader
-	mockReader := &mockReader{err: fmt.Errorf("mock error")}
+	mockReader := &testutils.MockReader{Err: fmt.Errorf("mock error")}
 
 	originalReader := rand.Reader
 	rand.Reader = mockReader
@@ -80,15 +73,59 @@ func TestRandUint64_Failure(t *testing.T) {
 
 func TestDeepCopy(t *testing.T) {
 	t.Run("Return error when pointer value is nil", func(t *testing.T) {
-		got, err := deepCopy[*struct{}](nil)
+		got, err := DeepCopy[*struct{}](nil)
 		assert.Nil(t, got)
 		assert.Error(t, err)
 	})
 
 	t.Run("Return error when src is unsupported type", func(t *testing.T) {
 		ch := make(chan int)
-		got, err := deepCopy(ch)
+		got, err := DeepCopy(ch)
 		assert.Nil(t, got)
 		assert.Error(t, err)
 	})
+}
+
+func TestCleanupOnError(t *testing.T) {
+	tests := []struct {
+		name     string
+		cleanups []func()
+		want     []func()
+	}{
+		{
+			name:     "Nil cleanup functions",
+			cleanups: nil,
+			want:     nil,
+		},
+		{
+			name:     "Empty cleanup functions",
+			cleanups: []func(){},
+			want:     nil,
+		},
+		{
+			name: "One cleanup functions",
+			cleanups: []func(){
+				func() {},
+			},
+			want: nil,
+		},
+		{
+			name: "Multiple cleanup functions",
+			cleanups: []func(){
+				func() {},
+				func() {
+					func() {
+						// This function is intentionally left blank
+					}()
+				},
+				func() {},
+			},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, CleanupOnError(tt.cleanups), "expected output to be the same.")
+		})
+	}
 }

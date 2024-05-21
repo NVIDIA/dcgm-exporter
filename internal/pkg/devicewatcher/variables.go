@@ -14,29 +14,8 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package devicewatcher
 
-const (
-	windowSizeInMSLabel = "window_size_in_ms"
-)
-
-// DCGMDbgLvl is a DCGM library debug level.
-const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
-
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
+var doNothing = func() {
+	// This function is intentionally left blank
 }

@@ -53,7 +53,7 @@ func TestProcessPodMapper(t *testing.T) {
 	dcgmprovider.Initialize(config)
 	defer dcgmprovider.Client().Cleanup()
 
-	c := testDCGMGPUCollector(t, sampleCounters)
+	c := testDCGMGPUCollector(t, testutils.SampleCounters)
 	defer c.Cleanup()
 
 	out, err := c.GetMetrics()
@@ -61,7 +61,7 @@ func TestProcessPodMapper(t *testing.T) {
 
 	original := out
 
-	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(Counter)]
+	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(appconfig.Counter)]
 
 	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
@@ -290,7 +290,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				})
 				require.NotNil(t, podMapper)
 				metrics := MetricsByCounter{}
-				counter := Counter{
+				counter := appconfig.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -303,7 +303,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
 					Value:         "42",
 					MigProfile:    tc.MetricMigProfile,
-					Counter: Counter{
+					Counter: appconfig.Counter{
 						FieldID:   155,
 						FieldName: "DCGM_FI_DEV_POWER_USAGE",
 						PromType:  "gauge",
@@ -326,7 +326,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err := podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)] {
+				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)] {
 					require.Contains(t, metric.Attributes, podAttribute)
 					require.Contains(t, metric.Attributes, namespaceAttribute)
 					require.Contains(t, metric.Attributes, containerAttribute)

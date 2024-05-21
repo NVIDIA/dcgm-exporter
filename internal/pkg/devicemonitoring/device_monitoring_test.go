@@ -26,136 +26,8 @@ import (
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
-
-type watchedEntityKey struct {
-	parentID uint
-	childID  uint
-}
-
-var fakeProfileName = "2fake.4gb"
-
-var (
-	gpuInstanceInfo1 = deviceinfo.GPUInstanceInfo{
-		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlProfileSlices: 3},
-		ProfileName: fakeProfileName,
-		EntityId:    0,
-	}
-
-	gpuInstanceInfo2 = deviceinfo.GPUInstanceInfo{
-		Info:        dcgm.MigEntityInfo{GpuUuid: "fake", NvmlInstanceId: 1, NvmlProfileSlices: 3},
-		ProfileName: fakeProfileName,
-		EntityId:    14,
-	}
-
-	nvLinkVal1 = dcgm.NvLinkStatus{
-		State: 2,
-		Index: 0,
-	}
-
-	nvLinkVal2 = dcgm.NvLinkStatus{
-		State: 3,
-		Index: 1,
-	}
-)
-
-func MockGPUDeviceInfo(
-	ctrl *gomock.Controller, gpuCount int, gpuToGpuInstanceInfos map[int][]deviceinfo.GPUInstanceInfo,
-) *mockdeviceinfo.MockProvider {
-	mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
-
-	mockGPUs := make([]deviceinfo.GPUInfo, 0)
-
-	for i := range gpuCount {
-		gpuInfo := deviceinfo.GPUInfo{}
-		gpuInfo.DeviceInfo.GPU = uint(i)
-
-		if gpuInstanceInfos, exist := gpuToGpuInstanceInfos[i]; exist {
-			gpuInfo.GPUInstances = gpuInstanceInfos
-		}
-
-		mockGPUs = append(mockGPUs, gpuInfo)
-		mockSystemInfo.EXPECT().GPU(uint(i)).Return(gpuInfo).AnyTimes()
-	}
-
-	mockSystemInfo.EXPECT().GPUCount().Return(uint(gpuCount)).AnyTimes()
-	mockSystemInfo.EXPECT().GPUs().Return(mockGPUs).AnyTimes()
-	mockSystemInfo.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
-
-	return mockSystemInfo
-}
-
-func MockCPUDeviceInfo(
-	ctrl *gomock.Controller, cpuCount int, cpuToCores map[int][]uint, watchedCPUs map[uint]bool,
-	watchedCores map[watchedEntityKey]bool, infoType dcgm.Field_Entity_Group,
-) *mockdeviceinfo.MockProvider {
-	mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
-
-	mockCPUs := make([]deviceinfo.CPUInfo, 0)
-
-	for i := range cpuCount {
-		cpuInfo := deviceinfo.CPUInfo{}
-		cpuInfo.EntityId = uint(i)
-
-		if cores, exist := cpuToCores[i]; exist {
-			cpuInfo.Cores = []uint{}
-
-			for _, core := range cores {
-				cpuInfo.Cores = append(cpuInfo.Cores, core)
-
-				mockSystemInfo.EXPECT().IsCoreWatched(core,
-					uint(i)).Return(watchedCores[watchedEntityKey{uint(i), core}]).AnyTimes()
-			}
-		}
-
-		mockSystemInfo.EXPECT().IsCPUWatched(cpuInfo.EntityId).Return(watchedCPUs[cpuInfo.EntityId]).AnyTimes()
-		mockSystemInfo.EXPECT().CPU(uint(i)).Return(cpuInfo).AnyTimes()
-
-		mockCPUs = append(mockCPUs, cpuInfo)
-	}
-
-	mockSystemInfo.EXPECT().CPUs().Return(mockCPUs).AnyTimes()
-	mockSystemInfo.EXPECT().InfoType().Return(infoType).AnyTimes()
-
-	return mockSystemInfo
-}
-
-func MockSwitchDeviceInfo(
-	ctrl *gomock.Controller, switchCount int, switchToNvLinks map[int][]dcgm.NvLinkStatus,
-	watchedSwitches map[uint]bool, watchedLinks map[watchedEntityKey]bool, infoType dcgm.Field_Entity_Group,
-) *mockdeviceinfo.MockProvider {
-	mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
-
-	mockSwitches := make([]deviceinfo.SwitchInfo, 0)
-
-	for i := range switchCount {
-		switchInfo := deviceinfo.SwitchInfo{}
-		switchInfo.EntityId = uint(i)
-
-		if nvLinks, exist := switchToNvLinks[i]; exist {
-			switchInfo.NvLinks = []dcgm.NvLinkStatus{}
-
-			for _, nvLink := range nvLinks {
-				nvLink.ParentId = uint(i)
-				nvLink.ParentType = dcgm.FE_SWITCH
-				switchInfo.NvLinks = append(switchInfo.NvLinks, nvLink)
-
-				mockSystemInfo.EXPECT().IsLinkWatched(nvLink.Index,
-					uint(i)).Return(watchedLinks[watchedEntityKey{uint(i), nvLink.Index}]).AnyTimes()
-			}
-		}
-
-		mockSystemInfo.EXPECT().IsSwitchWatched(switchInfo.EntityId).Return(watchedSwitches[switchInfo.EntityId]).AnyTimes()
-		mockSystemInfo.EXPECT().Switch(uint(i)).Return(switchInfo).AnyTimes()
-
-		mockSwitches = append(mockSwitches, switchInfo)
-	}
-
-	mockSystemInfo.EXPECT().Switches().Return(mockSwitches).AnyTimes()
-	mockSystemInfo.EXPECT().InfoType().Return(infoType).AnyTimes()
-
-	return mockSystemInfo
-}
 
 func TestGetMonitoredEntities(t *testing.T) {
 	tests := []struct {
@@ -172,7 +44,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					Flex: true,
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, nil)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, nil)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
@@ -200,8 +72,8 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, Flex = false, Major -1, Minor -1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
 
@@ -211,7 +83,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					MinorRange: []int{-1},
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
@@ -234,19 +106,25 @@ func TestGetMonitoredEntities(t *testing.T) {
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -255,8 +133,8 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, Flex = false, Major -1, Minor 14",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
 
@@ -266,7 +144,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					MinorRange: []int{14},
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
@@ -289,11 +167,14 @@ func TestGetMonitoredEntities(t *testing.T) {
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -302,8 +183,8 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, Flex = false, Major 1, Minor -1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
 
@@ -313,7 +194,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					MinorRange: []int{-1},
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
@@ -328,19 +209,25 @@ func TestGetMonitoredEntities(t *testing.T) {
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -349,8 +236,8 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, Flex = false, Major 0, Minor 14",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
 
@@ -360,7 +247,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					MinorRange: []int{14},
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
@@ -375,11 +262,14 @@ func TestGetMonitoredEntities(t *testing.T) {
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -388,8 +278,8 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, Flex = false, Minor -1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
 
@@ -398,26 +288,32 @@ func TestGetMonitoredEntities(t *testing.T) {
 					MinorRange: []int{-1},
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
 			},
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -426,8 +322,8 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 1 each, Flex = true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
 
@@ -435,26 +331,32 @@ func TestGetMonitoredEntities(t *testing.T) {
 					Flex: true,
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
 			},
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -463,7 +365,10 @@ func TestGetMonitoredEntities(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 2 and 0, Flex = true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1, gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{
+					testutils.MockGPUInstanceInfo1,
+					testutils.MockGPUInstanceInfo2,
+				}
 
 				ctrl := gomock.NewController(t)
 
@@ -471,26 +376,32 @@ func TestGetMonitoredEntities(t *testing.T) {
 					Flex: true,
 				}
 
-				mockGPUDeviceInfo := MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 				mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
 
 				return mockGPUDeviceInfo
 			},
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
@@ -508,7 +419,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: false, 1: true}
-				return MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: []Info{
 				{
@@ -526,17 +437,18 @@ func TestGetMonitoredEntities(t *testing.T) {
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
 
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal1, nvLinkVal2}
-				switchToNvLinks[1] = []dcgm.NvLinkStatus{nvLinkVal1, nvLinkVal2}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal1, testutils.MockNVLinkVal2}
+				switchToNvLinks[1] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal1, testutils.MockNVLinkVal2}
 
 				watchedSwitches := map[uint]bool{0: true, 1: true}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 0}: true,
 					{0, 1}: true,
 					{1, 0}: true,
 					{1, 1}: true,
 				}
-				return MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: []Info{
 				{
@@ -554,11 +466,11 @@ func TestGetMonitoredEntities(t *testing.T) {
 			},
 		},
 		{
-			name: "Switch Count 3, watched = mix",
+			name: "CPU Count 3, watched = mix",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: false, 1: true, 2: false}
-				return MockCPUDeviceInfo(ctrl, 3, nil, watchedCPUs, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 3, nil, watchedCPUs, nil, dcgm.FE_CPU)
 			},
 			want: []Info{
 				{
@@ -579,13 +491,13 @@ func TestGetMonitoredEntities(t *testing.T) {
 				cpuToCores[1] = []uint{0, 1}
 
 				watchedCPUs := map[uint]bool{0: true, 1: true}
-				watchedCores := map[watchedEntityKey]bool{
+				watchedCores := map[testutils.WatchedEntityKey]bool{
 					{0, 0}: true,
 					{0, 1}: false,
 					{1, 0}: false,
 					{1, 1}: true,
 				}
-				return MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
 			want: []Info{
 				{
@@ -622,7 +534,7 @@ func Test_monitorAllGPUs(t *testing.T) {
 			name: "GPU Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 0, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 0, nil)
 			},
 			want: nil,
 		},
@@ -630,10 +542,10 @@ func Test_monitorAllGPUs(t *testing.T) {
 			name: "GPU Count 1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			want: []Info{
 				{
@@ -650,11 +562,11 @@ func Test_monitorAllGPUs(t *testing.T) {
 			name: "GPU Count 2",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 			},
 			want: []Info{
 				{
@@ -697,7 +609,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 0, addFlexibly true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 0, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 0, nil)
 			},
 			addFlexibly: true,
 			want:        nil,
@@ -706,7 +618,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 0, addFlexibly false",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 0, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 0, nil)
 			},
 			addFlexibly: false,
 			want:        nil,
@@ -715,7 +627,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 1, addFlexibly true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, nil)
 			},
 			addFlexibly: true,
 			want: []Info{
@@ -733,7 +645,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 1, addFlexibly false",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, nil)
 			},
 			addFlexibly: false,
 			want:        nil,
@@ -742,7 +654,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 2, addFlexibly true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, nil)
 			},
 			addFlexibly: true,
 			want: []Info{
@@ -768,7 +680,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 2, addFlexibly false",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, nil)
 			},
 			addFlexibly: false,
 			want:        nil,
@@ -777,19 +689,22 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 1, GPU Instance Count 1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			addFlexibly: true,
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -798,27 +713,36 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 1, GPU Instance Count 2",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1, gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{
+					testutils.MockGPUInstanceInfo1,
+					testutils.MockGPUInstanceInfo2,
+				}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			addFlexibly: true,
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -827,28 +751,34 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 1 each",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 			},
 			addFlexibly: true,
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(1),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -857,27 +787,36 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 2 and 0, addFlexibly true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1, gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{
+					testutils.MockGPUInstanceInfo1,
+					testutils.MockGPUInstanceInfo2,
+				}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 			},
 			addFlexibly: true,
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
@@ -894,27 +833,36 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 2 and 0, addFlexibly false",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1, gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{
+					testutils.MockGPUInstanceInfo1,
+					testutils.MockGPUInstanceInfo2,
+				}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 			},
 			addFlexibly: false,
 			want: []Info{
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo1,
+					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 				{
-					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+					Entity: dcgm.GroupEntityPair{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+					},
 					DeviceInfo: dcgm.Device{
 						GPU: uint(0),
 					},
-					InstanceInfo: &gpuInstanceInfo2,
+					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
 				},
 			},
@@ -939,7 +887,7 @@ func Test_monitorAllSwitches(t *testing.T) {
 			name: "Switch Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockSwitchDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_SWITCH)
 			},
 			want: nil,
 		},
@@ -948,7 +896,7 @@ func Test_monitorAllSwitches(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: true}
-				return MockSwitchDeviceInfo(ctrl, 1, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 1, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: []Info{
 				{
@@ -964,7 +912,7 @@ func Test_monitorAllSwitches(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: false}
-				return MockSwitchDeviceInfo(ctrl, 1, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 1, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: nil,
 		},
@@ -973,7 +921,7 @@ func Test_monitorAllSwitches(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: true, 1: true}
-				return MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: []Info{
 				{
@@ -995,7 +943,7 @@ func Test_monitorAllSwitches(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: false, 1: false}
-				return MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: nil,
 		},
@@ -1004,7 +952,7 @@ func Test_monitorAllSwitches(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: false, 1: true, 2: false}
-				return MockSwitchDeviceInfo(ctrl, 3, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 3, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: []Info{
 				{
@@ -1035,7 +983,7 @@ func Test_monitorAllLinks(t *testing.T) {
 			name: "Switch Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockSwitchDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_SWITCH)
 			},
 			want: nil,
 		},
@@ -1044,7 +992,7 @@ func Test_monitorAllLinks(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedSwitches := map[uint]bool{0: true, 1: true}
-				return MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
+				return testutils.MockSwitchDeviceInfo(ctrl, 2, nil, watchedSwitches, nil, dcgm.FE_SWITCH)
 			},
 			want: nil,
 		},
@@ -1054,13 +1002,14 @@ func Test_monitorAllLinks(t *testing.T) {
 				ctrl := gomock.NewController(t)
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal2}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal2}
 
 				watchedSwitches := map[uint]bool{0: true}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: true,
 				}
-				return MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: []Info{
 				{
@@ -1077,13 +1026,14 @@ func Test_monitorAllLinks(t *testing.T) {
 				ctrl := gomock.NewController(t)
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal2}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal2}
 
 				watchedSwitches := map[uint]bool{0: false}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: true,
 				}
-				return MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: nil,
 		},
@@ -1093,13 +1043,14 @@ func Test_monitorAllLinks(t *testing.T) {
 				ctrl := gomock.NewController(t)
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal2}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal2}
 
 				watchedSwitches := map[uint]bool{0: true}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: false,
 				}
-				return MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: nil,
 		},
@@ -1109,13 +1060,14 @@ func Test_monitorAllLinks(t *testing.T) {
 				ctrl := gomock.NewController(t)
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal1}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal1}
 
 				watchedSwitches := map[uint]bool{0: true}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 0}: true,
 				}
-				return MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: nil,
 		},
@@ -1126,15 +1078,16 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
 
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal2}
-				switchToNvLinks[1] = []dcgm.NvLinkStatus{nvLinkVal2}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal2}
+				switchToNvLinks[1] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal2}
 
 				watchedSwitches := map[uint]bool{0: true, 1: true}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: true,
 					{1, 1}: true,
 				}
-				return MockSwitchDeviceInfo(ctrl, 2, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 2, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: []Info{
 				{
@@ -1158,17 +1111,18 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				switchToNvLinks := make(map[int][]dcgm.NvLinkStatus)
 
-				switchToNvLinks[0] = []dcgm.NvLinkStatus{nvLinkVal1, nvLinkVal2}
-				switchToNvLinks[1] = []dcgm.NvLinkStatus{nvLinkVal1, nvLinkVal2}
+				switchToNvLinks[0] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal1, testutils.MockNVLinkVal2}
+				switchToNvLinks[1] = []dcgm.NvLinkStatus{testutils.MockNVLinkVal1, testutils.MockNVLinkVal2}
 
 				watchedSwitches := map[uint]bool{0: true, 1: true}
-				watchedLinks := map[watchedEntityKey]bool{
+				watchedLinks := map[testutils.WatchedEntityKey]bool{
 					{0, 0}: true,
 					{0, 1}: false,
 					{1, 0}: true,
 					{1, 1}: true,
 				}
-				return MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks, dcgm.FE_LINK)
+				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
+					dcgm.FE_LINK)
 			},
 			want: []Info{
 				{
@@ -1199,7 +1153,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 			name: "CPU Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockCPUDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_CPU)
 			},
 			want: nil,
 		},
@@ -1208,7 +1162,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: true}
-				return MockCPUDeviceInfo(ctrl, 1, nil, watchedCPUs, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 1, nil, watchedCPUs, nil, dcgm.FE_CPU)
 			},
 			want: []Info{
 				{
@@ -1224,7 +1178,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: false}
-				return MockCPUDeviceInfo(ctrl, 1, nil, watchedCPUs, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 1, nil, watchedCPUs, nil, dcgm.FE_CPU)
 			},
 			want: nil,
 		},
@@ -1233,7 +1187,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: true, 1: true}
-				return MockCPUDeviceInfo(ctrl, 2, nil, watchedCPUs, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 2, nil, watchedCPUs, nil, dcgm.FE_CPU)
 			},
 			want: []Info{
 				{
@@ -1255,7 +1209,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: false, 1: false}
-				return MockCPUDeviceInfo(ctrl, 2, nil, watchedCPUs, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 2, nil, watchedCPUs, nil, dcgm.FE_CPU)
 			},
 			want: nil,
 		},
@@ -1264,7 +1218,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: false, 1: true, 2: false}
-				return MockCPUDeviceInfo(ctrl, 3, nil, watchedCPUs, nil, dcgm.FE_CPU)
+				return testutils.MockCPUDeviceInfo(ctrl, 3, nil, watchedCPUs, nil, dcgm.FE_CPU)
 			},
 			want: []Info{
 				{
@@ -1295,7 +1249,7 @@ func Test_monitorAllCPUCores(t *testing.T) {
 			name: "CPU Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockCPUDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 0, nil, nil, nil, dcgm.FE_CPU_CORE)
 			},
 			want: nil,
 		},
@@ -1304,7 +1258,7 @@ func Test_monitorAllCPUCores(t *testing.T) {
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
 				watchedCPUs := map[uint]bool{0: true, 1: true}
-				return MockCPUDeviceInfo(ctrl, 2, nil, watchedCPUs, nil, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 2, nil, watchedCPUs, nil, dcgm.FE_CPU_CORE)
 			},
 			want: nil,
 		},
@@ -1317,10 +1271,10 @@ func Test_monitorAllCPUCores(t *testing.T) {
 				cpuToCores[0] = []uint{1}
 
 				watchedCPUs := map[uint]bool{0: true}
-				watchedCores := map[watchedEntityKey]bool{
+				watchedCores := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: true,
 				}
-				return MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
 			want: []Info{
 				{
@@ -1340,10 +1294,10 @@ func Test_monitorAllCPUCores(t *testing.T) {
 				cpuToCores[0] = []uint{1}
 
 				watchedCPUs := map[uint]bool{0: false}
-				watchedCores := map[watchedEntityKey]bool{
+				watchedCores := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: true,
 				}
-				return MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
 			want: nil,
 		},
@@ -1356,10 +1310,10 @@ func Test_monitorAllCPUCores(t *testing.T) {
 				cpuToCores[0] = []uint{1}
 
 				watchedCPUs := map[uint]bool{0: true}
-				watchedCores := map[watchedEntityKey]bool{
+				watchedCores := map[testutils.WatchedEntityKey]bool{
 					{0, 1}: false,
 				}
-				return MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
 			want: nil,
 		},
@@ -1373,13 +1327,13 @@ func Test_monitorAllCPUCores(t *testing.T) {
 				cpuToCores[1] = []uint{0, 1}
 
 				watchedCPUs := map[uint]bool{0: true, 1: true}
-				watchedCores := map[watchedEntityKey]bool{
+				watchedCores := map[testutils.WatchedEntityKey]bool{
 					{0, 0}: true,
 					{0, 1}: true,
 					{1, 0}: true,
 					{1, 1}: true,
 				}
-				return MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
 			want: []Info{
 				{
@@ -1418,13 +1372,13 @@ func Test_monitorAllCPUCores(t *testing.T) {
 				cpuToCores[1] = []uint{0, 1}
 
 				watchedCPUs := map[uint]bool{0: true, 1: true}
-				watchedCores := map[watchedEntityKey]bool{
+				watchedCores := map[testutils.WatchedEntityKey]bool{
 					{0, 0}: true,
 					{0, 1}: false,
 					{1, 0}: false,
 					{1, 1}: true,
 				}
-				return MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
+				return testutils.MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
 			want: []Info{
 				{
@@ -1462,7 +1416,7 @@ func Test_monitorGPU(t *testing.T) {
 			name: "GPU Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 0, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 0, nil)
 			},
 			gpuID: 0,
 			want:  nil,
@@ -1471,10 +1425,10 @@ func Test_monitorGPU(t *testing.T) {
 			name: "GPU Count 1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			gpuID: 0,
 			want: &Info{
@@ -1490,10 +1444,10 @@ func Test_monitorGPU(t *testing.T) {
 			name: "GPU Count 1, gpuID mismatch",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			gpuID: 1000,
 			want:  nil,
@@ -1502,11 +1456,11 @@ func Test_monitorGPU(t *testing.T) {
 			name: "GPU Count 2, one GPU ID match",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 			},
 			gpuID: 1,
 			want: &Info{
@@ -1540,7 +1494,7 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 0, addFlexibly true",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 0, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 0, nil)
 			},
 			gpuInstanceID: 0,
 			want:          nil,
@@ -1549,7 +1503,7 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 1, GPU Instance Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, nil)
 			},
 			gpuInstanceID: 0,
 			want:          nil,
@@ -1558,7 +1512,7 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 0",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, nil)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, nil)
 			},
 			gpuInstanceID: 0,
 			want:          nil,
@@ -1567,18 +1521,21 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 1, GPU Instance Count 1",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			gpuInstanceID: 0,
 			want: &Info{
-				Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo1.EntityId},
+				Entity: dcgm.GroupEntityPair{
+					EntityGroupId: dcgm.FE_GPU_I,
+					EntityId:      testutils.MockGPUInstanceInfo1.EntityId,
+				},
 				DeviceInfo: dcgm.Device{
 					GPU: uint(0),
 				},
-				InstanceInfo: &gpuInstanceInfo1,
+				InstanceInfo: &testutils.MockGPUInstanceInfo1,
 				ParentId:     PARENT_ID_IGNORED,
 			},
 		},
@@ -1586,10 +1543,10 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 1, GPU Instance Count 1, GPU Instance ID mismatch",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			gpuInstanceID: 1000,
 			want:          nil,
@@ -1598,18 +1555,24 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 1, GPU Instance Count 2, one match",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1, gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{
+					testutils.MockGPUInstanceInfo1,
+					testutils.MockGPUInstanceInfo2,
+				}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 1, gpuInstanceInfos)
 			},
 			gpuInstanceID: 14,
 			want: &Info{
-				Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+				Entity: dcgm.GroupEntityPair{
+					EntityGroupId: dcgm.FE_GPU_I,
+					EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+				},
 				DeviceInfo: dcgm.Device{
 					GPU: uint(0),
 				},
-				InstanceInfo: &gpuInstanceInfo2,
+				InstanceInfo: &testutils.MockGPUInstanceInfo2,
 				ParentId:     PARENT_ID_IGNORED,
 			},
 		},
@@ -1617,19 +1580,22 @@ func Test_monitorGPUInstance(t *testing.T) {
 			name: "GPU Count 2, GPU Instance Count 1 each, one match",
 			mockFunc: func() *mockdeviceinfo.MockProvider {
 				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
-				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo1}
-				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{gpuInstanceInfo2}
+				gpuInstanceInfos[0] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
 
 				ctrl := gomock.NewController(t)
-				return MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				return testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
 			},
 			gpuInstanceID: 14,
 			want: &Info{
-				Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: gpuInstanceInfo2.EntityId},
+				Entity: dcgm.GroupEntityPair{
+					EntityGroupId: dcgm.FE_GPU_I,
+					EntityId:      testutils.MockGPUInstanceInfo2.EntityId,
+				},
 				DeviceInfo: dcgm.Device{
 					GPU: uint(1),
 				},
-				InstanceInfo: &gpuInstanceInfo2,
+				InstanceInfo: &testutils.MockGPUInstanceInfo2,
 				ParentId:     PARENT_ID_IGNORED,
 			},
 		},

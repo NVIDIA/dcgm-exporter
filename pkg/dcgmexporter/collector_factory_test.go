@@ -30,10 +30,18 @@ import (
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
+var mockGPU = deviceinfo.GPUInfo{
+	DeviceInfo: dcgm.Device{
+		GPU: uint(0),
+	},
+	GPUInstances: []deviceinfo.GPUInstanceInfo{},
+}
+
 func Test_collectorFactory_Register(t *testing.T) {
-	dcgmCounter := Counter{
+	dcgmCounter := appconfig.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_GPU_TEMP,
 		FieldName: "DCGM_FI_DEV_GPU_TEMP",
 		PromType:  "gauge",
@@ -44,7 +52,9 @@ func Test_collectorFactory_Register(t *testing.T) {
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
-	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
+	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+	mockDeviceInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
 
 	defaultFieldEntityGroupTypeSystemInfoItem := FieldEntityGroupTypeSystemInfoItem{
 		DeviceFields: []dcgm.Short{42},
@@ -64,7 +74,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: fmt.Sprintf("Collector enabled for the %s", dcgm.FE_GPU.String()),
 			cs: &CounterSet{
-				DCGMCounters: []Counter{dcgmCounter},
+				DCGMCounters: []appconfig.Counter{dcgmCounter},
 			},
 			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
 				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
@@ -77,6 +87,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockGroupHandle.SetHandle(uintptr(42))
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
+				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandle, dcgm.FE_GPU,
+					mockGPU.DeviceInfo.GPU).Return(nil).AnyTimes()
 
 				mockFieldHandle := dcgm.FieldHandle{}
 				mockFieldHandle.SetHandle(uintptr(43))
@@ -100,7 +112,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: fmt.Sprintf("Collector enabled for the %s but DCGM returns error", dcgm.FE_GPU.String()),
 			cs: &CounterSet{
-				DCGMCounters: []Counter{dcgmCounter},
+				DCGMCounters: []appconfig.Counter{dcgmCounter},
 			},
 			fieldEntityGroupTypeSystemInfo: &FieldEntityGroupTypeSystemInfo{
 				items: map[dcgm.Field_Entity_Group]FieldEntityGroupTypeSystemInfoItem{
@@ -118,8 +130,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector is enabled",
 			cs: &CounterSet{
-				DCGMCounters: []Counter{},
-				ExporterCounters: []Counter{
+				DCGMCounters: []appconfig.Counter{},
+				ExporterCounters: []appconfig.Counter{
 					{
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
 					},
@@ -143,8 +155,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector can not be initialized",
 			cs: &CounterSet{
-				DCGMCounters: []Counter{},
-				ExporterCounters: []Counter{
+				DCGMCounters: []appconfig.Counter{},
+				ExporterCounters: []appconfig.Counter{
 					{
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
 					},
@@ -163,8 +175,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector can not be created by DCGM",
 			cs: &CounterSet{
-				DCGMCounters: []Counter{},
-				ExporterCounters: []Counter{
+				DCGMCounters: []appconfig.Counter{},
+				ExporterCounters: []appconfig.Counter{
 					{
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
 					},
@@ -186,8 +198,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: "DCGM_EXP_XID_ERRORS_COUNT collector is enabled",
 			cs: &CounterSet{
-				DCGMCounters: []Counter{},
-				ExporterCounters: []Counter{
+				DCGMCounters: []appconfig.Counter{},
+				ExporterCounters: []appconfig.Counter{
 					{
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
 					},
@@ -211,8 +223,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: "DCGM_EXP_XID_ERRORS_COUNT collector can not be initialized",
 			cs: &CounterSet{
-				DCGMCounters: []Counter{},
-				ExporterCounters: []Counter{
+				DCGMCounters: []appconfig.Counter{},
+				ExporterCounters: []appconfig.Counter{
 					{
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
 					},
@@ -231,8 +243,8 @@ func Test_collectorFactory_Register(t *testing.T) {
 		{
 			name: "DCGM_EXP_XID_ERRORS_COUNT collector can not be created by DCGM",
 			cs: &CounterSet{
-				DCGMCounters: []Counter{},
-				ExporterCounters: []Counter{
+				DCGMCounters: []appconfig.Counter{},
+				ExporterCounters: []appconfig.Counter{
 					{
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
 					},
@@ -280,11 +292,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 			registry := NewRegistry()
 			if tt.wantsPanic {
 				require.PanicsWithValue(t, "logrus.Fatal", func() {
-					InitCollectorFactory().Register(tt.cs, tt.fieldEntityGroupTypeSystemInfo, tt.hostname, tt.config, registry)
+					InitCollectorFactory(tt.cs, tt.fieldEntityGroupTypeSystemInfo, tt.hostname, tt.config,
+						registry, deviceWatcher).Register()
 				})
 				return
 			}
-			InitCollectorFactory().Register(tt.cs, tt.fieldEntityGroupTypeSystemInfo, tt.hostname, tt.config, registry)
+			InitCollectorFactory(tt.cs, tt.fieldEntityGroupTypeSystemInfo, tt.hostname, tt.config,
+				registry, deviceWatcher).Register()
 			if tt.assert != nil {
 				tt.assert(t, registry)
 			}
@@ -297,6 +311,8 @@ func setupDCGMMockForDCGMExpMetrics(fields []dcgm.Short) func(mockDCGM *dcgmmock
 		mockGroupHandle := dcgm.GroupHandle{}
 		mockGroupHandle.SetHandle(uintptr(42))
 		mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
+		mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandle, dcgm.FE_GPU,
+			mockGPU.DeviceInfo.GPU).Return(nil).AnyTimes()
 
 		mockFieldHandle := dcgm.FieldHandle{}
 		mockFieldHandle.SetHandle(uintptr(43))

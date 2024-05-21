@@ -25,6 +25,8 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 type mockCollector struct {
@@ -44,7 +46,7 @@ func TestRegistry_Gather(t *testing.T) {
 	collector := new(mockCollector)
 
 	metrics := MetricsByCounter{}
-	counterA := Counter{
+	counterA := appconfig.Counter{
 		FieldID:   155,
 		FieldName: "DCGM_FI_DEV_POWER_USAGE",
 		PromType:  "gauge",
@@ -56,7 +58,7 @@ func TestRegistry_Gather(t *testing.T) {
 		Attributes: map[string]string{},
 	})
 
-	counterB := Counter{
+	counterB := appconfig.Counter{
 		FieldName: "DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT",
 		PromType:  "gauge",
 	}

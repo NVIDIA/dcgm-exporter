@@ -19,6 +19,7 @@ package dcgmexporter
 import (
 	"fmt"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -28,101 +29,92 @@ import (
 )
 
 type CollectorFactory interface {
-	Register(
-		cs *CounterSet,
-		fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
-		hostname string,
-		config *appconfig.Config,
-		cRegistry *Registry,
-	)
+	Register()
 }
 
 // ToDo: When we move collectors to dedicated package like "collectors", we can replace the factory with something like "collectors.Register". Today, the collectorFactory plays a role of a package.
-type collectorFactory struct{}
-
-func InitCollectorFactory() CollectorFactory {
-	return &collectorFactory{}
+type collectorFactory struct {
+	counterSet                     *CounterSet
+	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo
+	hostname                       string
+	config                         *appconfig.Config
+	cRegistry                      *Registry
+	watcher                        devicewatcher.Watcher
 }
 
-func (cf *collectorFactory) Register(cs *CounterSet,
+func InitCollectorFactory(
+	counterSet *CounterSet,
 	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
 	hostname string,
 	config *appconfig.Config,
 	cRegistry *Registry,
-) {
-	logrus.WithField(logging.DumpKey, fmt.Sprintf("%+v", cs.DCGMCounters)).Debug("Counters are initialized")
-
-	cf.enableDCGMCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry, dcgm.FE_GPU)
-	cf.enableDCGMCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry, dcgm.FE_SWITCH)
-	cf.enableDCGMCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry, dcgm.FE_LINK)
-	cf.enableDCGMCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry, dcgm.FE_CPU)
-	cf.enableDCGMCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry, dcgm.FE_CPU_CORE)
-	cf.enableDCGMExpClockEventsCount(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
-	cf.enableDCGMExpXIDErrorsCountCollector(cs, fieldEntityGroupTypeSystemInfo, hostname, config, cRegistry)
+	watcher devicewatcher.Watcher,
+) CollectorFactory {
+	return &collectorFactory{
+		counterSet:                     counterSet,
+		fieldEntityGroupTypeSystemInfo: fieldEntityGroupTypeSystemInfo,
+		hostname:                       hostname,
+		config:                         config,
+		cRegistry:                      cRegistry,
+		watcher:                        watcher,
+	}
 }
 
-func (*collectorFactory) enableDCGMCollector(
-	cs *CounterSet,
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
-	hostname string,
-	config *appconfig.Config,
-	cRegistry *Registry,
-	group dcgm.Field_Entity_Group,
-) {
-	if len(cs.DCGMCounters) > 0 {
-		if item, exists := fieldEntityGroupTypeSystemInfo.Get(group); exists {
-			collector, err := NewDCGMCollector(cs.DCGMCounters, hostname, config, item)
+func (cf *collectorFactory) Register() {
+	logrus.WithField(logging.DumpKey, fmt.Sprintf("%+v", cf.counterSet.DCGMCounters)).Debug("Counters are initialized")
+
+	cf.enableDCGMCollector(dcgm.FE_GPU)
+	cf.enableDCGMCollector(dcgm.FE_SWITCH)
+	cf.enableDCGMCollector(dcgm.FE_LINK)
+	cf.enableDCGMCollector(dcgm.FE_CPU)
+	cf.enableDCGMCollector(dcgm.FE_CPU_CORE)
+	cf.enableDCGMExpClockEventsCount()
+	cf.enableDCGMExpXIDErrorsCountCollector()
+}
+
+func (cf *collectorFactory) enableDCGMCollector(group dcgm.Field_Entity_Group) {
+	if len(cf.counterSet.DCGMCounters) > 0 {
+		if item, exists := cf.fieldEntityGroupTypeSystemInfo.Get(group); exists {
+			collector, err := NewDCGMCollector(cf.counterSet.DCGMCounters, cf.hostname, cf.config, cf.watcher, item)
 			if err != nil {
 				logrus.Fatalf("Cannot create DCGMCollector for %s: %s", group.String(), err)
 			}
-			cRegistry.Register(group, collector)
+			cf.cRegistry.Register(group, collector)
 		}
 	}
 }
 
-func (*collectorFactory) enableDCGMExpClockEventsCount(
-	cs *CounterSet,
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
-	hostname string,
-	config *appconfig.Config,
-	cRegistry *Registry,
-) {
-	if IsDCGMExpClockEventsCountEnabled(cs.ExporterCounters) {
-		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+func (cf *collectorFactory) enableDCGMExpClockEventsCount() {
+	if IsDCGMExpClockEventsCountEnabled(cf.counterSet.ExporterCounters) {
+		item, exists := cf.fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
 			logrus.Fatalf("%s collector cannot be initialized", DCGMClockEventsCount.String())
 		}
-		clocksThrottleReasonsCollector, err := NewClockEventsCollector(
-			cs.ExporterCounters, hostname, config, item)
+		clocksThrottleReasonsCollector, err := NewClockEventsCollector(cf.counterSet.ExporterCounters, cf.hostname,
+			cf.config, cf.watcher, item)
 		if err != nil {
 			logrus.Fatalf("%s collector cannot be initialized. Error: %s", DCGMClockEventsCount.String(), err)
 		}
 
-		cRegistry.Register(dcgm.FE_GPU, clocksThrottleReasonsCollector)
+		cf.cRegistry.Register(dcgm.FE_GPU, clocksThrottleReasonsCollector)
 
 		logrus.Infof("%s collector initialized", DCGMClockEventsCount.String())
 	}
 }
 
-func (*collectorFactory) enableDCGMExpXIDErrorsCountCollector(
-	cs *CounterSet,
-	fieldEntityGroupTypeSystemInfo *FieldEntityGroupTypeSystemInfo,
-	hostname string,
-	config *appconfig.Config,
-	cRegistry *Registry,
-) {
-	if IsDCGMExpXIDErrorsCountEnabled(cs.ExporterCounters) {
-		item, exists := fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
+func (cf *collectorFactory) enableDCGMExpXIDErrorsCountCollector() {
+	if IsDCGMExpXIDErrorsCountEnabled(cf.counterSet.ExporterCounters) {
+		item, exists := cf.fieldEntityGroupTypeSystemInfo.Get(dcgm.FE_GPU)
 		if !exists {
 			logrus.Fatalf("%s collector cannot be initialized", DCGMXIDErrorsCount.String())
 		}
 
-		xidCollector, err := NewXIDCollector(cs.ExporterCounters, hostname, config, item)
+		xidCollector, err := NewXIDCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config, cf.watcher, item)
 		if err != nil {
 			logrus.Fatal(err)
 		}
 
-		cRegistry.Register(dcgm.FE_GPU, xidCollector)
+		cf.cRegistry.Register(dcgm.FE_GPU, xidCollector)
 
 		logrus.Infof("%s collector initialized", DCGMXIDErrorsCount.String())
 	}

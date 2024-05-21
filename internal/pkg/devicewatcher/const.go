@@ -14,29 +14,11 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package devicewatcher
 
 const (
-	windowSizeInMSLabel = "window_size_in_ms"
-)
+	DCGM_ST_NOT_CONFIGURED = "Setting not configured"
 
-// DCGMDbgLvl is a DCGM library debug level.
-const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
+	maxKeepAge     = 0.0 // How long to keep data for this field in seconds
+	maxKeepSamples = 0   // Maximum number of samples to keep. 0=no limit
 )
-
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
-}

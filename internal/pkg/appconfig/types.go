@@ -59,3 +59,10 @@ type Config struct {
 	PodResourcesKubeletSocket  string
 	HPCJobMappingDir           string
 }
+
+type Counter struct {
+	FieldID   dcgm.Short
+	FieldName string
+	PromType  string
+	Help      string
+}
