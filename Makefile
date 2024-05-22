@@ -28,9 +28,8 @@ PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
-
 .PHONY: all binary install check-format local
-all: update-version ubuntu20.04 ubuntu22.04 ubi9
+all: update-version ubuntu22.04 ubi9
 
 binary: generate update-version
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
@@ -58,20 +57,65 @@ else
 	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
-TARGETS = ubuntu22.04 ubi9
+ubi%: DOCKERFILE = docker/Dockerfile.ubi
+ubi%: --docker-build-%
+	@
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubi9
 
-DOCKERFILE.ubuntu22.04 = docker/Dockerfile.ubuntu22.04
-DOCKERFILE.ubi9 = docker/Dockerfile.ubi9
 
-$(TARGETS):
+ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
+ubuntu%: --docker-build-%
+	@
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+
+
+--docker-build-%:
+	@echo "Building for $@"
+	DOCKER_BUILDKIT=1 \
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
+		--progress=plain \
 		--platform $(PLATFORMS) \
+		--build-arg BASEIMAGE="$(BASE_IMAGE)" \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$@" \
-		--file $(DOCKERFILE.$@) .
+		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)" \
+		--file $(DOCKERFILE) .
+
+.PHONY: packages package-arm64 package-amd64
+packages: package-amd64 package-arm64
+
+package-arm64:
+	$(MAKE) package-build PLATFORMS=linux/arm64
+
+package-amd64:
+	$(MAKE) package-build PLATFORMS=linux/amd64
+
+package-build:
+	ARCH=`echo $(PLATFORMS) | cut -d'/' -f2)`; \
+	if [ "$$ARCH" = "amd64" ]; then \
+		ARCH="x86-64"; \
+	fi; \
+	if [ "$$ARCH" = "arm64" ]; then \
+		ARCH="sbsa"; \
+	fi; \
+	export DIST_NAME="dcgm-exporter-linux-$$ARCH-$(VERSION)"; \
+	$(MAKE) ubuntu22.04 OUTPUT=type=docker PLATFORMS=$(PLATFORMS) && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/dcgm-exporter && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/dcgm-exporter/usr/bin && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/dcgm-exporter/etc/dcgm-exporter && \
+	I=`docker create $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)` && \
+	docker cp $$I:/usr/bin/dcgm-exporter /tmp/$$DIST_NAME/dcgm-exporter/usr/bin/ && \
+	docker cp $$I:/etc/dcgm-exporter /tmp/$$DIST_NAME/dcgm-exporter/etc/ && \
+	cp ./LICENSE /tmp/$$DIST_NAME/dcgm-exporter && \
+	mkdir -p /tmp/$$DIST_NAME/dcgm-exporter/lib/systemd/system/ && \
+	cp ./packaging/config-files/systemd/nvidia-dcgm-exporter.service \
+		/tmp/$$DIST_NAME/dcgm-exporter/lib/systemd/system/nvidia-dcgm-exporter.service && \
+	docker rm -f $$I && \
+	$(MKDIR) -p $(CURDIR)/dist && \
+	cd "/tmp/$$DIST_NAME" && tar -czf $(CURDIR)/dist/$$DIST_NAME.tar.gz `ls -A` && \
+	rm -rf "/tmp/$$DIST_NAME";
 
 .PHONY: integration
 test-integration:

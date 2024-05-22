@@ -1,15 +1,28 @@
-FROM nvcr.io/nvidia/cuda:12.4.1-base-ubi9 AS builder
-ARG GOLANG_VERSION
-WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
-RUN set -eux; \
-	dnf clean expire-cache; \
-	dnf install -y go-toolset make wget
-RUN dnf clean all && rm -rf /usr/bin/go
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.4.1-base-ubi9
 
-# Install Go official release
+FROM --platform=$BUILDPLATFORM ubuntu:18.04 as builder
+
+ARG GOLANG_VERSION=1.22.2
+
+WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+	apt-get update \
+	&& apt-get install -y --no-install-recommends \
+	wget \
+	ca-certificates \
+	git \
+	build-essential \
+	gcc \
+	gcc-aarch64-linux-gnu \
+	qemu-user \
+	qemu-system-arm \
+	libc6-dev-arm64-cross \
+	&& apt-get autoremove -y \
+	&& rm -rf /var/lib/apt/lists/*
+
 RUN set -eux; \
+	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
 	url=; \
-	arch=$(uname -m) && if [ "${arch}" = "x86_64" ]; then arch=amd64; fi && if [ "${arch}" = "aarch64" ]; then arch=arm64; fi; \
 	case "$arch" in \
 	'amd64') \
 	url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
@@ -19,15 +32,6 @@ RUN set -eux; \
 	;; \
 	*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
 	esac; \
-	build=; \
-	if [ -z "$url" ]; then \
-	# https://github.com/golang/go/issues/38536#issuecomment-616897960
-	build=1; \
-	url="https://dl.google.com/go/go${GOLANG_VERSION}.src.tar.gz"; \
-	echo >&2; \
-	echo >&2 "warning: current architecture ($arch) does not have a compatible Go binary release; will be building from source"; \
-	echo >&2; \
-	fi; \
 	wget -O go.tgz "$url" --progress=dot:giga; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz;
@@ -35,12 +39,20 @@ ENV GOTOOLCHAIN=local
 ENV GOPATH /go
 ENV PATH $GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
-ENV PATH $PATH:/usr/local/go/bin   
+ENV PATH $PATH:/usr/local/go/bin
 COPY . .
 
-RUN make binary check-format
+RUN --mount=type=cache,target=/root/.cache/go-build \
+	--mount=type=cache,target=/go/pkg \
+	# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
+	if [ "$TARGETARCH" = "arm64" ]; then \
+	export CC=aarch64-linux-gnu-gcc; \
+	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
+	fi && \
+	GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$CC CGO_ENABLED=1 make binary
 
-FROM nvcr.io/nvidia/cuda:12.4.1-base-ubi9
+
+FROM ${BASEIMAGE}
 ARG DCGM_VERSION
 ARG VERSION
 ARG DIST_DIR
