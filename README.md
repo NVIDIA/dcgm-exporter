@@ -11,7 +11,7 @@ Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 
 ```shell
-docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.1-ubuntu22.04
+docker run -d --gpus all --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:3.3.6-3.4.2-ubuntu22.04
 curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -111,11 +111,15 @@ To enable GPU-to-job mapping on the DCGM-exporter side, users must run the DCGM-
 
 In order to build dcgm-exporter ensure you have the following:
 
-```
-$ git clone https://github.com/NVIDIA/dcgm-exporter.git
-$ cd dcgm-exporter
-$ make binary
-$ sudo make install
+* [Golang >= 1.22 installed](https://golang.org/)
+* [DCGM installed](https://developer.nvidia.com/dcgm)
+* Have Linux machine with GPU, compatible with DCGM.
+
+```shell
+git clone https://github.com/NVIDIA/dcgm-exporter.git
+cd dcgm-exporter
+make binary
+sudo make install
 ...
 dcgm-exporter &
 curl localhost:9400/metrics
@@ -188,28 +192,6 @@ Build and push the images to some other 'private_registry'
 
 ```shell
 make REGISTRY=<private_registry> push
-```
-
-## Building binary archives
-
-You can build a `tar.gz` archives with the DCGM exporter binary and configuration for specific OS and CPU architecture:
-
-* Ubuntu 20.04 for AMD64
-
-```shell
-make ubuntu20.04.tar.gz PLATFORMS=linux/amd64
-```
-
-* Ubuntu 22.04 for AMD64
-
-```shell
-make ubuntu20.04.tar.gz PLATFORMS=linux/amd64
-```
-
-* UBI 9 for AMD64
-
-```shell
-make ubi9.tar.gz PLATFORMS=linux/amd64
 ```
 
 ## Issues and Contributing

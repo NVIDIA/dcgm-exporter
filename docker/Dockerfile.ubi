@@ -24,13 +24,13 @@ RUN set -eux; \
 	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
 	url=; \
 	case "$arch" in \
-	'amd64') \
-	url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
-	;; \
-	'arm64') \
-	url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
-	;; \
-	*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
+		'amd64') \
+			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+			;; \
+		'arm64') \
+			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+			;; \
+		*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
 	esac; \
 	wget -O go.tgz "$url" --progress=dot:giga; \
 	tar -C /usr/local -xzf go.tgz; \
@@ -58,12 +58,8 @@ ARG VERSION
 ARG DIST_DIR
 
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
-LABEL name="NVIDIA DCGM Exporter"
-LABEL vendor="NVIDIA"
-LABEL version="${VERSION}"
-LABEL release="N/A"
-LABEL summary="Exports GPU Metrics to Prometheus"
-LABEL description="See summary"
+
+ARG DCGM_VERSION
 
 RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y && rm -rf /var/cache/yum \
 	&& dnf clean expire-cache && dnf install -y datacenter-gpu-manager-${DCGM_VERSION} libcap \
@@ -71,7 +67,7 @@ RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ub
 
 COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter/dcgm-exporter /usr/bin/
-COPY ./etc /etc/dcgm-exporter
+COPY etc /etc/dcgm-exporter
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 # disable all constraints on the configurations required by NVIDIA container toolkit
