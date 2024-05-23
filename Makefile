@@ -39,7 +39,7 @@ test-main:
 	$(GO) test ./... -short
 
 install: binary
-	install -m 755 $(DIST_DIR)/dcgm-exporter /usr/bin/dcgm-exporter
+	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
 	install -m 644 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
