@@ -41,7 +41,8 @@ ENV PATH $GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH $PATH:/usr/local/go/bin
 COPY . .
-ARG TARGETOS TARGETARCH
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cache/go-build \
 	--mount=type=cache,target=/go/pkg \
 	# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
@@ -49,7 +50,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 	export CC=aarch64-linux-gnu-gcc; \
 	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
 	fi && \
-	GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$CC CGO_ENABLED=1 make binary
+	GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$CC CGO_ENABLED=1 make install
 
 FROM ${BASEIMAGE}
 
@@ -66,7 +67,7 @@ LABEL summary="Exports GPU Metrics to Prometheus"
 LABEL description="See summary"
 
 COPY ./LICENSE ./licenses/LICENSE
-COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter/dcgm-exporter /usr/bin/
+COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

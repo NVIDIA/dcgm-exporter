@@ -18,7 +18,8 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
 	qemu-system-arm \
 	libc6-dev-arm64-cross \
 	&& apt-get autoremove -y \
-	&& rm -rf /var/lib/apt/lists/*
+	&& rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
 
 RUN set -eux; \
 	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
@@ -41,7 +42,8 @@ ENV PATH $GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH $PATH:/usr/local/go/bin
 COPY . .
-
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cache/go-build \
 	--mount=type=cache,target=/go/pkg \
 	# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
@@ -49,7 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 	export CC=aarch64-linux-gnu-gcc; \
 	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
 	fi && \
-	GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$CC CGO_ENABLED=1 make binary
+	GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$CC CGO_ENABLED=1 make install
 
 
 FROM ${BASEIMAGE}
@@ -66,7 +68,7 @@ RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ub
 	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite
 
 COPY ./LICENSE ./licenses/LICENSE
-COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter/dcgm-exporter /usr/bin/
+COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
 
 ENV NVIDIA_VISIBLE_DEVICES=all
