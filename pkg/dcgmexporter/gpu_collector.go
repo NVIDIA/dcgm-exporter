@@ -56,7 +56,7 @@ func NewDCGMCollector(
 	collector.UseOldNamespace = config.UseOldNamespace
 	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
+	_, _, cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
 		fieldEntityGroupTypeSystemInfo.SystemInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {
@@ -201,6 +201,7 @@ func ToSwitchMetric(
 				GPUUUID:      "",
 				GPUDevice:    fmt.Sprintf("nvswitch%d", mi.ParentId),
 				GPUModelName: "",
+				GPUPCIBusID:  "",
 				Hostname:     hostname,
 				Labels:       labels,
 				Attributes:   nil,
@@ -246,6 +247,7 @@ func ToCPUMetric(
 				GPUUUID:      "",
 				GPUDevice:    fmt.Sprintf("%d", mi.ParentId),
 				GPUModelName: "",
+				GPUPCIBusID:  "",
 				Hostname:     hostname,
 				Labels:       labels,
 				Attributes:   nil,
@@ -311,6 +313,7 @@ func ToMetric(
 			GPUUUID:      d.UUID,
 			GPUDevice:    fmt.Sprintf("nvidia%d", d.GPU),
 			GPUModelName: gpuModel,
+			GPUPCIBusID:  d.PCI.BusID,
 			Hostname:     hostname,
 
 			Labels:     labels,

@@ -58,4 +58,5 @@ type Config struct {
 	DCGMLogLevel               string
 	PodResourcesKubeletSocket  string
 	HPCJobMappingDir           string
+	NvidiaResourceNames        []string
 }

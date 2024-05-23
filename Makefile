@@ -20,7 +20,7 @@ MKDIR                ?= mkdir
 GOLANGCILINT_TIMEOUT ?= 10m
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.21.5
+GOLANG_VERSION := 1.22.5
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -39,7 +39,7 @@ test-main:
 	$(GO) test ./... -short
 
 install: binary
-	install -m 755 $(DIST_DIR)/dcgm-exporter /usr/bin/dcgm-exporter
+	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
 	install -m 644 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
@@ -78,7 +78,8 @@ test-integration:
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
-	gocov test ./... | gocov report
+	sh scripts/test_coverage.sh
+	gocov convert tests.cov  | gocov report
 
 .PHONY: lint
 lint:
