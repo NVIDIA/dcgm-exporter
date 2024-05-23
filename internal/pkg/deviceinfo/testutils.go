@@ -80,7 +80,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// First GPU Instance in GPU1
-	sampleGPU1_Instance1 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU1Instance1 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 1},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0},
 		Info: dcgm.MigEntityInfo{
@@ -94,7 +94,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// Second GPU Instance in GPU1
-	sampleGPU1_Instance2 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU1Instance2 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 2},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0},
 		Info: dcgm.MigEntityInfo{
@@ -108,7 +108,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// First Compute Instance in the First GPU Instance in GPU1
-	sampleGPU1_Instance1_CI1 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU1Instance1CI1 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 1},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 1},
 		Info: dcgm.MigEntityInfo{
@@ -122,7 +122,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// Second Compute Instance in the First GPU Instance in GPU1
-	sampleGPU1_Instance1_CI2 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU1Instance1CI2 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 2},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 1},
 		Info: dcgm.MigEntityInfo{
@@ -136,7 +136,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// First Compute Instance in the Second GPU Instance in GPU1
-	sampleGPU1_Instance2_CI1 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU1Instance2CI1 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 3},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 2},
 		Info: dcgm.MigEntityInfo{
@@ -150,7 +150,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// First GPU Instance in GPU2
-	sampleGPU2_Instance1 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU2Instance1 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 3},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 1},
 		Info: dcgm.MigEntityInfo{
@@ -164,7 +164,7 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	// First Compute Instance in the First GPU Instance in GPU2
-	sampleGPU2_Instance1_CI1 := dcgm.MigHierarchyInfo_v2{
+	sampleGPU2Instance1CI1 := dcgm.MigHierarchyInfo_v2{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 4},
 		Parent: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 3},
 		Info: dcgm.MigEntityInfo{
@@ -178,19 +178,19 @@ func SpoofMigHierarchy() (dcgm.MigHierarchy_v2, []dcgm.MigHierarchyInfo_v2, []dc
 	}
 
 	sampleMigHierarchy.EntityList[0] = sampleGPU1
-	sampleMigHierarchy.EntityList[1] = sampleGPU1_Instance1
-	sampleMigHierarchy.EntityList[2] = sampleGPU1_Instance1_CI1
-	sampleMigHierarchy.EntityList[3] = sampleGPU1_Instance1_CI2
-	sampleMigHierarchy.EntityList[4] = sampleGPU1_Instance2
-	sampleMigHierarchy.EntityList[5] = sampleGPU1_Instance2_CI1
+	sampleMigHierarchy.EntityList[1] = sampleGPU1Instance1
+	sampleMigHierarchy.EntityList[2] = sampleGPU1Instance1CI1
+	sampleMigHierarchy.EntityList[3] = sampleGPU1Instance1CI2
+	sampleMigHierarchy.EntityList[4] = sampleGPU1Instance2
+	sampleMigHierarchy.EntityList[5] = sampleGPU1Instance2CI1
 	sampleMigHierarchy.EntityList[6] = sampleGPU2
-	sampleMigHierarchy.EntityList[7] = sampleGPU2_Instance1
-	sampleMigHierarchy.EntityList[8] = sampleGPU2_Instance1_CI1
+	sampleMigHierarchy.EntityList[7] = sampleGPU2Instance1
+	sampleMigHierarchy.EntityList[8] = sampleGPU2Instance1CI1
 
 	return sampleMigHierarchy, []dcgm.MigHierarchyInfo_v2{sampleGPU1, sampleGPU2},
-		[]dcgm.MigHierarchyInfo_v2{sampleGPU1_Instance1, sampleGPU1_Instance2, sampleGPU2_Instance1},
+		[]dcgm.MigHierarchyInfo_v2{sampleGPU1Instance1, sampleGPU1Instance2, sampleGPU2Instance1},
 		[]dcgm.MigHierarchyInfo_v2{
-			sampleGPU1_Instance1_CI1, sampleGPU1_Instance1_CI2, sampleGPU1_Instance2_CI1,
-			sampleGPU2_Instance1_CI1,
+			sampleGPU1Instance1CI1, sampleGPU1Instance1CI2, sampleGPU1Instance2CI1,
+			sampleGPU2Instance1CI1,
 		}
 }

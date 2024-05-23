@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package transformation
 
 import (
 	"context"
@@ -119,7 +119,7 @@ func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
 		}),
 	)
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("failure connecting to '%s'; err: %w", socket, err)
+		return nil, doNothing, fmt.Errorf("failure connecting to '%s'; err: %w", socket, err)
 	}
 
 	return conn, func() { conn.Close() }, nil

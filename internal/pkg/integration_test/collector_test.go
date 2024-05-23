@@ -35,6 +35,7 @@ import (
 	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 	"k8s.io/utils/ptr"
 
+	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -77,6 +78,50 @@ func runOnlyWithLiveGPUs(t *testing.T) {
 	if len(gpus) < 1 {
 		t.Skip("Skipping test that requires live GPUs. None were found")
 	}
+}
+
+func mockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
+	// Mock results outputs
+	mockDevice := dcgm.Device{
+		GPU:  0,
+		UUID: "fake1",
+	}
+
+	mockMigHierarchy := dcgm.MigHierarchy_v2{
+		Count: 0,
+	}
+
+	mockCPUHierarchy := dcgm.CpuHierarchy_v1{
+		Version: 0,
+		NumCpus: 1,
+		Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+			{
+				CpuId:      0,
+				OwnedCores: []uint64{0, 18446744073709551360, 65535},
+			},
+		},
+	}
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(1)
+
+	mockFieldHandle := dcgm.FieldHandle{}
+	mockFieldHandle.SetHandle(1)
+
+	mockDCGMProvider := mockdcgmprovider.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
+	mockDCGMProvider.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockMigHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(mockDevice, nil).AnyTimes()
+
+	return mockDCGMProvider
 }
 
 func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
@@ -866,7 +911,7 @@ func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.
 	defer dcgmprovider.SetClient(realDCGMProvider)
 
 	ctrl := gomock.NewController(t)
-	mockDCGMProvider := testutils.MockDCGM(ctrl)
+	mockDCGMProvider := mockDCGM(ctrl)
 
 	// Calls where actual API calls and results are desirable
 	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).
@@ -944,7 +989,7 @@ func testDCGMCPUCollector(t *testing.T, counters []counters.Counter) *collector.
 	defer dcgmprovider.SetClient(realDCGMProvider)
 
 	ctrl := gomock.NewController(t)
-	mockDCGMProvider := testutils.MockDCGM(ctrl)
+	mockDCGMProvider := mockDCGM(ctrl)
 
 	// Calls where actual API calls and results are desirable
 	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).

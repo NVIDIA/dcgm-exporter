@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package transformation
 
 import (
 	"bufio"
@@ -22,12 +22,12 @@ import (
 	"path"
 	"strconv"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
-
-	"github.com/sirupsen/logrus"
 )
 
 type hpcMapper struct {

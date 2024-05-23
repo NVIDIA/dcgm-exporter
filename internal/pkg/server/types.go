@@ -14,24 +14,29 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package server
 
 import (
+	"net/http"
+	"sync"
+
+	"github.com/prometheus/exporter-toolkit/web"
+
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
 )
 
-// GetTransformations return list of transformation applicable for metrics
-func GetTransformations(c *appconfig.Config) []Transform {
-	var transformations []Transform
-	if c.Kubernetes {
-		podMapper := NewPodMapper(c)
-		transformations = append(transformations, podMapper)
-	}
+type MetricsServer struct {
+	sync.Mutex
 
-	if c.HPCJobMappingDir != "" {
-		hpcMapper := newHPCMapper(c)
-		transformations = append(transformations, hpcMapper)
-	}
-
-	return transformations
+	server                 *http.Server
+	webConfig              *web.FlagConfig
+	metrics                string
+	metricsChan            chan string
+	registry               *registry.Registry
+	config                 *appconfig.Config
+	transformations        []transformation.Transform
+	deviceWatchListManager devicewatchlistmanager.Manager
 }

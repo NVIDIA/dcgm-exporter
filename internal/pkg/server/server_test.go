@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package server
 
 import (
 	"errors"
@@ -32,16 +32,22 @@ import (
 	mockcollectorpkg "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/collector"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
+	mocktransformation "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/transformation"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
 )
 
 const expectedResponse = `# HELP TEST_METRIC 
 # TYPE TEST_METRIC gauge
 TEST_METRIC{gpu="0",UUID="GPU-00000000-0000-0000-0000-000000000000",device="nvidia0",modelName="NVIDIA T400 4GB",Hostname="testhost"} 42
 `
+
+var deviceWatcher = devicewatcher.NewDeviceWatcher()
 
 func getMetricsByCounterWithTestMetric() collector.MetricsByCounter {
 	metrics := collector.MetricsByCounter{}
@@ -79,7 +85,7 @@ func TestMetrics(t *testing.T) {
 		name        string
 		group       dcgm.Field_Entity_Group
 		collector   func() collector.Collector
-		transformer func() Transform
+		transformer func() transformation.Transform
 		assert      func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
@@ -90,8 +96,8 @@ func TestMetrics(t *testing.T) {
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 				return mockCollector
 			},
-			transformer: func() Transform {
-				mockTransformation := NewMockTransform(ctrl)
+			transformer: func() transformation.Transform {
+				mockTransformation := mocktransformation.NewMockTransform(ctrl)
 				mockTransformation.EXPECT().Process(gomock.Any(), gomock.Any())
 				return mockTransformation
 			},
@@ -108,8 +114,8 @@ func TestMetrics(t *testing.T) {
 				mockCollector.EXPECT().GetMetrics().Return(nil, errors.New("boom")).AnyTimes()
 				return mockCollector
 			},
-			transformer: func() Transform {
-				return NewMockTransform(ctrl)
+			transformer: func() transformation.Transform {
+				return mocktransformation.NewMockTransform(ctrl)
 			},
 			assert: func(t *testing.T, recorder *httptest.ResponseRecorder) {
 				assert.Equal(t, http.StatusInternalServerError, recorder.Code)
@@ -124,8 +130,8 @@ func TestMetrics(t *testing.T) {
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 				return mockCollector
 			},
-			transformer: func() Transform {
-				mockTransformation := NewMockTransform(ctrl)
+			transformer: func() transformation.Transform {
+				mockTransformation := mocktransformation.NewMockTransform(ctrl)
 				mockTransformation.EXPECT().Process(gomock.Any(), gomock.Any()).Return(errors.New("boom")).AnyTimes()
 				return mockTransformation
 			},
@@ -142,8 +148,8 @@ func TestMetrics(t *testing.T) {
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 				return mockCollector
 			},
-			transformer: func() Transform {
-				mockTransformation := NewMockTransform(ctrl)
+			transformer: func() transformation.Transform {
+				mockTransformation := mocktransformation.NewMockTransform(ctrl)
 				mockTransformation.EXPECT().Process(gomock.Any(), gomock.Any())
 				return mockTransformation
 			},
@@ -156,7 +162,7 @@ func TestMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry()
+			reg := registry.NewRegistry()
 			entityCollectorTuple := collector.EntityCollectorTuple{}
 			entityCollectorTuple.SetEntity(tt.group)
 			entityCollectorTuple.SetCollector(tt.collector())
@@ -182,7 +188,7 @@ func TestMetrics(t *testing.T) {
 						true).AnyTimes()
 					return mockDeviceWatchListManager
 				}(tt.group),
-				transformations: []Transform{
+				transformations: []transformation.Transform{
 					tt.transformer(),
 				},
 			}
@@ -220,7 +226,7 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 	mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 	mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 
-	reg := NewRegistry()
+	reg := registry.NewRegistry()
 	entityCollectorTuple := collector.EntityCollectorTuple{}
 	entityCollectorTuple.SetEntity(dcgm.FE_GPU)
 	entityCollectorTuple.SetCollector(mockCollector)
@@ -248,7 +254,7 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 				false).AnyTimes()
 			return mockDeviceWatchListManager
 		}(),
-		transformations: []Transform{},
+		transformations: []transformation.Transform{},
 	}
 	recorder := &mockResponseWriter{}
 	metricServer.Metrics(recorder, nil)

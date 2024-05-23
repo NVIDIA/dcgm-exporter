@@ -26,11 +26,13 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname"
 	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
-	"github.com/NVIDIA/dcgm-exporter/pkg/stdout"
 )
 
 const (
@@ -230,7 +232,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		},
 		&cli.StringFlag{
 			Name:    CLIDCGMLogLevel,
-			Value:   dcgmexporter.DCGMDbgLvlNone,
+			Value:   DCGMDbgLvlNone,
 			Usage:   "Specify the DCGM log verbosity level. This parameter is effective only when the '--enable-dcgm-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
 		},
@@ -320,14 +322,14 @@ restart:
 
 	deviceWatchListManager := startDeviceWatchListManager(cs, config)
 
-	hostname, err := dcgmexporter.GetHostname(config)
+	hostname, err := hostname.GetHostname(config)
 	if err != nil {
 		return err
 	}
 
 	cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostname, config)
 
-	cRegistry := dcgmexporter.NewRegistry()
+	cRegistry := registry.NewRegistry()
 	for _, entityCollector := range cf.NewCollectors() {
 		cRegistry.Register(entityCollector)
 	}
@@ -343,7 +345,7 @@ restart:
 
 	wg.Add(1)
 
-	server, cleanup, err := dcgmexporter.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
+	server, cleanup, err := server.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
 	defer cleanup()
 	if err != nil {
 		return err
@@ -548,7 +550,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 	}
 
 	dcgmLogLevel := c.String(CLIDCGMLogLevel)
-	if !slices.Contains(dcgmexporter.DCGMDbgLvlValues, dcgmLogLevel) {
+	if !slices.Contains(DCGMDbgLvlValues, dcgmLogLevel) {
 		return nil, fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, dcgmLogLevel)
 	}
 

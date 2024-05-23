@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package hostname
 
 import (
 	"errors"

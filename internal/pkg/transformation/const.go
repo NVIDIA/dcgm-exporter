@@ -14,25 +14,17 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package transformation
 
-// DCGMDbgLvl is a DCGM library debug level.
 const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
+	// Note standard resource attributes
+	podAttribute       = "pod"
+	namespaceAttribute = "namespace"
+	containerAttribute = "container"
 
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
-}
+	hpcJobAttribute = "hpc_job"
+
+	oldPodAttribute       = "pod_name"
+	oldNamespaceAttribute = "pod_namespace"
+	oldContainerAttribute = "container_name"
+)

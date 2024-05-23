@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package dcgmexporter
+package transformation
 
 import (
 	"cmp"
@@ -29,11 +29,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	mockos "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
-
-	osmock "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
 
@@ -52,29 +51,29 @@ func TestHPCProcess(t *testing.T) {
 			config: &appconfig.Config{HPCJobMappingDir: "/var/run/nvidia/slurm"},
 			fsState: func() func() {
 				ctrl := gomock.NewController(t)
-				mOS := osmock.NewMockOS(ctrl)
-				mFileInfoGPU0 := osmock.NewMockFileInfo(ctrl)
+				mOS := mockos.NewMockOS(ctrl)
+				mFileInfoGPU0 := mockos.NewMockFileInfo(ctrl)
 				mFileInfoGPU0.EXPECT().IsDir().Return(false).AnyTimes()
 
-				mDirEntryGPU0 := osmock.NewMockDirEntry(ctrl)
+				mDirEntryGPU0 := mockos.NewMockDirEntry(ctrl)
 				mDirEntryGPU0.EXPECT().Info().Return(mFileInfoGPU0, nil).AnyTimes()
 				mDirEntryGPU0.EXPECT().Name().Return("0").AnyTimes()
 
-				mFileInfoGPU1 := osmock.NewMockFileInfo(ctrl)
+				mFileInfoGPU1 := mockos.NewMockFileInfo(ctrl)
 				mFileInfoGPU1.EXPECT().IsDir().Return(false).AnyTimes()
 
-				mDirEntryGPU1 := osmock.NewMockDirEntry(ctrl)
+				mDirEntryGPU1 := mockos.NewMockDirEntry(ctrl)
 				mDirEntryGPU1.EXPECT().Info().Return(mFileInfoGPU1, nil).AnyTimes()
 				mDirEntryGPU1.EXPECT().Name().Return("1").AnyTimes()
 
-				mFileInfoDir := osmock.NewMockFileInfo(ctrl)
+				mFileInfoDir := mockos.NewMockFileInfo(ctrl)
 				mFileInfoDir.EXPECT().IsDir().Return(true).AnyTimes()
 
-				mDirEntryDir := osmock.NewMockDirEntry(ctrl)
+				mDirEntryDir := mockos.NewMockDirEntry(ctrl)
 				mDirEntryDir.EXPECT().Info().Return(mFileInfoDir, nil).AnyTimes()
 				mDirEntryDir.EXPECT().Name().Return("iamdir").AnyTimes()
 
-				mDirEntryDamagedFile := osmock.NewMockDirEntry(ctrl)
+				mDirEntryDamagedFile := mockos.NewMockDirEntry(ctrl)
 				mDirEntryDamagedFile.EXPECT().Info().Return(nil, errors.New("boom")).AnyTimes()
 				mDirEntryDamagedFile.EXPECT().Name().Return("iamerror").AnyTimes()
 

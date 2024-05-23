@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package server
 
 import (
 	"bytes"
@@ -31,7 +31,9 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/rendermetrics"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
@@ -41,7 +43,7 @@ func NewMetricsServer(
 	c *appconfig.Config,
 	metrics chan string,
 	deviceWatchListManager devicewatchlistmanager.Manager,
-	registry *Registry,
+	registry *registry.Registry,
 ) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
 	serverv1 := &MetricsServer{
@@ -60,7 +62,7 @@ func NewMetricsServer(
 		metrics:                "",
 		registry:               registry,
 		config:                 c,
-		transformations:        GetTransformations(c),
+		transformations:        transformation.GetTransformations(c),
 		deviceWatchListManager: deviceWatchListManager,
 	}
 
@@ -145,7 +147,7 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func (s *MetricsServer) render(w io.Writer, metricGroups MetricsByCounterGroup) error {
+func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCounterGroup) error {
 	for group, metrics := range metricGroups {
 		deviceWatchList, exists := s.deviceWatchListManager.EntityWatchList(group)
 		if exists {

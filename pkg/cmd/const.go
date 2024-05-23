@@ -14,8 +14,25 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package cmd
 
-import osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
+// DCGMDbgLvl is a DCGM library debug level.
+const (
+	DCGMDbgLvlNone  = "NONE"
+	DCGMDbgLvlFatal = "FATAL"
+	DCGMDbgLvlError = "ERROR"
+	DCGMDbgLvlWarn  = "WARN"
+	DCGMDbgLvlInfo  = "INFO"
+	DCGMDbgLvlDebug = "DEBUG"
+	DCGMDbgLvlVerb  = "VERB"
+)
 
-var os osinterface.OS = osinterface.RealOS{}
+var DCGMDbgLvlValues = []string{
+	DCGMDbgLvlNone,
+	DCGMDbgLvlFatal,
+	DCGMDbgLvlError,
+	DCGMDbgLvlWarn,
+	DCGMDbgLvlInfo,
+	DCGMDbgLvlDebug,
+	DCGMDbgLvlVerb,
+}

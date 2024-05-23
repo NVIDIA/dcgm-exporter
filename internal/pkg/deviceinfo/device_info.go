@@ -28,6 +28,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
+const deviceInitMessage = "System entities of type %s initialized"
+
 type Info struct {
 	gpuCount uint
 	gpus     [dcgm.MAX_NUM_DEVICES]GPUInfo
@@ -185,7 +187,7 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 	s.gOpt = gOpt
 	err = s.verifyDevicePresence()
 	if err == nil {
-		logrus.Debugf("System entities of type %s initialized", s.infoType)
+		logrus.Debugf(deviceInitMessage, s.infoType)
 	}
 	return err
 }
@@ -231,7 +233,7 @@ func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
 	}
 
 	// Ensure correct CPUs and Cores are monitored
-	logrus.Debugf("System entities of type %s initialized", s.infoType)
+	logrus.Debugf(deviceInitMessage, s.infoType)
 	return nil
 }
 
@@ -276,7 +278,7 @@ func (s *Info) initializeNvSwitchInfo(sOpt appconfig.DeviceOptions) error {
 	s.sOpt = sOpt
 	err = s.verifySwitchDevicePresence()
 	if err == nil {
-		logrus.Debugf("System entities of type %s initialized", s.infoType)
+		logrus.Debugf(deviceInitMessage, s.infoType)
 	}
 
 	return err

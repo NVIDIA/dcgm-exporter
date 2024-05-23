@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package hostname
 
 import (
 	"net"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
+
+var os osinterface.OS = osinterface.RealOS{}
 
 // GetHostname return a hostname where metric was collected.
 func GetHostname(config *appconfig.Config) (string, error) {

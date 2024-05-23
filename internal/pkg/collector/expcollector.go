@@ -187,7 +187,9 @@ func newExpCollector(
 		fieldValueParser: func(val int64) []int64 {
 			return []int64{val}
 		},
-		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {},
+		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {
+			// This function is intentionally left blank
+		},
 	}
 
 	var err error
