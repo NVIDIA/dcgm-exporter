@@ -100,18 +100,19 @@ package-build:
 	if [ "$$ARCH" = "arm64" ]; then \
 		ARCH="sbsa"; \
 	fi; \
-	export DIST_NAME="dcgm-exporter-linux-$$ARCH-$(VERSION)"; \
+	export DIST_NAME="dcgm_exporter-linux-$$ARCH-$(VERSION)"; \
+	export COMPONENT_NAME="dcgm_exporter"; \
 	$(MAKE) ubuntu22.04 OUTPUT=type=docker PLATFORMS=$(PLATFORMS) && \
-	$(MKDIR) -p /tmp/$$DIST_NAME/dcgm-exporter && \
-	$(MKDIR) -p /tmp/$$DIST_NAME/dcgm-exporter/usr/bin && \
-	$(MKDIR) -p /tmp/$$DIST_NAME/dcgm-exporter/etc/dcgm-exporter && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/dcgm-exporter && \
 	I=`docker create $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)` && \
-	docker cp $$I:/usr/bin/dcgm-exporter /tmp/$$DIST_NAME/dcgm-exporter/usr/bin/ && \
-	docker cp $$I:/etc/dcgm-exporter /tmp/$$DIST_NAME/dcgm-exporter/etc/ && \
-	cp ./LICENSE /tmp/$$DIST_NAME/dcgm-exporter && \
-	mkdir -p /tmp/$$DIST_NAME/dcgm-exporter/lib/systemd/system/ && \
+	docker cp $$I:/usr/bin/dcgm-exporter /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin/ && \
+	docker cp $$I:/etc/dcgm-exporter /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/ && \
+	cp ./LICENSE /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
+	mkdir -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/lib/systemd/system/ && \
 	cp ./packaging/config-files/systemd/nvidia-dcgm-exporter.service \
-		/tmp/$$DIST_NAME/dcgm-exporter/lib/systemd/system/nvidia-dcgm-exporter.service && \
+		/tmp/$$DIST_NAME/$$COMPONENT_NAME/lib/systemd/system/nvidia-dcgm-exporter.service && \
 	docker rm -f $$I && \
 	$(MKDIR) -p $(CURDIR)/dist && \
 	cd "/tmp/$$DIST_NAME" && tar -czf $(CURDIR)/dist/$$DIST_NAME.tar.gz `ls -A` && \
