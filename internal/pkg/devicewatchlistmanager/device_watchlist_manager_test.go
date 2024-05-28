@@ -28,6 +28,7 @@ import (
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mockdevicewatcher "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
@@ -168,7 +169,7 @@ func TestNewWatchList(t *testing.T) {
 
 func TestNewWatchListManager(t *testing.T) {
 	type args struct {
-		counters appconfig.CounterList
+		counters counters.CounterList
 		config   *appconfig.Config
 	}
 	tests := []struct {
@@ -218,7 +219,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 	type fields struct {
 		entityWatchLists      map[dcgm.Field_Entity_Group]WatchList
 		entityWatchListsCount int
-		counters              appconfig.CounterList
+		counters              counters.CounterList
 		gOpts                 appconfig.DeviceOptions
 		sOpts                 appconfig.DeviceOptions
 		cOpts                 appconfig.DeviceOptions
@@ -235,7 +236,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 		args         args
 		deviceFields []dcgm.Short
 		mockFunc     func(
-			*mockdevicewatcher.MockWatcher, appconfig.CounterList, appconfig.CounterList,
+			*mockdevicewatcher.MockWatcher, counters.CounterList, counters.CounterList,
 			dcgm.Field_Entity_Group, []dcgm.Short, []dcgm.Short,
 		)
 		wantFunc func(
@@ -262,7 +263,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: testutils.SampleGPUFieldIDs,
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
@@ -320,7 +321,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: testutils.SampleGPUFieldIDs,
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
@@ -385,7 +386,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: testutils.SampleGPUFieldIDs,
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
@@ -453,7 +454,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: testutils.SampleGPUFieldIDs,
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
@@ -505,7 +506,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: testutils.SampleGPUFieldIDs,
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
@@ -525,7 +526,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			name: "No GPU WatchList",
 			fields: fields{
 				entityWatchLists: make(map[dcgm.Field_Entity_Group]WatchList),
-				counters:         []appconfig.Counter{},
+				counters:         []counters.Counter{},
 				gOpts:            deviceOptionFalse,
 				sOpts:            deviceOptionTrue,
 				cOpts:            deviceOptionOther,
@@ -538,7 +539,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: []dcgm.Short{},
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
@@ -555,7 +556,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			name: "Only Driver Version to Watch",
 			fields: fields{
 				entityWatchLists: make(map[dcgm.Field_Entity_Group]WatchList),
-				counters:         []appconfig.Counter{},
+				counters:         []counters.Counter{},
 				gOpts:            deviceOptionFalse,
 				sOpts:            deviceOptionTrue,
 				cOpts:            deviceOptionOther,
@@ -568,7 +569,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: []dcgm.Short{testutils.SampleDriverVersionCounter.FieldID},
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters appconfig.CounterList,
+				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
 				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)

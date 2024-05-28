@@ -22,6 +22,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
@@ -84,7 +85,7 @@ func (d *WatchList) Watch() ([]func(), error) {
 // and device options.
 type WatchListManager struct {
 	entityWatchLists map[dcgm.Field_Entity_Group]WatchList
-	counters         appconfig.CounterList
+	counters         counters.CounterList
 	gOpts            appconfig.DeviceOptions
 	sOpts            appconfig.DeviceOptions
 	cOpts            appconfig.DeviceOptions
@@ -93,7 +94,7 @@ type WatchListManager struct {
 
 // NewWatchListManager creates a new instance of the WatchListManager
 func NewWatchListManager(
-	counters appconfig.CounterList, config *appconfig.Config,
+	counters counters.CounterList, config *appconfig.Config,
 ) *WatchListManager {
 	return &WatchListManager{
 		entityWatchLists: make(map[dcgm.Field_Entity_Group]WatchList),

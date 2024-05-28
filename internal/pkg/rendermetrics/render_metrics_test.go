@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package rendermetrics
 
 import (
 	"bytes"
@@ -24,14 +24,15 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 )
 
-func getMetricsByCounterWithTestMetric() MetricsByCounter {
-	metrics := MetricsByCounter{}
+func getMetricsByCounterWithTestMetric() collector.MetricsByCounter {
+	metrics := collector.MetricsByCounter{}
 	counter := getTestMetric()
 
-	metrics[counter] = append(metrics[counter], Metric{
+	metrics[counter] = append(metrics[counter], collector.Metric{
 		GPU:          "0",
 		GPUDevice:    "nvidia0",
 		GPUModelName: "NVIDIA T400 4GB",
@@ -45,8 +46,8 @@ func getMetricsByCounterWithTestMetric() MetricsByCounter {
 	return metrics
 }
 
-func getTestMetric() appconfig.Counter {
-	counter := appconfig.Counter{
+func getTestMetric() counters.Counter {
+	counter := counters.Counter{
 		FieldID:   2000,
 		FieldName: "TEST_METRIC",
 		PromType:  "gauge",
@@ -60,7 +61,7 @@ func Test_render(t *testing.T) {
 	tests := []struct {
 		name    string
 		group   dcgm.Field_Entity_Group
-		metrics MetricsByCounter
+		metrics collector.MetricsByCounter
 		want    string
 		wantErr assert.ErrorAssertionFunc
 	}{
@@ -120,12 +121,12 @@ TEST_METRIC{cpucore="0",cpu="nvidia0",Hostname="testhost"} 42
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := &bytes.Buffer{}
-			err := renderGroup(w, tt.group, tt.metrics)
+			err := RenderGroup(w, tt.group, tt.metrics)
 			if tt.wantErr != nil &&
-				!tt.wantErr(t, err, fmt.Sprintf("renderGroup(w, %v, %v)", tt.group, tt.metrics)) {
+				!tt.wantErr(t, err, fmt.Sprintf("RenderGroup(w, %v, %v)", tt.group, tt.metrics)) {
 				return
 			}
-			assert.Equalf(t, tt.want, w.String(), "renderGroup(w, %v, %v)", tt.group, tt.metrics)
+			assert.Equalf(t, tt.want, w.String(), "RenderGroup(w, %v, %v)", tt.group, tt.metrics)
 		})
 	}
 }

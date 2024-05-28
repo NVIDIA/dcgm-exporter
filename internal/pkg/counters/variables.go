@@ -14,25 +14,16 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package counters
 
-// DCGMDbgLvl is a DCGM library debug level.
-const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
+import osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
+var os osinterface.OS = osinterface.RealOS{}
+
+var promMetricType = map[string]bool{
+	"gauge":     true,
+	"counter":   true,
+	"histogram": true,
+	"summary":   true,
+	"label":     true,
 }

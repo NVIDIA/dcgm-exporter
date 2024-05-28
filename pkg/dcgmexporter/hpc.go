@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 
@@ -44,10 +45,11 @@ func (p *hpcMapper) Name() string {
 	return "hpcMapper"
 }
 
-func (p *hpcMapper) Process(metrics MetricsByCounter, _ deviceinfo.Provider) error {
+func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
 	_, err := os.Stat(p.Config.HPCJobMappingDir)
 	if err != nil {
-		logrus.WithError(err).Warnf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.", p.Config.HPCJobMappingDir)
+		logrus.WithError(err).Warnf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.",
+			p.Config.HPCJobMappingDir)
 		return nil
 	}
 
@@ -75,7 +77,7 @@ func (p *hpcMapper) Process(metrics MetricsByCounter, _ deviceinfo.Provider) err
 	logrus.Debugf("GPU to job mapping: %+v", gpuToJobMap)
 
 	for counter := range metrics {
-		var modifiedMetrics []Metric
+		var modifiedMetrics []collector.Metric
 		for _, metric := range metrics[counter] {
 			jobs, exists := gpuToJobMap[metric.GPU]
 			if exists {

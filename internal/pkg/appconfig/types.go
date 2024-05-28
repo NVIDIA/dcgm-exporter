@@ -16,14 +16,11 @@
 
 package appconfig
 
-import "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+import (
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+)
 
 type KubernetesGPUIDType string
-
-const (
-	GPUUID     KubernetesGPUIDType = "uid"
-	DeviceName KubernetesGPUIDType = "device-name"
-)
 
 type DeviceOptions struct {
 	Flex       bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
@@ -58,28 +55,4 @@ type Config struct {
 	DCGMLogLevel               string
 	PodResourcesKubeletSocket  string
 	HPCJobMappingDir           string
-}
-
-type Counter struct {
-	FieldID   dcgm.Short
-	FieldName string
-	PromType  string
-	Help      string
-}
-
-func (c Counter) IsLabel() bool {
-	return c.PromType == "label"
-}
-
-type CounterList []Counter
-
-func (c CounterList) LabelCounters() CounterList {
-	var labelsCounters CounterList
-	for _, counter := range c {
-		if counter.IsLabel() {
-			labelsCounters = append(labelsCounters, counter)
-		}
-	}
-
-	return labelsCounters
 }

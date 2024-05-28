@@ -29,6 +29,7 @@ import (
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
@@ -1790,8 +1791,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 	dcgmprovider.SetClient(mockDCGM)
 
 	type args struct {
-		counters   []appconfig.Counter
-		entityType dcgm.Field_Entity_Group
+		counterList []counters.Counter
+		entityType  dcgm.Field_Entity_Group
 	}
 	tests := []struct {
 		name         string
@@ -1802,8 +1803,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "GPU, GPU Instance and VGPU Counters",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_GPU,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_GPU,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1817,8 +1818,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "GPU Instance Counters",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_GPU_I,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_GPU_I,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1835,8 +1836,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "VGPU Counters",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_VGPU,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_VGPU,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1853,8 +1854,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "CPU and CPU Core Counters",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_CPU,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_CPU,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1871,8 +1872,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "Switch and NV Link Counters",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_SWITCH,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_SWITCH,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1890,8 +1891,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "NV Link Counters",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_LINK,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_LINK,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1908,8 +1909,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "Invalid Entity Type",
 			args: args{
-				counters:   testutils.SampleCounters,
-				entityType: dcgm.FE_COUNT,
+				counterList: testutils.SampleCounters,
+				entityType:  dcgm.FE_COUNT,
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
@@ -1925,8 +1926,8 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 		{
 			name: "No Counters",
 			args: args{
-				counters:   []appconfig.Counter{},
-				entityType: dcgm.FE_GPU,
+				counterList: []counters.Counter{},
+				entityType:  dcgm.FE_GPU,
 			},
 			mockDCGMFunc: func(_ []dcgm.Short) {},
 			want: func() []dcgm.Short {
@@ -1940,7 +1941,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 
 			d := &DeviceWatcher{}
 			want := tt.want()
-			got := d.GetDeviceFields(tt.args.counters, tt.args.entityType)
+			got := d.GetDeviceFields(tt.args.counterList, tt.args.entityType)
 
 			slices.Sort(want)
 			slices.Sort(got)

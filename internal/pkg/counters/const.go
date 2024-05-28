@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package counters
 
-//go:generate go run -v go.uber.org/mock/mockgen  -destination=./mock_collector.go -package=dcgmexporter -copyright_file=../../hack/header.txt . Collector
+const (
+	undefinedConfigMapData = "none"
 
-// Collector interface
-type Collector interface {
-	GetMetrics() (MetricsByCounter, error)
-	Cleanup()
-}
+	cpuFieldsStart = 1100
+	dcpFieldsStart = 1000
+
+	DCGMExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
+	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
+)

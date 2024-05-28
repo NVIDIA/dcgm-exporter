@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
 import (
 	"errors"
@@ -26,14 +26,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	dcgmmock "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
+	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
+
+var deviceWatcher = devicewatcher.NewDeviceWatcher()
 
 var mockGPU = deviceinfo.GPUInfo{
 	DeviceInfo: dcgm.Device{
@@ -43,7 +47,7 @@ var mockGPU = deviceinfo.GPUInfo{
 }
 
 func Test_collectorFactory_Register(t *testing.T) {
-	dcgmCounter := appconfig.Counter{
+	dcgmCounter := counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_GPU_TEMP,
 		FieldName: "DCGM_FI_DEV_GPU_TEMP",
 		PromType:  "gauge",
@@ -58,35 +62,35 @@ func Test_collectorFactory_Register(t *testing.T) {
 	mockDeviceInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
 	mockDeviceInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
 
-	defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(mockDeviceInfo, []dcgm.Short{42}, nil, deviceWatcher,
-		int64(1))
+	defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(mockDeviceInfo, []dcgm.Short{42}, nil,
+		deviceWatcher, int64(1))
 
 	tests := []struct {
 		name                      string
-		cs                        *CounterSet
+		cs                        *counters.CounterSet
 		getDeviceWatchListManager func() devicewatchlistmanager.Manager
 		hostname                  string
 		config                    *appconfig.Config
-		setupDCGMMock             func(*dcgmmock.MockDCGM)
-		assert                    func(*testing.T, *Registry)
+		setupDCGMMock             func(*mockdcgm.MockDCGM)
+		assert                    func(*testing.T, []EntityCollectorTuple)
 		wantsPanic                bool
 	}{
 		{
 			name: fmt.Sprintf("Collector enabled for the %s", dcgm.FE_GPU.String()),
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{dcgmCounter},
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{dcgmCounter},
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
 					true)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
 					false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
 			hostname: "testhost",
 			config:   &appconfig.Config{},
-			setupDCGMMock: func(mockDCGM *dcgmmock.MockDCGM) {
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockGroupHandle.SetHandle(uintptr(42))
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
@@ -105,29 +109,28 @@ func Test_collectorFactory_Register(t *testing.T) {
 					gomock.Any(),
 				).Return(nil).AnyTimes()
 			},
-			assert: func(t *testing.T, registry *Registry) {
-				require.Len(t, registry.collectorGroups, 1)
-				require.Contains(t, registry.collectorGroups, dcgm.FE_GPU)
-				require.Len(t, registry.collectorGroups[dcgm.FE_GPU], 1)
-				require.IsType(t, &DCGMCollector{}, registry.collectorGroups[dcgm.FE_GPU][0])
+			assert: func(t *testing.T, entityCollectorTuples []EntityCollectorTuple) {
+				require.Len(t, entityCollectorTuples, 1)
+				require.Equal(t, entityCollectorTuples[0].Entity(), dcgm.FE_GPU)
+				require.IsType(t, &DCGMCollector{}, entityCollectorTuples[0].Collector())
 			},
 		},
 		{
 			name: fmt.Sprintf("Collector enabled for the %s but DCGM returns error", dcgm.FE_GPU.String()),
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{dcgmCounter},
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{dcgmCounter},
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
 					true)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
 					false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
 			hostname: "testhost",
 			config:   &appconfig.Config{},
-			setupDCGMMock: func(mockDCGM *dcgmmock.MockDCGM) {
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, errors.New("boom")).AnyTimes()
 			},
@@ -135,9 +138,9 @@ func Test_collectorFactory_Register(t *testing.T) {
 		},
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector is enabled",
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{},
-				ExporterCounters: []appconfig.Counter{
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
 					{
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
 					},
@@ -145,25 +148,24 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
 					true).AnyTimes()
 				return mockDeviceWatchListManager
 			},
 			hostname:      "testhost",
 			config:        &appconfig.Config{},
 			setupDCGMMock: setupDCGMMockForDCGMExpMetrics([]dcgm.Short{112}),
-			assert: func(t *testing.T, registry *Registry) {
-				require.Len(t, registry.collectorGroups, 1)
-				require.Contains(t, registry.collectorGroups, dcgm.FE_GPU)
-				require.Len(t, registry.collectorGroups[dcgm.FE_GPU], 1)
-				require.IsType(t, &clockEventsCollector{}, registry.collectorGroups[dcgm.FE_GPU][0])
+			assert: func(t *testing.T, entityCollectorTuples []EntityCollectorTuple) {
+				require.Len(t, entityCollectorTuples, 1)
+				require.Equal(t, entityCollectorTuples[0].Entity(), dcgm.FE_GPU)
+				require.IsType(t, &clockEventsCollector{}, entityCollectorTuples[0].Collector())
 			},
 		},
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector can not be initialized",
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{},
-				ExporterCounters: []appconfig.Counter{
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
 					{
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
 					},
@@ -171,22 +173,22 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.
 					WatchList{}, false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
 			hostname:   "testhost",
 			config:     &appconfig.Config{},
 			wantsPanic: true,
-			assert: func(t *testing.T, registry *Registry) {
-				require.Len(t, registry.collectorGroups, 0)
+			assert: func(t *testing.T, entityCollectorTuples []EntityCollectorTuple) {
+				require.Len(t, entityCollectorTuples, 0)
 			},
 		},
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector can not be created by DCGM",
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{},
-				ExporterCounters: []appconfig.Counter{
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
 					{
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
 					},
@@ -194,13 +196,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
 					true)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
 					false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
-			setupDCGMMock: func(mockDCGM *dcgmmock.MockDCGM) {
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, errors.New("boom")).AnyTimes()
 			},
@@ -210,9 +212,9 @@ func Test_collectorFactory_Register(t *testing.T) {
 		},
 		{
 			name: "DCGM_EXP_XID_ERRORS_COUNT collector is enabled",
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{},
-				ExporterCounters: []appconfig.Counter{
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
 					{
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
 					},
@@ -220,27 +222,26 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
 					true)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
 					false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
 			hostname:      "testhost",
 			config:        &appconfig.Config{},
 			setupDCGMMock: setupDCGMMockForDCGMExpMetrics([]dcgm.Short{230}),
-			assert: func(t *testing.T, registry *Registry) {
-				require.Len(t, registry.collectorGroups, 1)
-				require.Contains(t, registry.collectorGroups, dcgm.FE_GPU)
-				require.Len(t, registry.collectorGroups[dcgm.FE_GPU], 1)
-				require.IsType(t, &xidCollector{}, registry.collectorGroups[dcgm.FE_GPU][0])
+			assert: func(t *testing.T, entityCollectorTuples []EntityCollectorTuple) {
+				require.Len(t, entityCollectorTuples, 1)
+				require.Equal(t, entityCollectorTuples[0].Entity(), dcgm.FE_GPU)
+				require.IsType(t, &xidCollector{}, entityCollectorTuples[0].Collector())
 			},
 		},
 		{
 			name: "DCGM_EXP_XID_ERRORS_COUNT collector can not be initialized",
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{},
-				ExporterCounters: []appconfig.Counter{
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
 					{
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
 					},
@@ -248,22 +249,22 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.
 					WatchList{}, false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
 			hostname:   "testhost",
 			config:     &appconfig.Config{},
 			wantsPanic: true,
-			assert: func(t *testing.T, registry *Registry) {
-				require.Len(t, registry.collectorGroups, 0)
+			assert: func(t *testing.T, entityCollectorTuples []EntityCollectorTuple) {
+				require.Len(t, entityCollectorTuples, 0)
 			},
 		},
 		{
 			name: "DCGM_EXP_XID_ERRORS_COUNT collector can not be created by DCGM",
-			cs: &CounterSet{
-				DCGMCounters: []appconfig.Counter{},
-				ExporterCounters: []appconfig.Counter{
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
 					{
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
 					},
@@ -271,13 +272,13 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
 				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-				mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
 					true)
-				mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
 					false).AnyTimes()
 				return mockDeviceWatchListManager
 			},
-			setupDCGMMock: func(mockDCGM *dcgmmock.MockDCGM) {
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, errors.New("boom")).AnyTimes()
 			},
@@ -299,7 +300,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 				logrus.StandardLogger().ExitFunc = nil
 			}()
 
-			mockDCGMProvider := dcgmmock.NewMockDCGM(ctrl)
+			mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
 
 			realDCGM := dcgmprovider.Client()
 			defer func() {
@@ -311,25 +312,24 @@ func Test_collectorFactory_Register(t *testing.T) {
 				tt.setupDCGMMock(mockDCGMProvider)
 			}
 
-			registry := NewRegistry()
 			if tt.wantsPanic {
 				require.PanicsWithValue(t, "logrus.Fatal", func() {
-					InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname, tt.config,
-						registry).Register()
+					InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname,
+						tt.config).NewCollectors()
 				})
 				return
 			}
-			InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname, tt.config,
-				registry).Register()
+			entityCollectors := InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname,
+				tt.config).NewCollectors()
 			if tt.assert != nil {
-				tt.assert(t, registry)
+				tt.assert(t, entityCollectors)
 			}
 		})
 	}
 }
 
-func setupDCGMMockForDCGMExpMetrics(fields []dcgm.Short) func(mockDCGM *dcgmmock.MockDCGM) {
-	return func(mockDCGM *dcgmmock.MockDCGM) {
+func setupDCGMMockForDCGMExpMetrics(fields []dcgm.Short) func(mockDCGM *mockdcgm.MockDCGM) {
+	return func(mockDCGM *mockdcgm.MockDCGM) {
 		mockGroupHandle := dcgm.GroupHandle{}
 		mockGroupHandle.SetHandle(uintptr(42))
 		mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()

@@ -29,9 +29,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
+	mockcollectorpkg "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/collector"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
@@ -39,6 +42,33 @@ const expectedResponse = `# HELP TEST_METRIC
 # TYPE TEST_METRIC gauge
 TEST_METRIC{gpu="0",UUID="GPU-00000000-0000-0000-0000-000000000000",device="nvidia0",modelName="NVIDIA T400 4GB",Hostname="testhost"} 42
 `
+
+func getMetricsByCounterWithTestMetric() collector.MetricsByCounter {
+	metrics := collector.MetricsByCounter{}
+	counter := getTestMetric()
+
+	metrics[counter] = append(metrics[counter], collector.Metric{
+		GPU:          "0",
+		GPUDevice:    "nvidia0",
+		GPUModelName: "NVIDIA T400 4GB",
+		Hostname:     "testhost",
+		UUID:         "UUID",
+		GPUUUID:      "GPU-00000000-0000-0000-0000-000000000000",
+		Counter:      counter,
+		Value:        "42",
+		Attributes:   map[string]string{},
+	})
+	return metrics
+}
+
+func getTestMetric() counters.Counter {
+	counter := counters.Counter{
+		FieldID:   2000,
+		FieldName: "TEST_METRIC",
+		PromType:  "gauge",
+	}
+	return counter
+}
 
 func TestMetrics(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -48,15 +78,15 @@ func TestMetrics(t *testing.T) {
 	tests := []struct {
 		name        string
 		group       dcgm.Field_Entity_Group
-		collector   func() Collector
+		collector   func() collector.Collector
 		transformer func() Transform
 		assert      func(*testing.T, *httptest.ResponseRecorder)
 	}{
 		{
 			name:  "Returns 200",
 			group: dcgm.FE_GPU,
-			collector: func() Collector {
-				mockCollector := NewMockCollector(ctrl)
+			collector: func() collector.Collector {
+				mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 				return mockCollector
 			},
@@ -73,8 +103,8 @@ func TestMetrics(t *testing.T) {
 		{
 			name:  "Returns 500 when Collector return error",
 			group: dcgm.FE_GPU,
-			collector: func() Collector {
-				mockCollector := NewMockCollector(ctrl)
+			collector: func() collector.Collector {
+				mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 				mockCollector.EXPECT().GetMetrics().Return(nil, errors.New("boom")).AnyTimes()
 				return mockCollector
 			},
@@ -89,8 +119,8 @@ func TestMetrics(t *testing.T) {
 		{
 			name:  "Returns 500 when Transformer returns error",
 			group: dcgm.FE_GPU,
-			collector: func() Collector {
-				mockCollector := NewMockCollector(ctrl)
+			collector: func() collector.Collector {
+				mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 				return mockCollector
 			},
@@ -107,8 +137,8 @@ func TestMetrics(t *testing.T) {
 		{
 			name:  "Returns 500 when group is unknown",
 			group: dcgm.FE_NONE,
-			collector: func() Collector {
-				mockCollector := NewMockCollector(ctrl)
+			collector: func() collector.Collector {
+				mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 				return mockCollector
 			},
@@ -127,7 +157,10 @@ func TestMetrics(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := NewRegistry()
-			reg.Register(tt.group, tt.collector())
+			entityCollectorTuple := collector.EntityCollectorTuple{}
+			entityCollectorTuple.SetEntity(tt.group)
+			entityCollectorTuple.SetCollector(tt.collector())
+			reg.Register(entityCollectorTuple)
 
 			mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 			mockDeviceInfo.EXPECT().InfoType().Return(tt.group).AnyTimes()
@@ -145,7 +178,8 @@ func TestMetrics(t *testing.T) {
 				registry: reg,
 				deviceWatchListManager: func(group dcgm.Field_Entity_Group) devicewatchlistmanager.Manager {
 					mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-					mockDeviceWatchListManager.EXPECT().WatchList(group).Return(defaultDeviceWatchList, true).AnyTimes()
+					mockDeviceWatchListManager.EXPECT().EntityWatchList(group).Return(defaultDeviceWatchList,
+						true).AnyTimes()
 					return mockDeviceWatchListManager
 				}(tt.group),
 				transformations: []Transform{
@@ -183,11 +217,14 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 
 	metrics := getMetricsByCounterWithTestMetric()
 
-	mockCollector := NewMockCollector(ctrl)
+	mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 	mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
 
 	reg := NewRegistry()
-	reg.Register(dcgm.FE_GPU, mockCollector)
+	entityCollectorTuple := collector.EntityCollectorTuple{}
+	entityCollectorTuple.SetEntity(dcgm.FE_GPU)
+	entityCollectorTuple.SetCollector(mockCollector)
+	reg.Register(entityCollectorTuple)
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_CPU).AnyTimes()
@@ -205,8 +242,9 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 		registry: reg,
 		deviceWatchListManager: func() devicewatchlistmanager.Manager {
 			mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-			mockDeviceWatchListManager.EXPECT().WatchList(dcgm.FE_CPU).Return(defaultDeviceWatchList, true).AnyTimes()
-			mockDeviceWatchListManager.EXPECT().WatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
+			mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_CPU).Return(defaultDeviceWatchList,
+				true).AnyTimes()
+			mockDeviceWatchListManager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{},
 				false).AnyTimes()
 			return mockDeviceWatchListManager
 		}(),

@@ -17,14 +17,19 @@
 package testutils
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"runtime"
 	"testing"
 	"unsafe"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
+	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
@@ -38,9 +43,56 @@ func (r *MockReader) Read(_ []byte) (n int, err error) {
 	return 0, r.Err
 }
 
-type WatchedEntityKey struct {
-	ParentID uint
-	ChildID  uint
+// RequireLinux checks if tests are being executed on a Linux platform or not
+func RequireLinux(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skipf("Test is not supported on %q", runtime.GOOS)
+	}
+}
+
+func MockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
+	// Mock results outputs
+	mockDevice := dcgm.Device{
+		GPU:  0,
+		UUID: "fake1",
+	}
+
+	mockMigHierarchy := dcgm.MigHierarchy_v2{
+		Count: 0,
+	}
+
+	mockCPUHierarchy := dcgm.CpuHierarchy_v1{
+		Version: 0,
+		NumCpus: 1,
+		Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+			{
+				CpuId:      0,
+				OwnedCores: []uint64{0, 18446744073709551360, 65535},
+			},
+		},
+	}
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(1)
+
+	mockFieldHandle := dcgm.FieldHandle{}
+	mockFieldHandle.SetHandle(1)
+
+	mockDCGMProvider := mockdcgmprovider.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
+	mockDCGMProvider.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockMigHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(),
+		gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(mockDevice, nil).AnyTimes()
+
+	return mockDCGMProvider
 }
 
 func MockGPUDeviceInfo(
@@ -141,14 +193,6 @@ func MockSwitchDeviceInfo(
 	return mockSystemInfo
 }
 
-// RequireLinux checks if
-func RequireLinux(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skipf("Test is not supported on %q", runtime.GOOS)
-	}
-}
-
 // GetStructPrivateFieldValue returns private field value
 func GetStructPrivateFieldValue[T any](t *testing.T, v any, fieldName string) T {
 	t.Helper()
@@ -176,4 +220,53 @@ func GetStructPrivateFieldValue[T any](t *testing.T, v any, fieldName string) T 
 	realPtr := (*T)(fieldPtr)
 
 	return *realPtr
+}
+
+func CreateTmpDir(t *testing.T) (string, func()) {
+	path, err := os.MkdirTemp("", "dcgm-exporter")
+	require.NoError(t, err)
+
+	return path, func() {
+		require.NoError(t, os.RemoveAll(path))
+	}
+}
+
+type MockPodResourcesServer struct {
+	resourceName string
+	gpus         []string
+}
+
+func NewMockPodResourcesServer(resourceName string, gpus []string) *MockPodResourcesServer {
+	return &MockPodResourcesServer{
+		resourceName: resourceName,
+		gpus:         gpus,
+	}
+}
+
+func (s *MockPodResourcesServer) List(
+	ctx context.Context, req *v1alpha1.ListPodResourcesRequest,
+) (*v1alpha1.ListPodResourcesResponse, error) {
+	podResources := make([]*v1alpha1.PodResources, len(s.gpus))
+
+	for i, gpu := range s.gpus {
+		podResources[i] = &v1alpha1.PodResources{
+			Name:      fmt.Sprintf("gpu-pod-%d", i),
+			Namespace: "default",
+			Containers: []*v1alpha1.ContainerResources{
+				{
+					Name: "default",
+					Devices: []*v1alpha1.ContainerDevices{
+						{
+							ResourceName: s.resourceName,
+							DeviceIds:    []string{gpu},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	return &v1alpha1.ListPodResourcesResponse{
+		PodResources: podResources,
+	}, nil
 }

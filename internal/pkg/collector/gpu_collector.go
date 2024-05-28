@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
 import (
 	"errors"
@@ -26,6 +26,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
@@ -34,12 +35,17 @@ import (
 
 const unknownErr = "Unknown Error"
 
-type DCGMCollectorConstructor func(
-	[]appconfig.Counter, string, *appconfig.Config, devicewatchlistmanager.WatchList,
-) (*DCGMCollector, func(), error)
+type DCGMCollector struct {
+	counters                 []counters.Counter
+	cleanups                 []func()
+	useOldNamespace          bool
+	deviceWatchList          devicewatchlistmanager.WatchList
+	hostname                 string
+	replaceBlanksInModelName bool
+}
 
 func NewDCGMCollector(
-	c []appconfig.Counter,
+	c []counters.Counter,
 	hostname string,
 	config *appconfig.Config,
 	deviceWatchList devicewatchlistmanager.WatchList,
@@ -49,9 +55,9 @@ func NewDCGMCollector(
 	}
 
 	collector := &DCGMCollector{
-		Counters:        c,
-		DeviceWatchList: deviceWatchList,
-		Hostname:        hostname,
+		counters:        c,
+		deviceWatchList: deviceWatchList,
+		hostname:        hostname,
 	}
 
 	if config == nil {
@@ -59,27 +65,27 @@ func NewDCGMCollector(
 		return collector, nil
 	}
 
-	collector.UseOldNamespace = config.UseOldNamespace
-	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
+	collector.useOldNamespace = config.UseOldNamespace
+	collector.replaceBlanksInModelName = config.ReplaceBlanksInModelName
 
 	cleanups, err := deviceWatchList.Watch()
 	if err != nil {
 		return nil, err
 	}
 
-	collector.Cleanups = cleanups
+	collector.cleanups = cleanups
 
 	return collector, nil
 }
 
 func (c *DCGMCollector) Cleanup() {
-	for _, c := range c.Cleanups {
+	for _, c := range c.cleanups {
 		c()
 	}
 }
 
 func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.DeviceWatchList.DeviceInfo())
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
 
 	metrics := make(MetricsByCounter)
 
@@ -88,10 +94,10 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		var err error
 		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
 			vals, err = dcgmprovider.Client().LinkGetLatestValues(mi.Entity.EntityId, mi.ParentId,
-				c.DeviceWatchList.DeviceFields())
+				c.deviceWatchList.DeviceFields())
 		} else {
 			vals, err = dcgmprovider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
-				c.DeviceWatchList.DeviceFields())
+				c.deviceWatchList.DeviceFields())
 		}
 
 		if err != nil {
@@ -104,39 +110,39 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 
 		// InstanceInfo will be nil for GPUs
-		switch c.DeviceWatchList.DeviceInfo().InfoType() {
+		switch c.deviceWatchList.DeviceInfo().InfoType() {
 		case dcgm.FE_SWITCH, dcgm.FE_LINK:
-			ToSwitchMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			toSwitchMetric(metrics, vals, c.counters, mi, c.useOldNamespace, c.hostname)
 		case dcgm.FE_CPU, dcgm.FE_CPU_CORE:
-			ToCPUMetric(metrics, vals, c.Counters, mi, c.UseOldNamespace, c.Hostname)
+			toCPUMetric(metrics, vals, c.counters, mi, c.useOldNamespace, c.hostname)
 		default:
-			ToMetric(metrics,
+			toMetric(metrics,
 				vals,
-				c.Counters,
+				c.counters,
 				mi.DeviceInfo,
 				mi.InstanceInfo,
-				c.UseOldNamespace,
-				c.Hostname,
-				c.ReplaceBlanksInModelName)
+				c.useOldNamespace,
+				c.hostname,
+				c.replaceBlanksInModelName)
 		}
 	}
 
 	return metrics, nil
 }
 
-func FindCounterField(c []appconfig.Counter, fieldID uint) (appconfig.Counter, error) {
+func FindCounterField(c []counters.Counter, fieldID uint) (counters.Counter, error) {
 	for i := 0; i < len(c); i++ {
 		if uint(c[i].FieldID) == fieldID {
 			return c[i], nil
 		}
 	}
 
-	return appconfig.Counter{}, fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldID)
+	return counters.Counter{}, fmt.Errorf("could not find counter corresponding to field ID '%d'", fieldID)
 }
 
-func ToSwitchMetric(
+func toSwitchMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []appconfig.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []counters.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
 
@@ -179,9 +185,9 @@ func ToSwitchMetric(
 	}
 }
 
-func ToCPUMetric(
+func toCPUMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []appconfig.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1, c []counters.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	labels := map[string]string{}
 
@@ -224,10 +230,10 @@ func ToCPUMetric(
 	}
 }
 
-func ToMetric(
+func toMetric(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
-	c []appconfig.Counter,
+	c []counters.Counter,
 	d dcgm.Device,
 	instanceInfo *deviceinfo.GPUInstanceInfo,
 	useOld bool,

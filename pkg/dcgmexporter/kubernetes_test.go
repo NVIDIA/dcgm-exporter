@@ -17,7 +17,6 @@
 package dcgmexporter
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -34,16 +33,115 @@ import (
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
+var deviceWatcher = devicewatcher.NewDeviceWatcher()
+
+const FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
+
+var expectedGPUMetrics = map[string]bool{
+	testutils.SampleGPUTempCounter.FieldName:           true,
+	testutils.SampleGPUTotalEnergyCounter.FieldName:    true,
+	testutils.SampleGPUPowerUsageCounter.FieldName:     true,
+	testutils.SampleVGPULicenseStatusCounter.FieldName: true,
+}
+
+// TODO (roarora): This is temporary. Remove this when kubernetes_test moves to integrationtest package.
+func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.DCGMCollector {
+	dOpt := appconfig.DeviceOptions{
+		Flex:       true,
+		MajorRange: []int{-1},
+		MinorRange: []int{-1},
+	}
+	config := appconfig.Config{
+		GPUDeviceOptions: dOpt,
+		NoHostname:       false,
+		UseOldNamespace:  false,
+		UseFakeGPUs:      false,
+		CollectInterval:  1,
+	}
+
+	// Store actual dcgm provider
+	realDCGMProvider := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGMProvider)
+
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := testutils.MockDCGM(ctrl)
+
+	// Calls where actual API calls and results are desirable
+	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).
+		DoAndReturn(func(fieldID dcgm.Short) dcgm.FieldMeta {
+			return realDCGMProvider.FieldGetById(fieldID)
+		}).AnyTimes()
+
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+			error,
+		) {
+			return realDCGMProvider.EntityGetLatestValues(entityGroup, entityId, fields)
+		}).AnyTimes()
+
+	// Set mock DCGM provider
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(counters, &config)
+
+	err := deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher,
+		int64(config.CollectInterval))
+	require.NoError(t, err)
+
+	gpuItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
+	require.True(t, exists)
+
+	g, err := collector.NewDCGMCollector(counters, "", &config, gpuItem)
+	require.NoError(t, err)
+
+	/* Test for error when no switches are available to monitor. */
+	switchItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_SWITCH)
+	assert.False(t, exists, "dcgm.FE_SWITCH should not be available")
+
+	_, err = collector.NewDCGMCollector(counters, "", &config, switchItem)
+	require.Error(t, err, "NewDCGMCollector should return error")
+
+	/* Test for error when no cpus are available to monitor. */
+	cpuItem, exist := deviceWatchListManager.EntityWatchList(dcgm.FE_CPU)
+	require.False(t, exist, "dcgm.FE_CPU should not be available")
+
+	_, err = collector.NewDCGMCollector(counters, "", &config, cpuItem)
+	require.Error(t, err, "NewDCGMCollector should return error")
+
+	out, err := g.GetMetrics()
+	require.NoError(t, err)
+	require.Greater(t, len(out), 0, "Check that you have a GPU on this node")
+	require.Len(t, out, len(expectedGPUMetrics), fmt.Sprintf("Expected: %+v \nGot: %+v", expectedGPUMetrics, out))
+
+	seenMetrics := map[string]bool{}
+	for _, metrics := range out {
+		for _, metric := range metrics {
+			seenMetrics[metric.Counter.FieldName] = true
+			require.NotEmpty(t, metric.GPU)
+
+			require.NotEmpty(t, metric.Value)
+			require.NotEqual(t, metric.Value, FailedToConvert)
+		}
+	}
+	require.Equal(t, seenMetrics, expectedGPUMetrics)
+
+	return g
+}
+
 func TestProcessPodMapper(t *testing.T) {
 	testutils.RequireLinux(t)
 
-	tmpDir, cleanup := CreateTmpDir(t)
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
 	defer cleanup()
 
 	config := &appconfig.Config{
@@ -61,12 +159,13 @@ func TestProcessPodMapper(t *testing.T) {
 
 	original := out
 
-	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(appconfig.Counter)]
+	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(counters.Counter)]
 
 	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 	gpus := GetGPUUUIDs(arbirtaryMetric)
-	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
 
 	cleanup = StartMockServer(t, server, socketPath)
 	defer cleanup()
@@ -93,7 +192,7 @@ func TestProcessPodMapper(t *testing.T) {
 	}
 }
 
-func GetGPUUUIDs(metrics []Metric) []string {
+func GetGPUUUIDs(metrics []collector.Metric) []string {
 	gpus := make([]string, len(metrics))
 	for i, dev := range metrics {
 		gpus[i] = dev.GPUUUID
@@ -125,56 +224,6 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	}
 }
 
-func CreateTmpDir(t *testing.T) (string, func()) {
-	path, err := os.MkdirTemp("", "dcgm-exporter")
-	require.NoError(t, err)
-
-	return path, func() {
-		require.NoError(t, os.RemoveAll(path))
-	}
-}
-
-// Contains a list of UUIDs
-type PodResourcesMockServer struct {
-	resourceName string
-	gpus         []string
-}
-
-func NewPodResourcesMockServer(resourceName string, gpus []string) *PodResourcesMockServer {
-	return &PodResourcesMockServer{
-		resourceName: resourceName,
-		gpus:         gpus,
-	}
-}
-
-func (s *PodResourcesMockServer) List(
-	ctx context.Context, req *podresourcesapi.ListPodResourcesRequest,
-) (*podresourcesapi.ListPodResourcesResponse, error) {
-	podResources := make([]*podresourcesapi.PodResources, len(s.gpus))
-
-	for i, gpu := range s.gpus {
-		podResources[i] = &podresourcesapi.PodResources{
-			Name:      fmt.Sprintf("gpu-pod-%d", i),
-			Namespace: "default",
-			Containers: []*podresourcesapi.ContainerResources{
-				{
-					Name: "default",
-					Devices: []*podresourcesapi.ContainerDevices{
-						{
-							ResourceName: s.resourceName,
-							DeviceIds:    []string{gpu},
-						},
-					},
-				},
-			},
-		}
-	}
-
-	return &podresourcesapi.ListPodResourcesResponse{
-		PodResources: podResources,
-	}, nil
-}
-
 func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
 
@@ -191,20 +240,20 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testCases := []TestCase{
 		{
 			KubernetesGPUIDType: appconfig.GPUUID,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
 			KubernetesGPUIDType: appconfig.GPUUID,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
 		},
 		{
 			KubernetesGPUIDType: appconfig.GPUUID,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
@@ -212,26 +261,26 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 		},
 		{
 			KubernetesGPUIDType: appconfig.DeviceName,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
 		},
 		{
 			KubernetesGPUIDType: appconfig.DeviceName,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			MetricMigProfile:    "mig",
 			PODGPUID:            "nvidia0/gi0",
 		},
 		{
 			KubernetesGPUIDType: appconfig.DeviceName,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			MetricGPUDevice:     "0",
 			PODGPUID:            "0/vgpu",
 		},
 		{
 			KubernetesGPUIDType: appconfig.GPUUID,
-			ResourceName:        nvidiaResourceName,
+			ResourceName:        appconfig.NvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5::",
 		},
@@ -254,7 +303,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			tc.MetricGPUDevice,
 		),
 			func(t *testing.T) {
-				tmpDir, cleanup := CreateTmpDir(t)
+				tmpDir, cleanup := testutils.CreateTmpDir(t)
 				defer cleanup()
 				socketPath := tmpDir + "/kubelet.sock"
 				server := grpc.NewServer()
@@ -268,7 +317,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 
 				gpus := []string{tc.PODGPUID}
 				podresourcesapi.RegisterPodResourcesListerServer(server,
-					NewPodResourcesMockServer(tc.ResourceName, gpus))
+					testutils.NewMockPodResourcesServer(tc.ResourceName, gpus))
 
 				cleanup = StartMockServer(t, server, socketPath)
 				defer cleanup()
@@ -289,21 +338,21 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					PodResourcesKubeletSocket: socketPath,
 				})
 				require.NotNil(t, podMapper)
-				metrics := MetricsByCounter{}
-				counter := appconfig.Counter{
+				metrics := collector.MetricsByCounter{}
+				counter := counters.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
 				}
 
-				metrics[counter] = append(metrics[counter], Metric{
+				metrics[counter] = append(metrics[counter], collector.Metric{
 					GPU:           "0",
 					GPUUUID:       tc.MetricGPUID,
 					GPUDevice:     tc.MetricGPUDevice,
 					GPUInstanceID: fmt.Sprint(tc.GPUInstanceID),
 					Value:         "42",
 					MigProfile:    tc.MetricMigProfile,
-					Counter: appconfig.Counter{
+					Counter: counters.Counter{
 						FieldID:   155,
 						FieldName: "DCGM_FI_DEV_POWER_USAGE",
 						PromType:  "gauge",
@@ -326,7 +375,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err := podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(appconfig.Counter)] {
+				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)] {
 					require.Contains(t, metric.Attributes, podAttribute)
 					require.Contains(t, metric.Attributes, namespaceAttribute)
 					require.Contains(t, metric.Attributes, containerAttribute)

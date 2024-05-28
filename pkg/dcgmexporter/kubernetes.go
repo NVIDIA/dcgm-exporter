@@ -30,6 +30,7 @@ import (
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
@@ -53,7 +54,7 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
 	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
@@ -81,7 +82,7 @@ func (p *PodMapper) Process(metrics MetricsByCounter, deviceInfo deviceinfo.Prov
 	// and not the copy, we need to use the indexes
 	for counter := range metrics {
 		for j, val := range metrics[counter] {
-			deviceID, err := val.getIDOfType(p.Config.KubernetesGPUIdType)
+			deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
 			if err != nil {
 				return err
 			}
@@ -148,9 +149,9 @@ func (p *PodMapper) toDeviceToPod(
 			for _, device := range container.GetDevices() {
 
 				resourceName := device.GetResourceName()
-				if resourceName != nvidiaResourceName {
+				if resourceName != appconfig.NvidiaResourceName {
 					// Mig resources appear differently than GPU resources
-					if !strings.HasPrefix(resourceName, nvidiaMigResourcePrefix) {
+					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
 						continue
 					}
 				}
@@ -162,14 +163,14 @@ func (p *PodMapper) toDeviceToPod(
 				}
 
 				for _, deviceID := range device.GetDeviceIds() {
-					if strings.HasPrefix(deviceID, MIG_UUID_PREFIX) {
+					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
 						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
 						if err == nil {
 							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
 								uint(migDevice.GPUInstanceID))
 							deviceToPodMap[giIdentifier] = podInfo
 						}
-						gpuUUID := deviceID[len(MIG_UUID_PREFIX):]
+						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
 						deviceToPodMap[gpuUUID] = podInfo
 					} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
 						var gpuIndex string

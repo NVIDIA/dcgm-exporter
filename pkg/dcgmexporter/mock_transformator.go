@@ -24,10 +24,12 @@
 package dcgmexporter
 
 import (
-	reflect "reflect"
+	"reflect"
 
-	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
-	gomock "go.uber.org/mock/gomock"
+	"go.uber.org/mock/gomock"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
 // MockTransform is a mock of Transform interface.
@@ -68,7 +70,7 @@ func (mr *MockTransformMockRecorder) Name() *gomock.Call {
 }
 
 // Process mocks base method.
-func (m *MockTransform) Process(arg0 MetricsByCounter, arg1 deviceinfo.Provider) error {
+func (m *MockTransform) Process(arg0 collector.MetricsByCounter, arg1 deviceinfo.Provider) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Process", arg0, arg1)
 	ret0, _ := ret[0].(error)

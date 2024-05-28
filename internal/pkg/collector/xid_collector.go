@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
 import (
 	"fmt"
@@ -24,6 +24,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
@@ -36,14 +37,14 @@ func (c *xidCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func NewXIDCollector(
-	counters appconfig.CounterList,
+	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
 	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
-	if !IsDCGMExpXIDErrorsCountEnabled(counters) {
-		logrus.Error(dcgmExpXIDErrorsCount + " collector is disabled")
-		return nil, fmt.Errorf(dcgmExpXIDErrorsCount + " collector is disabled")
+	if !IsDCGMExpXIDErrorsCountEnabled(counterList) {
+		logrus.Error(counters.DCGMExpXIDErrorsCount + " collector is disabled")
+		return nil, fmt.Errorf(counters.DCGMExpXIDErrorsCount + " collector is disabled")
 	}
 
 	collector := xidCollector{}
@@ -51,7 +52,7 @@ func NewXIDCollector(
 	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 
 	collector.expCollector, err = newExpCollector(
-		counters.LabelCounters(),
+		counterList.LabelCounters(),
 		hostname,
 		config,
 		deviceWatchList,
@@ -60,8 +61,8 @@ func NewXIDCollector(
 		return nil, err
 	}
 
-	collector.counter = counters[slices.IndexFunc(counters, func(c appconfig.Counter) bool {
-		return c.FieldName == dcgmExpXIDErrorsCount
+	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
+		return c.FieldName == counters.DCGMExpXIDErrorsCount
 	})]
 
 	collector.labelFiller = func(metricValueLabels map[string]string, entityValue int64) {
@@ -73,8 +74,8 @@ func NewXIDCollector(
 	return &collector, nil
 }
 
-func IsDCGMExpXIDErrorsCountEnabled(counters []appconfig.Counter) bool {
-	return slices.ContainsFunc(counters, func(c appconfig.Counter) bool {
-		return c.FieldName == dcgmExpXIDErrorsCount
+func IsDCGMExpXIDErrorsCountEnabled(counterList counters.CounterList) bool {
+	return slices.ContainsFunc(counterList, func(c counters.Counter) bool {
+		return c.FieldName == counters.DCGMExpXIDErrorsCount
 	})
 }

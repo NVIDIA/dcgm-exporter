@@ -24,10 +24,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 )
 
 func Test_getDeviceWatchListManager(t *testing.T) {
@@ -40,13 +40,13 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		counterSet *dcgmexporter.CounterSet
+		counterSet *counters.CounterSet
 		assertion  func(*testing.T, devicewatchlistmanager.Manager)
 	}{
 		{
 			name: "When DCGM_FI_DEV_XID_ERRORS and DCGM_EXP_XID_ERRORS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []appconfig.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   230,
 						FieldName: "DCGM_FI_DEV_XID_ERRORS",
@@ -54,7 +54,7 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 						Help:      "Value of the last XID error encountered.",
 					},
 				},
-				ExporterCounters: []appconfig.Counter{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9001,
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
@@ -65,15 +65,15 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(230), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_FI_DEV_XID_ERRORS enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []appconfig.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   230,
 						FieldName: "DCGM_FI_DEV_XID_ERRORS",
@@ -84,15 +84,15 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(230), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_EXP_XID_ERRORS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				ExporterCounters: []appconfig.Counter{
+			counterSet: &counters.CounterSet{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9001,
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
@@ -103,31 +103,31 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(230), values[0].FieldID)
 			},
 		},
 		{
 			name:       "When no counters",
-			counterSet: &dcgmexporter.CounterSet{},
+			counterSet: &counters.CounterSet{},
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 0)
 			},
 		},
 		{
 			name: "When DCGM_FI_DEV_CLOCK_THROTTLE_REASON and DCGM_EXP_CLOCK_EVENTS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []appconfig.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   112,
 						FieldName: "DCGM_FI_DEV_CLOCK_THROTTLE_REASON",
 						PromType:  "gauge",
 					},
 				},
-				ExporterCounters: []appconfig.Counter{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9002,
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
@@ -139,15 +139,15 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(112), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_FI_DEV_CLOCK_THROTTLE_REASON enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []appconfig.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   112,
 						FieldName: "DCGM_FI_DEV_CLOCK_THROTTLE_REASON",
@@ -157,15 +157,15 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(112), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_EXP_CLOCK_EVENTS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				ExporterCounters: []appconfig.Counter{
+			counterSet: &counters.CounterSet{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9002,
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
@@ -176,7 +176,7 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]appconfig.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(112), values[0].FieldID)
 			},

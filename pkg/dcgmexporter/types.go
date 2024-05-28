@@ -17,7 +17,6 @@
 package dcgmexporter
 
 import (
-	"fmt"
 	"net/http"
 	"sync"
 
@@ -25,18 +24,12 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 var (
-	SkipDCGMValue   = "SKIPPING DCGM VALUE"
-	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
-
-	nvidiaResourceName      = "nvidia.com/gpu"
-	nvidiaMigResourcePrefix = "nvidia.com/mig-"
-	MIG_UUID_PREFIX         = "MIG-"
-
 	// Note standard resource attributes
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
@@ -47,65 +40,13 @@ var (
 	oldPodAttribute       = "pod_name"
 	oldNamespaceAttribute = "pod_namespace"
 	oldContainerAttribute = "container_name"
-
-	undefinedConfigMapData = "none"
 )
 
 //go:generate go run -v go.uber.org/mock/mockgen  -destination=./mock_transformator.go -package=dcgmexporter -copyright_file=../../hack/header.txt . Transform
 
 type Transform interface {
-	Process(metrics MetricsByCounter, deviceInfo deviceinfo.Provider) error
+	Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error
 	Name() string
-}
-
-type DCGMCollector struct {
-	Counters                 []appconfig.Counter
-	Cleanups                 []func()
-	UseOldNamespace          bool
-	DeviceWatchList          devicewatchlistmanager.WatchList
-	Hostname                 string
-	ReplaceBlanksInModelName bool
-}
-
-type Metric struct {
-	Counter appconfig.Counter
-	Value   string
-
-	GPU          string
-	GPUUUID      string
-	GPUDevice    string
-	GPUModelName string
-
-	UUID string
-
-	MigProfile    string
-	GPUInstanceID string
-	Hostname      string
-
-	Labels     map[string]string
-	Attributes map[string]string
-}
-
-func (m Metric) getIDOfType(idType appconfig.KubernetesGPUIDType) (string, error) {
-	// For MIG devices, return the MIG profile instead of
-	if m.MigProfile != "" {
-		return fmt.Sprintf("%s-%s", m.GPU, m.GPUInstanceID), nil
-	}
-	switch idType {
-	case appconfig.GPUUID:
-		return m.GPUUUID, nil
-	case appconfig.DeviceName:
-		return m.GPUDevice, nil
-	}
-	return "", fmt.Errorf("unsupported KubernetesGPUIDType for MetricID '%s'", idType)
-}
-
-var promMetricType = map[string]bool{
-	"gauge":     true,
-	"counter":   true,
-	"histogram": true,
-	"summary":   true,
-	"label":     true,
 }
 
 type MetricsServer struct {
@@ -131,14 +72,5 @@ type PodInfo struct {
 	Container string
 }
 
-// MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
-type MetricsByCounter map[appconfig.Counter][]Metric
-
-// CounterSet return
-type CounterSet struct {
-	DCGMCounters     appconfig.CounterList
-	ExporterCounters appconfig.CounterList
-}
-
 // MetricsByCounterGroup represents a group of metrics by specific counter groups
-type MetricsByCounterGroup map[dcgm.Field_Entity_Group]MetricsByCounter
+type MetricsByCounterGroup map[dcgm.Field_Entity_Group]collector.MetricsByCounter

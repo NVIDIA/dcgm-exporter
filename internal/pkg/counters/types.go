@@ -14,34 +14,37 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package counters
 
 import (
-	"testing"
-
-	"github.com/stretchr/testify/assert"
-
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
-func setupTest(t *testing.T) func(t *testing.T) {
-	config := &appconfig.Config{
-		UseRemoteHE: false,
-	}
-
-	dcgmprovider.Initialize(config)
-
-	return func(t *testing.T) {
-		defer dcgmprovider.Client().Cleanup()
-	}
+type Counter struct {
+	FieldID   dcgm.Short
+	FieldName string
+	PromType  string
+	Help      string
 }
 
-func runOnlyWithLiveGPUs(t *testing.T) {
-	t.Helper()
-	gpus, err := dcgmprovider.Client().GetSupportedDevices()
-	assert.NoError(t, err)
-	if len(gpus) < 1 {
-		t.Skip("Skipping test that requires live GPUs. None were found")
+func (c Counter) IsLabel() bool {
+	return c.PromType == "label"
+}
+
+type CounterList []Counter
+
+func (c CounterList) LabelCounters() CounterList {
+	var labelsCounters CounterList
+	for _, counter := range c {
+		if counter.IsLabel() {
+			labelsCounters = append(labelsCounters, counter)
+		}
 	}
+
+	return labelsCounters
+}
+
+type CounterSet struct {
+	DCGMCounters     CounterList
+	ExporterCounters CounterList
 }

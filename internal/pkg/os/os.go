@@ -18,9 +18,9 @@ package os
 
 import "os"
 
-//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/os.go -package=os -copyright_file=../../../hack/header.txt . OS
-//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/dir_entry.go -package=os -copyright_file=../../../hack/header.txt os DirEntry
-//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/file_info.go -package=os -copyright_file=../../../hack/header.txt io/fs FileInfo
+//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/mock_os.go -package=os -copyright_file=../../../hack/header.txt . OS
+//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/mock_dir_entry.go -package=os -copyright_file=../../../hack/header.txt os DirEntry
+//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/mock_file_info.go -package=os -copyright_file=../../../hack/header.txt io/fs FileInfo
 type OS interface {
 	CreateTemp(dir, pattern string) (*os.File, error)
 	Getenv(key string) string

@@ -19,67 +19,70 @@ package testutils
 import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
 
+var os osinterface.OS = osinterface.RealOS{}
+
 var (
-	SampleGPUTempCounter = appconfig.Counter{
+	SampleGPUTempCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_GPU_TEMP,
 		FieldName: "DCGM_FI_DEV_GPU_TEMP",
 		PromType:  "gauge",
 		Help:      "Temperature Help info",
 	}
 
-	SampleGPUTotalEnergyCounter = appconfig.Counter{
+	SampleGPUTotalEnergyCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION,
 		FieldName: "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION",
 		PromType:  "gauge",
 		Help:      "Energy help info",
 	}
 
-	SampleGPUPowerUsageCounter = appconfig.Counter{
+	SampleGPUPowerUsageCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_POWER_USAGE,
 		FieldName: "DCGM_FI_DEV_POWER_USAGE",
 		PromType:  "gauge",
 		Help:      "Power help info",
 	}
 
-	SampleVGPULicenseStatusCounter = appconfig.Counter{
+	SampleVGPULicenseStatusCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS,
 		FieldName: "DCGM_FI_DEV_VGPU_LICENSE_STATUS",
 		PromType:  "gauge",
 		Help:      "vgpu license status",
 	}
 
-	SampleDriverVersionCounter = appconfig.Counter{
+	SampleDriverVersionCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DRIVER_VERSION,
 		FieldName: "DCGM_FI_DRIVER_VERSION",
 		PromType:  "label",
 		Help:      "Driver version",
 	}
 
-	SampleSwitchCurrentTempCounter = appconfig.Counter{
+	SampleSwitchCurrentTempCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT,
 		FieldName: "DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT",
 		PromType:  "gauge",
 		Help:      "switch temperature",
 	}
 
-	SampleSwitchLinkFlitErrorsCounter = appconfig.Counter{
+	SampleSwitchLinkFlitErrorsCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS,
 		FieldName: "DCGM_FI_DEV_NVSWITCH_LINK_FLIT_ERRORS",
 		PromType:  "gauge",
 		Help:      "per-link flit errors",
 	}
 
-	SampleCPUUtilTotalCounter = appconfig.Counter{
+	SampleCPUUtilTotalCounter = counters.Counter{
 		FieldID:   dcgm.DCGM_FI_DEV_CPU_UTIL_TOTAL,
 		FieldName: "DCGM_FI_DEV_CPU_UTIL_TOTAL",
 		PromType:  "gauge",
 		Help:      "Total CPU utilization",
 	}
 
-	SampleCounters = []appconfig.Counter{
+	SampleCounters = []counters.Counter{
 		SampleGPUTempCounter,
 		SampleGPUTotalEnergyCounter,
 		SampleGPUPowerUsageCounter,

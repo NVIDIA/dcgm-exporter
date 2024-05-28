@@ -21,6 +21,8 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
@@ -323,10 +325,12 @@ restart:
 		return err
 	}
 
-	cRegistry := dcgmexporter.NewRegistry()
+	cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostname, config)
 
-	cf := dcgmexporter.InitCollectorFactory(cs, deviceWatchListManager, hostname, config, cRegistry)
-	cf.Register()
+	cRegistry := dcgmexporter.NewRegistry()
+	for _, entityCollector := range cf.NewCollectors() {
+		cRegistry.Register(entityCollector)
+	}
 
 	defer func() {
 		cRegistry.Cleanup()
@@ -364,10 +368,10 @@ restart:
 }
 
 func startDeviceWatchListManager(
-	cs *dcgmexporter.CounterSet, config *appconfig.Config,
+	cs *counters.CounterSet, config *appconfig.Config,
 ) devicewatchlistmanager.Manager {
 	// Create a list containing DCGM Collector, Exp Collectors and all the label Collectors
-	var allCounters appconfig.CounterList
+	var allCounters counters.CounterList
 	var deviceWatchListManager devicewatchlistmanager.Manager
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
@@ -389,13 +393,13 @@ func startDeviceWatchListManager(
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
 func appendDCGMClockEventsCountDependency(
-	cs *dcgmexporter.CounterSet, allCounters []appconfig.Counter,
-) []appconfig.Counter {
+	cs *counters.CounterSet, allCounters []counters.Counter,
+) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
-		if containsField(cs.ExporterCounters, dcgmexporter.DCGMClockEventsCount) &&
+		if containsField(cs.ExporterCounters, counters.DCGMClockEventsCount) &&
 			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
 			allCounters = append(allCounters,
-				appconfig.Counter{
+				counters.Counter{
 					FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
 				})
 		}
@@ -405,13 +409,13 @@ func appendDCGMClockEventsCountDependency(
 
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_XID_ERRORS_COUNT metric
 func appendDCGMXIDErrorsCountDependency(
-	allCounters []appconfig.Counter, cs *dcgmexporter.CounterSet,
-) []appconfig.Counter {
+	allCounters []counters.Counter, cs *counters.CounterSet,
+) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
-		if containsField(cs.ExporterCounters, dcgmexporter.DCGMXIDErrorsCount) &&
+		if containsField(cs.ExporterCounters, counters.DCGMXIDErrorsCount) &&
 			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
 			allCounters = append(allCounters,
-				appconfig.Counter{
+				counters.Counter{
 					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
 				})
 		}
@@ -419,14 +423,14 @@ func appendDCGMXIDErrorsCountDependency(
 	return allCounters
 }
 
-func containsField(slice []appconfig.Counter, fieldID dcgmexporter.ExporterCounter) bool {
-	return slices.ContainsFunc(slice, func(counter appconfig.Counter) bool {
+func containsField(slice []counters.Counter, fieldID counters.ExporterCounter) bool {
+	return slices.ContainsFunc(slice, func(counter counters.Counter) bool {
 		return counter.FieldID == dcgm.Short(fieldID)
 	})
 }
 
-func getCounters(config *appconfig.Config) *dcgmexporter.CounterSet {
-	cs, err := dcgmexporter.GetCounterSet(config)
+func getCounters(config *appconfig.Config) *counters.CounterSet {
+	cs, err := counters.GetCounterSet(config)
 	if err != nil {
 		logrus.Fatal(err)
 	}

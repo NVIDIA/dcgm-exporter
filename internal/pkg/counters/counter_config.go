@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package counters
 
 import (
 	"context"
@@ -31,11 +31,6 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-)
-
-const (
-	cpuFieldsStart = 1100
-	dcpFieldsStart = 1000
 )
 
 func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
@@ -70,7 +65,7 @@ func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 		}
 	}
 
-	res, err = extractCounters(records, c)
+	res, err = ExtractCounters(records, c)
 	if err != nil {
 		return res, err
 	}
@@ -93,7 +88,7 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
-func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, error) {
+func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, error) {
 	res := CounterSet{}
 
 	for i, record := range records {
@@ -121,7 +116,12 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				return nil, fmt.Errorf("could not find DCGM field; err: %w", err)
 			} else if expField != DCGMFIUnknown {
 				res.ExporterCounters = append(res.ExporterCounters,
-					appconfig.Counter{FieldID: dcgm.Short(expField), FieldName: record[0], PromType: record[1], Help: record[2]})
+					Counter{
+						FieldID:   dcgm.Short(expField),
+						FieldName: record[0],
+						PromType:  record[1],
+						Help:      record[2],
+					})
 				continue
 			}
 		}
@@ -140,7 +140,8 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 			}
 
-			res.DCGMCounters = append(res.DCGMCounters, appconfig.Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
+			res.DCGMCounters = append(res.DCGMCounters,
+				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		} else {
 			if !fieldIsSupported(uint(oldFieldID), c) {
 				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
@@ -151,7 +152,8 @@ func extractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 			}
 
-			res.DCGMCounters = append(res.DCGMCounters, appconfig.Counter{FieldID: oldFieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
+			res.DCGMCounters = append(res.DCGMCounters,
+				Counter{FieldID: oldFieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		}
 	}
 

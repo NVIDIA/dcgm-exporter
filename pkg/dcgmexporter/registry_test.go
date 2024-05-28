@@ -26,16 +26,17 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	collectorpkg "github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 )
 
 type mockCollector struct {
 	mock.Mock
 }
 
-func (m *mockCollector) GetMetrics() (MetricsByCounter, error) {
+func (m *mockCollector) GetMetrics() (collectorpkg.MetricsByCounter, error) {
 	args := m.Called()
-	return args.Get(0).(MetricsByCounter), args.Error(1)
+	return args.Get(0).(collectorpkg.MetricsByCounter), args.Error(1)
 }
 
 func (m *mockCollector) Cleanup() {
@@ -45,25 +46,25 @@ func (m *mockCollector) Cleanup() {
 func TestRegistry_Gather(t *testing.T) {
 	collector := new(mockCollector)
 
-	metrics := MetricsByCounter{}
-	counterA := appconfig.Counter{
+	metrics := collectorpkg.MetricsByCounter{}
+	counterA := counters.Counter{
 		FieldID:   155,
 		FieldName: "DCGM_FI_DEV_POWER_USAGE",
 		PromType:  "gauge",
 	}
 
-	metrics[counterA] = append(metrics[counterA], Metric{
+	metrics[counterA] = append(metrics[counterA], collectorpkg.Metric{
 		GPU:        "0",
 		Counter:    counterA,
 		Attributes: map[string]string{},
 	})
 
-	counterB := appconfig.Counter{
+	counterB := counters.Counter{
 		FieldName: "DCGM_FI_EXP_CLOCK_THROTTLE_REASONS_COUNT",
 		PromType:  "gauge",
 	}
 
-	metrics[counterB] = append(metrics[counterB], Metric{
+	metrics[counterB] = append(metrics[counterB], collectorpkg.Metric{
 		GPU:        "0",
 		Counter:    counterB,
 		Value:      "42",
@@ -94,7 +95,7 @@ func TestRegistry_Gather(t *testing.T) {
 		{
 			name: "When collector return errors",
 			collectorState: func() *mock.Call {
-				cs := collector.On("GetMetrics").Return(MetricsByCounter{}, errors.New("Boom!"))
+				cs := collector.On("GetMetrics").Return(collectorpkg.MetricsByCounter{}, errors.New("Boom!"))
 				cs.On("Cleanup").Return()
 				return cs
 			},
@@ -108,7 +109,10 @@ func TestRegistry_Gather(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := NewRegistry()
-			reg.Register(dcgm.FE_GPU, collector)
+			newEntityCollectorTuple := collectorpkg.EntityCollectorTuple{}
+			newEntityCollectorTuple.SetEntity(dcgm.FE_GPU)
+			newEntityCollectorTuple.SetCollector(collector)
+			reg.Register(newEntityCollectorTuple)
 			mockCall := tc.collectorState()
 			got, err := reg.Gather()
 			tc.assert(got, err)
@@ -121,8 +125,17 @@ func TestRegistry_Gather(t *testing.T) {
 func TestRegistry_Register_Accepts_Duplicates_(t *testing.T) {
 	reg := NewRegistry()
 	collector := new(mockCollector)
-	reg.Register(dcgm.FE_GPU, collector)
-	reg.Register(dcgm.FE_GPU, collector)
+
+	newEntityCollectorTuple1 := collectorpkg.EntityCollectorTuple{}
+	newEntityCollectorTuple1.SetEntity(dcgm.FE_GPU)
+	newEntityCollectorTuple1.SetCollector(collector)
+
+	newEntityCollectorTuple2 := collectorpkg.EntityCollectorTuple{}
+	newEntityCollectorTuple2.SetEntity(dcgm.FE_GPU)
+	newEntityCollectorTuple2.SetCollector(collector)
+
+	reg.Register(newEntityCollectorTuple1)
+	reg.Register(newEntityCollectorTuple2)
 	assert.Len(t, reg.collectorGroups, 1)
 	assert.Len(t, reg.collectorGroupsSeen, 1)
 }

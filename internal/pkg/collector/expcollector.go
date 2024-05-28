@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
 import (
 	"fmt"
@@ -25,6 +25,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
@@ -34,8 +35,8 @@ var expCollectorFieldGroupIdx atomic.Uint32
 
 type expCollector struct {
 	deviceWatchList  devicewatchlistmanager.WatchList // Device info and fields used for counters and labels
-	counter          appconfig.Counter                // Counter for a specific collector type
-	labelsCounters   []appconfig.Counter              // Counters used for labels
+	counter          counters.Counter                 // Counter for a specific collector type
+	labelsCounters   []counters.Counter               // C  ounters used for labels
 	hostname         string                           // Hostname
 	config           *appconfig.Config                // Configuration settings
 	cleanups         []func()                         // Cleanup functions
@@ -120,7 +121,9 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func (c *expCollector) createMetric(labels map[string]string, mi devicemonitoring.Info, uuid string, val int) Metric {
+func (c *expCollector) createMetric(
+	labels map[string]string, mi devicemonitoring.Info, uuid string, val int,
+) Metric {
 	gpuModel := getGPUModel(mi.DeviceInfo, c.config.ReplaceBlanksInModelName)
 
 	m := Metric{
@@ -181,7 +184,7 @@ func (c *expCollector) Cleanup() {
 
 // newExpCollector is a constructor for the expCollector
 func newExpCollector(
-	labelsCounters []appconfig.Counter,
+	labelsCounters []counters.Counter,
 	hostname string,
 	config *appconfig.Config,
 	deviceWatchList devicewatchlistmanager.WatchList,

@@ -14,25 +14,13 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package appconfig
 
-// DCGMDbgLvl is a DCGM library debug level.
 const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
+	GPUUID     KubernetesGPUIDType = "uid"
+	DeviceName KubernetesGPUIDType = "device-name"
 
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
-}
+	NvidiaResourceName      = "nvidia.com/gpu"
+	NvidiaMigResourcePrefix = "nvidia.com/mig-"
+	MIG_UUID_PREFIX         = "MIG-"
+)

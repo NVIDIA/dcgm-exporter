@@ -23,7 +23,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/sirupsen/logrus"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
@@ -37,7 +37,7 @@ func NewDeviceWatcher() *DeviceWatcher {
 	return &DeviceWatcher{}
 }
 
-func (d *DeviceWatcher) GetDeviceFields(counters []appconfig.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
+func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
 	for _, counter := range counters {
 		fieldMeta := dcgmprovider.Client().FieldGetById(counter.FieldID)

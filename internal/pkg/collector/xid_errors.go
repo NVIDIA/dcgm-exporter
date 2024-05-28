@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
 // Based on this doc: https://docs.nvidia.com/deploy/xid-errors/#topic_4
 var xidErrCodeToText = []string{

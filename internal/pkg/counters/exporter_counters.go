@@ -14,14 +14,9 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package counters
 
 import "fmt"
-
-const (
-	dcgmExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
-	dcgmExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
-)
 
 type ExporterCounter uint16
 
@@ -35,9 +30,9 @@ const (
 func (enm ExporterCounter) String() string {
 	switch enm {
 	case DCGMXIDErrorsCount:
-		return dcgmExpXIDErrorsCount
+		return DCGMExpXIDErrorsCount
 	case DCGMClockEventsCount:
-		return dcgmExpClockEventsCount
+		return DCGMExpClockEventsCount
 	default:
 		return "DCGM_FI_UNKNOWN"
 	}
@@ -53,7 +48,7 @@ var DCGMFields = map[string]ExporterCounter{
 func IdentifyMetricType(s string) (ExporterCounter, error) {
 	mv, ok := DCGMFields[s]
 	if !ok {
-		return mv, fmt.Errorf("Unknown ExporterCounter field '%s'", s)
+		return mv, fmt.Errorf("unknown ExporterCounter field '%s'", s)
 	}
 	return mv, nil
 }

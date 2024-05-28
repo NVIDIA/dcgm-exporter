@@ -14,25 +14,11 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
-// DCGMDbgLvl is a DCGM library debug level.
 const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
-)
+	windowSizeInMSLabel = "window_size_in_ms"
 
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
-}
+	SkipDCGMValue   = "SKIPPING DCGM VALUE"
+	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
+)

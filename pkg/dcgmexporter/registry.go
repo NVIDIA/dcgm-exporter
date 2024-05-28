@@ -23,44 +23,39 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 )
-
-// groupCollectorTuple represents a composite key, that consists Group and Collector.
-// The groupCollectorTuple is necessary to maintain uniqueness of Group and Collector pairs.
-type groupCollectorTuple struct {
-	Group     dcgm.Field_Entity_Group
-	Collector Collector
-}
 
 // groupCounterTuple represents a composite key, that consists Group and Counter.
 // The groupCounterTuple is necessary to maintain uniqueness of Group and Counter pairs.
 type groupCounterTuple struct {
 	Group   dcgm.Field_Entity_Group
-	Counter appconfig.Counter
+	Counter counters.Counter
 }
 
 type Registry struct {
-	collectorGroups     map[dcgm.Field_Entity_Group][]Collector
-	collectorGroupsSeen map[groupCollectorTuple]struct{}
+	collectorGroups     map[dcgm.Field_Entity_Group][]collector.Collector
+	collectorGroupsSeen map[collector.EntityCollectorTuple]struct{}
 	mtx                 sync.RWMutex
 }
 
 // NewRegistry creates a new registry
 func NewRegistry() *Registry {
 	return &Registry{
-		collectorGroups:     map[dcgm.Field_Entity_Group][]Collector{},
-		collectorGroupsSeen: map[groupCollectorTuple]struct{}{},
+		collectorGroups:     map[dcgm.Field_Entity_Group][]collector.Collector{},
+		collectorGroupsSeen: map[collector.EntityCollectorTuple]struct{}{},
 	}
 }
 
 // Register registers a collector with the registry.
-func (r *Registry) Register(group dcgm.Field_Entity_Group, c Collector) {
-	if _, exists := r.collectorGroupsSeen[groupCollectorTuple{Group: group, Collector: c}]; exists {
+func (r *Registry) Register(entityCollectorTuples collector.EntityCollectorTuple) {
+	if _, exists := r.collectorGroupsSeen[entityCollectorTuples]; exists {
 		return
 	}
-	r.collectorGroups[group] = append(r.collectorGroups[group], c)
-	r.collectorGroupsSeen[groupCollectorTuple{Group: group, Collector: c}] = struct{}{}
+	r.collectorGroups[entityCollectorTuples.Entity()] = append(r.collectorGroups[entityCollectorTuples.Entity()],
+		entityCollectorTuples.Collector())
+	r.collectorGroupsSeen[entityCollectorTuples] = struct{}{}
 }
 
 // Gather gathers metrics from all registered collectors.
@@ -86,8 +81,8 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 				}
 
 				for counter, metricVals := range metrics {
-					val, _ := sm.LoadOrStore(groupCounterTuple{Group: group, Counter: counter}, []Metric{})
-					out := val.([]Metric)
+					val, _ := sm.LoadOrStore(groupCounterTuple{Group: group, Counter: counter}, []collector.Metric{})
+					out := val.([]collector.Metric)
 					out = append(out, metricVals...)
 					sm.Store(groupCounterTuple{Group: group, Counter: counter}, out)
 				}
@@ -106,9 +101,9 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 	sm.Range(func(key, value interface{}) bool {
 		tuple := key.(groupCounterTuple)
 		if _, exists := output[tuple.Group]; !exists {
-			output[tuple.Group] = map[appconfig.Counter][]Metric{}
+			output[tuple.Group] = map[counters.Counter][]collector.Metric{}
 		}
-		output[tuple.Group][tuple.Counter] = value.([]Metric)
+		output[tuple.Group][tuple.Counter] = value.([]collector.Metric)
 		return true // continue iteration
 	})
 

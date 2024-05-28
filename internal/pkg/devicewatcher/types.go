@@ -21,11 +21,11 @@ package devicewatcher
 import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
 type Watcher interface {
-	GetDeviceFields([]appconfig.Counter, dcgm.Field_Entity_Group) []dcgm.Short
+	GetDeviceFields([]counters.Counter, dcgm.Field_Entity_Group) []dcgm.Short
 	WatchDeviceFields([]dcgm.Short, deviceinfo.Provider, int64) ([]func(), error)
 }

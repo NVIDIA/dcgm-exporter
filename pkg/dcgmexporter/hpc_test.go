@@ -24,12 +24,14 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 
 	osmock "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
@@ -42,7 +44,7 @@ func TestHPCProcess(t *testing.T) {
 		name      string
 		config    *appconfig.Config
 		fsState   func() func()
-		assertion func(*testing.T, MetricsByCounter)
+		assertion func(*testing.T, collector.MetricsByCounter)
 		wantErr   assert.ErrorAssertionFunc
 	}{
 		{
@@ -108,13 +110,13 @@ func TestHPCProcess(t *testing.T) {
 					_ = realOS.Remove(slurm1.Name())
 				}
 			},
-			assertion: func(t *testing.T, mbc MetricsByCounter) {
+			assertion: func(t *testing.T, mbc collector.MetricsByCounter) {
 				require.Len(t, mbc, 1, "metrics are expected for a single counter only.")
 				// We get metric value with 0 index
-				metricValues := mbc[reflect.ValueOf(mbc).MapKeys()[0].Interface().(appconfig.Counter)]
+				metricValues := mbc[reflect.ValueOf(mbc).MapKeys()[0].Interface().(counters.Counter)]
 				require.Len(t, metricValues, 4, "received unexpected number of metric values.")
 				// Sort metrics by GPU ID
-				slices.SortFunc(metricValues, func(a, b Metric) int {
+				slices.SortFunc(metricValues, func(a, b collector.Metric) int {
 					return cmp.Compare(a.GPU, b.GPU)
 				})
 				assert.Equal(t, "0", metricValues[0].GPU)
@@ -142,20 +144,20 @@ func TestHPCProcess(t *testing.T) {
 				defer cleanup()
 			}
 
-			metrics := MetricsByCounter{}
-			counter := appconfig.Counter{
+			metrics := collector.MetricsByCounter{}
+			counter := counters.Counter{
 				FieldID:   155,
 				FieldName: "DCGM_FI_DEV_POWER_USAGE",
 				PromType:  "gauge",
 			}
 
-			metrics[counter] = append(metrics[counter], Metric{
+			metrics[counter] = append(metrics[counter], collector.Metric{
 				GPU:           "0",
 				GPUUUID:       uuid.New().String(),
 				GPUDevice:     "nvidia0",
 				GPUInstanceID: "",
 				Value:         "42",
-				Counter: appconfig.Counter{
+				Counter: counters.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -163,13 +165,13 @@ func TestHPCProcess(t *testing.T) {
 				Attributes: map[string]string{},
 			})
 
-			metrics[counter] = append(metrics[counter], Metric{
+			metrics[counter] = append(metrics[counter], collector.Metric{
 				GPU:           "1",
 				GPUUUID:       uuid.New().String(),
 				GPUDevice:     "nvidia1",
 				GPUInstanceID: "1",
 				Value:         "451",
-				Counter: appconfig.Counter{
+				Counter: counters.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",
@@ -177,13 +179,13 @@ func TestHPCProcess(t *testing.T) {
 				Attributes: map[string]string{},
 			})
 
-			metrics[counter] = append(metrics[counter], Metric{
+			metrics[counter] = append(metrics[counter], collector.Metric{
 				GPU:           "2",
 				GPUUUID:       uuid.New().String(),
 				GPUDevice:     "nvidia3",
 				GPUInstanceID: "2",
 				Value:         "1984",
-				Counter: appconfig.Counter{
+				Counter: counters.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
 					PromType:  "gauge",

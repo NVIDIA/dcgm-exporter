@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package collector
 
 import (
 	"fmt"
@@ -24,14 +24,15 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
 // IsDCGMExpClockEventsCountEnabled checks if the DCGM_EXP_CLOCK_EVENTS_COUNT counter exists
-func IsDCGMExpClockEventsCountEnabled(counters []appconfig.Counter) bool {
-	return slices.ContainsFunc(counters,
-		func(c appconfig.Counter) bool {
-			return c.FieldName == dcgmExpClockEventsCount
+func IsDCGMExpClockEventsCountEnabled(counterList counters.CounterList) bool {
+	return slices.ContainsFunc(counterList,
+		func(c counters.Counter) bool {
+			return c.FieldName == counters.DCGMExpClockEventsCount
 		})
 }
 
@@ -86,14 +87,14 @@ func (c *clockEventsCollector) GetMetrics() (MetricsByCounter, error) {
 }
 
 func NewClockEventsCollector(
-	counters appconfig.CounterList,
+	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
 	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
-	if !IsDCGMExpClockEventsCountEnabled(counters) {
-		logrus.Error(dcgmExpClockEventsCount + " collector is disabled")
-		return nil, fmt.Errorf(dcgmExpClockEventsCount + " collector is disabled")
+	if !IsDCGMExpClockEventsCountEnabled(counterList) {
+		logrus.Error(counters.DCGMExpClockEventsCount + " collector is disabled")
+		return nil, fmt.Errorf(counters.DCGMExpClockEventsCount + " collector is disabled")
 	}
 
 	collector := clockEventsCollector{}
@@ -101,7 +102,7 @@ func NewClockEventsCollector(
 	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
 
 	collector.expCollector, err = newExpCollector(
-		counters.LabelCounters(),
+		counterList.LabelCounters(),
 		hostname,
 		config,
 		deviceWatchList,
@@ -110,8 +111,8 @@ func NewClockEventsCollector(
 		return nil, err
 	}
 
-	collector.counter = counters[slices.IndexFunc(counters, func(c appconfig.Counter) bool {
-		return c.FieldName == dcgmExpClockEventsCount
+	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
+		return c.FieldName == counters.DCGMExpClockEventsCount
 	})]
 
 	collector.labelFiller = func(metricValueLabels map[string]string, entityValue int64) {

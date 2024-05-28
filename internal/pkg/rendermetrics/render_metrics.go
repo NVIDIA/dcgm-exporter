@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package dcgmexporter
+package rendermetrics
 
 import (
 	"fmt"
@@ -23,6 +23,8 @@ import (
 	"text/template"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 )
 
 /*
@@ -132,7 +134,7 @@ var getCPUCoreMetricsTemplate = sync.OnceValue(func() *template.Template {
 	return template.Must(template.New("cpuMetricsFormat").Parse(cpuCoreMetricsFormat))
 })
 
-func renderGroup(w io.Writer, group dcgm.Field_Entity_Group, metrics MetricsByCounter) error {
+func RenderGroup(w io.Writer, group dcgm.Field_Entity_Group, metrics collector.MetricsByCounter) error {
 	var tmpl *template.Template
 
 	switch group {

@@ -31,6 +31,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/rendermetrics"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
@@ -162,7 +163,7 @@ func (s *MetricsServer) render(w io.Writer, metricGroups MetricsByCounterGroup) 
 				}
 			}
 
-			err := renderGroup(w, group, metrics)
+			err := rendermetrics.RenderGroup(w, group, metrics)
 			if err != nil {
 				logrus.WithError(err).
 					WithFields(logrus.Fields{

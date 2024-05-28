@@ -24,12 +24,13 @@
 package devicewatcher
 
 import (
-	reflect "reflect"
+	"reflect"
 
-	appconfig "github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
-	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	gomock "go.uber.org/mock/gomock"
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"go.uber.org/mock/gomock"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
 // MockWatcher is a mock of Watcher interface.
@@ -56,7 +57,7 @@ func (m *MockWatcher) EXPECT() *MockWatcherMockRecorder {
 }
 
 // GetDeviceFields mocks base method.
-func (m *MockWatcher) GetDeviceFields(arg0 []appconfig.Counter, arg1 dcgm.Field_Entity_Group) []dcgm.Short {
+func (m *MockWatcher) GetDeviceFields(arg0 []counters.Counter, arg1 dcgm.Field_Entity_Group) []dcgm.Short {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetDeviceFields", arg0, arg1)
 	ret0, _ := ret[0].([]dcgm.Short)
