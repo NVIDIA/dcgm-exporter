@@ -24,13 +24,12 @@
 package devicewatcher
 
 import (
-	"reflect"
+	reflect "reflect"
 
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"go.uber.org/mock/gomock"
-
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	counters "github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockWatcher is a mock of Watcher interface.
@@ -71,12 +70,14 @@ func (mr *MockWatcherMockRecorder) GetDeviceFields(arg0, arg1 any) *gomock.Call 
 }
 
 // WatchDeviceFields mocks base method.
-func (m *MockWatcher) WatchDeviceFields(arg0 []dcgm.Short, arg1 deviceinfo.Provider, arg2 int64) ([]func(), error) {
+func (m *MockWatcher) WatchDeviceFields(arg0 []dcgm.Short, arg1 deviceinfo.Provider, arg2 int64) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "WatchDeviceFields", arg0, arg1, arg2)
-	ret0, _ := ret[0].([]func())
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].([]dcgm.GroupHandle)
+	ret1, _ := ret[1].(dcgm.FieldHandle)
+	ret2, _ := ret[2].([]func())
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
 }
 
 // WatchDeviceFields indicates an expected call of WatchDeviceFields.

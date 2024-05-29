@@ -138,7 +138,7 @@ func TestNewWatchList(t *testing.T) {
 			}
 
 			mockDeviceWatcher.EXPECT().WatchDeviceFields(tt.args.deviceFields, tt.args.deviceInfo,
-				tt.args.collectInterval*1000).Return([]func(){}, err)
+				tt.args.collectInterval*1000).Return([]dcgm.GroupHandle{}, dcgm.FieldHandle{}, []func(){}, err)
 
 			got := NewWatchList(tt.args.deviceInfo, tt.args.deviceFields, tt.args.labelDeviceFields, mockDeviceWatcher,
 				tt.args.collectInterval)

@@ -39,6 +39,8 @@ var DeviceTypesToWatch = []dcgm.Field_Entity_Group{
 type WatchList struct {
 	deviceInfo        deviceinfo.Provider
 	deviceFields      []dcgm.Short
+	deviceGroups      []dcgm.GroupHandle
+	deviceFieldGroup  dcgm.FieldHandle
 	labelDeviceFields []dcgm.Short
 	watcher           devicewatcher.Watcher
 	collectInterval   int64
@@ -78,7 +80,18 @@ func (d *WatchList) IsEmpty() bool {
 }
 
 func (d *WatchList) Watch() ([]func(), error) {
-	return d.watcher.WatchDeviceFields(d.deviceFields, d.deviceInfo, d.collectInterval*1000)
+	var cleanups []func()
+	var err error
+	d.deviceGroups, d.deviceFieldGroup, cleanups, err = d.watcher.WatchDeviceFields(d.deviceFields, d.deviceInfo, d.collectInterval*1000)
+	return cleanups, err
+}
+
+func (d *WatchList) DeviceGroups() []dcgm.GroupHandle {
+	return d.deviceGroups
+}
+
+func (d *WatchList) DeviceFieldGroup() dcgm.FieldHandle {
+	return d.deviceFieldGroup
 }
 
 // WatchListManager manages multiple entities and their corresponding WatchLists, counters to watch

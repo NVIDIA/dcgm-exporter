@@ -69,7 +69,7 @@ func shouldIncludeField(entityType, fieldLevel dcgm.Field_Entity_Group) bool {
 
 func (d *DeviceWatcher) WatchDeviceFields(
 	deviceFields []dcgm.Short, deviceInfo deviceinfo.Provider, updateFreqInUsec int64,
-) ([]func(), error) {
+) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
 	var err error
 	var cleanups []func()
 	var groups []dcgm.GroupHandle
@@ -86,25 +86,25 @@ func (d *DeviceWatcher) WatchDeviceFields(
 		groups, cleanups, err = d.createGroups(deviceInfo)
 	}
 	if err != nil {
-		return utils.CleanupOnError(cleanups), err
+		return nil, dcgm.FieldHandle{}, utils.CleanupOnError(cleanups), err
 	} else if len(groups) == 0 {
-		return cleanups, nil
+		return nil, dcgm.FieldHandle{}, cleanups, nil
 	}
 
 	fieldGroup, cleanup, fieldGroupErr := newFieldGroup(deviceFields)
 	if fieldGroupErr != nil {
-		return utils.CleanupOnError(cleanups), fieldGroupErr
+		return nil, dcgm.FieldHandle{}, utils.CleanupOnError(cleanups), fieldGroupErr
 	}
 	cleanups = append(cleanups, cleanup)
 
 	for _, group := range groups {
 		err = watchFieldGroup(group, fieldGroup, updateFreqInUsec)
 		if err != nil {
-			return utils.CleanupOnError(cleanups), err
+			return nil, dcgm.FieldHandle{}, utils.CleanupOnError(cleanups), err
 		}
 	}
 
-	return cleanups, nil
+	return groups, fieldGroup, cleanups, nil
 }
 
 func (d *DeviceWatcher) createGroups(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, []func(),

@@ -27,5 +27,5 @@ import (
 
 type Watcher interface {
 	GetDeviceFields([]counters.Counter, dcgm.Field_Entity_Group) []dcgm.Short
-	WatchDeviceFields([]dcgm.Short, deviceinfo.Provider, int64) ([]func(), error)
+	WatchDeviceFields([]dcgm.Short, deviceinfo.Provider, int64) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error)
 }

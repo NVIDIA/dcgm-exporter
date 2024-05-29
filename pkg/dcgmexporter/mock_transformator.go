@@ -24,12 +24,11 @@
 package dcgmexporter
 
 import (
-	"reflect"
+	reflect "reflect"
 
-	"go.uber.org/mock/gomock"
-
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	collector "github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockTransform is a mock of Transform interface.
