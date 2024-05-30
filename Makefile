@@ -123,7 +123,8 @@ test-integration:
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
-	gocov test $$(go list ./... | grep -v "/tests/e2e/")  | gocov report
+	sh scripts/test_coverage.sh
+	gocov convert tests.cov  | gocov report
 
 .PHONY: lint
 lint:
@@ -143,6 +144,7 @@ tools: ## Install required tools and utilities
 	go install github.com/axw/gocov/gocov@latest
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install mvdan.cc/gofumpt@latest
+	go install github.com/wadey/gocovmerge@latest
 
 fmt:
 	find . -name '*.go' | xargs gofumpt -l -w

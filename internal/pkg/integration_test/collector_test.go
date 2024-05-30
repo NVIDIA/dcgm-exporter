@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package integrationtest
+package integration_test
 
 import (
 	"bytes"
@@ -39,10 +39,13 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/rendermetrics"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
+
+var deviceWatcher = devicewatcher.NewDeviceWatcher()
 
 var expectedGPUMetrics = map[string]bool{
 	testutils.SampleGPUTempCounter.FieldName:           true,
