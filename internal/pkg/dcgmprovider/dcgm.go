@@ -83,7 +83,6 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 		logrus.Info("Attempting to initialize DCGM.")
 		cleanup, err := dcgm.Init(dcgm.Embedded)
 		if err != nil {
-			cleanup()
 			logrus.Fatal(err)
 		}
 		client.shutdown = cleanup

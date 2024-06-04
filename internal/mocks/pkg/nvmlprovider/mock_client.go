@@ -26,8 +26,9 @@ package nvmlprovider
 import (
 	reflect "reflect"
 
-	nvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	gomock "go.uber.org/mock/gomock"
+
+	nvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
 // MockNVML is a mock of NVML interface.

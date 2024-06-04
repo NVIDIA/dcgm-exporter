@@ -29,6 +29,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname"
 	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/prerequisites"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout"
@@ -303,6 +304,11 @@ restart:
 	}
 
 	enableDebugLogging(config)
+
+	err = prerequisites.Validate()
+	if err != nil {
+		return err
+	}
 
 	// Initialize DCGM Provider Instance
 	dcgmprovider.Initialize(config)
