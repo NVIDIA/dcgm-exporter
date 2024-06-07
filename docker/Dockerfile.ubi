@@ -19,19 +19,19 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
 	libc6-dev-arm64-cross \
 	&& apt-get autoremove -y \
 	&& rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
+	&& ln -sf /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
 
 RUN set -eux; \
 	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
 	url=; \
 	case "$arch" in \
-		'amd64') \
-			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
-			;; \
-		'arm64') \
-			url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
-			;; \
-		*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
+	'amd64') \
+	url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+	;; \
+	'arm64') \
+	url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+	;; \
+	*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
 	esac; \
 	wget -O go.tgz "$url" --progress=dot:giga; \
 	tar -C /usr/local -xzf go.tgz; \
@@ -63,9 +63,17 @@ LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 
 ARG DCGM_VERSION
 
-RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y && rm -rf /var/cache/yum \
-	&& dnf clean expire-cache && dnf install -y datacenter-gpu-manager-${DCGM_VERSION} libcap \
-	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite
+RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
+	&& dnf install --nodocs --setopt=install_weak_deps=False -y datacenter-gpu-manager-${DCGM_VERSION} libcap \
+	&& dnf -y clean all\
+	&& rm -rf /var/cache/yum\
+	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
+	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
+	&& rm -rf /usr/lib64/libdcgm_cublas_proxy*.so \
+	&& rm -rf /usr/local/dcgm/scripts \
+	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
+	&& rm -rf /var/lib/rpm/rpmdb.sqlite /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \
+	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
 
 COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
