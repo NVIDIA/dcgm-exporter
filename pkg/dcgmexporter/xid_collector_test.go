@@ -221,16 +221,18 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 			}))
 			continue
 		}
-		assert.Len(t, mv.Label, 8)
+		assert.Len(t, mv.Label, 9)
 		assert.Equal(t, "gpu", *mv.Label[0].Name)
 		assert.Equal(t, "UUID", *mv.Label[1].Name)
-		assert.Equal(t, "device", *mv.Label[2].Name)
-		assert.Equal(t, "modelName", *mv.Label[3].Name)
-		assert.Equal(t, "Hostname", *mv.Label[4].Name)
-		assert.Equal(t, "DCGM_FI_DRIVER_VERSION", *mv.Label[5].Name)
-		assert.Equal(t, "window_size_in_ms", *mv.Label[6].Name)
-		assert.Equal(t, "xid", *mv.Label[7].Name)
-		assert.NotEmpty(t, *mv.Label[7].Value)
+		assert.Equal(t, "pci_bus_id", *mv.Label[2].Name)
+		assert.NotEmpty(t, *mv.Label[2].Value)
+		assert.Equal(t, "device", *mv.Label[3].Name)
+		assert.Equal(t, "modelName", *mv.Label[4].Name)
+		assert.Equal(t, "Hostname", *mv.Label[5].Name)
+		assert.Equal(t, "DCGM_FI_DRIVER_VERSION", *mv.Label[6].Name)
+		assert.Equal(t, "window_size_in_ms", *mv.Label[7].Name)
+		assert.Equal(t, "xid", *mv.Label[8].Name)
+		assert.NotEmpty(t, *mv.Label[8].Value)
 	}
 }
 
