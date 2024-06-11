@@ -124,6 +124,7 @@ func (c *expCollector) createMetric(
 		GPUUUID:      mi.DeviceInfo.UUID,
 		GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
 		GPUModelName: gpuModel,
+		GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
 		Hostname:     c.hostname,
 
 		Labels:     labels,

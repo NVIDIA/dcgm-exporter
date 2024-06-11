@@ -175,6 +175,7 @@ func toSwitchMetric(
 				GPUUUID:      "",
 				GPUDevice:    fmt.Sprintf("nvswitch%d", mi.ParentId),
 				GPUModelName: "",
+				GPUPCIBusID:  "",
 				Hostname:     hostname,
 				Labels:       labels,
 				Attributes:   nil,
@@ -220,6 +221,7 @@ func toCPUMetric(
 				GPUUUID:      "",
 				GPUDevice:    fmt.Sprintf("%d", mi.ParentId),
 				GPUModelName: "",
+				GPUPCIBusID:  "",
 				Hostname:     hostname,
 				Labels:       labels,
 				Attributes:   nil,
@@ -285,6 +287,7 @@ func toMetric(
 			GPUUUID:      d.UUID,
 			GPUDevice:    fmt.Sprintf("nvidia%d", d.GPU),
 			GPUModelName: gpuModel,
+			GPUPCIBusID:  d.PCI.BusID,
 			Hostname:     hostname,
 
 			Labels:     labels,

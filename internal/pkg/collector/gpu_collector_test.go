@@ -53,6 +53,9 @@ func TestToMetric(t *testing.T) {
 		Identifiers: dcgm.DeviceIdentifiers{
 			Model: "NVIDIA T400 4GB",
 		},
+		PCI: dcgm.PCIInfo{
+			BusID: "00000000:0000:0000.0",
+		},
 	}
 
 	var instanceInfo *deviceinfo.GPUInstanceInfo = nil
@@ -82,6 +85,9 @@ func TestToMetric(t *testing.T) {
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
 			assert.Equal(t, "42", metricValues[0].Value)
 			assert.Equal(t, tc.expectedGPUModelName, metricValues[0].GPUModelName)
+
+			assert.Equal(t, d.UUID, metricValues[0].GPUUUID)
+			assert.Equal(t, d.PCI.BusID, metricValues[0].GPUPCIBusID)
 		})
 	}
 }
@@ -100,6 +106,9 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 		UUID: "fake0",
 		Identifiers: dcgm.DeviceIdentifiers{
 			Model: "NVIDIA T400 4GB",
+		},
+		PCI: dcgm.PCIInfo{
+			BusID: "00000000:0000:0000.0",
 		},
 	}
 
@@ -151,6 +160,9 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 			assert.Equal(t, fmt.Sprint(tc.fieldValue), metricValues[0].Attributes["err_code"])
 			assert.Contains(t, metricValues[0].Attributes, "err_msg")
 			assert.Equal(t, tc.expectedErr, metricValues[0].Attributes["err_msg"])
+
+			assert.Equal(t, d.UUID, metricValues[0].GPUUUID)
+			assert.Equal(t, d.PCI.BusID, metricValues[0].GPUPCIBusID)
 		})
 	}
 }
