@@ -24,6 +24,11 @@ go test $(go list ./... | grep -v "/tests/e2e/") \
   -coverprofile=unit_coverage.out \
   -json > test_results.json
 
+if [ $? -ne 0 ]; then
+  echo "Unit tests failed."
+  exit 1
+fi
+
 echo "Running integration tests..."
 go test ./internal/pkg/integration_test/... \
   -count=1 \
@@ -32,6 +37,11 @@ go test ./internal/pkg/integration_test/... \
   -coverpkg=./internal/pkg/... \
   -coverprofile=integration_coverage.out \
   -json >> test_results.json
+
+if [ $? -ne 0 ]; then
+  echo "Integration tests failed."
+  exit 1
+fi
 
 echo "Merging coverage profiles..."
 gocovmerge unit_coverage.out integration_coverage.out > combined_coverage.out.tmp

@@ -71,7 +71,7 @@ func Test_render(t *testing.T) {
 			metrics: metrics,
 			want: `# HELP TEST_METRIC 
 # TYPE TEST_METRIC gauge
-TEST_METRIC{gpu="0",UUID="GPU-00000000-0000-0000-0000-000000000000",device="nvidia0",modelName="NVIDIA T400 4GB",Hostname="testhost"} 42
+TEST_METRIC{gpu="0",UUID="GPU-00000000-0000-0000-0000-000000000000",pci_bus_id="",device="nvidia0",modelName="NVIDIA T400 4GB",Hostname="testhost"} 42
 `,
 		},
 		{
