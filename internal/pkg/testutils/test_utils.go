@@ -252,3 +252,62 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 		}
 	}
 }
+
+type FieldType int
+
+const (
+	Fields FieldType = iota
+	Functions
+	All
+)
+
+// GetFields returns a map of fields of a struct, including unexported fields, based on the specified field type.
+func GetFields(input interface{}, fieldType FieldType) map[string]interface{} {
+	result := make(map[string]interface{})
+	val := reflect.ValueOf(input)
+
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return result
+	}
+
+	typ := val.Type()
+
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		fieldTyp := typ.Field(i)
+
+		// Determine if the field should be included based on the specified field type
+		includeField := false
+		switch fieldType {
+		case Fields:
+			includeField = field.Kind() != reflect.Func
+		case Functions:
+			includeField = field.Kind() == reflect.Func
+		case All:
+			includeField = true
+		}
+
+		if !includeField {
+			continue
+		}
+
+		// Access unexported fields
+		if !field.CanInterface() {
+			field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
+		}
+
+		result[fieldTyp.Name] = field.Interface()
+	}
+
+	return result
+}
+
+func StrToByteArray(str string) [4096]byte {
+	var byteArray [4096]byte
+	copy(byteArray[:], str)
+	return byteArray
+}

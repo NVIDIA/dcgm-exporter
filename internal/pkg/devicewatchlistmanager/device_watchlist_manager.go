@@ -82,7 +82,8 @@ func (d *WatchList) IsEmpty() bool {
 func (d *WatchList) Watch() ([]func(), error) {
 	var cleanups []func()
 	var err error
-	d.deviceGroups, d.deviceFieldGroup, cleanups, err = d.watcher.WatchDeviceFields(d.deviceFields, d.deviceInfo, d.collectInterval*1000)
+	d.deviceGroups, d.deviceFieldGroup, cleanups, err = d.watcher.WatchDeviceFields(d.deviceFields, d.deviceInfo,
+		d.collectInterval*1000)
 	return cleanups, err
 }
 

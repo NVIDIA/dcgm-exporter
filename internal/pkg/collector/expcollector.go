@@ -19,7 +19,6 @@ package collector
 import (
 	"fmt"
 	"maps"
-	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -31,12 +30,10 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
-var expCollectorFieldGroupIdx atomic.Uint32
-
 type expCollector struct {
 	deviceWatchList  devicewatchlistmanager.WatchList // Device info and fields used for counters and labels
 	counter          counters.Counter                 // Counter for a specific collector type
-	labelsCounters   []counters.Counter               // C  ounters used for labels
+	labelsCounters   []counters.Counter               // Counters used for labels
 	hostname         string                           // Hostname
 	config           *appconfig.Config                // Configuration settings
 	cleanups         []func()                         // Cleanup functions
@@ -66,6 +63,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 				if _, exists := mapEntityIDToValues[val.EntityId]; !exists {
 					mapEntityIDToValues[val.EntityId] = map[int64]int{}
 				}
+
 				for _, v := range c.fieldValueParser(val.Int64()) {
 					mapEntityIDToValues[val.EntityId][v] += 1
 				}
