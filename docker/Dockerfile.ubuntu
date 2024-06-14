@@ -1,8 +1,8 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.5.0-base-ubuntu22.04
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 as builder
 
-ARG GOLANG_VERSION=1.22.2
+ARG GOLANG_VERSION=1.22.4
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN apt-get update \

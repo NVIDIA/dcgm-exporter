@@ -18,9 +18,10 @@ REGISTRY             ?= nvidia
 GO                   ?= go
 MKDIR                ?= mkdir
 GOLANGCILINT_TIMEOUT ?= 10m
+IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.22.2
+GOLANG_VERSION := 1.22.4
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -61,12 +62,13 @@ ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
 ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubi9
-
+ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
 ubuntu%: --docker-build-%
 	@
 ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 
 --docker-build-%:
@@ -80,7 +82,7 @@ ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)" \
+		--tag $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)$(if $(IMAGE_TAG),-$(IMAGE_TAG)) \
 		--file $(DOCKERFILE) .
 
 .PHONY: packages package-arm64 package-amd64
@@ -92,6 +94,7 @@ package-arm64:
 package-amd64:
 	$(MAKE) package-build PLATFORMS=linux/amd64
 
+package-build: IMAGE_TAG = ubuntu22.04
 package-build:
 	ARCH=`echo $(PLATFORMS) | cut -d'/' -f2)`; \
 	if [ "$$ARCH" = "amd64" ]; then \
@@ -106,7 +109,7 @@ package-build:
 	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
 	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin && \
 	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/dcgm-exporter && \
-	I=`docker create $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)` && \
+	I=`docker create $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$(IMAGE_TAG)` && \
 	docker cp $$I:/usr/bin/dcgm-exporter /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin/ && \
 	docker cp $$I:/etc/dcgm-exporter /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/ && \
 	cp ./LICENSE /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
