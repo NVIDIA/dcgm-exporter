@@ -144,12 +144,12 @@ extraConfigMapVolumes:
       name: exporter-metrics-config-map
       items:
       - key: metrics
-        path: dcgm-metrics-included.csv
+        path: dcp-metrics-included.csv
 
 extraVolumeMounts:
   - name: exporter-metrics-volume
     mountPath: /etc/dcgm-exporter/dcp-metrics-included.csv
-    subPath: dcgm-metrics-included.csv
+    subPath: dcp-metrics-included.csv
 
 extraEnv: []
 #- name: EXTRA_VAR
