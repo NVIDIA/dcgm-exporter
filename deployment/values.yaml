@@ -154,3 +154,9 @@ extraEnv: []
 
 # Path to the kubelet socket for /pod-resources
 kubeletPath: "/var/lib/kubelet/pod-resources"
+
+# Customized list of metrics to emit. Expected to be in the same format (CSV) as the default list.
+# Must be the complete list and is not additive. If unset, the default list will take effect.
+# customMetrics: |
+#   DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
+#   DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
