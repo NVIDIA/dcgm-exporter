@@ -73,8 +73,8 @@ podLabels: {}
 # Annotations to be added to dcgm-exporter pods
 podAnnotations: {}
 # Using this annotation which is required for prometheus scraping
- # prometheus.io/scrape: "true"
- # prometheus.io/port: "9400"
+# prometheus.io/scrape: "true"
+# prometheus.io/port: "9400"
 
 # The SecurityContext for the dcgm-exporter pods
 podSecurityContext: {}
@@ -85,7 +85,7 @@ securityContext:
   runAsNonRoot: false
   runAsUser: 0
   capabilities:
-     add: ["SYS_ADMIN"]
+    add: ["SYS_ADMIN"]
   # readOnlyRootFilesystem: true
 
 # Defines the dcgm-exporter service
@@ -138,15 +138,18 @@ extraHostVolumes: []
 #- name: host-binaries
 #  hostPath: /opt/bin
 
-extraConfigMapVolumes: []
-#- name: exporter-metrics-volume
-#  configMap:
-#    name: exporter-metrics-config-map
+extraConfigMapVolumes:
+  - name: exporter-metrics-volume
+    configMap:
+      name: exporter-metrics-config-map
+      items:
+      - key: metrics
+        path: dcgm-metrics-included.csv
 
-extraVolumeMounts: []
-#- name: host-binaries
-#  mountPath: /opt/bin
-#  readOnly: true
+extraVolumeMounts:
+  - name: exporter-metrics-volume
+    mountPath: /etc/dcgm-exporter/dcp-metrics-included.csv
+    subPath: dcgm-metrics-included.csv
 
 extraEnv: []
 #- name: EXTRA_VAR
