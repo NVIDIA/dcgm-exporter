@@ -296,7 +296,12 @@ func action(c *cli.Context) (err error) {
 func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
 restart:
 
-	logrus.Info("Starting dcgm-exporter")
+	var version string
+	if c != nil && c.App != nil {
+		version = c.App.Version
+	}
+
+	logrus.WithField("Version", version).Info("Starting dcgm-exporter")
 
 	config, err := contextToConfig(c)
 	if err != nil {
