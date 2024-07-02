@@ -73,8 +73,8 @@ podLabels: {}
 # Annotations to be added to dcgm-exporter pods
 podAnnotations: {}
 # Using this annotation which is required for prometheus scraping
- # prometheus.io/scrape: "true"
- # prometheus.io/port: "9400"
+# prometheus.io/scrape: "true"
+# prometheus.io/port: "9400"
 
 # The SecurityContext for the dcgm-exporter pods
 podSecurityContext: {}
@@ -85,7 +85,7 @@ securityContext:
   runAsNonRoot: false
   runAsUser: 0
   capabilities:
-     add: ["SYS_ADMIN"]
+    add: ["SYS_ADMIN"]
   # readOnlyRootFilesystem: true
 
 # Defines the dcgm-exporter service
