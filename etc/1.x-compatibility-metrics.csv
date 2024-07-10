@@ -15,8 +15,8 @@ dcgm_power_usage,              gauge, Power draw (in W).
 dcgm_total_energy_consumption, counter, Total energy consumption since boot (in mJ).
 
 # PCIe
-dcgm_pcie_tx_throughput,  counter, Total number of bytes transmitted through PCIe TX (in KB) via NVML.
-dcgm_pcie_rx_throughput,  counter, Total number of bytes received through PCIe RX (in KB) via NVML.
+dcgm_fi_prof_pcie_tx_bytes,  counter, Total number of bytes transmitted through PCIe TX via NVML.
+dcgm_fi_prof_pcie_rx_bytes,  counter, Total number of bytes received through PCIe RX via NVML.
 dcgm_pcie_replay_counter, counter, Total number of PCIe retries.
 
 # Utilization (the sample period varies depending on the product)
