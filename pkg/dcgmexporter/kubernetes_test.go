@@ -174,6 +174,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 		MetricGPUDevice     string
 		MetricMigProfile    string
 		PODGPUID            string
+		NvidiaResourceNames []string
 	}
 
 	testCases := []TestCase{
@@ -232,6 +233,13 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			MetricGPUDevice:     "0",
 			GPUInstanceID:       3,
 		},
+		{
+			KubernetesGPUIDType: GPUUID,
+			ResourceName:        "nvidia.com/a100",
+			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			NvidiaResourceNames: []string{"nvidia.com/a100"},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -272,6 +280,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				podMapper, err := NewPodMapper(&Config{
 					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
 					PodResourcesKubeletSocket: socketPath,
+					NvidiaResourceNames:       tc.NvidiaResourceNames,
 				})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
