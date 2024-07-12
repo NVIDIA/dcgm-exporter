@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	"k8s.io/utils/strings/slices"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
@@ -147,7 +148,7 @@ func (p *PodMapper) toDeviceToPod(
 			for _, device := range container.GetDevices() {
 
 				resourceName := device.GetResourceName()
-				if resourceName != nvidiaResourceName {
+				if resourceName != nvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
 					// Mig resources appear differently than GPU resources
 					if !strings.HasPrefix(resourceName, nvidiaMigResourcePrefix) {
 						continue
