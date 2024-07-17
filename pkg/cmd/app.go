@@ -86,6 +86,7 @@ const (
 	CLIDCGMLogLevel               = "dcgm-log-level"
 	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
+	CLINvidiaResourceNames        = "nvidia-resource-names"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -248,6 +249,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   "",
 			Usage:   "Path to HPC job mapping file directory used for mapping GPUs to jobs.",
 			EnvVars: []string{"DCGM_HPC_JOB_MAPPING_DIR"},
+		},
+		&cli.StringSliceFlag{
+			Name:    CLINvidiaResourceNames,
+			Value:   cli.NewStringSlice(),
+			Usage:   "Nvidia resource names for specified GPU type like nvidia.com/a100, nvidia.com/a10.",
+			EnvVars: []string{"NVIDIA_RESOURCE_NAMES"},
 		},
 	}
 
@@ -591,5 +598,6 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		DCGMLogLevel:               dcgmLogLevel,
 		PodResourcesKubeletSocket:  c.String(CLIPodResourcesKubeletSocket),
 		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
+		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
 	}, nil
 }

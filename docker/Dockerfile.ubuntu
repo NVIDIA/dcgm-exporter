@@ -1,6 +1,6 @@
 ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.5.0-base-ubuntu22.04
 
-FROM --platform=$BUILDPLATFORM ubuntu:18.04 as builder
+FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
 ARG GOLANG_VERSION=1.22.4
 
@@ -43,10 +43,8 @@ ENV PATH $PATH:/usr/local/go/bin
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
-RUN --mount=type=cache,target=/root/.cache/go-build \
-	--mount=type=cache,target=/go/pkg \
-	# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
-	if [ "$TARGETARCH" = "arm64" ]; then \
+# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
 	export CC=aarch64-linux-gnu-gcc; \
 	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
 	fi && \
@@ -83,12 +81,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	&& rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
 	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
 # Required for DCP metrics
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
+ENV NVIDIA_DRIVER_CAPABILITIES compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
-ENV NVIDIA_DISABLE_REQUIRE="true"
-ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DISABLE_REQUIRE "true"
+ENV NVIDIA_VISIBLE_DEVICES all
 
-ENV NO_SETCAP=
+ENV NO_SETCAP ""
 COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 

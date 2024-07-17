@@ -21,7 +21,7 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 	}
 	app := cmd.NewApp()
 	args := os.Args[0:1]
-	args = append(args, "-f=../../etc/default-counters.csv") // Append a file with default counters
+	args = append(args, "-f=./testdata/default-counters.csv") // Append a file with default counters
 	port := getRandomAvailablePort(t)
 	args = append(args, fmt.Sprintf("-a=:%d", port))
 	args = append(args, "--web-config-file=./testdata/web-config.yml")
