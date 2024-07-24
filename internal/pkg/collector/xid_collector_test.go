@@ -193,13 +193,15 @@ func TestNewXIDCollector(t *testing.T) {
 				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 				return &xidCollector{
 					expCollector{
-						deviceWatchList: deviceWatchList,
-						counter:         sampleDCGMExpXIDCounter,
-						labelsCounters:  []counters.Counter{sampleLabelCounter},
-						hostname:        hostname,
-						config:          config,
-						cleanups:        sampleCleanups,
-						windowSize:      config.XIDCountWindowSize,
+						baseExpCollector: baseExpCollector{
+							deviceWatchList: deviceWatchList,
+							counter:         sampleDCGMExpXIDCounter,
+							labelsCounters:  []counters.Counter{sampleLabelCounter},
+							hostname:        hostname,
+							config:          config,
+							cleanups:        sampleCleanups,
+						},
+						windowSize: config.XIDCountWindowSize,
 					},
 				}
 			},
@@ -230,13 +232,15 @@ func TestNewXIDCollector(t *testing.T) {
 				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 				return &xidCollector{
 					expCollector{
-						deviceWatchList: deviceWatchList,
-						counter:         sampleDCGMExpXIDCounter,
-						labelsCounters:  nil,
-						hostname:        hostname,
-						config:          config,
-						cleanups:        sampleCleanups,
-						windowSize:      config.XIDCountWindowSize,
+						baseExpCollector: baseExpCollector{
+							deviceWatchList: deviceWatchList,
+							counter:         sampleDCGMExpXIDCounter,
+							labelsCounters:  nil,
+							hostname:        hostname,
+							config:          config,
+							cleanups:        sampleCleanups,
+						},
+						windowSize: config.XIDCountWindowSize,
 					},
 				}
 			},

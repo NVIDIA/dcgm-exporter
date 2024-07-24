@@ -2,10 +2,10 @@ module github.com/NVIDIA/dcgm-exporter
 
 go 1.22.0
 
-toolchain go1.22.4
+toolchain go1.22.5
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20240315184911-5e46e1bcb05a
+	github.com/NVIDIA/go-dcgm v0.0.0-20240724144738-f83cdef499b2
 	github.com/NVIDIA/go-nvml v0.12.0-3
 	github.com/avast/retry-go/v4 v4.5.1
 	github.com/bits-and-blooms/bitset v1.13.0

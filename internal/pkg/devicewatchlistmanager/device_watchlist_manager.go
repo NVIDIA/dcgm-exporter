@@ -17,8 +17,6 @@
 package devicewatchlistmanager
 
 import (
-	"fmt"
-
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -82,6 +80,7 @@ func (d *WatchList) IsEmpty() bool {
 func (d *WatchList) Watch() ([]func(), error) {
 	var cleanups []func()
 	var err error
+
 	d.deviceGroups, d.deviceFieldGroup, cleanups, err = d.watcher.WatchDeviceFields(d.deviceFields, d.deviceInfo,
 		d.collectInterval*1000)
 	return cleanups, err
@@ -127,10 +126,6 @@ func (e *WatchListManager) CreateEntityWatchList(
 ) error {
 	deviceFields := watcher.GetDeviceFields(e.counters, entityType)
 
-	if !shouldMonitorFields(deviceFields) {
-		return fmt.Errorf("no fields to watch for device type: %d", entityType)
-	}
-
 	labelDeviceFields := watcher.GetDeviceFields(e.counters.LabelCounters(), entityType)
 
 	deviceInfo, err := deviceinfo.Initialize(e.gOpts, e.sOpts, e.cOpts, e.useFakeGPUs, entityType)
@@ -153,16 +148,4 @@ func (e *WatchListManager) CreateEntityWatchList(
 func (e *WatchListManager) EntityWatchList(deviceType dcgm.Field_Entity_Group) (WatchList, bool) {
 	entityWatchList, exists := e.entityWatchLists[deviceType]
 	return entityWatchList, exists
-}
-
-func shouldMonitorFields(fields []dcgm.Short) bool {
-	if len(fields) == 0 {
-		return false
-	}
-
-	if len(fields) == 1 && fields[0] == dcgm.DCGM_FI_DRIVER_VERSION {
-		return false
-	}
-
-	return true
 }

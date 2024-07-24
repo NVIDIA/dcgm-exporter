@@ -35,7 +35,7 @@ RUN set -eux; \
 	wget -O go.tgz "$url" --progress=dot:giga; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz;
-ENV GOTOOLCHAIN=local
+ENV GOTOOLCHAIN local
 ENV GOPATH /go
 ENV PATH $GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
@@ -48,7 +48,11 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 	export CC=aarch64-linux-gnu-gcc; \
 	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
 	fi && \
-	GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$CC CGO_ENABLED=1 make install
+	export GOOS=$TARGETOS && \
+	export GOARCH=$TARGETARCH &&  \
+	export CGO_ENABLED=1 && \
+	go clean -cache -modcache &&\
+	make install
 
 FROM ${BASEIMAGE}
 

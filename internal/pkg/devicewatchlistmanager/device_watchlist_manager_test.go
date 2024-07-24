@@ -525,12 +525,13 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 		{
 			name: "No GPU WatchList",
 			fields: fields{
-				entityWatchLists: make(map[dcgm.Field_Entity_Group]WatchList),
-				counters:         []counters.Counter{},
-				gOpts:            deviceOptionFalse,
-				sOpts:            deviceOptionTrue,
-				cOpts:            deviceOptionOther,
-				useFakeGPUs:      false,
+				entityWatchLists:      make(map[dcgm.Field_Entity_Group]WatchList),
+				entityWatchListsCount: 1,
+				counters:              []counters.Counter{},
+				gOpts:                 deviceOptionFalse,
+				sOpts:                 deviceOptionTrue,
+				cOpts:                 deviceOptionOther,
+				useFakeGPUs:           false,
 			},
 			args: args{
 				entityType:      dcgm.FE_GPU,
@@ -542,25 +543,50 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields).Times(1)
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(deviceFields).Times(1)
+
+				fakeDevices := deviceinfo.SpoofGPUDevices()
+				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
+
+				mockHierarchy := dcgm.MigHierarchy_v2{
+					Count: 1,
+				}
+				mockHierarchy.EntityList[0] = fakeGPUs[0]
+
+				// Times 2 because the wantFunc is also calling the same method
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
+				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
-				e *WatchListManager, entityType dcgm.Field_Entity_Group, deviceFields,
-				labelDeviceFields []dcgm.Short, watcher *mockdevicewatcher.MockWatcher, collectInterval int64,
+				e *WatchListManager,
+				entityType dcgm.Field_Entity_Group,
+				deviceFields,
+				labelDeviceFields []dcgm.Short,
+				watcher *mockdevicewatcher.MockWatcher,
+				collectInterval int64,
 			) map[dcgm.Field_Entity_Group]WatchList {
-				return nil
+				watchList := make(map[dcgm.Field_Entity_Group]WatchList)
+
+				mockDeviceInfo, _ := deviceinfo.Initialize(e.gOpts, e.sOpts, e.cOpts, e.useFakeGPUs, entityType)
+				watchList[entityType] = *NewWatchList(mockDeviceInfo, deviceFields, []dcgm.Short{}, watcher,
+					collectInterval)
+
+				return watchList
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "Only Driver Version to Watch",
 			fields: fields{
-				entityWatchLists: make(map[dcgm.Field_Entity_Group]WatchList),
-				counters:         []counters.Counter{},
-				gOpts:            deviceOptionFalse,
-				sOpts:            deviceOptionTrue,
-				cOpts:            deviceOptionOther,
-				useFakeGPUs:      false,
+				entityWatchLists:      make(map[dcgm.Field_Entity_Group]WatchList),
+				entityWatchListsCount: 1,
+				counters:              []counters.Counter{},
+				gOpts:                 deviceOptionFalse,
+				sOpts:                 deviceOptionTrue,
+				cOpts:                 deviceOptionOther,
+				useFakeGPUs:           false,
 			},
 			args: args{
 				entityType:      dcgm.FE_GPU,
@@ -569,18 +595,44 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 			},
 			deviceFields: []dcgm.Short{testutils.SampleDriverVersionCounter.FieldID},
 			mockFunc: func(
-				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
-				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
+				watcher *mockdevicewatcher.MockWatcher,
+				counters, labelCounters counters.CounterList,
+				entityType dcgm.Field_Entity_Group,
+				deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields).Times(1)
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(deviceFields).Times(1)
+
+				fakeDevices := deviceinfo.SpoofGPUDevices()
+				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
+
+				mockHierarchy := dcgm.MigHierarchy_v2{
+					Count: 1,
+				}
+				mockHierarchy.EntityList[0] = fakeGPUs[0]
+
+				// Times 2 because the wantFunc is also calling the same method
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
+				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
-				e *WatchListManager, entityType dcgm.Field_Entity_Group, deviceFields,
-				labelDeviceFields []dcgm.Short, watcher *mockdevicewatcher.MockWatcher, collectInterval int64,
+				e *WatchListManager,
+				entityType dcgm.Field_Entity_Group,
+				deviceFields,
+				labelDeviceFields []dcgm.Short,
+				watcher *mockdevicewatcher.MockWatcher,
+				collectInterval int64,
 			) map[dcgm.Field_Entity_Group]WatchList {
-				return nil
+				watchList := make(map[dcgm.Field_Entity_Group]WatchList)
+
+				mockDeviceInfo, _ := deviceinfo.Initialize(e.gOpts, e.sOpts, e.cOpts, e.useFakeGPUs, entityType)
+				watchList[entityType] = *NewWatchList(mockDeviceInfo, deviceFields, labelDeviceFields, watcher,
+					collectInterval)
+
+				return watchList
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 
@@ -595,11 +647,23 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				useFakeGPUs:      tt.fields.useFakeGPUs,
 			}
 
-			tt.mockFunc(tt.args.watcher, tt.fields.counters, tt.fields.counters.LabelCounters(), tt.args.entityType,
-				tt.deviceFields, []dcgm.Short{testutils.SampleDriverVersionCounter.FieldID})
+			tt.mockFunc(
+				tt.args.watcher,
+				tt.fields.counters,
+				tt.fields.counters.LabelCounters(),
+				tt.args.entityType,
+				tt.deviceFields,
+				[]dcgm.Short{testutils.SampleDriverVersionCounter.FieldID},
+			)
 
-			want := tt.wantFunc(e, tt.args.entityType, tt.deviceFields,
-				[]dcgm.Short{testutils.SampleDriverVersionCounter.FieldID}, tt.args.watcher, tt.args.collectInterval)
+			want := tt.wantFunc(
+				e,
+				tt.args.entityType,
+				tt.deviceFields,
+				[]dcgm.Short{testutils.SampleDriverVersionCounter.FieldID},
+				tt.args.watcher,
+				tt.args.collectInterval,
+			)
 
 			err := e.CreateEntityWatchList(tt.args.entityType, tt.args.watcher, tt.args.collectInterval)
 			got := e.entityWatchLists

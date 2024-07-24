@@ -19,6 +19,7 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -284,6 +285,231 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 			hostname:   "testhost",
 			config:     &appconfig.Config{},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector is enabled",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{0}, nil).AnyTimes()
+				mockDCGM.EXPECT().HealthSet(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
+				mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil).AnyTimes()
+				mockDCGM.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(dcgm.FieldHandle{}, nil)
+				mockDCGM.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil).AnyTimes()
+				setupDCGMMockForDCGMExpMetrics([]dcgm.Short{230})(mockDCGM)
+			},
+			assert: func(t *testing.T, entityCollectorTuples []EntityCollectorTuple) {
+				require.Len(t, entityCollectorTuples, 1)
+				require.Equal(t, entityCollectorTuples[0].Entity(), dcgm.FE_GPU)
+				require.IsType(t, &gpuHealthStatusCollector{}, entityCollectorTuples[0].Collector())
+			},
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{}, errors.New("boom!")).AnyTimes()
+			},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized when zero supported devices",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{}, nil)
+			},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized when entity group can not be created",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{0}, nil)
+				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
+					return strings.HasPrefix(x.(string), "gpu_health_monitor_")
+				})).Return(dcgm.GroupHandle{}, errors.New("boom!"))
+			},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized when entity can not be added to the group",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{0}, nil)
+				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
+					return strings.HasPrefix(x.(string), "gpu_health_monitor_")
+				})).Return(dcgm.GroupHandle{}, nil)
+				mockDCGM.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Eq(uint(0))).Return(errors.New("boom!"))
+			},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized when enable healthcheck returns an error",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{0}, nil)
+				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
+					return strings.HasPrefix(x.(string), "gpu_health_monitor_")
+				})).Return(dcgm.GroupHandle{}, nil)
+				mockDCGM.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Eq(uint(0))).Return(nil)
+				mockDCGM.EXPECT().HealthSet(gomock.Any(), gomock.Eq(dcgm.DCGM_HEALTH_WATCH_ALL)).Return(errors.New("boom!"))
+			},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized when deviceinfo.Initialize returns an error",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{0}, nil)
+				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
+					return strings.HasPrefix(x.(string), "gpu_health_monitor_")
+				})).Return(dcgm.GroupHandle{}, nil)
+				mockDCGM.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Eq(uint(0))).Return(nil)
+				mockDCGM.EXPECT().HealthSet(gomock.Any(), gomock.Eq(dcgm.DCGM_HEALTH_WATCH_ALL)).Return(nil)
+				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("boom!"))
+			},
+			wantsPanic: true,
+		},
+		{
+			name: "DCGM_EXP_GPU_HEALTH_STATUS collector can not be initialized when device watch returns an error",
+			cs: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{},
+				ExporterCounters: []counters.Counter{
+					{
+						FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
+					},
+				},
+			},
+			getDeviceWatchListManager: func() devicewatchlistmanager.Manager {
+				mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+				mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(defaultDeviceWatchList,
+					true)
+				return mockDeviceWatchListManager
+			},
+			hostname: "testhost",
+			config:   &appconfig.Config{},
+			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
+				mockDCGM.EXPECT().GetSupportedDevices().Return([]uint{0}, nil)
+				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
+					return strings.HasPrefix(x.(string), "gpu_health_monitor_")
+				})).Return(dcgm.GroupHandle{}, nil)
+				mockDCGM.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Eq(uint(0))).Return(nil)
+				mockDCGM.EXPECT().HealthSet(gomock.Any(), gomock.Eq(dcgm.DCGM_HEALTH_WATCH_ALL)).Return(nil)
+				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+				mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil)
+				mockDCGM.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
+					return strings.HasPrefix(x.(string), "gpu-collector-group")
+				})).Return(dcgm.GroupHandle{}, errors.New("boom!"))
+			},
 			wantsPanic: true,
 		},
 	}

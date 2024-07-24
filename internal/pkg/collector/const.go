@@ -19,6 +19,6 @@ package collector
 const (
 	windowSizeInMSLabel = "window_size_in_ms"
 
-	SkipDCGMValue   = "SKIPPING DCGM VALUE"
+	skipDCGMValue   = "SKIPPING DCGM VALUE"
 	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"
 )

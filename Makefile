@@ -21,12 +21,12 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.22.4
+GOLANG_VERSION := 1.22.5
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
-DOCKERCMD      := docker buildx build
+DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local

@@ -75,3 +75,6 @@ DCGM_FI_DRIVER_VERSION,        label, Driver Version
 # DCGM_FI_DEV_POWER_INFOROM_VER, label, Power management object inforom version
 # DCGM_FI_DEV_INFOROM_IMAGE_VER, label, Inforom image version
 # DCGM_FI_DEV_VBIOS_VERSION,     label, VBIOS version of the device
+
+# GPU Background health monitoring metrics.
+DCGM_EXP_GPU_HEALTH_STATUS,           gauge, GPU Health Status

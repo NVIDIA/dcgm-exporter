@@ -195,13 +195,15 @@ func TestNewClockEventsCollector(t *testing.T) {
 				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
 				return &clockEventsCollector{
 					expCollector{
-						deviceWatchList: deviceWatchList,
-						counter:         sampleDCGMExpClockEventsCounter,
-						labelsCounters:  []counters.Counter{sampleLabelCounter},
-						hostname:        hostname,
-						config:          config,
-						cleanups:        sampleCleanups,
-						windowSize:      config.ClockEventsCountWindowSize,
+						baseExpCollector: baseExpCollector{
+							deviceWatchList: deviceWatchList,
+							counter:         sampleDCGMExpClockEventsCounter,
+							labelsCounters:  []counters.Counter{sampleLabelCounter},
+							hostname:        hostname,
+							config:          config,
+							cleanups:        sampleCleanups,
+						},
+						windowSize: config.ClockEventsCountWindowSize,
 					},
 				}
 			},
@@ -232,13 +234,15 @@ func TestNewClockEventsCollector(t *testing.T) {
 				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
 				return &clockEventsCollector{
 					expCollector{
-						deviceWatchList: deviceWatchList,
-						counter:         sampleDCGMExpClockEventsCounter,
-						labelsCounters:  nil,
-						hostname:        hostname,
-						config:          config,
-						cleanups:        sampleCleanups,
-						windowSize:      config.ClockEventsCountWindowSize,
+						baseExpCollector: baseExpCollector{
+							deviceWatchList: deviceWatchList,
+							counter:         sampleDCGMExpClockEventsCounter,
+							labelsCounters:  nil,
+							hostname:        hostname,
+							config:          config,
+							cleanups:        sampleCleanups,
+						},
+						windowSize: config.ClockEventsCountWindowSize,
 					},
 				}
 			},
@@ -367,7 +371,12 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 	mockCollectorInterval := int64(1)
 	mockConfig := appconfig.Config{}
 	mockHostname := "localhost"
-	var mockCleanups []func()
+	cleanupCalled := 0
+	mockCleanups := []func(){
+		func() {
+			cleanupCalled++
+		},
+	}
 
 	mockGroupHandle1 := dcgm.GroupHandle{}
 	mockGroupHandle1.SetHandle(uintptr(1))
@@ -759,6 +768,11 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			want, gpu1Value, gpu2Value := tt.want()
 			tt.conditions(mockDeviceWatcher, gpu1Value, gpu2Value)
 			c := tt.collector()
+			defer func() {
+				c.Cleanup()
+				assert.Equal(t, 1, cleanupCalled, "clean up function was not called")
+				cleanupCalled = 0 // reset to zero
+			}()
 
 			got, err := c.GetMetrics()
 

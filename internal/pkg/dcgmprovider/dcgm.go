@@ -234,3 +234,19 @@ func (d dcgmProvider) Cleanup() {
 
 	reset()
 }
+
+func (d dcgmProvider) HealthSet(groupID dcgm.GroupHandle, systems dcgm.HealthSystem) error {
+	return dcgm.HealthSet(groupID, systems)
+}
+
+func (d dcgmProvider) HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error) {
+	return dcgm.HealthGet(groupID)
+}
+
+func (d dcgmProvider) HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse, error) {
+	return dcgm.HealthCheck(groupID)
+}
+
+func (d dcgmProvider) GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error) {
+	return dcgm.GetGroupInfo(groupID)
+}

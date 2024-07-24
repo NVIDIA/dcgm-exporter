@@ -300,6 +300,21 @@ func (mr *MockDCGMMockRecorder) GetGpuInstanceHierarchy() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGpuInstanceHierarchy", reflect.TypeOf((*MockDCGM)(nil).GetGpuInstanceHierarchy))
 }
 
+// GetGroupInfo mocks base method.
+func (m *MockDCGM) GetGroupInfo(arg0 dcgm.GroupHandle) (*dcgm.GroupInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetGroupInfo", arg0)
+	ret0, _ := ret[0].(*dcgm.GroupInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetGroupInfo indicates an expected call of GetGroupInfo.
+func (mr *MockDCGMMockRecorder) GetGroupInfo(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupInfo", reflect.TypeOf((*MockDCGM)(nil).GetGroupInfo), arg0)
+}
+
 // GetNvLinkLinkStatus mocks base method.
 func (m *MockDCGM) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
 	m.ctrl.T.Helper()
@@ -373,6 +388,50 @@ func (m *MockDCGM) GroupAllGPUs() dcgm.GroupHandle {
 func (mr *MockDCGMMockRecorder) GroupAllGPUs() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GroupAllGPUs", reflect.TypeOf((*MockDCGM)(nil).GroupAllGPUs))
+}
+
+// HealthCheck mocks base method.
+func (m *MockDCGM) HealthCheck(arg0 dcgm.GroupHandle) (dcgm.HealthResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HealthCheck", arg0)
+	ret0, _ := ret[0].(dcgm.HealthResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HealthCheck indicates an expected call of HealthCheck.
+func (mr *MockDCGMMockRecorder) HealthCheck(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthCheck", reflect.TypeOf((*MockDCGM)(nil).HealthCheck), arg0)
+}
+
+// HealthGet mocks base method.
+func (m *MockDCGM) HealthGet(arg0 dcgm.GroupHandle) (dcgm.HealthSystem, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HealthGet", arg0)
+	ret0, _ := ret[0].(dcgm.HealthSystem)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HealthGet indicates an expected call of HealthGet.
+func (mr *MockDCGMMockRecorder) HealthGet(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthGet", reflect.TypeOf((*MockDCGM)(nil).HealthGet), arg0)
+}
+
+// HealthSet mocks base method.
+func (m *MockDCGM) HealthSet(arg0 dcgm.GroupHandle, arg1 dcgm.HealthSystem) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HealthSet", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// HealthSet indicates an expected call of HealthSet.
+func (mr *MockDCGMMockRecorder) HealthSet(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthSet", reflect.TypeOf((*MockDCGM)(nil).HealthSet), arg0, arg1)
 }
 
 // InjectFieldValue mocks base method.

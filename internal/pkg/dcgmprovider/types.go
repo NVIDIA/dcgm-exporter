@@ -52,4 +52,8 @@ type DCGM interface {
 	UpdateAllFields() error
 	WatchFieldsWithGroupEx(dcgm.FieldHandle, dcgm.GroupHandle, int64, float64, int32) error
 	Cleanup()
+	HealthSet(groupID dcgm.GroupHandle, systems dcgm.HealthSystem) error
+	HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error)
+	HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse, error)
+	GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error)
 }

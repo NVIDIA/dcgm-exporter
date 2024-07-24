@@ -31,15 +31,10 @@ import (
 )
 
 type expCollector struct {
-	deviceWatchList  devicewatchlistmanager.WatchList // Device info and fields used for counters and labels
-	counter          counters.Counter                 // Counter for a specific collector type
-	labelsCounters   []counters.Counter               // Counters used for labels
-	hostname         string                           // Hostname
-	config           *appconfig.Config                // Configuration settings
-	cleanups         []func()                         // Cleanup functions
-	fieldValueParser func(val int64) []int64          // Function to parse the field value
-	labelFiller      func(map[string]string, int64)   // Function to fill labels
-	windowSize       int                              // Window size
+	baseExpCollector
+	fieldValueParser func(val int64) []int64        // Function to parse the field value
+	labelFiller      func(map[string]string, int64) // Function to fill labels
+	windowSize       int                            // Window size
 }
 
 func (c *expCollector) getMetrics() (MetricsByCounter, error) {
@@ -109,68 +104,6 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func (c *expCollector) createMetric(
-	labels map[string]string, mi devicemonitoring.Info, uuid string, val int,
-) Metric {
-	gpuModel := getGPUModel(mi.DeviceInfo, c.config.ReplaceBlanksInModelName)
-
-	m := Metric{
-		Counter:      c.counter,
-		Value:        fmt.Sprint(val),
-		UUID:         uuid,
-		GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
-		GPUUUID:      mi.DeviceInfo.UUID,
-		GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
-		GPUModelName: gpuModel,
-		GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
-		Hostname:     c.hostname,
-
-		Labels:     labels,
-		Attributes: map[string]string{},
-	}
-	if mi.InstanceInfo != nil {
-		m.MigProfile = mi.InstanceInfo.ProfileName
-		m.GPUInstanceID = fmt.Sprintf("%d", mi.InstanceInfo.Info.NvmlInstanceId)
-	} else {
-		m.MigProfile = ""
-		m.GPUInstanceID = ""
-	}
-	return m
-}
-
-func (c *expCollector) getLabelsFromCounters(mi devicemonitoring.Info, labels map[string]string) error {
-	latestValues, err := dcgmprovider.Client().EntityGetLatestValues(mi.Entity.EntityGroupId, mi.Entity.EntityId,
-		c.deviceWatchList.LabelDeviceFields())
-	if err != nil {
-		return err
-	}
-	// Extract Labels
-	for _, val := range latestValues {
-		v := ToString(val)
-		// Filter out counters with no value and ignored fields for this entity
-		if v == SkipDCGMValue {
-			continue
-		}
-
-		counter, err := FindCounterField(c.labelsCounters, val.FieldId)
-		if err != nil {
-			continue
-		}
-
-		if counter.IsLabel() {
-			labels[counter.FieldName] = v
-			continue
-		}
-	}
-	return nil
-}
-
-func (c *expCollector) Cleanup() {
-	for _, cleanup := range c.cleanups {
-		cleanup()
-	}
-}
-
 // newExpCollector is a constructor for the expCollector
 func newExpCollector(
 	labelsCounters []counters.Counter,
@@ -179,10 +112,13 @@ func newExpCollector(
 	deviceWatchList devicewatchlistmanager.WatchList,
 ) (expCollector, error) {
 	collector := expCollector{
-		deviceWatchList: deviceWatchList,
-		hostname:        hostname,
-		config:          config,
-		labelsCounters:  labelsCounters,
+		baseExpCollector: baseExpCollector{
+			deviceWatchList: deviceWatchList,
+			hostname:        hostname,
+			config:          config,
+			labelsCounters:  labelsCounters,
+		},
+
 		fieldValueParser: func(val int64) []int64 {
 			return []int64{val}
 		},

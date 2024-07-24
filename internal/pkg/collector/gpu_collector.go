@@ -130,7 +130,7 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func FindCounterField(c []counters.Counter, fieldID uint) (counters.Counter, error) {
+func findCounterField(c []counters.Counter, fieldID uint) (counters.Counter, error) {
 	for i := 0; i < len(c); i++ {
 		if uint(c[i].FieldID) == fieldID {
 			return c[i], nil
@@ -147,10 +147,10 @@ func toSwitchMetric(
 	labels := map[string]string{}
 
 	for _, val := range values {
-		v := ToString(val)
+		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := FindCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldId)
 		if err != nil {
 			continue
 		}
@@ -164,7 +164,7 @@ func toSwitchMetric(
 			uuid = "uuid"
 		}
 		var m Metric
-		if v == SkipDCGMValue {
+		if v == skipDCGMValue {
 			continue
 		} else {
 			m = Metric{
@@ -193,10 +193,10 @@ func toCPUMetric(
 	labels := map[string]string{}
 
 	for _, val := range values {
-		v := ToString(val)
+		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := FindCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldId)
 		if err != nil {
 			continue
 		}
@@ -210,7 +210,7 @@ func toCPUMetric(
 			uuid = "uuid"
 		}
 		var m Metric
-		if v == SkipDCGMValue {
+		if v == skipDCGMValue {
 			continue
 		} else {
 			m = Metric{
@@ -245,13 +245,13 @@ func toMetric(
 	labels := map[string]string{}
 
 	for _, val := range values {
-		v := ToString(val)
+		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
-		if v == SkipDCGMValue {
+		if v == skipDCGMValue {
 			continue
 		}
 
-		counter, err := FindCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldId)
 		if err != nil {
 			continue
 		}
@@ -316,52 +316,52 @@ func getGPUModel(d dcgm.Device, replaceBlanksInModelName bool) string {
 	return gpuModel
 }
 
-func ToString(value dcgm.FieldValue_v1) string {
+func toString(value dcgm.FieldValue_v1) string {
 	switch value.FieldType {
 	case dcgm.DCGM_FT_INT64:
 		switch v := value.Int64(); v {
 		case dcgm.DCGM_FT_INT32_BLANK:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT32_NOT_FOUND:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT64_BLANK:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT64_NOT_FOUND:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		default:
 			return fmt.Sprintf("%d", value.Int64())
 		}
 	case dcgm.DCGM_FT_DOUBLE:
 		switch v := value.Float64(); v {
 		case dcgm.DCGM_FT_FP64_BLANK:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_FP64_NOT_FOUND:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		default:
 			return fmt.Sprintf("%f", value.Float64())
 		}
 	case dcgm.DCGM_FT_STRING:
 		switch v := value.String(); v {
 		case dcgm.DCGM_FT_STR_BLANK:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_STR_NOT_FOUND:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_STR_NOT_SUPPORTED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		case dcgm.DCGM_FT_STR_NOT_PERMISSIONED:
-			return SkipDCGMValue
+			return skipDCGMValue
 		default:
 			return v
 		}

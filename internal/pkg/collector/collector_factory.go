@@ -58,7 +58,6 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 		"Counters are being initialized.")
 
 	entityCollectorTuples := make([]EntityCollectorTuple, 0)
-
 	entityTypes := []dcgm.Field_Entity_Group{
 		dcgm.FE_GPU,
 		dcgm.FE_SWITCH,
@@ -108,6 +107,17 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 		}
 	}
 
+	if IsDCGMExpGPUHealthStatusEnabled(cf.counterSet.ExporterCounters) {
+		if newCollector, err := cf.enableExpCollector(counters.DCGMExpGPUHealthStatus); err != nil {
+			logrus.Fatalf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpGPUHealthStatus, err)
+		} else {
+			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
+				entity:    dcgm.FE_GPU,
+				collector: newCollector,
+			})
+		}
+	}
+
 	return entityCollectorTuples
 }
 
@@ -139,6 +149,12 @@ func (cf *collectorFactory) enableExpCollector(expCollectorName string) (Collect
 	case counters.DCGMExpXIDErrorsCount:
 		newCollector, err = NewXIDCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config,
 			item)
+	case counters.DCGMExpGPUHealthStatus:
+		newCollector, err = NewGPUHealthStatusCollector(cf.counterSet.ExporterCounters,
+			cf.hostname,
+			cf.config,
+			item,
+		)
 	default:
 		err = fmt.Errorf("invalid collector '%s'", expCollectorName)
 	}

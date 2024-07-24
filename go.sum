@@ -25,6 +25,14 @@ github.com/Microsoft/hcsshim v0.11.4 h1:68vKo2VN8DE9AdN4tnkWnmdhqdbpUFM8OF3Airm7
 github.com/Microsoft/hcsshim v0.11.4/go.mod h1:smjE4dvqPX9Zldna+t5FG3rnoHhaB7QYxPRqGcpAD9w=
 github.com/NVIDIA/go-dcgm v0.0.0-20240315184911-5e46e1bcb05a h1:qFqfDLey3/IaM3JYLrRY33CKEwXEzzGeJsruDkHka4s=
 github.com/NVIDIA/go-dcgm v0.0.0-20240315184911-5e46e1bcb05a/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
+github.com/NVIDIA/go-dcgm v0.0.0-20240619211117-c0033eaed98e h1:xlrBVR72inSPNNoFaiQu8JUFsvl6Uil5nHGszWuTSLI=
+github.com/NVIDIA/go-dcgm v0.0.0-20240619211117-c0033eaed98e/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
+github.com/NVIDIA/go-dcgm v0.0.0-20240625142512-8d2180486ef7 h1:w7RrIrMWqt6upSVbqnDZRwAfk7dywseHXrKjHCBjXoU=
+github.com/NVIDIA/go-dcgm v0.0.0-20240625142512-8d2180486ef7/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
+github.com/NVIDIA/go-dcgm v0.0.0-20240702213448-784931ee1612 h1:V6R+2/SRN9bzRD0JehbX4ocrchX2iWLFc2N9ndkdRuM=
+github.com/NVIDIA/go-dcgm v0.0.0-20240702213448-784931ee1612/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
+github.com/NVIDIA/go-dcgm v0.0.0-20240724144738-f83cdef499b2 h1:vm3BjlVoMnvllesEylfk+TAY5OhMfYO2vocJMEmuLmk=
+github.com/NVIDIA/go-dcgm v0.0.0-20240724144738-f83cdef499b2/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
 github.com/NVIDIA/go-nvml v0.12.0-3 h1:QwfjYxEqIQVRhl8327g2Y3ZvKResPydpGSKtCIIK9jE=
 github.com/NVIDIA/go-nvml v0.12.0-3/go.mod h1:SOufGc5Wql+cxrIZ8RyJwVKDYxfbs4WPkHXqadcbfvA=
 github.com/Shopify/logrus-bugsnag v0.0.0-20171204204709-577dee27f20d h1:UrqY+r/OJnIp5u0s1SbQ8dVfLCZJsnvazdBP5hS4iRs=
