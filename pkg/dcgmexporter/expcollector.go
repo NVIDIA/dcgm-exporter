@@ -78,22 +78,12 @@ type expCollector struct {
 	labelFiller         func(map[string]string, int64) // Function to fill labels
 	windowSize          int                            // Window size
 	transformations     []Transform                    // Transformers for metric postprocessing
+	deviceGroups        []dcgm.GroupHandle
+	deviceFieldGroup    dcgm.FieldHandle
 }
 
 func (c *expCollector) getMetrics() (MetricsByCounter, error) {
-	fieldGroupIdx := expCollectorFieldGroupIdx.Add(1)
-
-	fieldGroupName := fmt.Sprintf("expCollectorFieldGroupName%d", fieldGroupIdx)
-	fieldsGroup, err := dcgm.FieldGroupCreate(fieldGroupName, c.counterDeviceFields)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		_ = dcgm.FieldGroupDestroy(fieldsGroup)
-	}()
-
-	err = dcgm.UpdateAllFields()
+	err := dcgm.UpdateAllFields()
 	if err != nil {
 		return nil, err
 	}
@@ -102,18 +92,19 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 
 	window := time.Now().Add(-time.Duration(c.windowSize) * time.Millisecond)
 
-	values, _, err := dcgm.GetValuesSince(dcgm.GroupAllGPUs(), fieldsGroup, window)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, val := range values {
-		if val.Status == 0 {
-			if _, exists := mapEntityIDToValues[val.EntityId]; !exists {
-				mapEntityIDToValues[val.EntityId] = map[int64]int{}
-			}
-			for _, v := range c.fieldValueParser(val.Int64()) {
-				mapEntityIDToValues[val.EntityId][v] += 1
+	for _, group := range c.deviceGroups {
+		values, _, err := dcgm.GetValuesSince(group, c.deviceFieldGroup, window)
+		if err != nil {
+			return nil, err
+		}
+		for _, val := range values {
+			if val.Status == 0 {
+				if _, exists := mapEntityIDToValues[val.EntityId]; !exists {
+					mapEntityIDToValues[val.EntityId] = map[int64]int{}
+				}
+				for _, v := range c.fieldValueParser(val.Int64()) {
+					mapEntityIDToValues[val.EntityId][v] += 1
+				}
 			}
 		}
 	}
@@ -258,7 +249,7 @@ func newExpCollector(
 
 	var err error
 
-	collector.cleanups, err = SetupDcgmFieldsWatch(collector.counterDeviceFields,
+	collector.deviceGroups, collector.deviceFieldGroup, collector.cleanups, err = SetupDcgmFieldsWatch(collector.counterDeviceFields,
 		collector.sysInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {

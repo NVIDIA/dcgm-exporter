@@ -56,7 +56,7 @@ func NewDCGMCollector(
 	collector.UseOldNamespace = config.UseOldNamespace
 	collector.ReplaceBlanksInModelName = config.ReplaceBlanksInModelName
 
-	cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
+	_, _, cleanups, err := SetupDcgmFieldsWatch(collector.DeviceFields,
 		fieldEntityGroupTypeSystemInfo.SystemInfo,
 		int64(config.CollectInterval)*1000)
 	if err != nil {

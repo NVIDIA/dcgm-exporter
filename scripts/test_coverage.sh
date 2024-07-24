@@ -1,4 +1,7 @@
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+#!/bin/bash
+
+#
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,19 +14,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
 
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: "dcgm-exporter"
-  labels:
-    app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "3.5.0"
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: "dcgm-exporter"
-      app.kubernetes.io/version: "3.5.0"
-  endpoints:
-  - port: "metrics"
-    path: "/metrics"
+echo "Running unit tests..."
+go test $(go list ./... | grep -v "/tests/e2e/") \
+  -count=1 \
+  -timeout 5m \
+  -covermode=count \
+  -coverprofile=unit_coverage.out \
+  -json > test_results.json
+
+echo "Merging coverage profiles..."
+gocovmerge unit_coverage.out > combined_coverage.out.tmp
+
+# Remove mocks from coverage
+cat combined_coverage.out.tmp | grep -v "mock_" > tests.cov
+
+# Cleanup
+rm combined_coverage.out.tmp unit_coverage.out

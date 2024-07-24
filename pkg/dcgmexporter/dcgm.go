@@ -81,7 +81,7 @@ func WatchFieldGroup(
 	return nil
 }
 
-func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collectIntervalUsec int64) ([]func(), error) {
+func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collectIntervalUsec int64) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
 	var err error
 	var cleanups []func()
 	var cleanup func()
@@ -120,12 +120,12 @@ func SetupDcgmFieldsWatch(deviceFields []dcgm.Short, sysInfo SystemInfo, collect
 		}
 	}
 
-	return cleanups, nil
+	return groups, fieldGroup, cleanups, nil
 
 fail:
 	for _, f := range cleanups {
 		f()
 	}
 
-	return nil, err
+	return nil, dcgm.FieldHandle{}, nil, err
 }
