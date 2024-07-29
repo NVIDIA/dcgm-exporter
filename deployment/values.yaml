@@ -138,15 +138,18 @@ extraHostVolumes: []
 #- name: host-binaries
 #  hostPath: /opt/bin
 
-extraConfigMapVolumes: []
-#- name: exporter-metrics-volume
-#  configMap:
-#    name: exporter-metrics-config-map
+extraConfigMapVolumes:
+  - name: exporter-metrics-volume
+    configMap:
+      name: exporter-metrics-config-map
+      items:
+      - key: metrics
+        path: dcp-metrics-included.csv
 
-extraVolumeMounts: []
-#- name: host-binaries
-#  mountPath: /opt/bin
-#  readOnly: true
+extraVolumeMounts:
+  - name: exporter-metrics-volume
+    mountPath: /etc/dcgm-exporter/dcp-metrics-included.csv
+    subPath: dcp-metrics-included.csv
 
 extraEnv: []
 #- name: EXTRA_VAR
