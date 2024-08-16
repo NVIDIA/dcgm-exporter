@@ -177,7 +177,7 @@ This project uses [docker buildx](https://docs.docker.com/buildx/working-with-bu
 
 Builds local images based on the machine architecture and makes them available in 'docker images'
 
-```
+```shell
 make local
 ```
 
