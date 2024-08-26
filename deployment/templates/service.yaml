@@ -27,6 +27,9 @@ metadata:
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
+  {{- if eq .Values.service.type "ClusterIP" }}
+  clusterIP: {{ .Values.service.clusterIP | quote }}
+  {{- end }}
   ports:
   - name: "metrics"
     port: {{ .Values.service.port }}
