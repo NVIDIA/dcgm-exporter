@@ -1,6 +1,7 @@
 *.swp
 *.swo
 dcgm-exporter
+!/cmd/dcgm-exporter
 !etc/
 !deployment/
 .env
