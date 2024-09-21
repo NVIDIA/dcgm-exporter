@@ -107,6 +107,7 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 serviceMonitor:
+  apiVersion: "monitoring.coreos.com/v1"
   enabled: true
   interval: 15s
   honorLabels: false
