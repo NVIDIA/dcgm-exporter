@@ -93,6 +93,7 @@ service:
   # When enabled, the helm chart will create service
   enable: true
   type: ClusterIP
+  clusterIP: ""
   port: 9400
   address: ":9400"
   # Annotations to add to the service
