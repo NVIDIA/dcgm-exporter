@@ -47,6 +47,8 @@ spec:
         securityContext:
           runAsNonRoot: false
           runAsUser: 0
+          capabilities:
+            add: ["SYS_ADMIN"]
         volumeMounts:
         - name: "pod-gpu-resources"
           readOnly: true
