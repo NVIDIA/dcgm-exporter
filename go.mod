@@ -4,6 +4,8 @@ go 1.22.0
 
 toolchain go1.22.5
 
+replace github.com/NVIDIA/go-dcgm => gitlab-master.nvidia.com/dcgm/go-dcgm v0.0.0-20241030191717-3df29d8ccb68
+
 require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20240724144738-f83cdef499b2
 	github.com/NVIDIA/go-nvml v0.12.0-3

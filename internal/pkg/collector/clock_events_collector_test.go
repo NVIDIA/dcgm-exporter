@@ -192,7 +192,7 @@ func TestNewClockEventsCollector(t *testing.T) {
 				hostname string, config *appconfig.Config,
 				deviceWatchList devicewatchlistmanager.WatchList,
 			) Collector {
-				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
+				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
 				return &clockEventsCollector{
 					expCollector{
 						baseExpCollector: baseExpCollector{
@@ -231,7 +231,7 @@ func TestNewClockEventsCollector(t *testing.T) {
 				hostname string, config *appconfig.Config,
 				deviceWatchList devicewatchlistmanager.WatchList,
 			) Collector {
-				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
+				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
 				return &clockEventsCollector{
 					expCollector{
 						baseExpCollector: baseExpCollector{

@@ -17,11 +17,11 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 3.3.6-3.4.2-ubuntu22.04
+  tag: 4.0.0-4.0.0-ubuntu22.04
 
 # Change the following reference to "/etc/dcgm-exporter/default-counters.csv"
 # to stop profiling metrics from DCGM
-arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
+arguments: ["-f", "/etc/dcgm-exporter/default-counters.csv"]
 # NOTE: in general, add any command line arguments to arguments above
 # and they will be passed through.
 # Use "-r", "<HOST>:<PORT>" to connect to an already running hostengine
@@ -146,12 +146,12 @@ extraConfigMapVolumes:
       name: exporter-metrics-config-map
       items:
       - key: metrics
-        path: dcp-metrics-included.csv
+        path: default-counters.csv
 
 extraVolumeMounts:
   - name: exporter-metrics-volume
-    mountPath: /etc/dcgm-exporter/dcp-metrics-included.csv
-    subPath: dcp-metrics-included.csv
+    mountPath: /etc/dcgm-exporter/default-counters.csv
+    subPath: default-counters.csv
 
 extraEnv: []
 #- name: EXTRA_VAR

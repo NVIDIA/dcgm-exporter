@@ -41,7 +41,6 @@ test-main:
 install: binary
 	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
-	install -m 644 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
 check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
@@ -61,13 +60,13 @@ endif
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 

@@ -23,16 +23,6 @@ github.com/Microsoft/go-winio v0.6.1 h1:9/kr64B9VUZrLm5YYwbGtUJnMgqWVOdUAXu6Migc
 github.com/Microsoft/go-winio v0.6.1/go.mod h1:LRdKpFKfdobln8UmuiYcKPot9D2v6svN5+sAH+4kjUM=
 github.com/Microsoft/hcsshim v0.11.4 h1:68vKo2VN8DE9AdN4tnkWnmdhqdbpUFM8OF3Airm7fz8=
 github.com/Microsoft/hcsshim v0.11.4/go.mod h1:smjE4dvqPX9Zldna+t5FG3rnoHhaB7QYxPRqGcpAD9w=
-github.com/NVIDIA/go-dcgm v0.0.0-20240315184911-5e46e1bcb05a h1:qFqfDLey3/IaM3JYLrRY33CKEwXEzzGeJsruDkHka4s=
-github.com/NVIDIA/go-dcgm v0.0.0-20240315184911-5e46e1bcb05a/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
-github.com/NVIDIA/go-dcgm v0.0.0-20240619211117-c0033eaed98e h1:xlrBVR72inSPNNoFaiQu8JUFsvl6Uil5nHGszWuTSLI=
-github.com/NVIDIA/go-dcgm v0.0.0-20240619211117-c0033eaed98e/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
-github.com/NVIDIA/go-dcgm v0.0.0-20240625142512-8d2180486ef7 h1:w7RrIrMWqt6upSVbqnDZRwAfk7dywseHXrKjHCBjXoU=
-github.com/NVIDIA/go-dcgm v0.0.0-20240625142512-8d2180486ef7/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
-github.com/NVIDIA/go-dcgm v0.0.0-20240702213448-784931ee1612 h1:V6R+2/SRN9bzRD0JehbX4ocrchX2iWLFc2N9ndkdRuM=
-github.com/NVIDIA/go-dcgm v0.0.0-20240702213448-784931ee1612/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
-github.com/NVIDIA/go-dcgm v0.0.0-20240724144738-f83cdef499b2 h1:vm3BjlVoMnvllesEylfk+TAY5OhMfYO2vocJMEmuLmk=
-github.com/NVIDIA/go-dcgm v0.0.0-20240724144738-f83cdef499b2/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
 github.com/NVIDIA/go-nvml v0.12.0-3 h1:QwfjYxEqIQVRhl8327g2Y3ZvKResPydpGSKtCIIK9jE=
 github.com/NVIDIA/go-nvml v0.12.0-3/go.mod h1:SOufGc5Wql+cxrIZ8RyJwVKDYxfbs4WPkHXqadcbfvA=
 github.com/Shopify/logrus-bugsnag v0.0.0-20171204204709-577dee27f20d h1:UrqY+r/OJnIp5u0s1SbQ8dVfLCZJsnvazdBP5hS4iRs=
@@ -386,6 +376,8 @@ github.com/yvasiyarov/gorelic v0.0.0-20141212073537-a9bba5b9ab50 h1:hlE8//ciYMzt
 github.com/yvasiyarov/gorelic v0.0.0-20141212073537-a9bba5b9ab50/go.mod h1:NUSPSUX/bi6SeDMUh6brw0nXpxHnc96TguQh0+r/ssA=
 github.com/yvasiyarov/newrelic_platform_go v0.0.0-20140908184405-b21fdbd4370f h1:ERexzlUfuTvpE74urLSbIQW0Z/6hF9t8U4NsJLaioAY=
 github.com/yvasiyarov/newrelic_platform_go v0.0.0-20140908184405-b21fdbd4370f/go.mod h1:GlGEuHIJweS1mbCqG+7vt2nvWLzLLnRHbXz5JKd/Qbg=
+gitlab-master.nvidia.com/dcgm/go-dcgm v0.0.0-20241030191717-3df29d8ccb68 h1:t+TOlSl94LLT/mEQUJbNZpLvKxjtdC6b63Si7wyJZYg=
+gitlab-master.nvidia.com/dcgm/go-dcgm v0.0.0-20241030191717-3df29d8ccb68/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
 go.opencensus.io v0.24.0 h1:y73uSU6J157QMP2kn2r30vwW1A2W2WFwSCGnAVxeaD0=
 go.opencensus.io v0.24.0/go.mod h1:vNK8G9p7aAivkbmorf4v+7Hgx+Zs0yY+0fOtgBfjQKo=
 go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.46.1 h1:aFJWCqJMNjENlcleuuOkGAPH82y0yULBScfXcIEdS24=

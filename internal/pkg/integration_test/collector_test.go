@@ -142,7 +142,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 
 	allCounters := []counters.Counter{
 		{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		},
 	}
 
@@ -243,7 +243,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 
 	for i, gpuID := range gpuIDs {
 		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
 			time.Now().Add(-time.Duration(i)*time.Second).UnixMicro(),
@@ -252,7 +252,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		require.NoError(t, err)
 
 		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
 			time.Now().Add(-time.Duration(i)*time.Second).UnixMicro(),
@@ -261,7 +261,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		require.NoError(t, err)
 
 		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
 			time.Now().Add(-time.Duration(i)*time.Second).UnixMicro(),
@@ -296,7 +296,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 
 	allCounters := []counters.Counter{
 		{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		},
 	}
 
@@ -401,7 +401,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	require.Len(t, gpuIDs, 1)
 	gpuID := gpuIDs[0]
 	err = dcgmprovider.Client().InjectFieldValue(gpuID,
-		dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		dcgm.DCGM_FT_INT64,
 		0,
 		time.Now().Add(-time.Duration(1)*time.Second).UnixMicro(),
@@ -432,7 +432,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	allCounters := []counters.Counter{
 		{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		},
 	}
 
@@ -520,7 +520,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 
 	gpuID := gpuIDs[0]
 	err = dcgmprovider.Client().InjectFieldValue(gpuID,
-		dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		dcgm.DCGM_FT_INT64,
 		0,
 		time.Now().Add(-time.Duration(1)*time.Second).UnixMicro(),
@@ -539,7 +539,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 
 	allCounters := []counters.Counter{
 		{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		},
 	}
 
@@ -669,7 +669,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 
 	allCounters := []counters.Counter{
 		{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		},
 	}
 
@@ -809,7 +809,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 
 	allCounters := []counters.Counter{
 		{
-			FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+			FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		},
 	}
 

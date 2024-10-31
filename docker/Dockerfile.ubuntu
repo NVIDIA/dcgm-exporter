@@ -1,8 +1,8 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.5.0-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.6.1-base-ubuntu22.04
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
-ARG GOLANG_VERSION=1.22.4
+ARG GOLANG_VERSION=1.22.5
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN apt-get update \
@@ -72,18 +72,18 @@ COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-	datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl \
-	&& apt-get -y clean \
-	&& apt-get -y autoclean \
-	&& apt-get autoremove -y \
-	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
-	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
-	&& rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
-	&& rm -rf /usr/local/dcgm/scripts \
-	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
-	&& rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
-	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
+#RUN apt-get update && apt-get install -y --no-install-recommends \
+#	datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl \
+#	&& apt-get -y clean \
+#	&& apt-get -y autoclean \
+#	&& apt-get autoremove -y \
+#	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
+#	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
+#	&& rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
+#	&& rm -rf /usr/local/dcgm/scripts \
+#	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
+#	&& rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
+#	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit

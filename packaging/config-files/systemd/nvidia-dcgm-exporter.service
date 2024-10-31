@@ -25,7 +25,7 @@ PrivateTmp=false
 StandardOutput=append:/var/dcgm-exporter.log
 StandardError=append:/var/dcgm-exporter.log
 
-ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/dcp-metrics-included.csv
+ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/default-counters.csv
 
 Restart=on-abort
 

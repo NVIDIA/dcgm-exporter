@@ -417,10 +417,10 @@ func appendDCGMClockEventsCountDependency(
 ) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
 		if containsField(cs.ExporterCounters, counters.DCGMClockEventsCount) &&
-			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS) {
+			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS) {
 			allCounters = append(allCounters,
 				counters.Counter{
-					FieldID: dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS,
+					FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 				})
 		}
 	}

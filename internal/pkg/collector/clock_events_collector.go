@@ -99,7 +99,7 @@ func NewClockEventsCollector(
 
 	collector := clockEventsCollector{}
 	var err error
-	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS})
+	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
 
 	collector.expCollector, err = newExpCollector(
 		counterList.LabelCounters(),
