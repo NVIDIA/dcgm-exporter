@@ -69,7 +69,7 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 	for _, entityType := range entityTypes {
 		if len(cf.counterSet.DCGMCounters) > 0 {
 			entityWatchList, exists := cf.deviceWatchListManager.EntityWatchList(entityType)
-			if !exists {
+			if !exists || len(entityWatchList.DeviceFields()) == 0 {
 				continue
 			}
 
