@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/cuda:12.6.1-base-ubuntu22.04 AS builder
+FROM nvcr.io/nvidia/cuda:12.6.2-base-ubuntu22.04 AS builder
 ARG GOLANG_VERSION=1.22.4
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN set -eux; \
@@ -45,7 +45,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM nvcr.io/nvidia/cuda:12.6.1-base-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:12.6.2-base-ubuntu22.04
 
 ARG VERSION
 ARG DCGM_VERSION
