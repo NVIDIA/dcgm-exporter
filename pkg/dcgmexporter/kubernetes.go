@@ -105,13 +105,9 @@ func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error 
 }
 
 func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx,
+	conn, err := grpc.NewClient(
 		socket,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			d := net.Dialer{}
 			return d.DialContext(ctx, "unix", addr)
