@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/cuda:12.6.1-base-ubi9 AS builder
+FROM nvcr.io/nvidia/cuda:12.6.2-base-ubi9 AS builder
 ARG GOLANG_VERSION=1.22.4
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN set -eux; \
@@ -40,7 +40,7 @@ COPY . .
 
 RUN make binary check-format
 
-FROM nvcr.io/nvidia/cuda:12.6.1-base-ubi9
+FROM nvcr.io/nvidia/cuda:12.6.2-base-ubi9
 ARG DCGM_VERSION
 ARG VERSION
 ARG DIST_DIR
@@ -63,7 +63,8 @@ RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ub
 	&& rm -rf /usr/local/dcgm/scripts \
 	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
 	&& rm -rf /var/lib/rpm/rpmdb.sqlite /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \
-	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
+	&& rm -rf /usr/share/doc && rm -rf /usr/share/man \
+	&& dnf remove openssl
 
 COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /go/src/github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter/dcgm-exporter /usr/bin/
