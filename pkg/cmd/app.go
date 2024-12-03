@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime"
@@ -17,7 +18,6 @@ import (
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -267,7 +267,8 @@ func NewApp(buildVersion ...string) *cli.App {
 		})
 	} else {
 		err := "dcgm-exporter is only supported on Linux."
-		logrus.Fatal(err)
+		slog.Error(err)
+		fatal()
 		return nil
 	}
 
@@ -276,6 +277,10 @@ func NewApp(buildVersion ...string) *cli.App {
 	}
 
 	return c
+}
+
+func fatal() {
+	os.Exit(1)
 }
 
 func newOSWatcher(sigs ...os.Signal) chan os.Signal {
@@ -292,7 +297,7 @@ func action(c *cli.Context) (err error) {
 		// during initialization and return an error.
 		defer func() {
 			if r := recover(); r != nil {
-				logrus.WithField(StackTrace, string(debug.Stack())).Error("Encountered a failure.")
+				slog.Error("Encountered a failure.", slog.String(StackTrace, string(debug.Stack())))
 				err = fmt.Errorf("encountered a failure; err: %v", r)
 			}
 		}()
@@ -308,7 +313,7 @@ restart:
 		version = c.App.Version
 	}
 
-	logrus.WithField("Version", version).Info("Starting dcgm-exporter")
+	slog.Info("Starting dcgm-exporter", slog.String("Version", version))
 
 	config, err := contextToConfig(c)
 	if err != nil {
@@ -326,13 +331,13 @@ restart:
 	dcgmprovider.Initialize(config)
 	defer dcgmprovider.Client().Cleanup()
 
-	logrus.Info("DCGM successfully initialized!")
+	slog.Info("DCGM successfully initialized!")
 
 	// Initialize NVML Provider Instance
 	nvmlprovider.Initialize()
 	defer nvmlprovider.Client().Cleanup()
 
-	logrus.Info("NVML provider successfully initialized!")
+	slog.Info("NVML provider successfully initialized!")
 
 	fillConfigMetricGroups(config)
 
@@ -377,7 +382,8 @@ restart:
 	cancel()
 	err = utils.WaitWithTimeout(&wg, time.Second*2)
 	if err != nil {
-		logrus.Fatal(err)
+		slog.Error(err.Error())
+		fatal()
 	}
 
 	if sig == syscall.SIGHUP {
@@ -405,7 +411,7 @@ func startDeviceWatchListManager(
 	for _, deviceType := range devicewatchlistmanager.DeviceTypesToWatch {
 		err := deviceWatchListManager.CreateEntityWatchList(deviceType, deviceWatcher, int64(config.CollectInterval))
 		if err != nil {
-			logrus.Infof("Not collecting %s metrics; %s", deviceType.String(), err)
+			slog.Info(fmt.Sprintf("Not collecting %s metrics; %s", deviceType.String(), err))
 		}
 	}
 	return deviceWatchListManager
@@ -452,7 +458,8 @@ func containsField(slice []counters.Counter, fieldID counters.ExporterCounter) b
 func getCounters(config *appconfig.Config) *counters.CounterSet {
 	cs, err := counters.GetCounterSet(config)
 	if err != nil {
-		logrus.Fatal(err)
+		slog.Error(err.Error())
+		os.Exit(1)
 	}
 
 	// Copy labels from DCGM Counters to ExporterCounters
@@ -469,9 +476,9 @@ func fillConfigMetricGroups(config *appconfig.Config) {
 	groups, err := dcgmprovider.Client().GetSupportedMetricGroups(0)
 	if err != nil {
 		config.CollectDCP = false
-		logrus.Info("Not collecting DCP metrics: ", err)
+		slog.Info("Not collecting DCP metrics: " + err.Error())
 	} else {
-		logrus.Info("Collecting DCP Metrics")
+		slog.Info("Collecting DCP Metrics")
 		config.MetricGroups = groups
 	}
 }
@@ -479,13 +486,13 @@ func fillConfigMetricGroups(config *appconfig.Config) {
 func enableDebugLogging(config *appconfig.Config) {
 	if config.Debug {
 		// enable debug logging
-		logrus.SetLevel(logrus.DebugLevel)
-		logrus.Debug("Debug output is enabled")
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+		slog.Debug("Debug output is enabled")
 	}
 
-	logrus.Debugf("Command line: %s", strings.Join(os.Args, " "))
+	slog.Debug(fmt.Sprintf("Command line: %s", strings.Join(os.Args, " ")))
 
-	logrus.WithField(DumpKey, fmt.Sprintf("%+v", config)).Debug("Loaded configuration")
+	slog.Debug("Loaded configuration", slog.String(DumpKey, fmt.Sprintf("%+v", config)))
 }
 
 func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {

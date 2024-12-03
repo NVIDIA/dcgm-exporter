@@ -33,6 +33,7 @@ type OS interface {
 	Stat(name string) (os.FileInfo, error)
 	TempDir() string
 	ReadDir(name string) ([]os.DirEntry, error)
+	Exit(code int)
 }
 
 type RealOS struct{}
@@ -80,3 +81,5 @@ func (RealOS) Remove(name string) error {
 func (RealOS) ReadDir(name string) ([]os.DirEntry, error) {
 	return os.ReadDir(name)
 }
+
+func (RealOS) Exit(code int) { os.Exit(code) }

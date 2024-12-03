@@ -5,8 +5,8 @@ FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 ARG GOLANG_VERSION=1.22.5
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends \
+RUN apt-get -qq update \
+	&& apt-get -qq install -y --no-install-recommends \
 	wget \
 	ca-certificates \
 	git \
@@ -16,8 +16,6 @@ RUN apt-get update \
 	qemu-user \
 	qemu-system-arm \
 	libc6-dev-arm64-cross \
-	&& apt-get autoremove -y \
-	&& rm -rf /var/lib/apt/lists/* \
 	&& ln -sf /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
 
 RUN set -eux; \
@@ -32,33 +30,33 @@ RUN set -eux; \
 	;; \
 	*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
 	esac; \
-	wget -O go.tgz "$url" --progress=dot:giga; \
+	wget -q -O go.tgz "$url"; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz;
-ENV GOTOOLCHAIN local
-ENV GOPATH /go
-ENV PATH $GOPATH/bin:$PATH
+ENV GOTOOLCHAIN=local GOPATH=/go
+ENV PATH=$GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
-ENV PATH $PATH:/usr/local/go/bin
+ENV PATH=$PATH:/usr/local/go/bin
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
+# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
 ARG TARGETOS
 ARG TARGETARCH
-# when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
 	export CC=aarch64-linux-gnu-gcc; \
 	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
 	fi && \
-	export GOOS=$TARGETOS && \
-	export GOARCH=$TARGETARCH &&  \
-	export CGO_ENABLED=1 && \
-	go clean -cache -modcache &&\
-	make install
+	GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=1 make install
+RUN apt-get update && apt-get install -y file && rm -rf /var/lib/apt/lists/*
+RUN file /usr/bin/dcgm-exporter
 
-FROM ${BASEIMAGE}
+FROM --platform=$TARGETARCH ${BASEIMAGE}
 
 ARG VERSION
 ARG DCGM_VERSION
 ARG DIST_DIR
+ARG TARGETARCH
 
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 LABEL name="NVIDIA DCGM Exporter"
@@ -71,27 +69,29 @@ LABEL description="See summary"
 COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
-
-#RUN apt-get update && apt-get install -y --no-install-recommends \
-#	datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin && apt-get purge --autoremove -y openssl \
-#	&& apt-get -y clean \
-#	&& apt-get -y autoclean \
-#	&& apt-get autoremove -y \
-#	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
-#	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
-#	&& rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
-#	&& rm -rf /usr/local/dcgm/scripts \
-#	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
-#	&& rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
-#	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
+ENV DEBIAN_FRONTEND=noninteractive
+RUN echo "$TARGETARCH" && apt-get -qq update && apt-get -qq install -y --no-install-recommends \
+    datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin \
+    && apt-get -qq purge --autoremove -y openssl \
+    && apt-get -qq -y clean \
+    && apt-get -qq -y autoclean \
+    && apt-get -qq autoremove -y \
+    && rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
+    # DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
+    && rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
+    && rm -rf /usr/local/dcgm/scripts \
+    && rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
+    && rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
+    && rm -rf /usr/share/doc && rm -rf /usr/share/man
 # Required for DCP metrics
-ENV NVIDIA_DRIVER_CAPABILITIES compute,utility,compat32
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
-ENV NVIDIA_DISABLE_REQUIRE "true"
-ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DISABLE_REQUIRE="true"
+ENV NVIDIA_VISIBLE_DEVICES=all
 
-ENV NO_SETCAP ""
+ENV NO_SETCAP=""
 COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
+RUN uname -a
 RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]

@@ -26,10 +26,9 @@ package transformation
 import (
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	collector "github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockTransform is a mock of Transform interface.

@@ -26,11 +26,10 @@ package devicewatchlistmanager
 import (
 	reflect "reflect"
 
-	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	gomock "go.uber.org/mock/gomock"
-
 	devicewatcher "github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	devicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockManager is a mock of Manager interface.

@@ -16,9 +16,10 @@ GO_CMD ?= go
 NAMESPACE ?= "dcgm-exporter"
 CHART ?= "./../../deployment/"
 IMAGE_REPOSITORY ?= "nvcr.io/nvidia/k8s/dcgm-exporter"
-IMAGE_TAG ?= "4.0.0-4.0.0-ubuntu22.04"
+IMAGE_TAG ?= "3.3.9-4.0.0-ubuntu22.04"
 KUBECONFIG ?= "~/.kube/config"
 RUNTIME_CLASS ?= ""
+NO_CLEANUP ?= "false"
 
 define TEST_CMD
 	@if [ -z ${KUBECONFIG} ]; then \
@@ -34,7 +35,8 @@ define TEST_CMD
 		-namespace=$(NAMESPACE) \
 		-image-repository=$(IMAGE_REPOSITORY) \
 		-image-tag=$(IMAGE_TAG) \
-		-runtime-class=$(RUNTIME_CLASS)
+		-runtime-class=$(RUNTIME_CLASS) \
+		-no-cleanup=$(NO_CLEANUP)
 endef
 
 .PHONY: e2e-test

@@ -26,11 +26,10 @@ package devicewatcher
 import (
 	reflect "reflect"
 
-	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	gomock "go.uber.org/mock/gomock"
-
 	counters "github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockWatcher is a mock of Watcher interface.

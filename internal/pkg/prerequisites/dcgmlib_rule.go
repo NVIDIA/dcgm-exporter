@@ -19,9 +19,8 @@ package prerequisites
 import (
 	debugelf "debug/elf"
 	"fmt"
+	"log/slog"
 	"strings"
-
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -58,7 +57,7 @@ func (c dcgmLibExistsRule) Validate() error {
 			if err != nil {
 				// When datacenter-gpu-manager uninstalled, the ldconfig -p may return that the libdcgm.so is present,
 				// but the library file was removed.
-				logrus.Error(err)
+				slog.Error(err.Error())
 				return errLibdcgmNotFound
 			}
 
@@ -80,7 +79,7 @@ func (c dcgmLibExistsRule) readELF(name string) (debugelf.Machine, error) {
 		return 0, fmt.Errorf("could not open %s: %v", name, err)
 	}
 	if err := elfFile.Close(); err != nil {
-		logrus.Warnf("could not close ELF: %v", err)
+		slog.Warn(fmt.Sprintf("could not close ELF: %v", err))
 	}
 
 	return elfFile.Machine, nil

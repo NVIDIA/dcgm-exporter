@@ -18,10 +18,10 @@ package collector
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -93,7 +93,7 @@ func NewClockEventsCollector(
 	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
 	if !IsDCGMExpClockEventsCountEnabled(counterList) {
-		logrus.Error(counters.DCGMExpClockEventsCount + " collector is disabled")
+		slog.Error(counters.DCGMExpClockEventsCount + " collector is disabled")
 		return nil, fmt.Errorf(counters.DCGMExpClockEventsCount + " collector is disabled")
 	}
 

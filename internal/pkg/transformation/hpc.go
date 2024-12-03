@@ -18,15 +18,16 @@ package transformation
 
 import (
 	"bufio"
+	"fmt"
+	"log/slog"
 	sysOS "os"
 	"path"
 	"strconv"
 
-	"github.com/sirupsen/logrus"
-
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
@@ -35,7 +36,7 @@ type hpcMapper struct {
 }
 
 func newHPCMapper(c *appconfig.Config) *hpcMapper {
-	logrus.Infof("HPC job mapping is enabled and watch for the %q directory", c.HPCJobMappingDir)
+	slog.Info(fmt.Sprintf("HPC job mapping is enabled and watch for the %q directory", c.HPCJobMappingDir))
 	return &hpcMapper{
 		Config: c,
 	}
@@ -48,8 +49,8 @@ func (p *hpcMapper) Name() string {
 func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
 	_, err := os.Stat(p.Config.HPCJobMappingDir)
 	if err != nil {
-		logrus.WithError(err).Warnf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.",
-			p.Config.HPCJobMappingDir)
+		slog.Error(fmt.Sprintf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.",
+			p.Config.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
 		return nil
 	}
 
@@ -60,7 +61,7 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 
 	gpuToJobMap := make(map[string][]string)
 
-	logrus.Debugf("HPC job mapping files: %#v", gpuFiles)
+	slog.Debug(fmt.Sprintf("HPC job mapping files: %#v", gpuFiles))
 
 	for _, gpuFileName := range gpuFiles {
 		jobs, err := readFile(path.Join(p.Config.HPCJobMappingDir, gpuFileName))
@@ -74,7 +75,7 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 		gpuToJobMap[gpuFileName] = append(gpuToJobMap[gpuFileName], jobs...)
 	}
 
-	logrus.Debugf("GPU to job mapping: %+v", gpuToJobMap)
+	slog.Debug(fmt.Sprintf("GPU to job mapping: %+v", gpuToJobMap))
 
 	for counter := range metrics {
 		var modifiedMetrics []collector.Metric
@@ -84,7 +85,8 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 				for _, job := range jobs {
 					modifiedMetric, err := utils.DeepCopy(metric)
 					if err != nil {
-						logrus.WithError(err).Errorf("Can not create deepCopy for the value: %v", metric)
+						slog.Error(fmt.Sprintf("Can not create deepCopy for the value: %v", metric),
+							slog.String(logging.ErrorKey, err.Error()))
 						continue
 					}
 					modifiedMetric.Attributes[hpcJobAttribute] = job
@@ -110,7 +112,8 @@ func readFile(path string) ([]string, error) {
 	defer func(file *sysOS.File) {
 		err := file.Close()
 		if err != nil {
-			logrus.WithError(err).Errorf("Failed for close the file: %s", file.Name())
+			slog.Error(fmt.Sprintf("Failed for close the file: %s", file.Name()),
+				slog.String(logging.ErrorKey, err.Error()))
 		}
 	}(file)
 
@@ -136,25 +139,25 @@ func getGPUFiles(dirPath string) ([]string, error) {
 		return nil, err
 	}
 
-	logrus.Debugf("hpc mapper: %d files in the %q found", len(files), dirPath)
+	slog.Debug(fmt.Sprintf("hpc mapper: %d files in the %q found", len(files), dirPath))
 
 	var mappingFiles []string
 
 	for _, file := range files {
 		finfo, err := file.Info()
 		if err != nil {
-			logrus.Warnf("HPC mapper: can not get file info for the %s file.", file.Name())
+			slog.Warn(fmt.Sprintf("HPC mapper: can not get file info for the %s file.", file.Name()))
 			continue // Skip files that we can't read
 		}
 
 		if finfo.IsDir() {
-			logrus.Debugf("HPC mapper: the %q file is directory", file.Name())
+			slog.Debug(fmt.Sprintf("HPC mapper: the %q file is directory", file.Name()))
 			continue // Skip directories
 		}
 
 		_, err = strconv.Atoi(file.Name())
 		if err != nil {
-			logrus.Debugf("HPC mapper: file %q name doesn't match with GPU ID convention", file.Name())
+			slog.Debug(fmt.Sprintf("HPC mapper: file %q name doesn't match with GPU ID convention", file.Name()))
 			continue
 		}
 		mappingFiles = append(mappingFiles, file.Name())

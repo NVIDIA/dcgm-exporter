@@ -17,11 +17,12 @@
 package devicewatcher
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -249,10 +250,10 @@ func createGroup() (dcgm.GroupHandle, func(), error) {
 	cleanup := func() {
 		destroyErr := dcgmprovider.Client().DestroyGroup(groupID)
 		if destroyErr != nil && !strings.Contains(destroyErr.Error(), DCGM_ST_NOT_CONFIGURED) {
-			logrus.WithFields(logrus.Fields{
-				GroupIDKey:      groupID,
-				logrus.ErrorKey: destroyErr,
-			}).Warn("cannot destroy group")
+			slog.LogAttrs(context.Background(), slog.LevelWarn, "cannot destroy group",
+				slog.Any(GroupIDKey, groupID),
+				slog.String(ErrorKey, destroyErr.Error()),
+			)
 		}
 	}
 	return groupID, cleanup, nil
@@ -273,7 +274,9 @@ func newFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	cleanup := func() {
 		err := dcgmprovider.Client().FieldGroupDestroy(fieldGroup)
 		if err != nil {
-			logrus.WithError(err).Warn("Cannot destroy field group.")
+			slog.Warn("Cannot destroy field group.",
+				slog.String(ErrorKey, err.Error()),
+			)
 		}
 	}
 

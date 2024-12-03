@@ -26,11 +26,10 @@ package deviceinfo
 import (
 	reflect "reflect"
 
-	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	gomock "go.uber.org/mock/gomock"
-
 	appconfig "github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockProvider is a mock of Provider interface.

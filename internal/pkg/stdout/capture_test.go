@@ -20,11 +20,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -61,19 +60,36 @@ func TestCapture(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Create a buffer to capture stdout output
+			var buf bytes.Buffer
+
+			// Save the original stdout
+			stdout := os.Stdout
+
+			// Create a pipe to redirect stdout
+			r, w, err := os.Pipe()
+			assert.NoError(t, err)
+
+			os.Stdout = w // Redirect stdout to the write end of the pipe
+
 			ctx, cancel := context.WithCancel(context.Background())
-
-			buf := &bytes.Buffer{}
-			logrus.SetOutput(buf)
-
-			err := Capture(ctx, func() error {
+			err = Capture(ctx, func() error {
 				fmt.Println(tc.logMessage)
 				return nil
 			})
 
 			assert.NoError(t, err)
-			time.Sleep(1 * time.Millisecond)
-			tc.assert(t, buf.String())
+
+			// Close the write end of the pipe to allow reading all data
+			_ = w.Close()
+			os.Stdout = stdout // Restore original stdout
+
+			// Read from the pipe directly into the buffer
+			_, err = buf.ReadFrom(r)
+			assert.NoError(t, err)
+			if tc.assert != nil {
+				tc.assert(t, buf.String())
+			}
 			cancel()
 		})
 	}

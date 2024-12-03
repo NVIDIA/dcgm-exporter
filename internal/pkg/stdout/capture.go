@@ -19,13 +19,12 @@ package stdout
 import (
 	"bufio"
 	"context"
+	"log/slog"
 	"os"
 	"syscall"
-
-	"github.com/sirupsen/logrus"
 )
 
-// Capture go and C stdout and stderr and writes to logrus.StandardLogger
+// Capture go and C stdout and stderr and writes to std output
 func Capture(ctx context.Context, inner func() error) error {
 	stdout, err := syscall.Dup(syscall.Stdout)
 	if err != nil {
@@ -63,13 +62,13 @@ func Capture(ctx context.Context, inner func() error) error {
 			logEntry := scanner.Text()
 			parsedLogEntry := parseOutputEntry(logEntry)
 			if parsedLogEntry.IsRawString {
-				_, err := logrus.StandardLogger().Out.Write([]byte(parsedLogEntry.Message + "\n"))
+				_, err := os.Stdout.Write([]byte(parsedLogEntry.Message + "\n"))
 				if err != nil {
 					return
 				}
 				continue
 			}
-			logrus.WithField("dcgm_level", parsedLogEntry.Level).Info(parsedLogEntry.Message)
+			slog.LogAttrs(ctx, slog.LevelInfo, parsedLogEntry.Message, slog.String("dcgm_level", parsedLogEntry.Level))
 		}
 	}()
 

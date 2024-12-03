@@ -20,13 +20,14 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/exporter-toolkit/web"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
@@ -77,7 +78,7 @@ func NewMetricsServer(
 			</body>
 			</html>`))
 		if err != nil {
-			logrus.WithError(err).Error("Failed to write response.")
+			slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
 			http.Error(w, internalServerError, http.StatusInternalServerError)
 			return
 		}
@@ -91,16 +92,15 @@ func NewMetricsServer(
 
 func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 	defer wg.Done()
-	// Wrap the logrus logger with the LogrusAdapter
-	logger := logging.NewLogrusAdapter(logrus.StandardLogger())
 
 	var httpwg sync.WaitGroup
 	httpwg.Add(1)
 	go func() {
 		defer httpwg.Done()
-		logrus.Info("Starting webserver")
-		if err := web.ListenAndServe(s.server, s.webConfig, logger); err != nil && err != http.ErrServerClosed {
-			logrus.WithError(err).Fatal("Failed to Listen and Server HTTP server.")
+		slog.Info("Starting webserver")
+		if err := web.ListenAndServe(s.server, s.webConfig, slog.Default()); err != nil && err != http.ErrServerClosed {
+			slog.Error("Failed to Listen and Server HTTP server.", slog.String(logging.ErrorKey, err.Error()))
+			os.Exit(1)
 		}
 	}()
 
@@ -117,19 +117,25 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 
 	<-stop
 	if err := s.server.Shutdown(context.Background()); err != nil {
-		logrus.WithError(err).Fatal("Failed to shutdown HTTP server.")
+		slog.Error("Failed to shutdown HTTP server.", slog.String(logging.ErrorKey, err.Error()))
+		s.fatal()
 	}
 
 	if err := utils.WaitWithTimeout(&httpwg, 3*time.Second); err != nil {
-		logrus.WithError(err).Fatal("Failed waiting for HTTP server to shutdown.")
+		slog.Error("Failed waiting for HTTP server to shutdown.", slog.String(logging.ErrorKey, err.Error()))
+		s.fatal()
 	}
+}
+
+func (s *MetricsServer) fatal() {
+	os.Exit(1)
 }
 
 func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	metricGroups, err := s.registry.Gather()
 	if err != nil {
-		logrus.WithError(err).Error("Failed to gather metrics from collectors")
+		slog.Error("Failed to gather metrics from collectors", slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, internalServerError, http.StatusInternalServerError)
 		return
 	}
@@ -141,7 +147,7 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 	}
 	_, err = w.Write(buf.Bytes())
 	if err != nil {
-		logrus.WithError(err).Error("Failed to write response.")
+		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}
@@ -154,25 +160,24 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 			for _, transformation := range s.transformations {
 				err := transformation.Process(metrics, deviceWatchList.DeviceInfo())
 				if err != nil {
-					logrus.WithError(err).
-						WithFields(logrus.Fields{
-							logging.FieldEntityGroupKey: group.String(),
-							logging.MetricsKey:          metrics,
-							logging.DeviceInfoKey:       deviceWatchList.DeviceInfo,
-						}).
-						Error("Failed to apply transformations on metrics")
+					slog.LogAttrs(context.Background(), slog.LevelError, "Failed to apply transformations on metrics",
+						slog.String(logging.ErrorKey, err.Error()),
+						slog.String(logging.FieldEntityGroupKey, group.String()),
+						slog.Any(logging.MetricsKey, metrics),
+						slog.Any(logging.DeviceInfoKey, deviceWatchList.DeviceInfo),
+					)
 					return err
 				}
 			}
 
 			err := rendermetrics.RenderGroup(w, group, metrics)
 			if err != nil {
-				logrus.WithError(err).
-					WithFields(logrus.Fields{
-						logging.FieldEntityGroupKey: group.String(),
-						logging.MetricsKey:          metrics,
-					}).
-					Error("Failed to renderGroup metrics")
+				slog.LogAttrs(context.Background(), slog.LevelError, "Failed to renderGroup metrics",
+					slog.String(logging.ErrorKey, err.Error()),
+					slog.String(logging.FieldEntityGroupKey, group.String()),
+					slog.Any(logging.MetricsKey, metrics),
+					slog.Any(logging.DeviceInfoKey, deviceWatchList.DeviceInfo),
+				)
 				return err
 			}
 		}
@@ -184,7 +189,7 @@ func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, err := w.Write([]byte("KO"))
 	if err != nil {
-		logrus.WithError(err).Error("Failed to write response.")
+		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 	}
 }

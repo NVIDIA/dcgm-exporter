@@ -20,11 +20,10 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -45,22 +44,24 @@ func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 		var client kubernetes.Interface
 		client, err = getKubeClient()
 		if err != nil {
-			logrus.Fatal(err)
+			slog.Error(err.Error())
+			os.Exit(1)
 		}
 		records, err = readConfigMap(client, c)
 		if err != nil {
-			logrus.Fatal(err)
+			slog.Error(err.Error())
+			os.Exit(1)
 		}
 	} else {
 		err = fmt.Errorf("no configmap data specified")
 	}
 
 	if err != nil || c.ConfigMapData == undefinedConfigMapData {
-		logrus.Infof("Falling back to metric file '%s'", c.CollectorsFile)
+		slog.Info(fmt.Sprintf("Falling back to metric file '%s'", c.CollectorsFile))
 
 		records, err = ReadCSVFile(c.CollectorsFile)
 		if err != nil {
-			logrus.Errorf("Could not read metrics file '%s'; err: %v", c.CollectorsFile, err)
+			slog.Error(fmt.Sprintf("Could not read metrics file '%s'; err: %v", c.CollectorsFile, err))
 			return res, err
 		}
 	}
@@ -132,7 +133,7 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 
 		if !useOld {
 			if !fieldIsSupported(uint(fieldID), c) {
-				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
+				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
 				continue
 			}
 
@@ -144,7 +145,7 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		} else {
 			if !fieldIsSupported(uint(oldFieldID), c) {
-				logrus.Warnf("Skipping line %d ('%s'): metric not enabled", i, record[0])
+				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
 				continue
 			}
 

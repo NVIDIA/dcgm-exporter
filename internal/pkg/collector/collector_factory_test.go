@@ -23,9 +23,11 @@ import (
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+
+	osmock "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
+	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
@@ -518,19 +520,20 @@ func Test_collectorFactory_Register(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
-			logrus.StandardLogger().ExitFunc = func(i int) {
-				panic("logrus.Fatal")
-			}
-
-			defer func() {
-				logrus.StandardLogger().ExitFunc = nil
-			}()
-
 			mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
 
 			realDCGM := dcgmprovider.Client()
 			defer func() {
 				dcgmprovider.SetClient(realDCGM)
+			}()
+
+			mOS := osmock.NewMockOS(ctrl)
+			mOS.EXPECT().Exit(gomock.Eq(1)).Do(func(code int) {
+				panic("os.Exit")
+			}).AnyTimes()
+			os = mOS
+			defer func() {
+				os = osinterface.RealOS{}
 			}()
 
 			dcgmprovider.SetClient(mockDCGMProvider)
@@ -539,7 +542,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 			}
 
 			if tt.wantsPanic {
-				require.PanicsWithValue(t, "logrus.Fatal", func() {
+				require.PanicsWithValue(t, "os.Exit", func() {
 					InitCollectorFactory(tt.cs, tt.getDeviceWatchListManager(), tt.hostname,
 						tt.config).NewCollectors()
 				})

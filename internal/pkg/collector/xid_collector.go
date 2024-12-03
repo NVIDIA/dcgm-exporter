@@ -18,10 +18,10 @@ package collector
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -43,7 +43,7 @@ func NewXIDCollector(
 	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
 	if !IsDCGMExpXIDErrorsCountEnabled(counterList) {
-		logrus.Error(counters.DCGMExpXIDErrorsCount + " collector is disabled")
+		slog.Error(counters.DCGMExpXIDErrorsCount + " collector is disabled")
 		return nil, fmt.Errorf(counters.DCGMExpXIDErrorsCount + " collector is disabled")
 	}
 

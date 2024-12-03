@@ -69,6 +69,18 @@ func (mr *MockOSMockRecorder) CreateTemp(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTemp", reflect.TypeOf((*MockOS)(nil).CreateTemp), arg0, arg1)
 }
 
+// Exit mocks base method.
+func (m *MockOS) Exit(arg0 int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Exit", arg0)
+}
+
+// Exit indicates an expected call of Exit.
+func (mr *MockOSMockRecorder) Exit(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Exit", reflect.TypeOf((*MockOS)(nil).Exit), arg0)
+}
+
 // Getenv mocks base method.
 func (m *MockOS) Getenv(arg0 string) string {
 	m.ctrl.T.Helper()

@@ -19,11 +19,11 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -61,7 +61,7 @@ func NewDCGMCollector(
 	}
 
 	if config == nil {
-		logrus.Warn("Config is empty")
+		slog.Warn("Config is empty")
 		return collector, nil
 	}
 
@@ -103,7 +103,8 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		if err != nil {
 			if derr, ok := err.(*dcgm.DcgmError); ok {
 				if derr.Code == dcgm.DCGM_ST_CONNECTION_NOT_VALID {
-					logrus.Fatal("Could not retrieve metrics: ", err)
+					slog.Error("Could not retrieve metrics: " + err.Error())
+					os.Exit(1)
 				}
 			}
 			return nil, err

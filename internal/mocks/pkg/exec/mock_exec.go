@@ -26,9 +26,8 @@ package exec
 import (
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	exec "github.com/NVIDIA/dcgm-exporter/internal/pkg/exec"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockExec is a mock of Exec interface.

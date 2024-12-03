@@ -18,9 +18,9 @@ package collector
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -54,8 +54,8 @@ func InitCollectorFactory(
 }
 
 func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
-	logrus.WithField(logging.DumpKey, fmt.Sprintf("%+v", cf.counterSet.DCGMCounters)).Debug(
-		"Counters are being initialized.")
+	slog.Debug("Counters are being initialized.",
+		slog.String(logging.DumpKey, fmt.Sprintf("%+v", cf.counterSet.DCGMCounters)))
 
 	entityCollectorTuples := make([]EntityCollectorTuple, 0)
 	entityTypes := []dcgm.Field_Entity_Group{
@@ -74,8 +74,9 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 			}
 
 			if dcgmCollector, err := cf.enableDCGMCollector(entityWatchList); err != nil {
-				logrus.Fatalf("DCGM collector for entity type '%s' cannot be initialized; err: %v",
-					entityType.String(), err)
+				slog.Error(fmt.Sprintf("DCGM collector for entity type '%s' cannot be initialized; err: %v",
+					entityType.String(), err))
+				os.Exit(1)
 			} else {
 				entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
 					entity:    entityType,
@@ -87,7 +88,8 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 
 	if IsDCGMExpClockEventsCountEnabled(cf.counterSet.ExporterCounters) {
 		if newCollector, err := cf.enableExpCollector(counters.DCGMExpClockEventsCount); err != nil {
-			logrus.Fatalf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpClockEventsCount, err)
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpClockEventsCount, err))
+			os.Exit(1)
 		} else {
 			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
 				entity:    dcgm.FE_GPU,
@@ -98,7 +100,8 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 
 	if IsDCGMExpXIDErrorsCountEnabled(cf.counterSet.ExporterCounters) {
 		if newCollector, err := cf.enableExpCollector(counters.DCGMExpXIDErrorsCount); err != nil {
-			logrus.Fatalf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpXIDErrorsCount, err)
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpXIDErrorsCount, err))
+			os.Exit(1)
 		} else {
 			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
 				entity:    dcgm.FE_GPU,
@@ -109,7 +112,8 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 
 	if IsDCGMExpGPUHealthStatusEnabled(cf.counterSet.ExporterCounters) {
 		if newCollector, err := cf.enableExpCollector(counters.DCGMExpGPUHealthStatus); err != nil {
-			logrus.Fatalf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpGPUHealthStatus, err)
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpGPUHealthStatus, err))
+			os.Exit(1)
 		} else {
 			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
 				entity:    dcgm.FE_GPU,
@@ -163,6 +167,6 @@ func (cf *collectorFactory) enableExpCollector(expCollectorName string) (Collect
 		return nil, err
 	}
 
-	logrus.Infof("collector '%s' initialized", expCollectorName)
+	slog.Info(fmt.Sprintf("collector '%s' initialized", expCollectorName))
 	return newCollector, nil
 }

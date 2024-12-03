@@ -19,13 +19,13 @@ package transformation
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
@@ -44,7 +44,7 @@ var (
 )
 
 func NewPodMapper(c *appconfig.Config) *PodMapper {
-	logrus.Infof("Kubernetes metrics collection enabled!")
+	slog.Info("Kubernetes metrics collection enabled!")
 
 	return &PodMapper{
 		Config: c,
@@ -59,7 +59,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := os.Stat(socketPath)
 	if os.IsNotExist(err) {
-		logrus.Info("No Kubelet socket, ignoring")
+		slog.Info("No Kubelet socket, ignoring")
 		return nil
 	}
 
@@ -77,7 +77,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 
 	deviceToPod := p.toDeviceToPod(pods, deviceInfo)
 
-	logrus.Debugf("Device to pod mapping: %+v", deviceToPod)
+	slog.Debug(fmt.Sprintf("Device to pod mapping: %+v", deviceToPod))
 
 	// Note: for loop are copies the value, if we want to change the value
 	// and not the copy, we need to use the indexes

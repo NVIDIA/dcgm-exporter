@@ -18,10 +18,9 @@ package collector
 
 import (
 	"fmt"
+	"log/slog"
 	"maps"
 	"time"
-
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -131,7 +130,7 @@ func newExpCollector(
 
 	collector.cleanups, err = collector.deviceWatchList.Watch()
 	if err != nil {
-		logrus.Warnf("Failed to watch metrics: %s", err)
+		slog.Warn(fmt.Sprintf("Failed to watch metrics: %s", err))
 		return expCollector{}, err
 	}
 

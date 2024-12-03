@@ -21,7 +21,7 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.22.5
+GOLANG_VERSION := 1.22.9
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -32,10 +32,10 @@ MODULE         := github.com/NVIDIA/dcgm-exporter
 .PHONY: all binary install check-format local
 all: update-version ubuntu22.04 ubi9
 
-binary: generate update-version
+binary: update-version
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
-test-main:
+test-main: generate
 	$(GO) test ./... -short
 
 install: binary
@@ -121,7 +121,7 @@ package-build:
 	rm -rf "/tmp/$$DIST_NAME";
 
 .PHONY: integration
-test-integration:
+test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
@@ -130,7 +130,7 @@ test-coverage:
 
 .PHONY: lint
 lint:
-	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1 --fix
+	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1
 
 .PHONY: validate-modules
 validate-modules:

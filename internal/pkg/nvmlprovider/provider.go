@@ -19,11 +19,11 @@ package nvmlprovider
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
-	"github.com/sirupsen/logrus"
 )
 
 type MIGDeviceInfo struct {
@@ -62,15 +62,15 @@ type nvmlProvider struct {
 func newNVMLProvider() NVML {
 	// Check if a NVML client already exists and return it if so.
 	if Client() != nil && Client().(nvmlProvider).initialized {
-		logrus.Info("NVML already initialized.")
+		slog.Info("NVML already initialized.")
 		return Client()
 	}
 
-	logrus.Info("Attempting to initialize NVML library.")
+	slog.Info("Attempting to initialize NVML library.")
 	ret := nvml.Init()
 	if ret != nvml.SUCCESS {
 		err := errors.New(nvml.ErrorString(ret))
-		logrus.Errorf("Cannot init NVML library; err: %v", err)
+		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
 		return nvmlProvider{initialized: false}
 	}
 
@@ -88,7 +88,7 @@ func (n nvmlProvider) preCheck() error {
 // GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
 func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 	if err := n.preCheck(); err != nil {
-		logrus.Errorf("failed to get MIG Device Info; err: %v", err)
+		slog.Error(fmt.Sprintf("failed to get MIG Device Info; err: %v", err))
 		return nil, err
 	}
 

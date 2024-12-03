@@ -18,11 +18,11 @@ package deviceinfo
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/bits-and-blooms/bitset"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -92,7 +92,7 @@ func Initialize(
 	deviceInfo := &Info{}
 	var err error
 
-	logrus.Infof("Initializing system entities of type '%s'", entityType.String())
+	slog.Info(fmt.Sprintf("Initializing system entities of type '%s'", entityType.String()))
 	switch entityType {
 	case dcgm.FE_LINK:
 		deviceInfo.infoType = dcgm.FE_LINK
@@ -187,7 +187,7 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 	s.gOpt = gOpt
 	err = s.verifyDevicePresence()
 	if err == nil {
-		logrus.Debugf(deviceInitMessage, s.infoType)
+		slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
 	}
 	return err
 }
@@ -233,7 +233,7 @@ func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
 	}
 
 	// Ensure correct CPUs and Cores are monitored
-	logrus.Debugf(deviceInitMessage, s.infoType)
+	slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
 	return nil
 }
 
@@ -278,7 +278,7 @@ func (s *Info) initializeNvSwitchInfo(sOpt appconfig.DeviceOptions) error {
 	s.sOpt = sOpt
 	err = s.verifySwitchDevicePresence()
 	if err == nil {
-		logrus.Debugf(deviceInitMessage, s.infoType)
+		slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
 	}
 
 	return err

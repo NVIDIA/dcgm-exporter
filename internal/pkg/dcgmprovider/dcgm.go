@@ -17,11 +17,12 @@
 package dcgmprovider
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
@@ -58,7 +59,7 @@ type dcgmProvider struct {
 func newDCGMProvider(config *appconfig.Config) DCGM {
 	// Check if a DCGM client already exists and return it if so.
 	if Client() != nil {
-		logrus.Info("DCGM already initialized")
+		slog.Info("DCGM already initialized")
 		return Client()
 	}
 
@@ -66,11 +67,12 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 
 	// Connect to a remote DCGM host engine if configured.
 	if config.UseRemoteHE {
-		logrus.Info("Attempting to connect to remote hostengine at ", config.RemoteHEInfo)
+		slog.Info("Attempting to connect to remote hostengine at " + config.RemoteHEInfo)
 		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
 		if err != nil {
 			cleanup()
-			logrus.Fatal(err)
+			slog.Error(err.Error())
+			os.Exit(1)
 		}
 		client.shutdown = cleanup
 	} else {
@@ -80,19 +82,21 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 		}
 
 		// Initialize a local/embedded DCGM instance.
-		logrus.Info("Attempting to initialize DCGM.")
+		slog.Info("Attempting to initialize DCGM.")
 		cleanup, err := dcgm.Init(dcgm.Embedded)
 		if err != nil {
-			logrus.Fatal(err)
+			slog.Error(err.Error())
+			os.Exit(1)
 		}
 		client.shutdown = cleanup
 	}
 
 	// Initialize the DcgmFields module
 	if val := dcgm.FieldsInit(); val < 0 {
-		logrus.Fatalf("Failed to initialize DCGM Fields module; err: %d", val)
+		slog.Error(fmt.Sprintf("Failed to initialize DCGM Fields module; err: %d", val))
+		os.Exit(1)
 	} else {
-		logrus.Infof("Initialized DCGM Fields module.")
+		slog.Info("Initialized DCGM Fields module.")
 	}
 
 	return client
@@ -223,13 +227,13 @@ func (d dcgmProvider) WatchFieldsWithGroupEx(
 // Cleanup performs cleanup operations for the DCGM provider, including terminating modules and shutting down DCGM.
 func (d dcgmProvider) Cleanup() {
 	// Terminates the DcgmFields module
-	logrus.Info("Attempting to terminate DCGM Fields module.")
+	slog.Info("Attempting to terminate DCGM Fields module.")
 	if val := dcgm.FieldsTerm(); val < 0 {
-		logrus.Errorf("Failed to terminate DCGM Fields module; err: %d", val)
+		slog.Error(fmt.Sprintf("Failed to terminate DCGM Fields module; err: %d", val))
 	}
 
 	// Shuts down the DCGM instance.
-	logrus.Info("Attempting to terminate DCGM.")
+	slog.Info("Attempting to terminate DCGM.")
 	d.shutdown()
 
 	reset()

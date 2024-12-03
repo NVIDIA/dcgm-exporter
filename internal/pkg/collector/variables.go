@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,23 +14,8 @@
  * limitations under the License.
  */
 
-package main
+package collector
 
-import (
-	"log/slog"
-	"os"
+import osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 
-	_ "go.uber.org/automaxprocs"
-
-	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
-)
-
-var BuildVersion = "Filled by the build system"
-
-func main() {
-	app := cmd.NewApp(BuildVersion)
-	if err := app.Run(os.Args); err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
-	}
-}
+var os osinterface.OS = osinterface.RealOS{}

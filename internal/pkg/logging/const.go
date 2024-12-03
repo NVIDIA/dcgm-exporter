@@ -24,4 +24,5 @@ const (
 	FieldEntityGroupKey = "fieldEntityGroup"
 	MetricsKey          = "metrics"
 	DeviceInfoKey       = "deviceInfo"
+	ErrorKey            = "error"
 )

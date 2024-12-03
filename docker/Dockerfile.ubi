@@ -1,6 +1,6 @@
 ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.6.1-base-ubi9
 
-FROM --platform=$BUILDPLATFORM ubuntu:18.04 as builder
+FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
 ARG GOLANG_VERSION=1.22.5
 
@@ -36,11 +36,10 @@ RUN set -eux; \
 	wget -O go.tgz "$url" --progress=dot:giga; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz;
-ENV GOTOOLCHAIN=local
-ENV GOPATH /go
-ENV PATH $GOPATH/bin:$PATH
+ENV GOTOOLCHAIN=local GOPATH=/go
+ENV PATH=$GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
-ENV PATH $PATH:/usr/local/go/bin
+ENV PATH=$PATH:/usr/local/go/bin
 COPY . .
 ARG TARGETOS
 ARG TARGETARCH
@@ -68,7 +67,7 @@ ARG DCGM_VERSION
 #	&& dnf -y clean all\
 #	&& rm -rf /var/cache/yum\
 #	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
-	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
+# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
 #	&& rm -rf /usr/lib64/libdcgm_cublas_proxy*.so \
 #	&& rm -rf /usr/local/dcgm/scripts \
 #	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
@@ -85,7 +84,7 @@ ENV NVIDIA_DISABLE_REQUIRE="true"
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 
-ENV NO_SETCAP=
+ENV NO_SETCAP=""
 COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 

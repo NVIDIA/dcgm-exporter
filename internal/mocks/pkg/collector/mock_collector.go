@@ -26,9 +26,8 @@ package collector
 import (
 	reflect "reflect"
 
-	gomock "go.uber.org/mock/gomock"
-
 	collector "github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	gomock "go.uber.org/mock/gomock"
 )
 
 // MockCollector is a mock of Collector interface.
