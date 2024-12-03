@@ -28,6 +28,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
@@ -333,5 +337,72 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					require.Equal(t, "default", metric.Attributes[containerAttribute])
 				}
 			})
+	}
+}
+
+func TestProcessPodMapper_WithLabels(t *testing.T) {
+	pods := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"gpu-pod-0", map[string]string{"label-key": "label-value"}},
+		{"gpu-pod-1", map[string]string{"another-key": "another-value"}},
+	}
+
+	objects := make([]runtime.Object, len(pods))
+	for i, pod := range pods {
+		objects[i] = &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.name,
+				Namespace: "default",
+				Labels:    pod.labels,
+			},
+		}
+	}
+	clientset := fake.NewSimpleClientset(objects...)
+
+	tmpDir, cleanup := CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	gpus := []string{"gpu-uuid-0", "gpu-uuid-1"}
+	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
+	cleanupServer := StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	podMapper := &PodMapper{
+		Config: &Config{
+			KubernetesEnablePodLabels: true,
+			KubernetesGPUIdType:       GPUUID,
+			PodResourcesKubeletSocket: socketPath,
+		},
+		Client: clientset,
+	}
+
+	metrics := MetricsByCounter{}
+	counter := Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+		})
+	}
+
+	var sysInfo SystemInfo
+	err := podMapper.Process(metrics, sysInfo)
+	require.NoError(t, err)
+
+	for i, metric := range metrics[counter] {
+		pod := pods[i]
+		for key, value := range pod.labels {
+			require.Equal(t, value, metric.Labels[key])
+		}
 	}
 }

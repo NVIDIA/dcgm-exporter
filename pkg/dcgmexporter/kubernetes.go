@@ -19,6 +19,7 @@ package dcgmexporter
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net"
 	"regexp"
 	"slices"
@@ -28,6 +29,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
@@ -44,8 +48,25 @@ var (
 func NewPodMapper(c *Config) (*PodMapper, error) {
 	logrus.Infof("Kubernetes metrics collection enabled!")
 
+	if !c.KubernetesEnablePodLabels {
+		return &PodMapper{
+			Config: c,
+		}, nil
+	}
+
+	clusterConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get clientset: %w", err)
+	}
+
 	return &PodMapper{
 		Config: c,
+		Client: clientset,
 	}, nil
 }
 
@@ -97,6 +118,8 @@ func (p *PodMapper) Process(metrics MetricsByCounter, sysInfo SystemInfo) error 
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 				}
+
+				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
 		}
 	}
@@ -155,10 +178,23 @@ func (p *PodMapper) toDeviceToPod(
 					}
 				}
 
+				labels := map[string]string{}
+				if p.Config.KubernetesEnablePodLabels {
+					if podLabels, err := p.getPodLabels(pod.GetNamespace(), pod.GetName()); err != nil {
+						logrus.WithFields(logrus.Fields{
+							"pod":       pod.GetName(),
+							"namespace": pod.GetNamespace(),
+						}).Warnf("Couldn't get labels: %v", err)
+					} else {
+						labels = podLabels
+					}
+				}
+
 				podInfo := PodInfo{
 					Name:      pod.GetName(),
 					Namespace: pod.GetNamespace(),
 					Container: container.GetName(),
+					Labels:    labels,
 				}
 
 				for _, deviceID := range device.GetDeviceIds() {
@@ -198,4 +234,20 @@ func (p *PodMapper) toDeviceToPod(
 	}
 
 	return deviceToPodMap
+}
+
+func (p *PodMapper) getPodLabels(namespace, podName string) (map[string]string, error) {
+	if p.Client == nil {
+		return nil, fmt.Errorf("kubernetes client is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+
+	pod, err := p.Client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch labels: %w", err)
+	}
+
+	return pod.Labels, nil
 }

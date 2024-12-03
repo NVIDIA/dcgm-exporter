@@ -55,6 +55,7 @@ const (
 	CLIAddress                    = "address"
 	CLICollectInterval            = "collect-interval"
 	CLIKubernetes                 = "kubernetes"
+	CLIKubernetesEnablePodLabels  = "kubernetes-enable-pod-labels"
 	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
 	CLIUseOldNamespace            = "use-old-namespace"
 	CLIRemoteHEInfo               = "remote-hostengine-info"
@@ -147,6 +148,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   "localhost:5555",
 			Usage:   "Connect to remote hostengine at <HOST>:<PORT>",
 			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesEnablePodLabels,
+			Value:   false,
+			Usage:   "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
 		},
 		&cli.StringFlag{
 			Name:  CLIKubernetesGPUIDType,
@@ -617,6 +624,7 @@ func contextToConfig(c *cli.Context) (*dcgmexporter.Config, error) {
 		Address:                    c.String(CLIAddress),
 		CollectInterval:            c.Int(CLICollectInterval),
 		Kubernetes:                 c.Bool(CLIKubernetes),
+		KubernetesEnablePodLabels:  c.Bool(CLIKubernetesEnablePodLabels),
 		KubernetesGPUIdType:        dcgmexporter.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:                 true,
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),

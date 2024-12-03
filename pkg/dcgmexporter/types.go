@@ -24,6 +24,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/prometheus/exporter-toolkit/web"
+	"k8s.io/client-go/kubernetes"
 )
 
 var (
@@ -142,12 +143,14 @@ type MetricsServer struct {
 
 type PodMapper struct {
 	Config *Config
+	Client kubernetes.Interface
 }
 
 type PodInfo struct {
 	Name      string
 	Namespace string
 	Container string
+	Labels    map[string]string
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
