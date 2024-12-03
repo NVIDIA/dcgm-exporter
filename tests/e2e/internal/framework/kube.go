@@ -61,6 +61,11 @@ func (c *KubeClient) CreateNamespace(
 	return c.client.CoreV1().Namespaces().Create(ctx, namespaceObj, metav1.CreateOptions{})
 }
 
+// GetNamespace checks if a namespace exists and returns its details
+func (c *KubeClient) GetNamespace(ctx context.Context, namespace string) (*corev1.Namespace, error) {
+	return c.client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+}
+
 // DeleteNamespace deletes the namespace
 func (c *KubeClient) DeleteNamespace(
 	ctx context.Context,

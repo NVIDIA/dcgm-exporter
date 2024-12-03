@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
@@ -108,7 +109,17 @@ func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient
 		if err != nil {
 			Fail(fmt.Sprintf("Namespace deletion: Failed to delete namespace %q with error: %v", testContext.namespace, err))
 		} else {
-			_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q namespace completed.\n", testContext.namespace)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q deletion initiated.\n", testContext.namespace)
 		}
+
+		_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q waiting for completion.\n", testContext.namespace)
+
+		Eventually(func() bool {
+			_, err := kubeClient.GetNamespace(ctx, testContext.namespace)
+			return err != nil // True if namespace no longer exists
+		}).WithTimeout(2*time.Minute).WithPolling(5*time.Second).Should(BeTrue(),
+			fmt.Sprintf("Namespace deletion: Namespace %q was not deleted within the timeout period.", testContext.namespace))
+
+		_, _ = fmt.Fprintf(GinkgoWriter, "Namespace deletion: %q namespace fully deleted.\n", testContext.namespace)
 	}
 }
