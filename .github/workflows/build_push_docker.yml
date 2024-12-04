@@ -1,0 +1,47 @@
+# Build and push docker image contained in docker/ directory
+
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches:
+      - flexai/deploy
+    paths:
+      - "pkg/**"
+      - "docker/**"
+      - ".github/workflows/build_push_docker.yml"
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+
+    env:
+      GOLANG_VERSION: 1.22.5
+      DCGM_VERSION: 3.3.9
+      DCGM_EXPORTER_VERSION: 3.6.1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        run: |
+          docker login ${{ secrets.SCW_INFRA_REGISTRY_URL }} -p ${{ secrets.SCW_REGISTRY_INFRA_RW_SECRET }}
+
+      - name: Build and Push Docker Images
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/
+          file: docker/Dockerfile.ubuntu22.04
+          platforms: linux/amd64
+          build-args: |
+            GOLANG_VERSION=${{ env.GOLANG_VERSION }}
+            DCGM_VERSION=${{ env.DCGM_VERSION }}
+            VERSION=${{ env.DCGM_EXPORTER_VERSION }}
+          push: true
+          tags: |
+            ${{ secrets.SCW_INFRA_REGISTRY_URL }}/dcgm-exporter:${{ github.sha }}
+            ${{ secrets.SCW_INFRA_REGISTRY_URL }}/dcgm-exporter:latest
