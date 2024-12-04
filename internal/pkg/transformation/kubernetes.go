@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/resolver"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
@@ -75,6 +77,8 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 		return err
 	}
 
+	slog.Debug(fmt.Sprintf("Podresources API response: %+v", pods))
+
 	deviceToPod := p.toDeviceToPod(pods, deviceInfo)
 
 	slog.Debug(fmt.Sprintf("Device to pod mapping: %+v", deviceToPod))
@@ -107,13 +111,10 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 }
 
 func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx,
+	resolver.SetDefaultScheme("passthrough")
+	conn, err := grpc.NewClient(
 		socket,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			d := net.Dialer{}
 			return d.DialContext(ctx, "unix", addr)

@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/sirupsen/logrus"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +43,7 @@ import (
 
 func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
-
+	logrus.SetLevel(logrus.DebugLevel)
 	type TestCase struct {
 		KubernetesGPUIDType appconfig.KubernetesGPUIDType
 		GPUInstanceID       uint
