@@ -56,4 +56,5 @@ type Config struct {
 	PodResourcesKubeletSocket  string
 	HPCJobMappingDir           string
 	NvidiaResourceNames        []string
+	KubernetesVirtualGPUs      bool
 }
