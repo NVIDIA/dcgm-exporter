@@ -35,48 +35,52 @@ import (
 )
 
 func TestProcessPodMapper(t *testing.T) {
-	testutils.RequireLinux(t)
+	var kubeVirtualGPUs = []bool{false, true}
+	for _, virtual := range kubeVirtualGPUs {
+		testutils.RequireLinux(t)
 
-	tmpDir, cleanup := CreateTmpDir(t)
-	defer cleanup()
+		tmpDir, cleanup := CreateTmpDir(t)
+		defer cleanup()
 
-	cleanup, err := dcgm.Init(dcgm.Embedded)
-	require.NoError(t, err)
-	defer cleanup()
+		cleanup, err := dcgm.Init(dcgm.Embedded)
+		require.NoError(t, err)
+		defer cleanup()
 
-	c, cleanup := testDCGMGPUCollector(t, sampleCounters)
-	defer cleanup()
+		c, cleanup := testDCGMGPUCollector(t, sampleCounters)
+		defer cleanup()
 
-	out, err := c.GetMetrics()
-	require.NoError(t, err)
+		out, err := c.GetMetrics()
+		require.NoError(t, err)
 
-	original := out
+		original := out
 
-	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(Counter)]
+		arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(Counter)]
 
-	socketPath := tmpDir + "/kubelet.sock"
-	server := grpc.NewServer()
-	gpus := GetGPUUUIDs(arbirtaryMetric)
-	podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
+		socketPath := tmpDir + "/kubelet.sock"
+		server := grpc.NewServer()
+		gpus := GetGPUUUIDs(arbirtaryMetric)
+		podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(nvidiaResourceName, gpus))
 
-	cleanup = StartMockServer(t, server, socketPath)
-	defer cleanup()
+		cleanup = StartMockServer(t, server, socketPath)
+		defer cleanup()
 
-	podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID, PodResourcesKubeletSocket: socketPath})
-	require.NoError(t, err)
-	var sysInfo SystemInfo
-	err = podMapper.Process(out, sysInfo)
-	require.NoError(t, err)
+		podMapper, err := NewPodMapper(&Config{KubernetesGPUIdType: GPUUID, PodResourcesKubeletSocket: socketPath, KubernetesVirtualGPUs: virtual})
+		require.NoError(t, err)
+		var sysInfo SystemInfo
 
-	require.Len(t, out, len(original))
-	for _, metrics := range out {
-		for _, metric := range metrics {
-			require.Contains(t, metric.Attributes, podAttribute)
-			require.Contains(t, metric.Attributes, namespaceAttribute)
-			require.Contains(t, metric.Attributes, containerAttribute)
-			require.Equal(t, metric.Attributes[podAttribute], fmt.Sprintf("gpu-pod-%s", metric.GPU))
-			require.Equal(t, metric.Attributes[namespaceAttribute], "default")
-			require.Equal(t, metric.Attributes[containerAttribute], "default")
+		err = podMapper.Process(out, sysInfo)
+		require.NoError(t, err)
+
+		require.Len(t, out, len(original))
+		for _, metrics := range out {
+			for _, metric := range metrics {
+				require.Contains(t, metric.Attributes, podAttribute)
+				require.Contains(t, metric.Attributes, namespaceAttribute)
+				require.Contains(t, metric.Attributes, containerAttribute)
+				require.Equal(t, metric.Attributes[podAttribute], fmt.Sprintf("gpu-pod-%s", metric.GPU))
+				require.Equal(t, metric.Attributes[namespaceAttribute], "default")
+				require.Equal(t, metric.Attributes[containerAttribute], "default")
+			}
 		}
 	}
 }
@@ -167,14 +171,16 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	type TestCase struct {
-		KubernetesGPUIDType KubernetesGPUIDType
-		GPUInstanceID       uint
-		ResourceName        string
-		MetricGPUID         string
-		MetricGPUDevice     string
-		MetricMigProfile    string
-		PODGPUID            string
-		NvidiaResourceNames []string
+		KubernetesGPUIDType  KubernetesGPUIDType
+		GPUInstanceID        uint
+		ResourceName         string
+		MetricGPUID          string
+		MetricGPUDevice      string
+		MetricMigProfile     string
+		PODGPUIDs            []string
+		NvidiaResourceNames  []string
+		KubernetesVirtualGPU bool
+		VGPUs                []string
 	}
 
 	testCases := []TestCase{
@@ -182,13 +188,13 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			KubernetesGPUIDType: GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
-			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:           []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5"},
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
-			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:           []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
 			MetricMigProfile:    "",
 		},
 		{
@@ -197,39 +203,39 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			GPUInstanceID:       3,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
 			MetricMigProfile:    "",
-			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:           []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
 			ResourceName:        nvidiaResourceName,
 			GPUInstanceID:       3,
 			MetricMigProfile:    "mig",
-			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:           []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
 			ResourceName:        nvidiaResourceName,
 			MetricMigProfile:    "mig",
-			PODGPUID:            "nvidia0/gi0",
+			PODGPUIDs:           []string{"nvidia0/gi0"},
 		},
 		{
 			KubernetesGPUIDType: DeviceName,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUDevice:     "0",
-			PODGPUID:            "0/vgpu",
+			PODGPUIDs:           []string{"0/vgpu"},
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
-			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5::",
+			PODGPUIDs:           []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5::"},
 		},
 		{
 			KubernetesGPUIDType: GPUUID,
 			ResourceName:        "nvidia.com/mig-1g.10gb",
 			MetricMigProfile:    "1g.10gb",
 			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
-			PODGPUID:            "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:           []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
 			MetricGPUDevice:     "0",
 			GPUInstanceID:       3,
 		},
@@ -237,17 +243,161 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			KubernetesGPUIDType: GPUUID,
 			ResourceName:        "nvidia.com/a100",
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
-			PODGPUID:            "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:           []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5"},
 			NvidiaResourceNames: []string{"nvidia.com/a100"},
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         nvidiaResourceName,
+			MetricGPUID:          "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         nvidiaResourceName,
+			MetricGPUID:          "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
+			MetricMigProfile:     "",
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         nvidiaResourceName,
+			GPUInstanceID:        3,
+			MetricGPUID:          "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			MetricMigProfile:     "",
+			PODGPUIDs:            []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			GPUInstanceID:        3,
+			MetricMigProfile:     "mig",
+			PODGPUIDs:            []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			MetricMigProfile:     "mig",
+			PODGPUIDs:            []string{"nvidia0/gi0"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			MetricGPUDevice:      "0",
+			PODGPUIDs:            []string{"0/vgpu"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         nvidiaResourceName,
+			MetricGPUID:          "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5::"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         "nvidia.com/mig-1g.10gb",
+			MetricMigProfile:     "1g.10gb",
+			MetricGPUID:          "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5"},
+			MetricGPUDevice:      "0",
+			GPUInstanceID:        3,
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         "nvidia.com/a100",
+			MetricGPUID:          "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5"},
+			NvidiaResourceNames:  []string{"nvidia.com/a100"},
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			MetricMigProfile:     "mig",
+			PODGPUIDs:            []string{"nvidia0/gi3/vgpu0"},
+			GPUInstanceID:        3,
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"0"},
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			PODGPUIDs:            []string{"nvidia0/vgpu1"},
+			MetricGPUDevice:      "nvidia0",
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"1"},
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         nvidiaResourceName,
+			MetricGPUID:          "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5::2"},
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"2"},
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         "nvidia.com/mig-1g.10gb",
+			MetricMigProfile:     "1g.10gb",
+			MetricGPUID:          "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5::4"},
+			MetricGPUDevice:      "0",
+			GPUInstanceID:        3,
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"4"},
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			MetricMigProfile:     "mig",
+			PODGPUIDs:            []string{"nvidia0/gi3/vgpu0", "nvidia0/gi3/vgpu1"},
+			GPUInstanceID:        3,
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"0", "1"},
+		},
+		{
+			KubernetesGPUIDType:  DeviceName,
+			ResourceName:         nvidiaResourceName,
+			PODGPUIDs:            []string{"nvidia0/vgpu1", "nvidia0/vgpu2"},
+			MetricGPUDevice:      "nvidia0",
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"1", "2"},
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         nvidiaResourceName,
+			MetricGPUID:          "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"b8ea3855-276c-c9cb-b366-c6fa655957c5::2", "b8ea3855-276c-c9cb-b366-c6fa655957c5::3"},
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"2", "3"},
+		},
+		{
+			KubernetesGPUIDType:  GPUUID,
+			ResourceName:         "nvidia.com/mig-1g.10gb",
+			MetricMigProfile:     "1g.10gb",
+			MetricGPUID:          "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			PODGPUIDs:            []string{"MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5::4", "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5::5"},
+			MetricGPUDevice:      "0",
+			GPUInstanceID:        3,
+			KubernetesVirtualGPU: true,
+			VGPUs:                []string{"4", "5"},
 		},
 	}
 
 	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("when type %s, pod device id %s metric device id %s and gpu device %s",
+		t.Run(fmt.Sprintf("when type %s, pod device ids %s metric device id %s and gpu device %s with virtual GPUs: %t",
 			tc.KubernetesGPUIDType,
-			tc.PODGPUID,
+			tc.PODGPUIDs,
 			tc.MetricGPUID,
 			tc.MetricGPUDevice,
+			tc.KubernetesVirtualGPU,
 		),
 			func(t *testing.T) {
 				tmpDir, cleanup := CreateTmpDir(t)
@@ -259,7 +409,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				require.NoError(t, err)
 				defer cleanup()
 
-				gpus := []string{tc.PODGPUID}
+				gpus := tc.PODGPUIDs
 				podresourcesapi.RegisterPodResourcesListerServer(server, NewPodResourcesMockServer(tc.ResourceName, gpus))
 
 				cleanup = StartMockServer(t, server, socketPath)
@@ -281,6 +431,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					KubernetesGPUIdType:       tc.KubernetesGPUIDType,
 					PodResourcesKubeletSocket: socketPath,
 					NvidiaResourceNames:       tc.NvidiaResourceNames,
+					KubernetesVirtualGPUs:     tc.KubernetesVirtualGPU,
 				})
 				require.NoError(t, err)
 				require.NotNil(t, podMapper)
@@ -321,17 +472,94 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err = podMapper.Process(metrics, sysInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				for _, metric := range metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(Counter)] {
+				if tc.KubernetesVirtualGPU {
+					assert.Len(t, metrics[counter], len(gpus))
+				}
+
+				for i, metric := range metrics[counter] {
 					require.Contains(t, metric.Attributes, podAttribute)
 					require.Contains(t, metric.Attributes, namespaceAttribute)
 					require.Contains(t, metric.Attributes, containerAttribute)
 
 					// TODO currently we rely on ordering and implicit expectations of the mock implementation
 					// This should be a table comparison
-					require.Equal(t, fmt.Sprintf("gpu-pod-%d", 0), metric.Attributes[podAttribute])
+					require.Equal(t, fmt.Sprintf("gpu-pod-%d", i), metric.Attributes[podAttribute])
 					require.Equal(t, "default", metric.Attributes[namespaceAttribute])
 					require.Equal(t, "default", metric.Attributes[containerAttribute])
+
+					// Assert virtual GPU attributes.
+					vgpu, ok := metric.Attributes[vgpuAttribute]
+					// Ensure vgpu attribute only exists when vgpu is enabled.
+					if ok && !tc.KubernetesVirtualGPU {
+						t.Errorf("%s attribute should not be present unless configured", vgpuAttribute)
+					}
+					// Ensure we only populate non-empty values for the vgpu attribute.
+					if ok {
+						require.NotEqual(t, "", vgpu)
+						require.Equal(t, tc.VGPUs[i], vgpu)
+					}
 				}
 			})
+	}
+}
+
+func TestGetSharedGPU(t *testing.T) {
+	cases := []struct {
+		desc, deviceID string
+		wantVGPU       string
+		wantOK         bool
+	}{
+		{
+			desc:     "gke device plugin, non-mig, shared",
+			deviceID: "nvidia0/vgpu0",
+			wantVGPU: "0",
+			wantOK:   true,
+		},
+		{
+			desc:     "gke device plugin, non-mig, non-shared",
+			deviceID: "nvidia0",
+		},
+		{
+			desc:     "gke device plugin, mig, shared",
+			deviceID: "nvidia0/gi0/vgpu1",
+			wantVGPU: "1",
+			wantOK:   true,
+		},
+		{
+			desc:     "gke device plugin, mig, non-shared",
+			deviceID: "nvidia0/gi0",
+		},
+		{
+			desc:     "nvidia device plugin, non-mig, shared",
+			deviceID: "GPU-5a5a7118-e550-79a1-597e-7631e126c57a::3",
+			wantVGPU: "3",
+			wantOK:   true,
+		},
+		{
+			desc:     "nvidia device plugin, non-mig, non-shared",
+			deviceID: "GPU-5a5a7118-e550-79a1-597e-7631e126c57a",
+		},
+		{
+			desc:     "nvidia device plugin, mig, shared",
+			deviceID: "MIG-42f0f413-f7b0-58cc-aced-c1d1fb54db26::0",
+			wantVGPU: "0",
+			wantOK:   true,
+		},
+		{
+			desc:     "nvidia device plugin, mig, non-shared",
+			deviceID: "MIG-42f0f413-f7b0-58cc-aced-c1d1fb54db26",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			gotVGPU, gotOK := getSharedGPU(tc.deviceID)
+			if gotVGPU != tc.wantVGPU {
+				t.Errorf("expected: %s, got: %s", tc.wantVGPU, gotVGPU)
+			}
+			if gotOK != tc.wantOK {
+				t.Errorf("expected: %t, got: %t", tc.wantOK, gotOK)
+			}
+		})
 	}
 }

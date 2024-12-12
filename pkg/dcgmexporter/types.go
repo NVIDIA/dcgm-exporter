@@ -38,6 +38,7 @@ var (
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
+	vgpuAttribute      = "vgpu"
 
 	hpcJobAttribute = "hpc_job"
 
@@ -148,6 +149,7 @@ type PodInfo struct {
 	Name      string
 	Namespace string
 	Container string
+	VGPU      string
 }
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
