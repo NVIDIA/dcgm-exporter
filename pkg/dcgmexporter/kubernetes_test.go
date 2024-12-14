@@ -219,6 +219,20 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			PODGPUID:            "0/vgpu",
 		},
 		{
+			KubernetesGPUIDType: DeviceName,
+			ResourceName:        nvidiaResourceName,
+			MetricMigProfile:    "1g.10gb",
+			GPUInstanceID:       0,
+			PODGPUID:            "nvidia0/gi0/vgpu0",
+		},
+		{
+			KubernetesGPUIDType: DeviceName,
+			ResourceName:        nvidiaResourceName,
+			MetricMigProfile:    "1g.10gb",
+			GPUInstanceID:       1,
+			PODGPUID:            "nvidia0/gi1/vgpu0",
+		},
+		{
 			KubernetesGPUIDType: GPUUID,
 			ResourceName:        nvidiaResourceName,
 			MetricGPUID:         "b8ea3855-276c-c9cb-b366-c6fa655957c5",
