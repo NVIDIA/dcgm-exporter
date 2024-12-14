@@ -41,7 +41,8 @@ import (
 var (
 	connectionTimeout = 10 * time.Second
 
-	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)$`)
+	// Allow for MIG devices with or without GPU sharing to match in GKE.
+	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)(/vgpu[0-9]+)?$`)
 	gkeVirtualGPUDeviceIDSeparator = "/vgpu"
 )
 
