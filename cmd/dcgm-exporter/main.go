@@ -20,8 +20,6 @@ import (
 	"log/slog"
 	"os"
 
-	_ "go.uber.org/automaxprocs"
-
 	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
 
