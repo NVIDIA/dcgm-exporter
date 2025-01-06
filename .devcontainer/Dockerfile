@@ -1,9 +1,8 @@
-FROM nvcr.io/nvidia/cuda:12.3.2-base-ubuntu22.04
-ARG GOLANG_VERSION=1.22.2
+FROM nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
+ARG GOLANG_VERSION=1.22.5
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
-ARG DCGM_VERSION=3.3.5
 # Create a user 'developer' with UID=1000, add to 'developer' group, and add to 'sudo' group
 RUN groupadd -g $USER_GID $USERNAME && \
 	useradd -m -u $USER_GID -g $USERNAME -s /bin/bash $USERNAME && \
@@ -23,7 +22,7 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	make \
 	pkg-config \
 	wget \
-	datacenter-gpu-manager=1:${DCGM_VERSION} \
+	datacenter-gpu-manager-4-core \
 	libcap2-bin \
 	&& install -m 0755 -d /etc/apt/keyrings \
 	&& wget -O /etc/apt/keyrings/docker.asc https://download.docker.com/linux/ubuntu/gpg \
