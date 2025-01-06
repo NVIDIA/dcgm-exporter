@@ -1,4 +1,4 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.6.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
@@ -38,8 +38,8 @@ ENV PATH=$GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH=$PATH:/usr/local/go/bin
 COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
+RUN go mod download
 # when building aarch64 we have to target aarch64-linux-gnu-gcc compiler
 ARG TARGETOS
 ARG TARGETARCH
@@ -71,7 +71,7 @@ COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
 ENV DEBIAN_FRONTEND=noninteractive
 RUN echo "$TARGETARCH" && apt-get -qq update && apt-get -qq install -y --no-install-recommends \
-    datacenter-gpu-manager=1:${DCGM_VERSION} libcap2-bin \
+    datacenter-gpu-manager-4-core libcap2-bin \
     && apt-get -qq purge --autoremove -y openssl \
     && apt-get -qq -y clean \
     && apt-get -qq -y autoclean \
@@ -82,7 +82,8 @@ RUN echo "$TARGETARCH" && apt-get -qq update && apt-get -qq install -y --no-inst
     && rm -rf /usr/local/dcgm/scripts \
     && rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
     && rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
-    && rm -rf /usr/share/doc && rm -rf /usr/share/man
+    && rm -rf /usr/share/doc && rm -rf /usr/share/man \
+    && ldconfig
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit

@@ -33,7 +33,7 @@ var (
 	elf elfinterface.ELF = elfinterface.RealELF{}
 
 	// rxLDCacheEntry matches the following library strings:
-	//	libdcgm.so (libc6,x86-64) => /lib/x86_64-linux-gnu/libdcgm.so
+	//	libdcgm.so.4 (libc6,x86-64) => /lib/x86_64-linux-gnu/libdcgm.so.4
 	//	ld-linux.so.2 (ELF) => /lib/ld-linux.so.2
 	// ld-linux-x86-64.so.2 (libc6,x86-64) => /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
 	rxLDCacheEntry = regexp.MustCompile(`(?m)^(.*)\s*\(.*\)\s*=>\s*(.*)$`)

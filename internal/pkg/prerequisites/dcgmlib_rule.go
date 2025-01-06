@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	libdcgmco     = "libdcgm.so"
+	libdcgmco     = "libdcgm.so.4"
 	procSelfExe   = "/proc/self/exe"
 	ldconfig      = "ldconfig"
 	ldconfigParam = "-p"
@@ -32,7 +32,7 @@ const (
 
 type dcgmLibExistsRule struct{}
 
-// Validate checks if libdcgm.so exists and matches with the machine architecture.
+// Validate checks if libdcgm.so.4 exists and matches with the machine architecture.
 func (c dcgmLibExistsRule) Validate() error {
 	// On Ubuntu, ldconfig is a wrapper around ldconfig.real
 	ldconfigPath := fmt.Sprintf("/sbin/%s.real", ldconfig)
@@ -55,7 +55,7 @@ func (c dcgmLibExistsRule) Validate() error {
 			}
 			libMachine, err := c.readELF(libPath)
 			if err != nil {
-				// When datacenter-gpu-manager uninstalled, the ldconfig -p may return that the libdcgm.so is present,
+				// When datacenter-gpu-manager uninstalled, the ldconfig -p may return that the libdcgm.so.4 is present,
 				// but the library file was removed.
 				slog.Error(err.Error())
 				return errLibdcgmNotFound
