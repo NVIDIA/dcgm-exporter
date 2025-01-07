@@ -10,12 +10,18 @@
             "request": "launch",
             "mode": "test",
             "program": "${workspaceFolder}/tests/e2e",
-            "args": ["-test.v",
-            "--ginkgo.v",
-            "-kubeconfig","~/.kube/config",
-            "-chart","./../../deployment/",
-            "-image-repository","nvidia/dcgm-exporter",
-            "-arguments","{-f=/etc/dcgm-exporter/default-counters.csv,--enable-dcgm-log=true,--dcgm-log-level=ERROR}"],
+            "args": [
+                "-test.v",
+                "--ginkgo.v",
+                "-kubeconfig",
+                "~/.kube/config",
+                "-chart",
+                "./../../deployment/",
+                "-image-repository",
+                "nvidia/dcgm-exporter",
+                "-arguments",
+                "{-f=/etc/dcgm-exporter/default-counters.csv}"
+            ],
             "env": {},
             "buildFlags": "-tags=e2e"
         },
@@ -30,8 +36,8 @@
                 "-f",
                 "./etc/default-counters.csv",
                 "--debug",
-                "--enable-dcgm-log",
-                "--dcgm-log-level=INFO"
+                "-r",
+                "localhost:5555"
             ]
         }
     ]

@@ -22,21 +22,34 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
+	validMIGUUID := "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5"
+	newNvmlProvider := nvmlProvider{}
+
+	deviceInfo, err := newNvmlProvider.GetMIGDeviceInfoByID(validMIGUUID)
+	assert.Error(t, err, "uuid: %v, Device Info: %+v", validMIGUUID, deviceInfo)
+}
+
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
+	Initialize()
+	assert.NotNil(t, Client(), "expected NVML Client to be not nil")
+	assert.True(t, Client().(nvmlProvider).initialized, "expected Client to be initialized")
+	defer Client().Cleanup()
+
 	tests := []struct {
-		name          string
-		uuid          string
-		expectedGPU   string
-		expectedGi    int
-		expectedCi    int
-		expectedError bool
+		name            string
+		uuid            string
+		expectedMIGInfo *MIGDeviceInfo
+		expectedError   bool
 	}{
 		{
-			name:        "Successfull Parsing",
-			uuid:        "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5",
-			expectedGPU: "GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5",
-			expectedGi:  1,
-			expectedCi:  5,
+			name: "Successful Parsing",
+			uuid: "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5",
+			expectedMIGInfo: &MIGDeviceInfo{
+				ParentUUID:        "GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+				GPUInstanceID:     1,
+				ComputeInstanceID: 5,
+			},
 		},
 		{
 			name:          "Fail, Missing MIG at the beginning of UUID",
@@ -62,41 +75,41 @@ func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			deviceInfo, err := GetMIGDeviceInfoByID(tc.uuid)
-			if tc.expectedError && err != nil {
-				return
+			deviceInfo, err := Client().GetMIGDeviceInfoByID(tc.uuid)
+			if tc.expectedError {
+				assert.Error(t, err, "uuid: %v, Device Info: %+v", tc.uuid, deviceInfo)
+			} else {
+				assert.Nil(t, err, "err: %v, uuid: %v", err, tc.uuid)
+				assert.Equal(t, tc.expectedMIGInfo, deviceInfo, "MIG uuid '%v' parsed incorrectly", tc.uuid)
 			}
-			if tc.expectedError && err == nil {
-				t.Fatalf("Expected an error, but didn't get one: uuid: %v, (gpu: %v, gi: %v, ci: %v)",
-					tc.uuid,
-					deviceInfo.ParentUUID,
-					deviceInfo.GPUInstanceID,
-					deviceInfo.ComputeInstanceID)
-			}
-			if !tc.expectedError && err != nil {
-				t.Fatalf("Unexpected error: %v, uuid: %v, (gpu: %v, gi: %v, ci: %v)",
-					err,
-					tc.uuid,
-					deviceInfo.ParentUUID,
-					deviceInfo.GPUInstanceID,
-					deviceInfo.ComputeInstanceID)
-			}
+		})
+	}
+}
 
-			assert.Equal(t, tc.expectedGPU, deviceInfo.ParentUUID, "MIG UUID parsed incorrectly: uuid: %v, (gpu: %v, gi: %v, ci: %v)",
-				tc.uuid,
-				deviceInfo.ParentUUID,
-				deviceInfo.GPUInstanceID,
-				deviceInfo.ComputeInstanceID)
-			assert.Equal(t, tc.expectedGi, deviceInfo.GPUInstanceID, "MIG UUID parsed incorrectly: uuid: %v, (gpu: %v, gi: %v, ci: %v)",
-				tc.uuid,
-				deviceInfo.ParentUUID,
-				deviceInfo.GPUInstanceID,
-				deviceInfo.ComputeInstanceID)
-			assert.Equal(t, tc.expectedCi, deviceInfo.ComputeInstanceID, "MIG UUID parsed incorrectly: uuid: %v, (gpu: %v, gi: %v, ci: %v)",
-				tc.uuid,
-				deviceInfo.ParentUUID,
-				deviceInfo.GPUInstanceID,
-				deviceInfo.ComputeInstanceID)
+func Test_newNVMLProvider(t *testing.T) {
+	tests := []struct {
+		name       string
+		preRunFunc func() NVML
+	}{
+		{
+			name: "NVML not initialized",
+			preRunFunc: func() NVML {
+				return nvmlProvider{initialized: true}
+			},
+		},
+		{
+			name: "NVML already initialized",
+			preRunFunc: func() NVML {
+				Initialize()
+				return Client()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := tt.preRunFunc()
+			defer reset()
+			assert.Equalf(t, want, newNVMLProvider(), "Unexpected Output")
 		})
 	}
 }

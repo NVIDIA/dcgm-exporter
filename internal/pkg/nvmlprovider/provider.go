@@ -19,15 +19,12 @@ package nvmlprovider
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
-	"github.com/sirupsen/logrus"
 )
-
-var nvmlOnce *sync.Once = new(sync.Once)
 
 type MIGDeviceInfo struct {
 	ParentUUID        string
@@ -35,80 +32,138 @@ type MIGDeviceInfo struct {
 	ComputeInstanceID int
 }
 
-// GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
-func GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
-	var err error
+var nvmlInterface NVML
 
-	nvmlOnce.Do(func() {
-		ret := nvml.Init()
-		if ret != nvml.SUCCESS {
-			err = errors.New(nvml.ErrorString(ret))
-			logrus.Error("Can not init NVML library.")
-		}
-	})
-	if err != nil {
+// Initialize sets up the Singleton NVML interface.
+func Initialize() {
+	nvmlInterface = newNVMLProvider()
+}
+
+// reset clears the current NVML interface instance.
+func reset() {
+	nvmlInterface = nil
+}
+
+// Client retrieves the current NVML interface instance.
+func Client() NVML {
+	return nvmlInterface
+}
+
+// SetClient sets the current NVML interface instance to the provided one.
+func SetClient(n NVML) {
+	nvmlInterface = n
+}
+
+// nvmlProvider implements NVML Interface
+type nvmlProvider struct {
+	initialized bool
+}
+
+func newNVMLProvider() NVML {
+	// Check if a NVML client already exists and return it if so.
+	if Client() != nil && Client().(nvmlProvider).initialized {
+		slog.Info("NVML already initialized.")
+		return Client()
+	}
+
+	slog.Info("Attempting to initialize NVML library.")
+	ret := nvml.Init()
+	if ret != nvml.SUCCESS {
+		err := errors.New(nvml.ErrorString(ret))
+		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
+		return nvmlProvider{initialized: false}
+	}
+
+	return nvmlProvider{initialized: true}
+}
+
+func (n nvmlProvider) preCheck() error {
+	if !n.initialized {
+		return fmt.Errorf("NVML library not initialized")
+	}
+
+	return nil
+}
+
+// GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
+func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
+	if err := n.preCheck(); err != nil {
+		slog.Error(fmt.Sprintf("failed to get MIG Device Info; err: %v", err))
 		return nil, err
 	}
 
-	// 	1. With drivers >= R470 (470.42.01+), each MIG device is assigned a GPU UUID starting
-	//  with MIG-<UUID>.
-
 	device, ret := nvml.DeviceGetHandleByUUID(uuid)
 	if ret == nvml.SUCCESS {
-		parentDevice, ret := device.GetDeviceHandleFromMigDeviceHandle()
-		if ret != nvml.SUCCESS {
-			return nil, errors.New(nvml.ErrorString(ret))
-		}
-
-		parentUUID, ret := parentDevice.GetUUID()
-		if ret != nvml.SUCCESS {
-			return nil, errors.New(nvml.ErrorString(ret))
-		}
-
-		gi, ret := device.GetGpuInstanceId()
-		if ret != nvml.SUCCESS {
-			return nil, errors.New(nvml.ErrorString(ret))
-		}
-
-		ci, ret := device.GetComputeInstanceId()
-		if ret != nvml.SUCCESS {
-			return nil, errors.New(nvml.ErrorString(ret))
-		}
-
-		return &MIGDeviceInfo{
-			ParentUUID:        parentUUID,
-			GPUInstanceID:     gi,
-			ComputeInstanceID: ci,
-		}, nil
+		return getMIGDeviceInfoForNewDriver(device)
 	}
 
-	//  2. With drivers < R470 (e.g. R450 and R460), each MIG device is enumerated by
-	// specifying the CI and the corresponding parent GI. The format follows this
-	// convention: MIG-<GPU-UUID>/<GPU instance ID>/<compute instance ID>.
+	return getMIGDeviceInfoForOldDriver(uuid)
+}
 
-	tokens := strings.SplitN(uuid, "-", 2)
-	if len(tokens) != 2 || tokens[0] != "MIG" {
-		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
+// getMIGDeviceInfoForNewDriver identifies MIG Device Information for drivers >= R470 (470.42.01+),
+// each MIG device is assigned a GPU UUID starting with MIG-<UUID>.
+func getMIGDeviceInfoForNewDriver(device nvml.Device) (*MIGDeviceInfo, error) {
+	parentDevice, ret := device.GetDeviceHandleFromMigDeviceHandle()
+	if ret != nvml.SUCCESS {
+		return nil, errors.New(nvml.ErrorString(ret))
 	}
 
-	tokens = strings.SplitN(tokens[1], "/", 3)
-	if len(tokens) != 3 || !strings.HasPrefix(tokens[0], "GPU-") {
-		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
+	parentUUID, ret := parentDevice.GetUUID()
+	if ret != nvml.SUCCESS {
+		return nil, errors.New(nvml.ErrorString(ret))
 	}
 
-	gi, err := strconv.Atoi(tokens[1])
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
+	gi, ret := device.GetGpuInstanceId()
+	if ret != nvml.SUCCESS {
+		return nil, errors.New(nvml.ErrorString(ret))
 	}
 
-	ci, err := strconv.Atoi(tokens[2])
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse UUID '%s' as MIG device", uuid)
+	ci, ret := device.GetComputeInstanceId()
+	if ret != nvml.SUCCESS {
+		return nil, errors.New(nvml.ErrorString(ret))
 	}
 
 	return &MIGDeviceInfo{
-		ParentUUID:        tokens[0],
+		ParentUUID:        parentUUID,
 		GPUInstanceID:     gi,
 		ComputeInstanceID: ci,
 	}, nil
+}
+
+// getMIGDeviceInfoForOldDriver identifies MIG Device Information for drivers < R470 (e.g. R450 and R460),
+// each MIG device is enumerated by specifying the CI and the corresponding parent GI. The format follows this
+// convention: MIG-<GPU-UUID>/<GPU instance ID>/<Compute instance ID>.
+func getMIGDeviceInfoForOldDriver(uuid string) (*MIGDeviceInfo, error) {
+	tokens := strings.SplitN(uuid, "-", 2)
+	if len(tokens) != 2 || tokens[0] != "MIG" {
+		return nil, fmt.Errorf("unable to parse '%s' as MIG device UUID", uuid)
+	}
+
+	gpuTokens := strings.SplitN(tokens[1], "/", 3)
+	if len(gpuTokens) != 3 || !strings.HasPrefix(gpuTokens[0], "GPU-") {
+		return nil, fmt.Errorf("invalid MIG device UUID '%s'", uuid)
+	}
+
+	gi, err := strconv.Atoi(gpuTokens[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid GPU instance ID '%s' for MIG device '%s'", gpuTokens[1], uuid)
+	}
+
+	ci, err := strconv.Atoi(gpuTokens[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid Compute instance ID '%s' for MIG device '%s'", gpuTokens[2], uuid)
+	}
+
+	return &MIGDeviceInfo{
+		ParentUUID:        gpuTokens[0],
+		GPUInstanceID:     gi,
+		ComputeInstanceID: ci,
+	}, nil
+}
+
+// Cleanup performs cleanup operations for the NVML provider
+func (n nvmlProvider) Cleanup() {
+	if err := n.preCheck(); err == nil {
+		reset()
+	}
 }

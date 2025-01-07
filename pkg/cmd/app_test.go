@@ -23,27 +23,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
-	"github.com/NVIDIA/dcgm-exporter/pkg/dcgmexporter"
 )
 
-func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
-	config := &dcgmexporter.Config{
-		GPUDevices:    dcgmexporter.DeviceOptions{},
-		SwitchDevices: dcgmexporter.DeviceOptions{},
-		CPUDevices:    dcgmexporter.DeviceOptions{},
-		UseFakeGPUs:   true,
+func Test_getDeviceWatchListManager(t *testing.T) {
+	config := &appconfig.Config{
+		GPUDeviceOptions:    appconfig.DeviceOptions{},
+		SwitchDeviceOptions: appconfig.DeviceOptions{},
+		CPUDeviceOptions:    appconfig.DeviceOptions{},
+		UseFakeGPUs:         true,
 	}
 
 	tests := []struct {
 		name       string
-		counterSet *dcgmexporter.CounterSet
-		assertion  func(*testing.T, *dcgmexporter.FieldEntityGroupTypeSystemInfo)
+		counterSet *counters.CounterSet
+		assertion  func(*testing.T, devicewatchlistmanager.Manager)
 	}{
 		{
 			name: "When DCGM_FI_DEV_XID_ERRORS and DCGM_EXP_XID_ERRORS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []dcgmexporter.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   230,
 						FieldName: "DCGM_FI_DEV_XID_ERRORS",
@@ -51,7 +54,7 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 						Help:      "Value of the last XID error encountered.",
 					},
 				},
-				ExporterCounters: []dcgmexporter.Counter{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9001,
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
@@ -60,17 +63,17 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(230), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_FI_DEV_XID_ERRORS enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []dcgmexporter.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   230,
 						FieldName: "DCGM_FI_DEV_XID_ERRORS",
@@ -79,17 +82,17 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(230), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_EXP_XID_ERRORS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				ExporterCounters: []dcgmexporter.Counter{
+			counterSet: &counters.CounterSet{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9001,
 						FieldName: "DCGM_EXP_XID_ERRORS_COUNT",
@@ -98,33 +101,33 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(230), values[0].FieldID)
 			},
 		},
 		{
 			name:       "When no counters",
-			counterSet: &dcgmexporter.CounterSet{},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			counterSet: &counters.CounterSet{},
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 0)
 			},
 		},
 		{
 			name: "When DCGM_FI_DEV_CLOCK_THROTTLE_REASON and DCGM_EXP_CLOCK_EVENTS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []dcgmexporter.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   112,
 						FieldName: "DCGM_FI_DEV_CLOCK_THROTTLE_REASON",
 						PromType:  "gauge",
 					},
 				},
-				ExporterCounters: []dcgmexporter.Counter{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9002,
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
@@ -133,18 +136,18 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(112), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_FI_DEV_CLOCK_THROTTLE_REASON enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				DCGMCounters: []dcgmexporter.Counter{
+			counterSet: &counters.CounterSet{
+				DCGMCounters: []counters.Counter{
 					{
 						FieldID:   112,
 						FieldName: "DCGM_FI_DEV_CLOCK_THROTTLE_REASON",
@@ -152,17 +155,17 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(112), values[0].FieldID)
 			},
 		},
 		{
 			name: "When DCGM_EXP_CLOCK_EVENTS_COUNT enabled",
-			counterSet: &dcgmexporter.CounterSet{
-				ExporterCounters: []dcgmexporter.Counter{
+			counterSet: &counters.CounterSet{
+				ExporterCounters: []counters.Counter{
 					{
 						FieldID:   9002,
 						FieldName: "DCGM_EXP_CLOCK_EVENTS_COUNT",
@@ -171,21 +174,21 @@ func Test_getFieldEntityGroupTypeSystemInfo(t *testing.T) {
 					},
 				},
 			},
-			assertion: func(t *testing.T, got *dcgmexporter.FieldEntityGroupTypeSystemInfo) {
+			assertion: func(t *testing.T, got devicewatchlistmanager.Manager) {
 				require.NotNil(t, got)
-				values := testutils.GetStructPrivateFieldValue[[]dcgmexporter.Counter](t, got, "counters")
+				values := testutils.GetStructPrivateFieldValue[[]counters.Counter](t, got, "counters")
 				require.Len(t, values, 1)
 				assert.Equal(t, dcgm.Short(112), values[0].FieldID)
 			},
 		},
 	}
 
-	cleanupDCGM := initDCGM(config)
-	defer cleanupDCGM()
+	dcgmprovider.Initialize(config)
+	defer dcgmprovider.Client().Cleanup()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getFieldEntityGroupTypeSystemInfo(tt.counterSet, config)
+			got := startDeviceWatchListManager(tt.counterSet, config)
 			if tt.assertion == nil {
 				t.Skip(tt.name)
 			}

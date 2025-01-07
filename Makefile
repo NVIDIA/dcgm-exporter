@@ -18,30 +18,29 @@ REGISTRY             ?= nvidia
 GO                   ?= go
 MKDIR                ?= mkdir
 GOLANGCILINT_TIMEOUT ?= 10m
+IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.22.5
+GOLANG_VERSION := 1.22.9
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
-DOCKERCMD      := docker buildx build
+DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
-
 
 .PHONY: all binary install check-format local
 all: update-version ubuntu22.04 ubi9
 
-binary: generate update-version
+binary: update-version
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
-test-main:
+test-main: generate
 	$(GO) test ./... -short
 
 install: binary
 	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
-	install -m 644 -D ./etc/dcp-metrics-included.csv /etc/dcgm-exporter/dcp-metrics-included.csv
 
 check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
@@ -58,23 +57,71 @@ else
 	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
-TARGETS = ubuntu22.04 ubi9
+ubi%: DOCKERFILE = docker/Dockerfile.ubi
+ubi%: --docker-build-%
+	@
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubi9
+ubi9: IMAGE_TAG = ubi9
 
-DOCKERFILE.ubuntu22.04 = docker/Dockerfile.ubuntu22.04
-DOCKERFILE.ubi9 = docker/Dockerfile.ubi9
+ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
+ubuntu%: --docker-build-%
+	@
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
+ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
-$(TARGETS):
+
+--docker-build-%:
+	@echo "Building for $@"
+	DOCKER_BUILDKIT=1 \
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
+		--progress=plain \
 		--platform $(PLATFORMS) \
+		--build-arg BASEIMAGE="$(BASE_IMAGE)" \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(VERSION)" \
-		--tag "$(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$@" \
-		--file $(DOCKERFILE.$@) .
+		--tag $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)$(if $(IMAGE_TAG),-$(IMAGE_TAG)) \
+		--file $(DOCKERFILE) .
+
+.PHONY: packages package-arm64 package-amd64
+packages: package-amd64 package-arm64
+
+package-arm64:
+	$(MAKE) package-build PLATFORMS=linux/arm64
+
+package-amd64:
+	$(MAKE) package-build PLATFORMS=linux/amd64
+
+package-build: IMAGE_TAG = ubuntu22.04
+package-build:
+	ARCH=`echo $(PLATFORMS) | cut -d'/' -f2)`; \
+	if [ "$$ARCH" = "amd64" ]; then \
+		ARCH="x86-64"; \
+	fi; \
+	if [ "$$ARCH" = "arm64" ]; then \
+		ARCH="sbsa"; \
+	fi; \
+	export DIST_NAME="dcgm_exporter-linux-$$ARCH-$(VERSION)"; \
+	export COMPONENT_NAME="dcgm_exporter"; \
+	$(MAKE) ubuntu22.04 OUTPUT=type=docker PLATFORMS=$(PLATFORMS) && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin && \
+	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/dcgm-exporter && \
+	I=`docker create $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-$(IMAGE_TAG)` && \
+	docker cp $$I:/usr/bin/dcgm-exporter /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin/ && \
+	docker cp $$I:/etc/dcgm-exporter /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/ && \
+	cp ./LICENSE /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
+	mkdir -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/lib/systemd/system/ && \
+	cp ./packaging/config-files/systemd/nvidia-dcgm-exporter.service \
+		/tmp/$$DIST_NAME/$$COMPONENT_NAME/lib/systemd/system/nvidia-dcgm-exporter.service && \
+	docker rm -f $$I && \
+	$(MKDIR) -p $(CURDIR)/dist && \
+	cd "/tmp/$$DIST_NAME" && tar -czf $(CURDIR)/dist/$$DIST_NAME.tar.gz `ls -A` && \
+	rm -rf "/tmp/$$DIST_NAME";
 
 .PHONY: integration
-test-integration:
+test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
@@ -83,7 +130,7 @@ test-coverage:
 
 .PHONY: lint
 lint:
-	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1 --fix
+	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1
 
 .PHONY: validate-modules
 validate-modules:
@@ -99,6 +146,7 @@ tools: ## Install required tools and utilities
 	go install github.com/axw/gocov/gocov@latest
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install mvdan.cc/gofumpt@latest
+	go install github.com/wadey/gocovmerge@latest
 
 fmt:
 	find . -name '*.go' | xargs gofumpt -l -w
