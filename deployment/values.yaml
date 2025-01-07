@@ -61,6 +61,9 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name:
 
+# Defines the priority class used by the pod
+priorityClassName: "system-node-critical"
+
 rollingUpdate:
   # Specifies maximum number of DaemonSet pods that can be unavailable during the update
   maxUnavailable: 1
