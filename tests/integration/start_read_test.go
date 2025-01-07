@@ -38,7 +38,7 @@ func TestStartAndReadMetrics(t *testing.T) {
 	}
 	app := cmd.NewApp()
 	args := os.Args[0:1]
-	args = append(args, "-f=../../etc/default-counters.csv") // Append a file with default counters
+	args = append(args, "-f=./testdata/default-counters.csv") // Append a file with default counters
 	port := getRandomAvailablePort(t)
 	args = append(args, fmt.Sprintf("-a=:%d", port))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -46,9 +46,6 @@ func TestStartAndReadMetrics(t *testing.T) {
 		err := app.Run(args)
 		require.NoError(t, err)
 	}(ctx)
-
-	t.Log("The dcgm-exporter is running, we wait for 30 seconds to read metrics")
-	<-time.After(30 * time.Second)
 
 	t.Logf("Read metrics from http://localhost:%d/metrics", port)
 

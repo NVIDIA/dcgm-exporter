@@ -21,7 +21,7 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 	}
 	app := cmd.NewApp()
 	args := os.Args[0:1]
-	args = append(args, "-f=../../etc/default-counters.csv") // Append a file with default counters
+	args = append(args, "-f=./testdata/default-counters.csv") // Append a file with default counters
 	port := getRandomAvailablePort(t)
 	args = append(args, fmt.Sprintf("-a=:%d", port))
 	args = append(args, "--web-config-file=./testdata/web-config.yml")
@@ -59,7 +59,8 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 		}
 		status, err := retry.DoWithData(
 			func() (int, error) {
-				req := newRequestWithBasicAuth(t, "alice", "password", http.MethodGet, fmt.Sprintf("https://localhost:%d/metrics", port), nil)
+				req := newRequestWithBasicAuth(t, "alice", "password", http.MethodGet,
+					fmt.Sprintf("https://localhost:%d/metrics", port), nil)
 				resp, err := client.Do(req)
 				if err != nil {
 					return -1, err
@@ -84,7 +85,8 @@ func TestStartWithTLSEnabledAndBasicAuth(t *testing.T) {
 		}
 		status, err := retry.DoWithData(
 			func() (int, error) {
-				req := newRequestWithBasicAuth(t, "alice", "bad password", http.MethodGet, fmt.Sprintf("https://localhost:%d/metrics", port), nil)
+				req := newRequestWithBasicAuth(t, "alice", "bad password", http.MethodGet,
+					fmt.Sprintf("https://localhost:%d/metrics", port), nil)
 				resp, err := client.Do(req)
 				if err != nil {
 					return -1, err

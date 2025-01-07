@@ -11,7 +11,9 @@ tests.cov
 test_results.json
 .scannerwork
 dist/
-.run/
+.run
+dist/
+
 ###############################################################################
 # JetBrains
 # https://github.com/github/gitignore/blob/master/Global/JetBrains.gitignore

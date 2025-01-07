@@ -111,10 +111,26 @@ type HelmChartOptions struct {
 	DryRun        bool
 }
 
+type HelmChartValueOption func(*helmValues.Options)
+
+func WithValues(values ...string) HelmChartValueOption {
+	return func(o *helmValues.Options) {
+		o.Values = values
+	}
+}
+
+func WithJSONValues(values ...string) HelmChartValueOption {
+	return func(o *helmValues.Options) {
+		o.JSONValues = values
+	}
+}
+
 // Install deploys the helm chart
-func (c *HelmClient) Install(ctx context.Context, params []string, chartOpts HelmChartOptions) (string, error) {
-	values := helmValues.Options{
-		Values: params,
+func (c *HelmClient) Install(ctx context.Context, chartOpts HelmChartOptions, valuesOptions ...HelmChartValueOption) (string, error) {
+	values := helmValues.Options{}
+
+	for _, valueOption := range valuesOptions {
+		valueOption(&values)
 	}
 
 	chartSpec := helm.ChartSpec{
@@ -136,7 +152,6 @@ func (c *HelmClient) Install(ctx context.Context, params []string, chartOpts Hel
 	}
 
 	res, err := c.client.InstallChart(ctx, &chartSpec, nil)
-
 	if err != nil {
 		return "", fmt.Errorf("error installing the chart; err: %w", err)
 	}

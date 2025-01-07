@@ -63,6 +63,16 @@ func TestMain(m *testing.M) {
 		"",
 		`DCGM-exporter command line arguments. Example: -arguments="{-f=/etc/dcgm-exporter/default-counters.csv}"`)
 
+	flag.BoolVar(&testContext.noCleanup,
+		"no-cleanup",
+		false,
+		`Skip clean up after tests execution`)
+
+	flag.StringVar(&testContext.runtimeClass,
+		"runtime-class",
+		"",
+		"Runtime Class to use for the DCGM-exporter deployment and workload pods")
+
 	flag.Parse()
 
 	os.Exit(m.Run())

@@ -17,22 +17,20 @@
 package main
 
 import (
+	"log/slog"
 	"os"
-
-	"github.com/sirupsen/logrus"
 
 	_ "go.uber.org/automaxprocs"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
 
-var (
-	BuildVersion = "Filled by the build system"
-)
+var BuildVersion = "Filled by the build system"
 
 func main() {
 	app := cmd.NewApp(BuildVersion)
 	if err := app.Run(os.Args); err != nil {
-		logrus.Fatal(err)
+		slog.Error(err.Error())
+		os.Exit(1)
 	}
 }
