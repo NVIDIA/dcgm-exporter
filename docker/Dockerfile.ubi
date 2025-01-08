@@ -72,8 +72,7 @@ RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ub
 	&& rm -rf /usr/local/dcgm/scripts \
 	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
 	&& rm -rf /var/lib/rpm/rpmdb.sqlite /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \
-	&& rm -rf /usr/share/doc && rm -rf /usr/share/man \
-	&& ldconfig
+	&& rm -rf /usr/share/doc && rm -rf /usr/share/man
 
 COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/

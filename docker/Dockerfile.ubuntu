@@ -82,8 +82,7 @@ RUN echo "$TARGETARCH" && apt-get -qq update && apt-get -qq install -y --no-inst
     && rm -rf /usr/local/dcgm/scripts \
     && rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
     && rm -rf /var/cache/debconf/* /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
-    && rm -rf /usr/share/doc && rm -rf /usr/share/man \
-    && ldconfig
+    && rm -rf /usr/share/doc && rm -rf /usr/share/man
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
