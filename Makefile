@@ -76,6 +76,7 @@ ubuntu22.04: IMAGE_TAG = ubuntu22.04
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
 		--progress=plain \
+		--no-cache \
 		--platform $(PLATFORMS) \
 		--build-arg BASEIMAGE="$(BASE_IMAGE)" \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
