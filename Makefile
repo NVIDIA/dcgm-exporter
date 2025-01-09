@@ -72,6 +72,7 @@ ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 --docker-build-%:
 	@echo "Building for $@"
+	docker buildx inspect
 	DOCKER_BUILDKIT=1 \
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
