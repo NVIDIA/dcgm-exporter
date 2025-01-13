@@ -36,6 +36,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 var (
@@ -79,6 +80,52 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 	}
 
 	slog.Debug(fmt.Sprintf("Podresources API response: %+v", pods))
+	if p.Config.KubernetesVirtualGPUs {
+		deviceToPods := p.toDeviceToSharingPods(pods, deviceInfo)
+
+		slog.Debug(fmt.Sprintf("Device to sharing pods mapping: %+v", deviceToPods))
+
+		// For each counter metric, init a slice to collect metrics to associate with shared virtual GPUs.
+		for counter := range metrics {
+			var newmetrics []collector.Metric
+			// For each instrumented device, build list of metrics and create
+			// new metrics for any shared GPUs.
+			for j, val := range metrics[counter] {
+				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+				if err != nil {
+					return err
+				}
+
+				podInfos, _ := deviceToPods[deviceID]
+				// For all containers using the GPU, extract and annotate a metric
+				// with the container info and the shared GPU label, if it exists.
+				// Notably, this will increase the number of unique metrics (i.e. labelsets)
+				// to by the number of containers sharing the GPU.
+				for _, pi := range podInfos {
+					metric, err := utils.DeepCopy(metrics[counter][j])
+					if err != nil {
+						return err
+					}
+					if !p.Config.UseOldNamespace {
+						metric.Attributes[podAttribute] = pi.Name
+						metric.Attributes[namespaceAttribute] = pi.Namespace
+						metric.Attributes[containerAttribute] = pi.Container
+					} else {
+						metric.Attributes[oldPodAttribute] = pi.Name
+						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+						metric.Attributes[oldContainerAttribute] = pi.Container
+					}
+					if pi.VGPU != "" {
+						metric.Attributes[vgpuAttribute] = pi.VGPU
+					}
+					newmetrics = append(newmetrics, metric)
+				}
+			}
+			// Upsert the annotated metrics into the final map.
+			metrics[counter] = newmetrics
+		}
+		return nil
+	}
 
 	deviceToPod := p.toDeviceToPod(pods, deviceInfo)
 
@@ -140,6 +187,89 @@ func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodRes
 	}
 
 	return resp, nil
+}
+
+// getSharedGPU parses the provided device ID and extracts the shared
+// GPU identifier along with a boolean indicating if an identifier was
+// found.
+func getSharedGPU(deviceID string) (string, bool) {
+	// Check if we're using the GKE device plugin or NVIDIA device plugin.
+	if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+		return strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[1], true
+	} else if strings.Contains(deviceID, "::") {
+		return strings.Split(deviceID, "::")[1], true
+	}
+	return "", false
+}
+
+// toDeviceToSharingPods uses the same general logic as toDeviceToPod but
+// allows for multiple contianers to be associated with a metric when sharing
+// strategies are used in Kubernetes.
+// TODO(pintohuch): the logic is manually duplicated from toDeviceToPod for
+// better isolation and easier review. Ultimately, this logic should be
+// merged into a single function that can handle both shared and non-shared
+// GPU states.
+func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
+	deviceToPodsMap := make(map[string][]PodInfo)
+
+	for _, pod := range devicePods.GetPodResources() {
+		for _, container := range pod.GetContainers() {
+			for _, device := range container.GetDevices() {
+
+				resourceName := device.GetResourceName()
+				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
+					// Mig resources appear differently than GPU resources
+					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
+						continue
+					}
+				}
+
+				podInfo := PodInfo{
+					Name:      pod.GetName(),
+					Namespace: pod.GetNamespace(),
+					Container: container.GetName(),
+				}
+
+				for _, deviceID := range device.GetDeviceIds() {
+					if vgpu, ok := getSharedGPU(deviceID); ok {
+						podInfo.VGPU = vgpu
+					}
+					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
+						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+						if err == nil {
+							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
+								uint(migDevice.GPUInstanceID))
+							deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+						}
+						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+						deviceToPodsMap[gpuUUID] = append(deviceToPodsMap[gpuUUID], podInfo)
+					} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
+						var gpuIndex string
+						var gpuInstanceID string
+						for groupIdx, group := range gkeMigDeviceIDMatches {
+							switch groupIdx {
+							case 1:
+								gpuIndex = group
+							case 2:
+								gpuInstanceID = group
+							}
+						}
+						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
+						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+					} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+						deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]] = append(deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]], podInfo)
+					} else if strings.Contains(deviceID, "::") {
+						gpuInstanceID := strings.Split(deviceID, "::")[0]
+						deviceToPodsMap[gpuInstanceID] = append(deviceToPodsMap[gpuInstanceID], podInfo)
+					}
+					// Default mapping between deviceID and pod information
+					deviceToPodsMap[deviceID] = append(deviceToPodsMap[deviceID], podInfo)
+				}
+			}
+		}
+	}
+
+	return deviceToPodsMap
 }
 
 func (p *PodMapper) toDeviceToPod(

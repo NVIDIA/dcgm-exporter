@@ -87,6 +87,7 @@ const (
 	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 	CLINvidiaResourceNames        = "nvidia-resource-names"
+	CLIKubernetesVirtualGPUs      = "kubernetes-virtual-gpus"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -255,6 +256,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   cli.NewStringSlice(),
 			Usage:   "Nvidia resource names for specified GPU type like nvidia.com/a100, nvidia.com/a10.",
 			EnvVars: []string{"NVIDIA_RESOURCE_NAMES"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesVirtualGPUs,
+			Value:   false,
+			Usage:   "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins when using GPU sharing strategies, e.g. time-sharing or MPS.",
+			EnvVars: []string{"KUBERNETES_VIRTUAL_GPUS"},
 		},
 	}
 
@@ -606,5 +613,6 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		PodResourcesKubeletSocket:  c.String(CLIPodResourcesKubeletSocket),
 		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
 		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
+		KubernetesVirtualGPUs:      c.Bool(CLIKubernetesVirtualGPUs),
 	}, nil
 }
