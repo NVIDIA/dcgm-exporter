@@ -30,9 +30,9 @@ DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local
-all: update-version ubuntu22.04 ubi9
+all: ubuntu22.04 ubi9
 
-binary: update-version
+binary:
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: generate
@@ -46,7 +46,7 @@ check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
-push: update-version
+push:
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
 
@@ -60,13 +60,13 @@ endif
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.8.0-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.8.0-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 

@@ -37,4 +37,5 @@ type PodInfo struct {
 	Name      string
 	Namespace string
 	Container string
+	VGPU      string
 }
