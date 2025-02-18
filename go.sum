@@ -28,6 +28,8 @@ github.com/Microsoft/hcsshim v0.11.4 h1:68vKo2VN8DE9AdN4tnkWnmdhqdbpUFM8OF3Airm7
 github.com/Microsoft/hcsshim v0.11.4/go.mod h1:smjE4dvqPX9Zldna+t5FG3rnoHhaB7QYxPRqGcpAD9w=
 github.com/NVIDIA/go-dcgm v0.0.0-20250106155650-850266c9c8a5 h1:+HrFl/XGrOqfX8tgvJTCHfuDzbZbpdEQmbOdcDR53Ew=
 github.com/NVIDIA/go-dcgm v0.0.0-20250106155650-850266c9c8a5/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
+github.com/NVIDIA/go-dcgm v0.0.0-20250206205700-2b08cf88dcdc h1:sk7fIw8PGbElCNnc7q64vMgadgMFKSEtDtPweEyXvY4=
+github.com/NVIDIA/go-dcgm v0.0.0-20250206205700-2b08cf88dcdc/go.mod h1:kaRlwPjisNMY7xH8QWJ+6q76YJ/1eu6pWV45B5Ew6C4=
 github.com/NVIDIA/go-nvml v0.12.4-0 h1:4tkbB3pT1O77JGr0gQ6uD8FrsUPqP1A/EOEm2wI1TUg=
 github.com/NVIDIA/go-nvml v0.12.4-0/go.mod h1:8Llmj+1Rr+9VGGwZuRer5N/aCjxGuR5nPb/9ebBiIEQ=
 github.com/Shopify/logrus-bugsnag v0.0.0-20171204204709-577dee27f20d h1:UrqY+r/OJnIp5u0s1SbQ8dVfLCZJsnvazdBP5hS4iRs=

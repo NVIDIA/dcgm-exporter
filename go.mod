@@ -5,7 +5,7 @@ go 1.22.0
 toolchain go1.22.9
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20250106155650-850266c9c8a5
+	github.com/NVIDIA/go-dcgm v0.0.0-20250206205700-2b08cf88dcdc
 	github.com/NVIDIA/go-nvml v0.12.4-0
 	github.com/avast/retry-go/v4 v4.6.0
 	github.com/bits-and-blooms/bitset v1.17.0
