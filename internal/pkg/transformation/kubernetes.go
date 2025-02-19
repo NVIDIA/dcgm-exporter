@@ -96,7 +96,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					return err
 				}
 
-				podInfos, _ := deviceToPods[deviceID]
+				podInfos := deviceToPods[deviceID]
 				// For all containers using the GPU, extract and annotate a metric
 				// with the container info and the shared GPU label, if it exists.
 				// Notably, this will increase the number of unique metrics (i.e. labelsets)
@@ -203,7 +203,7 @@ func getSharedGPU(deviceID string) (string, bool) {
 }
 
 // toDeviceToSharingPods uses the same general logic as toDeviceToPod but
-// allows for multiple contianers to be associated with a metric when sharing
+// allows for multiple containers to be associated with a metric when sharing
 // strategies are used in Kubernetes.
 // TODO(pintohuch): the logic is manually duplicated from toDeviceToPod for
 // better isolation and easier review. Ultimately, this logic should be
