@@ -63,7 +63,7 @@ LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 ARG DCGM_VERSION
 
 RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
-	&& dnf install --nodocs --setopt=install_weak_deps=False -y datacenter-gpu-manager-4-core libcap \
+	&& dnf install --nodocs --setopt=install_weak_deps=False -y datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap \
 	&& dnf -y clean all\
 	&& rm -rf /var/cache/yum\
 	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
