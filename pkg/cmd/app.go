@@ -19,6 +19,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/urfave/cli/v2"
+	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -84,6 +85,7 @@ const (
 	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
 	CLIEnableDCGMLog              = "enable-dcgm-log"
 	CLIDCGMLogLevel               = "dcgm-log-level"
+	CLILogFormat                  = "log-format"
 	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 	CLINvidiaResourceNames        = "nvidia-resource-names"
@@ -240,6 +242,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
 		},
 		&cli.StringFlag{
+			Name:    CLILogFormat,
+			Value:   "text",
+			Usage:   "Specify the log output format. Possible values: text, json",
+			EnvVars: []string{"DCGM_EXPORTER_LOG_FORMAT"},
+		},
+		&cli.StringFlag{
 			Name:    CLIPodResourcesKubeletSocket,
 			Value:   "/var/lib/kubelet/pod-resources/kubelet.sock",
 			Usage:   "Path to the kubelet pod-resources socket file.",
@@ -312,8 +320,30 @@ func action(c *cli.Context) (err error) {
 	})
 }
 
+func configureLogFormat(c *cli.Context) error {
+	logFormat := c.String(CLILogFormat)
+	var logger *slog.Logger
+	switch logFormat {
+	case "text":
+		logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+		slog.SetDefault(logger)
+	case "json":
+		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		slog.SetDefault(logger)
+	default:
+		return fmt.Errorf("invalid %s parameter values: %s", CLILogFormat, logFormat)
+	}
+	return nil
+}
+
 func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
 restart:
+	if err := configureLogFormat(c); err != nil {
+		return err
+	}
+
+	// Initialize automaxprocs with desired logging format.
+	maxprocs.Set(maxprocs.Logger(slog.Info))
 
 	var version string
 	if c != nil && c.App != nil {
