@@ -17,5 +17,6 @@
     "--security-opt",
     "seccomp=unconfined",
     "--gpus=all"
-    ]
+    ],
+  "postStartCommand": "docker run --privileged --rm tonistiigi/binfmt --install all"
 }
