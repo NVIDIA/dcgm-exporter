@@ -325,10 +325,10 @@ func configureLogFormat(c *cli.Context) error {
 	var logger *slog.Logger
 	switch logFormat {
 	case "text":
-		logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 		slog.SetDefault(logger)
 	case "json":
-		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		slog.SetDefault(logger)
 	default:
 		return fmt.Errorf("invalid %s parameter values: %s", CLILogFormat, logFormat)
