@@ -389,17 +389,17 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 
 	mockLatestValues := []dcgm.FieldValue_v1{
 		{
-			FieldId:   150,
+			FieldID:   150,
 			FieldType: dcgm.DCGM_FT_INT64,
 			Value:     [4096]byte{42},
 		},
 		{
-			FieldId:   uint(mockLabelDeviceField),
+			FieldID:   mockLabelDeviceField,
 			FieldType: dcgm.DCGM_FT_STRING,
 			Value:     testutils.StrToByteArray(mockLabelValue),
 		},
 		{
-			FieldId:   uint(mockLabelDeviceField),
+			FieldID:   mockLabelDeviceField,
 			FieldType: dcgm.DCGM_FT_STRING,
 			Value:     testutils.StrToByteArray(dcgm.DCGM_FT_STR_NOT_FOUND),
 		},
@@ -429,8 +429,8 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityId: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
 				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
@@ -488,9 +488,9 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityId: gpuID2, Value: [4096]byte{gpu2Value}},
-					{EntityId: uint(2), Value: [4096]byte{gpu2Value}},
+					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityID: uint(2), Value: [4096]byte{gpu2Value}},
 				}
 
 				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
@@ -555,8 +555,8 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityId: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
 				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
@@ -628,11 +628,11 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityId: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityId: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityId: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityId: gpuID2, Value: [4096]byte{gpu2Value}},
-					{EntityId: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
 				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),

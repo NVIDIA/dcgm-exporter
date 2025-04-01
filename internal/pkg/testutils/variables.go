@@ -110,35 +110,35 @@ var (
 
 	SampleFieldIDToFieldMeta = map[dcgm.Short]dcgm.FieldMeta{
 		SampleGPUTempCounter.FieldID: {
-			FieldId:     SampleGPUTempCounter.FieldID,
+			FieldID:     SampleGPUTempCounter.FieldID,
 			EntityLevel: dcgm.FE_GPU,
 		},
 		SampleGPUTotalEnergyCounter.FieldID: {
-			FieldId:     SampleGPUTotalEnergyCounter.FieldID,
+			FieldID:     SampleGPUTotalEnergyCounter.FieldID,
 			EntityLevel: dcgm.FE_GPU,
 		},
 		SampleGPUPowerUsageCounter.FieldID: {
-			FieldId:     SampleGPUPowerUsageCounter.FieldID,
+			FieldID:     SampleGPUPowerUsageCounter.FieldID,
 			EntityLevel: dcgm.FE_GPU_I,
 		},
 		SampleVGPULicenseStatusCounter.FieldID: {
-			FieldId:     SampleVGPULicenseStatusCounter.FieldID,
+			FieldID:     SampleVGPULicenseStatusCounter.FieldID,
 			EntityLevel: dcgm.FE_VGPU,
 		},
 		SampleDriverVersionCounter.FieldID: {
-			FieldId:     SampleDriverVersionCounter.FieldID,
+			FieldID:     SampleDriverVersionCounter.FieldID,
 			EntityLevel: dcgm.FE_NONE,
 		},
 		SampleSwitchCurrentTempCounter.FieldID: {
-			FieldId:     SampleSwitchCurrentTempCounter.FieldID,
+			FieldID:     SampleSwitchCurrentTempCounter.FieldID,
 			EntityLevel: dcgm.FE_SWITCH,
 		},
 		SampleSwitchLinkFlitErrorsCounter.FieldID: {
-			FieldId:     SampleSwitchLinkFlitErrorsCounter.FieldID,
+			FieldID:     SampleSwitchLinkFlitErrorsCounter.FieldID,
 			EntityLevel: dcgm.FE_LINK,
 		},
 		SampleCPUUtilTotalCounter.FieldID: {
-			FieldId:     SampleCPUUtilTotalCounter.FieldID,
+			FieldID:     SampleCPUUtilTotalCounter.FieldID,
 			EntityLevel: dcgm.FE_CPU_CORE,
 		},
 	}

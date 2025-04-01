@@ -41,7 +41,7 @@ func NewDeviceWatcher() *DeviceWatcher {
 func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
 	for _, counter := range counters {
-		fieldMeta := dcgmprovider.Client().FieldGetById(counter.FieldID)
+		fieldMeta := dcgmprovider.Client().FieldGetByID(counter.FieldID)
 
 		if shouldIncludeField(entityType, fieldMeta.EntityLevel) {
 			deviceFields = append(deviceFields, counter.FieldID)

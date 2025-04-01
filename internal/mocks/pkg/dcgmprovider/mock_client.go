@@ -168,18 +168,18 @@ func (mr *MockDCGMMockRecorder) EntityGetLatestValues(arg0, arg1, arg2 any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EntityGetLatestValues", reflect.TypeOf((*MockDCGM)(nil).EntityGetLatestValues), arg0, arg1, arg2)
 }
 
-// FieldGetById mocks base method.
-func (m *MockDCGM) FieldGetById(arg0 dcgm.Short) dcgm.FieldMeta {
+// FieldGetByID mocks base method.
+func (m *MockDCGM) FieldGetByID(arg0 dcgm.Short) dcgm.FieldMeta {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FieldGetById", arg0)
+	ret := m.ctrl.Call(m, "FieldGetByID", arg0)
 	ret0, _ := ret[0].(dcgm.FieldMeta)
 	return ret0
 }
 
-// FieldGetById indicates an expected call of FieldGetById.
-func (mr *MockDCGMMockRecorder) FieldGetById(arg0 any) *gomock.Call {
+// FieldGetByID indicates an expected call of FieldGetByID.
+func (mr *MockDCGMMockRecorder) FieldGetByID(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FieldGetById", reflect.TypeOf((*MockDCGM)(nil).FieldGetById), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FieldGetByID", reflect.TypeOf((*MockDCGM)(nil).FieldGetByID), arg0)
 }
 
 // FieldGroupCreate mocks base method.
@@ -240,19 +240,19 @@ func (mr *MockDCGMMockRecorder) GetAllDeviceCount() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllDeviceCount", reflect.TypeOf((*MockDCGM)(nil).GetAllDeviceCount))
 }
 
-// GetCpuHierarchy mocks base method.
-func (m *MockDCGM) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
+// GetCPUHierarchy mocks base method.
+func (m *MockDCGM) GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetCpuHierarchy")
-	ret0, _ := ret[0].(dcgm.CpuHierarchy_v1)
+	ret := m.ctrl.Call(m, "GetCPUHierarchy")
+	ret0, _ := ret[0].(dcgm.CPUHierarchy_v1)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetCpuHierarchy indicates an expected call of GetCpuHierarchy.
-func (mr *MockDCGMMockRecorder) GetCpuHierarchy() *gomock.Call {
+// GetCPUHierarchy indicates an expected call of GetCPUHierarchy.
+func (mr *MockDCGMMockRecorder) GetCPUHierarchy() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCpuHierarchy", reflect.TypeOf((*MockDCGM)(nil).GetCpuHierarchy))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCPUHierarchy", reflect.TypeOf((*MockDCGM)(nil).GetCPUHierarchy))
 }
 
 // GetDeviceInfo mocks base method.
@@ -285,19 +285,19 @@ func (mr *MockDCGMMockRecorder) GetEntityGroupEntities(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEntityGroupEntities", reflect.TypeOf((*MockDCGM)(nil).GetEntityGroupEntities), arg0)
 }
 
-// GetGpuInstanceHierarchy mocks base method.
-func (m *MockDCGM) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
+// GetGPUInstanceHierarchy mocks base method.
+func (m *MockDCGM) GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetGpuInstanceHierarchy")
+	ret := m.ctrl.Call(m, "GetGPUInstanceHierarchy")
 	ret0, _ := ret[0].(dcgm.MigHierarchy_v2)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetGpuInstanceHierarchy indicates an expected call of GetGpuInstanceHierarchy.
-func (mr *MockDCGMMockRecorder) GetGpuInstanceHierarchy() *gomock.Call {
+// GetGPUInstanceHierarchy indicates an expected call of GetGPUInstanceHierarchy.
+func (mr *MockDCGMMockRecorder) GetGPUInstanceHierarchy() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGpuInstanceHierarchy", reflect.TypeOf((*MockDCGM)(nil).GetGpuInstanceHierarchy))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGPUInstanceHierarchy", reflect.TypeOf((*MockDCGM)(nil).GetGPUInstanceHierarchy))
 }
 
 // GetGroupInfo mocks base method.
@@ -435,7 +435,7 @@ func (mr *MockDCGMMockRecorder) HealthSet(arg0, arg1 any) *gomock.Call {
 }
 
 // InjectFieldValue mocks base method.
-func (m *MockDCGM) InjectFieldValue(arg0, arg1, arg2 uint, arg3 int, arg4 int64, arg5 any) error {
+func (m *MockDCGM) InjectFieldValue(arg0 uint, arg1 dcgm.Short, arg2 uint, arg3 int, arg4 int64, arg5 any) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "InjectFieldValue", arg0, arg1, arg2, arg3, arg4, arg5)
 	ret0, _ := ret[0].(error)
