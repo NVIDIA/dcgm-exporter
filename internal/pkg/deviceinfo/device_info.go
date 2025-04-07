@@ -140,7 +140,7 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 		}
 	}
 
-	hierarchy, err := dcgmprovider.Client().GetGpuInstanceHierarchy()
+	hierarchy, err := dcgmprovider.Client().GetGPUInstanceHierarchy()
 	if err != nil {
 		return err
 	}
@@ -193,19 +193,19 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 }
 
 func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
-	hierarchy, err := dcgmprovider.Client().GetCpuHierarchy()
+	hierarchy, err := dcgmprovider.Client().GetCPUHierarchy()
 	if err != nil {
 		return err
 	}
 
-	if hierarchy.NumCpus <= 0 {
+	if hierarchy.NumCPUs <= 0 {
 		return fmt.Errorf("no cpus to monitor")
 	}
 
-	for i := 0; i < int(hierarchy.NumCpus); i++ {
+	for i := 0; i < int(hierarchy.NumCPUs); i++ {
 		// monitor only the CPUs as per the device options input
-		if cOpt.Flex || s.shouldMonitor(cOpt.MajorRange, hierarchy.Cpus[i].CpuId) {
-			cores := getCoreArray(hierarchy.Cpus[i].OwnedCores)
+		if cOpt.Flex || s.shouldMonitor(cOpt.MajorRange, hierarchy.CPUs[i].CPUID) {
+			cores := getCoreArray(hierarchy.CPUs[i].OwnedCores)
 
 			monitoredCores := make([]uint, 0)
 			for _, core := range cores {
@@ -216,7 +216,7 @@ func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
 			}
 
 			cpu := CPUInfo{
-				hierarchy.Cpus[i].CpuId,
+				hierarchy.CPUs[i].CPUID,
 				monitoredCores,
 			}
 
@@ -284,10 +284,10 @@ func (s *Info) initializeNvSwitchInfo(sOpt appconfig.DeviceOptions) error {
 	return err
 }
 
-func (s *Info) setGPUInstanceProfileName(entityId uint, profileName string) bool {
+func (s *Info) setGPUInstanceProfileName(entityID uint, profileName string) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
 		for j := range s.gpus[i].GPUInstances {
-			if s.gpus[i].GPUInstances[j].EntityId == entityId {
+			if s.gpus[i].GPUInstances[j].EntityId == entityID {
 				s.gpus[i].GPUInstances[j].ProfileName = profileName
 				return true
 			}
@@ -303,8 +303,8 @@ func (s *Info) setMigProfileNames(values []dcgm.FieldValue_v2) error {
 	errStr := "cannot find match for entities:"
 
 	for _, v := range values {
-		if !s.setGPUInstanceProfileName(v.EntityId, dcgmprovider.Client().Fv2_String(v)) {
-			errStr = fmt.Sprintf("%s group %d, id %d", errStr, v.EntityGroupId, v.EntityId)
+		if !s.setGPUInstanceProfileName(v.EntityID, dcgmprovider.Client().Fv2_String(v)) {
+			errStr = fmt.Sprintf("%s group %d, id %d", errStr, v.EntityGroupId, v.EntityID)
 			errFound = true
 		}
 	}
@@ -333,19 +333,19 @@ func (s *Info) populateMigProfileNames(entities []dcgm.GroupEntityPair) error {
 	return s.setMigProfileNames(values)
 }
 
-func (s *Info) gpuIDExists(gpuId int) bool {
+func (s *Info) gpuIDExists(gpuID int) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
-		if s.gpus[i].DeviceInfo.GPU == uint(gpuId) {
+		if s.gpus[i].DeviceInfo.GPU == uint(gpuID) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Info) gpuInstanceIDExists(gpuInstanceId int) bool {
+func (s *Info) gpuInstanceIDExists(gpuInstanceID int) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
 		for _, instance := range s.gpus[i].GPUInstances {
-			if instance.EntityId == uint(gpuInstanceId) {
+			if instance.EntityId == uint(gpuInstanceID) {
 				return true
 			}
 		}

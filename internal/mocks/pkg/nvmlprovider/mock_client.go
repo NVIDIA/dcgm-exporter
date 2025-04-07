@@ -34,6 +34,7 @@ import (
 type MockNVML struct {
 	ctrl     *gomock.Controller
 	recorder *MockNVMLMockRecorder
+	isgomock struct{}
 }
 
 // MockNVMLMockRecorder is the mock recorder for MockNVML.

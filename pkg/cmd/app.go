@@ -424,13 +424,25 @@ func startDeviceWatchListManager(
 	return deviceWatchListManager
 }
 
+func containsDCGMField(slice []counters.Counter, fieldID dcgm.Short) bool {
+	return slices.ContainsFunc(slice, func(counter counters.Counter) bool {
+		return uint16(counter.FieldID) == uint16(fieldID)
+	})
+}
+
+func containsExporterField(slice []counters.Counter, fieldID counters.ExporterCounter) bool {
+	return slices.ContainsFunc(slice, func(counter counters.Counter) bool {
+		return uint16(counter.FieldID) == uint16(fieldID)
+	})
+}
+
 // appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
 func appendDCGMClockEventsCountDependency(
 	cs *counters.CounterSet, allCounters []counters.Counter,
 ) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
-		if containsField(cs.ExporterCounters, counters.DCGMClockEventsCount) &&
-			!containsField(allCounters, dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS) {
+		if containsExporterField(cs.ExporterCounters, counters.DCGMClockEventsCount) &&
+			!containsDCGMField(allCounters, dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS) {
 			allCounters = append(allCounters,
 				counters.Counter{
 					FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
@@ -445,8 +457,8 @@ func appendDCGMXIDErrorsCountDependency(
 	allCounters []counters.Counter, cs *counters.CounterSet,
 ) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
-		if containsField(cs.ExporterCounters, counters.DCGMXIDErrorsCount) &&
-			!containsField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
+		if containsExporterField(cs.ExporterCounters, counters.DCGMXIDErrorsCount) &&
+			!containsDCGMField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
 			allCounters = append(allCounters,
 				counters.Counter{
 					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
@@ -454,12 +466,6 @@ func appendDCGMXIDErrorsCountDependency(
 		}
 	}
 	return allCounters
-}
-
-func containsField(slice []counters.Counter, fieldID counters.ExporterCounter) bool {
-	return slices.ContainsFunc(slice, func(counter counters.Counter) bool {
-		return counter.FieldID == dcgm.Short(fieldID)
-	})
 }
 
 func getCounters(config *appconfig.Config) *counters.CounterSet {

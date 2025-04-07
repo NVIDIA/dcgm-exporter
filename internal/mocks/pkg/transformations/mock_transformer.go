@@ -35,6 +35,7 @@ import (
 type MockTransform struct {
 	ctrl     *gomock.Controller
 	recorder *MockTransformMockRecorder
+	isgomock struct{}
 }
 
 // MockTransformMockRecorder is the mock recorder for MockTransform.
@@ -69,15 +70,15 @@ func (mr *MockTransformMockRecorder) Name() *gomock.Call {
 }
 
 // Process mocks base method.
-func (m *MockTransform) Process(arg0 collector.MetricsByCounter, arg1 deviceinfo.Provider) error {
+func (m *MockTransform) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Process", arg0, arg1)
+	ret := m.ctrl.Call(m, "Process", metrics, deviceInfo)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Process indicates an expected call of Process.
-func (mr *MockTransformMockRecorder) Process(arg0, arg1 any) *gomock.Call {
+func (mr *MockTransformMockRecorder) Process(metrics, deviceInfo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Process", reflect.TypeOf((*MockTransform)(nil).Process), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Process", reflect.TypeOf((*MockTransform)(nil).Process), metrics, deviceInfo)
 }

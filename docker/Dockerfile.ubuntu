@@ -1,4 +1,4 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.8.0-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.8.1-base-ubuntu22.04
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 

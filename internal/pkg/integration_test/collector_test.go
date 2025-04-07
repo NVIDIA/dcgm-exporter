@@ -94,12 +94,12 @@ func mockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
 		Count: 0,
 	}
 
-	mockCPUHierarchy := dcgm.CpuHierarchy_v1{
+	mockCPUHierarchy := dcgm.CPUHierarchy_v1{
 		Version: 0,
-		NumCpus: 1,
-		Cpus: [dcgm.MAX_NUM_CPUS]dcgm.CpuHierarchyCpu_v1{
+		NumCPUs: 1,
+		CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
 			{
-				CpuId:      0,
+				CPUID:      0,
 				OwnedCores: []uint64{0, 18446744073709551360, 65535},
 			},
 		},
@@ -114,8 +114,8 @@ func mockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
 	mockDCGMProvider := mockdcgmprovider.NewMockDCGM(ctrl)
 	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
 	mockDCGMProvider.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockMigHierarchy, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetCpuHierarchy().Return(mockCPUHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockMigHierarchy, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil).AnyTimes()
 	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
 	mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(nil).AnyTimes()
 	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).AnyTimes()
@@ -919,9 +919,9 @@ func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.
 	mockDCGMProvider := mockDCGM(ctrl)
 
 	// Calls where actual API calls and results are desirable
-	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).
+	mockDCGMProvider.EXPECT().FieldGetByID(gomock.Any()).
 		DoAndReturn(func(fieldID dcgm.Short) dcgm.FieldMeta {
-			return realDCGMProvider.FieldGetById(fieldID)
+			return realDCGMProvider.FieldGetByID(fieldID)
 		}).AnyTimes()
 
 	mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -998,9 +998,9 @@ func testDCGMCPUCollector(t *testing.T, counters []counters.Counter) *collector.
 	mockDCGMProvider := mockDCGM(ctrl)
 
 	// Calls where actual API calls and results are desirable
-	mockDCGMProvider.EXPECT().FieldGetById(gomock.Any()).
+	mockDCGMProvider.EXPECT().FieldGetByID(gomock.Any()).
 		DoAndReturn(func(fieldID dcgm.Short) dcgm.FieldMeta {
-			return realDCGMProvider.FieldGetById(fieldID)
+			return realDCGMProvider.FieldGetByID(fieldID)
 		}).AnyTimes()
 
 	mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).

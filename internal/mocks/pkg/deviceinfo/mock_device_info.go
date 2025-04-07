@@ -36,6 +36,7 @@ import (
 type MockProvider struct {
 	ctrl     *gomock.Controller
 	recorder *MockProviderMockRecorder
+	isgomock struct{}
 }
 
 // MockProviderMockRecorder is the mock recorder for MockProvider.
@@ -70,17 +71,17 @@ func (mr *MockProviderMockRecorder) COpts() *gomock.Call {
 }
 
 // CPU mocks base method.
-func (m *MockProvider) CPU(arg0 uint) deviceinfo.CPUInfo {
+func (m *MockProvider) CPU(i uint) deviceinfo.CPUInfo {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CPU", arg0)
+	ret := m.ctrl.Call(m, "CPU", i)
 	ret0, _ := ret[0].(deviceinfo.CPUInfo)
 	return ret0
 }
 
 // CPU indicates an expected call of CPU.
-func (mr *MockProviderMockRecorder) CPU(arg0 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) CPU(i any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CPU", reflect.TypeOf((*MockProvider)(nil).CPU), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CPU", reflect.TypeOf((*MockProvider)(nil).CPU), i)
 }
 
 // CPUs mocks base method.
@@ -112,17 +113,17 @@ func (mr *MockProviderMockRecorder) GOpts() *gomock.Call {
 }
 
 // GPU mocks base method.
-func (m *MockProvider) GPU(arg0 uint) deviceinfo.GPUInfo {
+func (m *MockProvider) GPU(i uint) deviceinfo.GPUInfo {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GPU", arg0)
+	ret := m.ctrl.Call(m, "GPU", i)
 	ret0, _ := ret[0].(deviceinfo.GPUInfo)
 	return ret0
 }
 
 // GPU indicates an expected call of GPU.
-func (mr *MockProviderMockRecorder) GPU(arg0 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) GPU(i any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GPU", reflect.TypeOf((*MockProvider)(nil).GPU), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GPU", reflect.TypeOf((*MockProvider)(nil).GPU), i)
 }
 
 // GPUCount mocks base method.
@@ -168,59 +169,59 @@ func (mr *MockProviderMockRecorder) InfoType() *gomock.Call {
 }
 
 // IsCPUWatched mocks base method.
-func (m *MockProvider) IsCPUWatched(arg0 uint) bool {
+func (m *MockProvider) IsCPUWatched(cpuID uint) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsCPUWatched", arg0)
+	ret := m.ctrl.Call(m, "IsCPUWatched", cpuID)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // IsCPUWatched indicates an expected call of IsCPUWatched.
-func (mr *MockProviderMockRecorder) IsCPUWatched(arg0 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) IsCPUWatched(cpuID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsCPUWatched", reflect.TypeOf((*MockProvider)(nil).IsCPUWatched), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsCPUWatched", reflect.TypeOf((*MockProvider)(nil).IsCPUWatched), cpuID)
 }
 
 // IsCoreWatched mocks base method.
-func (m *MockProvider) IsCoreWatched(arg0, arg1 uint) bool {
+func (m *MockProvider) IsCoreWatched(coreID, cpuID uint) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsCoreWatched", arg0, arg1)
+	ret := m.ctrl.Call(m, "IsCoreWatched", coreID, cpuID)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // IsCoreWatched indicates an expected call of IsCoreWatched.
-func (mr *MockProviderMockRecorder) IsCoreWatched(arg0, arg1 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) IsCoreWatched(coreID, cpuID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsCoreWatched", reflect.TypeOf((*MockProvider)(nil).IsCoreWatched), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsCoreWatched", reflect.TypeOf((*MockProvider)(nil).IsCoreWatched), coreID, cpuID)
 }
 
 // IsLinkWatched mocks base method.
-func (m *MockProvider) IsLinkWatched(arg0, arg1 uint) bool {
+func (m *MockProvider) IsLinkWatched(linkIndex, switchID uint) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsLinkWatched", arg0, arg1)
+	ret := m.ctrl.Call(m, "IsLinkWatched", linkIndex, switchID)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // IsLinkWatched indicates an expected call of IsLinkWatched.
-func (mr *MockProviderMockRecorder) IsLinkWatched(arg0, arg1 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) IsLinkWatched(linkIndex, switchID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsLinkWatched", reflect.TypeOf((*MockProvider)(nil).IsLinkWatched), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsLinkWatched", reflect.TypeOf((*MockProvider)(nil).IsLinkWatched), linkIndex, switchID)
 }
 
 // IsSwitchWatched mocks base method.
-func (m *MockProvider) IsSwitchWatched(arg0 uint) bool {
+func (m *MockProvider) IsSwitchWatched(switchID uint) bool {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsSwitchWatched", arg0)
+	ret := m.ctrl.Call(m, "IsSwitchWatched", switchID)
 	ret0, _ := ret[0].(bool)
 	return ret0
 }
 
 // IsSwitchWatched indicates an expected call of IsSwitchWatched.
-func (mr *MockProviderMockRecorder) IsSwitchWatched(arg0 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) IsSwitchWatched(switchID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSwitchWatched", reflect.TypeOf((*MockProvider)(nil).IsSwitchWatched), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSwitchWatched", reflect.TypeOf((*MockProvider)(nil).IsSwitchWatched), switchID)
 }
 
 // SOpts mocks base method.
@@ -238,17 +239,17 @@ func (mr *MockProviderMockRecorder) SOpts() *gomock.Call {
 }
 
 // Switch mocks base method.
-func (m *MockProvider) Switch(arg0 uint) deviceinfo.SwitchInfo {
+func (m *MockProvider) Switch(i uint) deviceinfo.SwitchInfo {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Switch", arg0)
+	ret := m.ctrl.Call(m, "Switch", i)
 	ret0, _ := ret[0].(deviceinfo.SwitchInfo)
 	return ret0
 }
 
 // Switch indicates an expected call of Switch.
-func (mr *MockProviderMockRecorder) Switch(arg0 any) *gomock.Call {
+func (mr *MockProviderMockRecorder) Switch(i any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Switch", reflect.TypeOf((*MockProvider)(nil).Switch), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Switch", reflect.TypeOf((*MockProvider)(nil).Switch), i)
 }
 
 // Switches mocks base method.
