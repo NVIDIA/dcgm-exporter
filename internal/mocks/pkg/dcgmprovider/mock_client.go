@@ -35,6 +35,7 @@ import (
 type MockDCGM struct {
 	ctrl     *gomock.Controller
 	recorder *MockDCGMMockRecorder
+	isgomock struct{}
 }
 
 // MockDCGMMockRecorder is the mock recorder for MockDCGM.
@@ -95,18 +96,18 @@ func (mr *MockDCGMMockRecorder) Cleanup() *gomock.Call {
 }
 
 // CreateFakeEntities mocks base method.
-func (m *MockDCGM) CreateFakeEntities(arg0 []dcgm.MigHierarchyInfo) ([]uint, error) {
+func (m *MockDCGM) CreateFakeEntities(entities []dcgm.MigHierarchyInfo) ([]uint, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateFakeEntities", arg0)
+	ret := m.ctrl.Call(m, "CreateFakeEntities", entities)
 	ret0, _ := ret[0].([]uint)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CreateFakeEntities indicates an expected call of CreateFakeEntities.
-func (mr *MockDCGMMockRecorder) CreateFakeEntities(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) CreateFakeEntities(entities any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateFakeEntities", reflect.TypeOf((*MockDCGM)(nil).CreateFakeEntities), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateFakeEntities", reflect.TypeOf((*MockDCGM)(nil).CreateFakeEntities), entities)
 }
 
 // CreateGroup mocks base method.
@@ -125,17 +126,17 @@ func (mr *MockDCGMMockRecorder) CreateGroup(arg0 any) *gomock.Call {
 }
 
 // DestroyGroup mocks base method.
-func (m *MockDCGM) DestroyGroup(arg0 dcgm.GroupHandle) error {
+func (m *MockDCGM) DestroyGroup(groupID dcgm.GroupHandle) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DestroyGroup", arg0)
+	ret := m.ctrl.Call(m, "DestroyGroup", groupID)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // DestroyGroup indicates an expected call of DestroyGroup.
-func (mr *MockDCGMMockRecorder) DestroyGroup(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) DestroyGroup(groupID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DestroyGroup", reflect.TypeOf((*MockDCGM)(nil).DestroyGroup), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DestroyGroup", reflect.TypeOf((*MockDCGM)(nil).DestroyGroup), groupID)
 }
 
 // EntitiesGetLatestValues mocks base method.
@@ -212,17 +213,17 @@ func (mr *MockDCGMMockRecorder) FieldGroupDestroy(arg0 any) *gomock.Call {
 }
 
 // Fv2_String mocks base method.
-func (m *MockDCGM) Fv2_String(arg0 dcgm.FieldValue_v2) string {
+func (m *MockDCGM) Fv2_String(fv dcgm.FieldValue_v2) string {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Fv2_String", arg0)
+	ret := m.ctrl.Call(m, "Fv2_String", fv)
 	ret0, _ := ret[0].(string)
 	return ret0
 }
 
 // Fv2_String indicates an expected call of Fv2_String.
-func (mr *MockDCGMMockRecorder) Fv2_String(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) Fv2_String(fv any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Fv2_String", reflect.TypeOf((*MockDCGM)(nil).Fv2_String), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Fv2_String", reflect.TypeOf((*MockDCGM)(nil).Fv2_String), fv)
 }
 
 // GetAllDeviceCount mocks base method.
@@ -271,18 +272,18 @@ func (mr *MockDCGMMockRecorder) GetDeviceInfo(arg0 any) *gomock.Call {
 }
 
 // GetEntityGroupEntities mocks base method.
-func (m *MockDCGM) GetEntityGroupEntities(arg0 dcgm.Field_Entity_Group) ([]uint, error) {
+func (m *MockDCGM) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetEntityGroupEntities", arg0)
+	ret := m.ctrl.Call(m, "GetEntityGroupEntities", entityGroup)
 	ret0, _ := ret[0].([]uint)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetEntityGroupEntities indicates an expected call of GetEntityGroupEntities.
-func (mr *MockDCGMMockRecorder) GetEntityGroupEntities(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) GetEntityGroupEntities(entityGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEntityGroupEntities", reflect.TypeOf((*MockDCGM)(nil).GetEntityGroupEntities), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEntityGroupEntities", reflect.TypeOf((*MockDCGM)(nil).GetEntityGroupEntities), entityGroup)
 }
 
 // GetGPUInstanceHierarchy mocks base method.
@@ -301,18 +302,18 @@ func (mr *MockDCGMMockRecorder) GetGPUInstanceHierarchy() *gomock.Call {
 }
 
 // GetGroupInfo mocks base method.
-func (m *MockDCGM) GetGroupInfo(arg0 dcgm.GroupHandle) (*dcgm.GroupInfo, error) {
+func (m *MockDCGM) GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetGroupInfo", arg0)
+	ret := m.ctrl.Call(m, "GetGroupInfo", groupID)
 	ret0, _ := ret[0].(*dcgm.GroupInfo)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetGroupInfo indicates an expected call of GetGroupInfo.
-func (mr *MockDCGMMockRecorder) GetGroupInfo(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) GetGroupInfo(groupID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupInfo", reflect.TypeOf((*MockDCGM)(nil).GetGroupInfo), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupInfo", reflect.TypeOf((*MockDCGM)(nil).GetGroupInfo), groupID)
 }
 
 // GetNvLinkLinkStatus mocks base method.
@@ -391,61 +392,61 @@ func (mr *MockDCGMMockRecorder) GroupAllGPUs() *gomock.Call {
 }
 
 // HealthCheck mocks base method.
-func (m *MockDCGM) HealthCheck(arg0 dcgm.GroupHandle) (dcgm.HealthResponse, error) {
+func (m *MockDCGM) HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HealthCheck", arg0)
+	ret := m.ctrl.Call(m, "HealthCheck", groupID)
 	ret0, _ := ret[0].(dcgm.HealthResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // HealthCheck indicates an expected call of HealthCheck.
-func (mr *MockDCGMMockRecorder) HealthCheck(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) HealthCheck(groupID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthCheck", reflect.TypeOf((*MockDCGM)(nil).HealthCheck), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthCheck", reflect.TypeOf((*MockDCGM)(nil).HealthCheck), groupID)
 }
 
 // HealthGet mocks base method.
-func (m *MockDCGM) HealthGet(arg0 dcgm.GroupHandle) (dcgm.HealthSystem, error) {
+func (m *MockDCGM) HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HealthGet", arg0)
+	ret := m.ctrl.Call(m, "HealthGet", groupID)
 	ret0, _ := ret[0].(dcgm.HealthSystem)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // HealthGet indicates an expected call of HealthGet.
-func (mr *MockDCGMMockRecorder) HealthGet(arg0 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) HealthGet(groupID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthGet", reflect.TypeOf((*MockDCGM)(nil).HealthGet), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthGet", reflect.TypeOf((*MockDCGM)(nil).HealthGet), groupID)
 }
 
 // HealthSet mocks base method.
-func (m *MockDCGM) HealthSet(arg0 dcgm.GroupHandle, arg1 dcgm.HealthSystem) error {
+func (m *MockDCGM) HealthSet(groupID dcgm.GroupHandle, systems dcgm.HealthSystem) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HealthSet", arg0, arg1)
+	ret := m.ctrl.Call(m, "HealthSet", groupID, systems)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // HealthSet indicates an expected call of HealthSet.
-func (mr *MockDCGMMockRecorder) HealthSet(arg0, arg1 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) HealthSet(groupID, systems any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthSet", reflect.TypeOf((*MockDCGM)(nil).HealthSet), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HealthSet", reflect.TypeOf((*MockDCGM)(nil).HealthSet), groupID, systems)
 }
 
 // InjectFieldValue mocks base method.
-func (m *MockDCGM) InjectFieldValue(arg0 uint, arg1 dcgm.Short, arg2 uint, arg3 int, arg4 int64, arg5 any) error {
+func (m *MockDCGM) InjectFieldValue(gpu uint, fieldID dcgm.Short, fieldType uint, status int, ts int64, value any) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "InjectFieldValue", arg0, arg1, arg2, arg3, arg4, arg5)
+	ret := m.ctrl.Call(m, "InjectFieldValue", gpu, fieldID, fieldType, status, ts, value)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // InjectFieldValue indicates an expected call of InjectFieldValue.
-func (mr *MockDCGMMockRecorder) InjectFieldValue(arg0, arg1, arg2, arg3, arg4, arg5 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) InjectFieldValue(gpu, fieldID, fieldType, status, ts, value any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InjectFieldValue", reflect.TypeOf((*MockDCGM)(nil).InjectFieldValue), arg0, arg1, arg2, arg3, arg4, arg5)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InjectFieldValue", reflect.TypeOf((*MockDCGM)(nil).InjectFieldValue), gpu, fieldID, fieldType, status, ts, value)
 }
 
 // LinkGetLatestValues mocks base method.
