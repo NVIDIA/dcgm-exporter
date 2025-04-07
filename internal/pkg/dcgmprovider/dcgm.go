@@ -103,14 +103,14 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 }
 
 func (d dcgmProvider) AddEntityToGroup(
-	groupId dcgm.GroupHandle, entityGroupId dcgm.Field_Entity_Group,
-	entityId uint,
+	groupID dcgm.GroupHandle, entityGroupID dcgm.Field_Entity_Group,
+	entityID uint,
 ) error {
-	return dcgm.AddEntityToGroup(groupId, entityGroupId, entityId)
+	return dcgm.AddEntityToGroup(groupID, entityGroupID, entityID)
 }
 
-func (d dcgmProvider) AddLinkEntityToGroup(groupId dcgm.GroupHandle, index uint, parentId uint) error {
-	return dcgm.AddLinkEntityToGroup(groupId, index, parentId)
+func (d dcgmProvider) AddLinkEntityToGroup(groupID dcgm.GroupHandle, index uint, parentID uint) error {
+	return dcgm.AddLinkEntityToGroup(groupID, index, parentID)
 }
 
 func (d dcgmProvider) CreateFakeEntities(entities []dcgm.MigHierarchyInfo) ([]uint, error) {
@@ -132,19 +132,19 @@ func (d dcgmProvider) EntitiesGetLatestValues(
 }
 
 func (d dcgmProvider) EntityGetLatestValues(
-	entityGroup dcgm.Field_Entity_Group, entityId uint, fields []dcgm.Short,
+	entityGroup dcgm.Field_Entity_Group, entityID uint, fields []dcgm.Short,
 ) ([]dcgm.FieldValue_v1,
 	error,
 ) {
-	return dcgm.EntityGetLatestValues(entityGroup, entityId, fields)
+	return dcgm.EntityGetLatestValues(entityGroup, entityID, fields)
 }
 
 func (d dcgmProvider) Fv2_String(fv dcgm.FieldValue_v2) string {
 	return dcgm.Fv2_String(fv)
 }
 
-func (d dcgmProvider) FieldGetById(fieldId dcgm.Short) dcgm.FieldMeta {
-	return dcgm.FieldGetById(fieldId)
+func (d dcgmProvider) FieldGetByID(fieldID dcgm.Short) dcgm.FieldMeta {
+	return dcgm.FieldGetByID(fieldID)
 }
 
 func (d dcgmProvider) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
@@ -159,20 +159,20 @@ func (d dcgmProvider) GetAllDeviceCount() (uint, error) {
 	return dcgm.GetAllDeviceCount()
 }
 
-func (d dcgmProvider) GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error) {
-	return dcgm.GetCpuHierarchy()
+func (d dcgmProvider) GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error) {
+	return dcgm.GetCPUHierarchy()
 }
 
-func (d dcgmProvider) GetDeviceInfo(gpuId uint) (dcgm.Device, error) {
-	return dcgm.GetDeviceInfo(gpuId)
+func (d dcgmProvider) GetDeviceInfo(gpuID uint) (dcgm.Device, error) {
+	return dcgm.GetDeviceInfo(gpuID)
 }
 
 func (d dcgmProvider) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
 	return dcgm.GetEntityGroupEntities(entityGroup)
 }
 
-func (d dcgmProvider) GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
-	return dcgm.GetGpuInstanceHierarchy()
+func (d dcgmProvider) GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
+	return dcgm.GetGPUInstanceHierarchy()
 }
 
 func (d dcgmProvider) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
@@ -183,8 +183,8 @@ func (d dcgmProvider) GetSupportedDevices() ([]uint, error) {
 	return dcgm.GetSupportedDevices()
 }
 
-func (d dcgmProvider) GetSupportedMetricGroups(gpuId uint) ([]dcgm.MetricGroup, error) {
-	return dcgm.GetSupportedMetricGroups(gpuId)
+func (d dcgmProvider) GetSupportedMetricGroups(gpuID uint) ([]dcgm.MetricGroup, error) {
+	return dcgm.GetSupportedMetricGroups(gpuID)
 }
 
 func (d dcgmProvider) GetValuesSince(
@@ -198,15 +198,15 @@ func (d dcgmProvider) GroupAllGPUs() dcgm.GroupHandle {
 }
 
 func (d dcgmProvider) InjectFieldValue(
-	gpu uint, fieldID uint, fieldType uint, status int, ts int64, value interface{},
+	gpu uint, fieldID dcgm.Short, fieldType uint, status int, ts int64, value interface{},
 ) error {
 	return dcgm.InjectFieldValue(gpu, fieldID, fieldType, status, ts, value)
 }
 
-func (d dcgmProvider) LinkGetLatestValues(index uint, parentId uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+func (d dcgmProvider) LinkGetLatestValues(index uint, parentID uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
 	error,
 ) {
-	return dcgm.LinkGetLatestValues(index, parentId, fields)
+	return dcgm.LinkGetLatestValues(index, parentID, fields)
 }
 
 func (d dcgmProvider) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {

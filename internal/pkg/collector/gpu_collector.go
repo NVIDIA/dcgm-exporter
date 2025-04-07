@@ -101,7 +101,7 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 
 		if err != nil {
-			if derr, ok := err.(*dcgm.DcgmError); ok {
+			if derr, ok := err.(*dcgm.Error); ok {
 				if derr.Code == dcgm.DCGM_ST_CONNECTION_NOT_VALID {
 					slog.Error("Could not retrieve metrics: " + err.Error())
 					os.Exit(1)
@@ -131,9 +131,9 @@ func (c *DCGMCollector) GetMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
-func findCounterField(c []counters.Counter, fieldID uint) (counters.Counter, error) {
+func findCounterField(c []counters.Counter, fieldID dcgm.Short) (counters.Counter, error) {
 	for i := 0; i < len(c); i++ {
-		if uint(c[i].FieldID) == fieldID {
+		if c[i].FieldID == fieldID {
 			return c[i], nil
 		}
 	}
@@ -151,7 +151,7 @@ func toSwitchMetric(
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -197,7 +197,7 @@ func toCPUMetric(
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -252,7 +252,7 @@ func toMetric(
 			continue
 		}
 
-		counter, err := findCounterField(c, val.FieldId)
+		counter, err := findCounterField(c, val.FieldID)
 		if err != nil {
 			continue
 		}

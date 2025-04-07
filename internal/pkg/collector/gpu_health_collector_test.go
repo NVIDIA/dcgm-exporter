@@ -116,7 +116,7 @@ func setDefaultExpectationsForGPUHealthStatusCollectorMockDCGMProvider(t *testin
 	mockDCGMProvider.EXPECT().HealthSet(gomock.Any(), gomock.Eq(dcgm.DCGM_HEALTH_WATCH_ALL)).Return(nil).AnyTimes()
 	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
 	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
 	mockDCGMProvider.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
 		return strings.HasPrefix(x.(string), "gpu-collector-group")
 	})).Return(dcgm.GroupHandle{}, nil).AnyTimes()

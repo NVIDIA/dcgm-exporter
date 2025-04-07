@@ -108,9 +108,10 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 				record)
 		}
 
-		fieldID, ok := dcgm.DCGM_FI[record[0]]
-		oldFieldID, oldOk := dcgm.OLD_DCGM_FI[record[0]]
-		if !ok && !oldOk {
+		fieldID, ok := dcgm.GetFieldID(record[0])
+		isLegacyField := dcgm.IsLegacyField(record[0])
+
+		if !ok && !isLegacyField {
 
 			expField, err := IdentifyMetricType(record[0])
 			if err != nil {
@@ -127,7 +128,7 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			}
 		}
 
-		if !ok && oldOk {
+		if !ok && isLegacyField {
 			useOld = true
 		}
 
@@ -144,7 +145,7 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			res.DCGMCounters = append(res.DCGMCounters,
 				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		} else {
-			if !fieldIsSupported(uint(oldFieldID), c) {
+			if !fieldIsSupported(uint(fieldID), c) {
 				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
 				continue
 			}
@@ -154,7 +155,7 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			}
 
 			res.DCGMCounters = append(res.DCGMCounters,
-				Counter{FieldID: oldFieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
+				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 		}
 	}
 
