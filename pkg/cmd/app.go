@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/fsnotify/fsnotify"
 	"github.com/urfave/cli/v2"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -384,7 +386,11 @@ restart:
 	go server.Run(stop, &wg)
 
 	sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+
+	go watchCollectorsFile(config.CollectorsFile, reloadMetricsServer(sigs))
+
 	sig := <-sigs
+	slog.Info("Received signal", slog.String("signal", sig.String()))
 	close(stop)
 	cancel()
 	err = utils.WaitWithTimeout(&wg, time.Second*2)
@@ -621,4 +627,62 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
 		KubernetesVirtualGPUs:      c.Bool(CLIKubernetesVirtualGPUs),
 	}, nil
+}
+
+func watchCollectorsFile(filePath string, onChange func()) {
+	slog.Info("Watching for changes in file", slog.String("file", filePath))
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		slog.Error("Error creating watcher", slog.String("error", err.Error()))
+	}
+	defer watcher.Close()
+
+	dir := filepath.Dir(filePath)
+	file := filepath.Base(filePath)
+
+	err = watcher.Add(dir)
+	if err != nil {
+		slog.Error("Error adding dir to watcher", slog.String("error", err.Error()))
+	}
+
+	go func() {
+		var lastModTime time.Time
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					slog.Error("Error reading events from watcher")
+					return
+				}
+
+				if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) != 0 {
+					if filepath.Base(event.Name) == file {
+						time.Sleep(200 * time.Millisecond)
+						info, err := os.Stat(filepath.Join(dir, file))
+						if err == nil {
+							modTime := info.ModTime()
+							if modTime != lastModTime {
+								lastModTime = modTime
+								onChange()
+							}
+						}
+					}
+				}
+
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+	select {}
+}
+
+func reloadMetricsServer(s chan os.Signal) func() {
+	// all we have to do is send a sighup
+	return func() {
+		slog.Info("Reloading metrics server")
+		s <- syscall.SIGHUP
+	}
 }

@@ -7,6 +7,7 @@ require (
 	github.com/NVIDIA/go-nvml v0.12.4-1
 	github.com/avast/retry-go/v4 v4.6.0
 	github.com/bits-and-blooms/bitset v1.22.0
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/mittwald/go-helm-client v0.12.16
