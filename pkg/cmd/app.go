@@ -19,6 +19,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/urfave/cli/v2"
+	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -84,6 +85,7 @@ const (
 	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
 	CLIEnableDCGMLog              = "enable-dcgm-log"
 	CLIDCGMLogLevel               = "dcgm-log-level"
+	CLILogFormat                  = "log-format"
 	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 	CLINvidiaResourceNames        = "nvidia-resource-names"
@@ -240,6 +242,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
 		},
 		&cli.StringFlag{
+			Name:    CLILogFormat,
+			Value:   "text",
+			Usage:   "Specify the log output format. Possible values: text, json",
+			EnvVars: []string{"DCGM_EXPORTER_LOG_FORMAT"},
+		},
+		&cli.StringFlag{
 			Name:    CLIPodResourcesKubeletSocket,
 			Value:   "/var/lib/kubelet/pod-resources/kubelet.sock",
 			Usage:   "Path to the kubelet pod-resources socket file.",
@@ -312,8 +320,37 @@ func action(c *cli.Context) (err error) {
 	})
 }
 
+func configureLogger(c *cli.Context) error {
+	logFormat := c.String(CLILogFormat)
+	logDebug := c.Bool(CLIDebugMode)
+	var opts slog.HandlerOptions
+	if logDebug {
+		opts.Level = slog.LevelDebug
+		defer slog.Debug("Debug output is enabled")
+	}
+	switch logFormat {
+	case "text":
+		logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
+		slog.SetDefault(logger)
+	case "json":
+		logger := slog.New(slog.NewJSONHandler(os.Stderr, &opts))
+		slog.SetDefault(logger)
+	default:
+		return fmt.Errorf("invalid %s parameter values: %s", CLILogFormat, logFormat)
+	}
+	return nil
+}
+
 func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
 restart:
+	if err := configureLogger(c); err != nil {
+		return err
+	}
+
+	// Initialize automaxprocs with desired logging format.
+	maxprocs.Set(maxprocs.Logger(func(msg string, args ...interface{}) {
+		slog.Info(fmt.Sprintf(msg, args))
+	}))
 
 	var version string
 	if c != nil && c.App != nil {
@@ -327,7 +364,8 @@ restart:
 		return err
 	}
 
-	enableDebugLogging(config)
+	slog.Debug(fmt.Sprintf("Command line: %s", strings.Join(os.Args, " ")))
+	slog.Debug("Loaded configuration", slog.String(DumpKey, fmt.Sprintf("%+v", config)))
 
 	err = prerequisites.Validate()
 	if err != nil {
@@ -494,18 +532,6 @@ func fillConfigMetricGroups(config *appconfig.Config) {
 		slog.Info("Collecting DCP Metrics")
 		config.MetricGroups = groups
 	}
-}
-
-func enableDebugLogging(config *appconfig.Config) {
-	if config.Debug {
-		// enable debug logging
-		slog.SetLogLoggerLevel(slog.LevelDebug)
-		slog.Debug("Debug output is enabled")
-	}
-
-	slog.Debug(fmt.Sprintf("Command line: %s", strings.Join(os.Args, " ")))
-
-	slog.Debug("Loaded configuration", slog.String(DumpKey, fmt.Sprintf("%+v", config)))
 }
 
 func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
