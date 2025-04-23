@@ -51,6 +51,8 @@ namespaceOverride: ""
 
 # Defines the runtime class that will be used by the pod
 runtimeClassName: ""
+# Whether to create runtime class, name comes from runtimeClassName when it is set
+createRuntimeClass: false
 # Defines serviceAccount names for components.
 serviceAccount:
   # Specifies whether a service account should be created
