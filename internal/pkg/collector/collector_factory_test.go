@@ -119,7 +119,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 		},
 		{
-			name: fmt.Sprintf("Collector enabled for the %s but DCGM returns error", dcgm.FE_GPU.String()),
+			name: fmt.Sprintf("Collector enabled for the %s even when DCGM returns error", dcgm.FE_GPU.String()),
 			cs: &counters.CounterSet{
 				DCGMCounters: []counters.Counter{dcgmCounter},
 			},
@@ -137,7 +137,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, errors.New("boom")).AnyTimes()
 			},
-			wantsPanic: true,
+			wantsPanic: false,
 		},
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector is enabled",
