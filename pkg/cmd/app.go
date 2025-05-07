@@ -348,9 +348,12 @@ restart:
 	}
 
 	// Initialize automaxprocs with desired logging format.
-	maxprocs.Set(maxprocs.Logger(func(msg string, args ...interface{}) {
+	_, err := maxprocs.Set(maxprocs.Logger(func(msg string, args ...interface{}) {
 		slog.Info(fmt.Sprintf(msg, args))
 	}))
+	if err != nil {
+		slog.Info(fmt.Sprintf("failed to set GOMAXPROCS: %v", err))
+	}
 
 	var version string
 	if c != nil && c.App != nil {

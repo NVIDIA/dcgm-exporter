@@ -93,7 +93,6 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 	res := CounterSet{}
 
 	for i, record := range records {
-		useOld := false
 		if len(record) == 0 {
 			continue
 		}
@@ -128,35 +127,17 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			}
 		}
 
-		if !ok && isLegacyField {
-			useOld = true
+		if !fieldIsSupported(uint(fieldID), c) {
+			slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
+			continue
 		}
 
-		if !useOld {
-			if !fieldIsSupported(uint(fieldID), c) {
-				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
-				continue
-			}
-
-			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
-			}
-
-			res.DCGMCounters = append(res.DCGMCounters,
-				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
-		} else {
-			if !fieldIsSupported(uint(fieldID), c) {
-				slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
-				continue
-			}
-
-			if _, ok := promMetricType[record[1]]; !ok {
-				return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
-			}
-
-			res.DCGMCounters = append(res.DCGMCounters,
-				Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
+		if _, ok := promMetricType[record[1]]; !ok {
+			return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 		}
+
+		res.DCGMCounters = append(res.DCGMCounters,
+			Counter{FieldID: fieldID, FieldName: record[0], PromType: record[1], Help: record[2]})
 	}
 
 	return &res, nil
