@@ -30,6 +30,7 @@ spec:
   {{- if .Values.service.clusterIP }}
   clusterIP: {{ .Values.service.clusterIP | quote }}
   {{- end }}
+  internalTrafficPolicy: {{ .Values.service.internalTrafficPolicy }}
   ports:
   - name: "metrics"
     port: {{ .Values.service.port }}
