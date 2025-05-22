@@ -18,7 +18,6 @@ metadata:
   name: {{ include "dcgm-exporter.webConfigConfigMap" . }}
   namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
-    app.kubernetes.io/component: "dcgm-exporter"
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
 data:
   web-config.yaml: |
