@@ -61,6 +61,7 @@ Selector labels
 {{- define "dcgm-exporter.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "dcgm-exporter.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: {{ include "dcgm-exporter.name" . }}
 {{- end -}}
 
 {{/*
