@@ -230,6 +230,41 @@ func (s *MockPodResourcesServer) List(
 	}, nil
 }
 
+func (s *MockPodResourcesServer) Get(
+	ctx context.Context, req *v1.GetPodResourcesRequest,
+) (*v1.GetPodResourcesResponse, error) {
+	return &v1.GetPodResourcesResponse{
+		PodResources: &v1.PodResources{
+			Name:      "gpu-pod-0",
+			Namespace: "default",
+			Containers: []*v1.ContainerResources{
+				{
+					Name: "default",
+					Devices: []*v1.ContainerDevices{
+						{
+							ResourceName: s.resourceName,
+							DeviceIds:    s.gpus,
+						},
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *MockPodResourcesServer) GetAllocatableResources(
+	ctx context.Context, req *v1.AllocatableResourcesRequest,
+) (*v1.AllocatableResourcesResponse, error) {
+	return &v1.AllocatableResourcesResponse{
+		Devices: []*v1.ContainerDevices{
+			{
+				ResourceName: s.resourceName,
+				DeviceIds:    s.gpus,
+			},
+		},
+	}, nil
+}
+
 func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	l, err := net.Listen("unix", socket)
 	require.NoError(t, err)
