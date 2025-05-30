@@ -27,7 +27,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
@@ -42,7 +41,7 @@ func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 
 	if c.ConfigMapData != undefinedConfigMapData {
 		var client kubernetes.Interface
-		client, err = getKubeClient()
+		client, err = appconfig.GetKubeClient()
 		if err != nil {
 			slog.Error(err.Error())
 			os.Exit(1)
@@ -188,18 +187,4 @@ func readConfigMap(kubeClient kubernetes.Interface, c *appconfig.Config) ([][]st
 	}
 
 	return records, err
-}
-
-func getKubeClient() (kubernetes.Interface, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, err
-	}
-
-	return client, err
 }
