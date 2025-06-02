@@ -113,6 +113,25 @@ func TestGetHostname(t *testing.T) {
 			},
 			want: "127.0.0.1",
 		},
+		{
+			name: "When appconfig.UseRemoteHE is true, kubernetes is true, and hostname is localhost",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "localhost",
+				Kubernetes:   true,
+			},
+			hook: func() func() {
+				ctrl := gomock.NewController(t)
+				m := osmock.NewMockOS(ctrl)
+				m.EXPECT().Getenv(gomock.Eq("NODE_NAME"))
+				m.EXPECT().Hostname().Return("test-hostname", nil).AnyTimes()
+				os = m
+				return func() {
+					os = osinterface.RealOS{}
+				}
+			},
+			want: "test-hostname",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
