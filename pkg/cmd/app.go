@@ -21,7 +21,6 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/fsnotify/fsnotify"
 	"github.com/urfave/cli/v2"
-	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -344,104 +343,111 @@ func configureLogger(c *cli.Context) error {
 }
 
 func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
-restart:
 	if err := configureLogger(c); err != nil {
 		return err
 	}
 
-	// Initialize automaxprocs with desired logging format.
-	_, err := maxprocs.Set(maxprocs.Logger(func(msg string, args ...interface{}) {
-		slog.Info(fmt.Sprintf(msg, args))
-	}))
-	if err != nil {
-		slog.Info(fmt.Sprintf("failed to set GOMAXPROCS: %v", err))
-	}
+	for {
+		// Create a new context for this run of the exporter
+		// Runs are ended by various events (signals from OS or DCGM)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	var version string
-	if c != nil && c.App != nil {
-		version = c.App.Version
-	}
+		var version string
+		if c != nil && c.App != nil {
+			version = c.App.Version
+		}
 
-	slog.Info("Starting dcgm-exporter", slog.String("Version", version))
+		slog.Info("Starting dcgm-exporter", slog.String("Version", version))
 
-	config, err := contextToConfig(c)
-	if err != nil {
-		return err
-	}
+		config, err := contextToConfig(c)
+		if err != nil {
+			return err
+		}
 
-	slog.Debug(fmt.Sprintf("Command line: %s", strings.Join(os.Args, " ")))
-	slog.Debug("Loaded configuration", slog.String(DumpKey, fmt.Sprintf("%+v", config)))
+		err = prerequisites.Validate()
+		if err != nil {
+			return err
+		}
 
-	err = prerequisites.Validate()
-	if err != nil {
-		return err
-	}
+		// Initialize DCGM Provider Instance
+		dcgmprovider.Initialize(config)
+		dcgmCleanup := dcgmprovider.Client().Cleanup
 
-	// Initialize DCGM Provider Instance
-	dcgmprovider.Initialize(config)
-	defer dcgmprovider.Client().Cleanup()
+		// Initialize NVML Provider Instance
+		nvmlprovider.Initialize()
+		nvmlCleanup := nvmlprovider.Client().Cleanup
 
-	slog.Info("DCGM successfully initialized!")
+		slog.Info("DCGM successfully initialized!")
+		slog.Info("NVML provider successfully initialized!")
 
-	// Initialize NVML Provider Instance
-	nvmlprovider.Initialize()
-	defer nvmlprovider.Client().Cleanup()
+		fillConfigMetricGroups(config)
 
-	slog.Info("NVML provider successfully initialized!")
+		cs := getCounters(config)
 
-	fillConfigMetricGroups(config)
+		deviceWatchListManager := startDeviceWatchListManager(cs, config)
 
-	cs := getCounters(config)
+		hostname, err := hostname.GetHostname(config)
+		if err != nil {
+			nvmlCleanup()
+			dcgmCleanup()
+			return err
+		}
 
-	deviceWatchListManager := startDeviceWatchListManager(cs, config)
+		cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostname, config)
 
-	hostname, err := hostname.GetHostname(config)
-	if err != nil {
-		return err
-	}
+		cRegistry := registry.NewRegistry()
+		for _, entityCollector := range cf.NewCollectors() {
+			cRegistry.Register(entityCollector)
+		}
 
-	cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostname, config)
+		ch := make(chan string, 10)
 
-	cRegistry := registry.NewRegistry()
-	for _, entityCollector := range cf.NewCollectors() {
-		cRegistry.Register(entityCollector)
-	}
+		var wg sync.WaitGroup
+		stop := make(chan interface{})
 
-	defer func() {
+		wg.Add(1)
+
+		server, cleanup, err := server.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
+		if err != nil {
+			cRegistry.Cleanup()
+			nvmlCleanup()
+			dcgmCleanup()
+			return err
+		}
+
+		go server.Run(ctx, stop, &wg)
+
+		sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+
+		go watchCollectorsFile(config.CollectorsFile, reloadMetricsServer(sigs))
+
+		sig := <-sigs
+		slog.Info("Received signal", slog.String("signal", sig.String()))
+		close(stop)
+		cancel() // Cancel the context for this iteration
+		err = utils.WaitWithTimeout(&wg, time.Second*2)
+		if err != nil {
+			slog.Error(err.Error())
+			cRegistry.Cleanup()
+			nvmlCleanup()
+			dcgmCleanup()
+			cleanup()
+			fatal()
+		}
+
+		// Call cleanup functions before continuing the loop
 		cRegistry.Cleanup()
-	}()
+		nvmlCleanup()
+		dcgmCleanup()
+		cleanup()
 
-	ch := make(chan string, 10)
+		if sig != syscall.SIGHUP {
+			return nil
+		}
 
-	var wg sync.WaitGroup
-	stop := make(chan interface{})
-
-	wg.Add(1)
-
-	server, cleanup, err := server.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
-	defer cleanup()
-	if err != nil {
-		return err
-	}
-
-	go server.Run(stop, &wg)
-
-	sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
-
-	go watchCollectorsFile(config.CollectorsFile, reloadMetricsServer(sigs))
-
-	sig := <-sigs
-	slog.Info("Received signal", slog.String("signal", sig.String()))
-	close(stop)
-	cancel()
-	err = utils.WaitWithTimeout(&wg, time.Second*2)
-	if err != nil {
-		slog.Error(err.Error())
-		fatal()
-	}
-
-	if sig == syscall.SIGHUP {
-		goto restart
+		// For SIGHUP, we'll continue the loop after cleanup
+		slog.Info("Restarting dcgm-exporter after signal")
 	}
 
 	return nil

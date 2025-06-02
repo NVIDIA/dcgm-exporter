@@ -90,7 +90,7 @@ func NewMetricsServer(
 	return serverv1, func() {}, nil
 }
 
-func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
+func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var httpwg sync.WaitGroup
@@ -111,12 +111,14 @@ func (s *MetricsServer) Run(stop chan interface{}, wg *sync.WaitGroup) {
 			select {
 			case <-stop:
 				return
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
 
 	<-stop
-	if err := s.server.Shutdown(context.Background()); err != nil {
+	if err := s.server.Shutdown(ctx); err != nil {
 		slog.Error("Failed to shutdown HTTP server.", slog.String(logging.ErrorKey, err.Error()))
 		s.fatal()
 	}
