@@ -27,7 +27,6 @@ spec:
   selector:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: "dcgm-exporter"
   namespaceSelector:
     matchNames:
     - "{{ include "dcgm-exporter.namespace" . }}"
