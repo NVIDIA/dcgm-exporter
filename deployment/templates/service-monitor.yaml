@@ -20,7 +20,6 @@ metadata:
   namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
-    app.kubernetes.io/component: "dcgm-exporter"
     {{- if .Values.serviceMonitor.additionalLabels }}
     {{- toYaml .Values.serviceMonitor.additionalLabels | nindent 4 }}
     {{- end }}
@@ -28,7 +27,6 @@ spec:
   selector:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: "dcgm-exporter"
   namespaceSelector:
     matchNames:
     - "{{ include "dcgm-exporter.namespace" . }}"

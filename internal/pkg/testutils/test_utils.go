@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
-	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
@@ -203,18 +203,18 @@ func NewMockPodResourcesServer(resourceName string, gpus []string) *MockPodResou
 }
 
 func (s *MockPodResourcesServer) List(
-	ctx context.Context, req *v1alpha1.ListPodResourcesRequest,
-) (*v1alpha1.ListPodResourcesResponse, error) {
-	podResources := make([]*v1alpha1.PodResources, len(s.gpus))
+	ctx context.Context, req *v1.ListPodResourcesRequest,
+) (*v1.ListPodResourcesResponse, error) {
+	podResources := make([]*v1.PodResources, len(s.gpus))
 
 	for i, gpu := range s.gpus {
-		podResources[i] = &v1alpha1.PodResources{
+		podResources[i] = &v1.PodResources{
 			Name:      fmt.Sprintf("gpu-pod-%d", i),
 			Namespace: "default",
-			Containers: []*v1alpha1.ContainerResources{
+			Containers: []*v1.ContainerResources{
 				{
 					Name: "default",
-					Devices: []*v1alpha1.ContainerDevices{
+					Devices: []*v1.ContainerDevices{
 						{
 							ResourceName: s.resourceName,
 							DeviceIds:    []string{gpu},
@@ -225,8 +225,43 @@ func (s *MockPodResourcesServer) List(
 		}
 	}
 
-	return &v1alpha1.ListPodResourcesResponse{
+	return &v1.ListPodResourcesResponse{
 		PodResources: podResources,
+	}, nil
+}
+
+func (s *MockPodResourcesServer) Get(
+	ctx context.Context, req *v1.GetPodResourcesRequest,
+) (*v1.GetPodResourcesResponse, error) {
+	return &v1.GetPodResourcesResponse{
+		PodResources: &v1.PodResources{
+			Name:      "gpu-pod-0",
+			Namespace: "default",
+			Containers: []*v1.ContainerResources{
+				{
+					Name: "default",
+					Devices: []*v1.ContainerDevices{
+						{
+							ResourceName: s.resourceName,
+							DeviceIds:    s.gpus,
+						},
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *MockPodResourcesServer) GetAllocatableResources(
+	ctx context.Context, req *v1.AllocatableResourcesRequest,
+) (*v1.AllocatableResourcesResponse, error) {
+	return &v1.AllocatableResourcesResponse{
+		Devices: []*v1.ContainerDevices{
+			{
+				ResourceName: s.resourceName,
+				DeviceIds:    s.gpus,
+			},
+		},
 	}, nil
 }
 

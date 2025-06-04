@@ -19,7 +19,6 @@ metadata:
   namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
-    app.kubernetes.io/component: "dcgm-exporter"
 spec:
   updateStrategy:
     type: RollingUpdate
@@ -31,12 +30,10 @@ spec:
   selector:
     matchLabels:
       {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: "dcgm-exporter"
   template:
     metadata:
       labels:
         {{- include "dcgm-exporter.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: "dcgm-exporter"
       {{- if .Values.podLabels }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       {{- end }}

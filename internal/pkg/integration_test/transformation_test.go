@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -67,7 +67,7 @@ func TestProcessPodMapper(t *testing.T) {
 	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 	gpus := getGPUUUIDs(arbirtaryMetric)
-	v1alpha1.RegisterPodResourcesListerServer(server,
+	v1.RegisterPodResourcesListerServer(server,
 		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
 
 	cleanup = testutils.StartMockServer(t, server, socketPath)

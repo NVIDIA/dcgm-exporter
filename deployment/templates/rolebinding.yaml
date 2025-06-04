@@ -5,12 +5,11 @@ metadata:
   namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
-    app.kubernetes.io/component: "dcgm-exporter"
 subjects:
 - kind: ServiceAccount
   name: {{ include "dcgm-exporter.serviceAccountName" . }}
   namespace: {{ include "dcgm-exporter.namespace" . }}
 roleRef:
-  kind: Role 
+  kind: Role
   name: dcgm-exporter-read-cm
   apiGroup: rbac.authorization.k8s.io

@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
-	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/ptr"
 
 	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
@@ -288,7 +288,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		gpuIDsAsString[i] = fmt.Sprint(g)
 	}
 
-	v1alpha1.RegisterPodResourcesListerServer(server,
+	v1.RegisterPodResourcesListerServer(server,
 		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpuIDsAsString))
 	// Tell that the app is running on K8S
 	config.Kubernetes = true
