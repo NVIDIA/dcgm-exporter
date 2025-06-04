@@ -1,7 +1,10 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: dcgm-exporter-resource-slice-reader
+  name: dcgm-exporter-read-cr
+  namespace: {{ include "dcgm-exporter.namespace" . }}
+  labels:
+    {{- include "dcgm-exporter.labels" . | nindent 4 }}
 rules:
 - apiGroups: ["resource.k8s.io"]
   resources: ["resourceslices"]
