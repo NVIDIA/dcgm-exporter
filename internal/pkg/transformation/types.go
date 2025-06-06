@@ -17,6 +17,12 @@
 package transformation
 
 import (
+	"context"
+	"sync"
+
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/tools/cache"
+
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
@@ -29,13 +35,30 @@ type Transform interface {
 	Name() string
 }
 
-type PodMapper struct {
-	Config *appconfig.Config
+type DRAResourceSliceManager struct {
+	factory       informers.SharedInformerFactory
+	informer      cache.SharedIndexInformer
+	cancelContext context.CancelFunc
+	mu            sync.RWMutex
+	deviceToUUID  map[string]string
 }
 
+type PodMapper struct {
+	Config               *appconfig.Config
+	ResourceSliceManager *DRAResourceSliceManager
+}
+
+type DynamicResourceInfo struct {
+	ClaimName      string
+	ClaimNamespace string
+	DriverName     string
+	PoolName       string
+	DeviceName     string
+}
 type PodInfo struct {
-	Name      string
-	Namespace string
-	Container string
-	VGPU      string
+	Name             string
+	Namespace        string
+	Container        string
+	VGPU             string
+	DynamicResources []DynamicResourceInfo
 }

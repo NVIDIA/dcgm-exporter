@@ -14,25 +14,23 @@
  * limitations under the License.
  */
 
-package transformation
+package appconfig
 
-const (
-	// Note standard resource attributes
-	podAttribute       = "pod"
-	namespaceAttribute = "namespace"
-	containerAttribute = "container"
-	vgpuAttribute      = "vgpu"
-
-	hpcJobAttribute = "hpc_job"
-
-	oldPodAttribute       = "pod_name"
-	oldNamespaceAttribute = "pod_namespace"
-	oldContainerAttribute = "container_name"
-	draClaimName          = "dra_claim_name"
-	draClaimNamespace     = "dra_claim_namespace"
-	draDriverName         = "dra_driver_name"
-	draPoolName           = "dra_pool_name"
-	draDeviceName         = "dra_device_name"
-
-	DRAGPUDriverName     = "gpu.nvidia.com"
+import (
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
+
+func GetKubeClient() (kubernetes.Interface, error) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	return client, err
+}
