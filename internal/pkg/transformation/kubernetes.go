@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"regexp"
 	"slices"
@@ -181,7 +182,7 @@ func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodRes
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
 
-	resp, err := client.List(ctx, &podresourcesapi.ListPodResourcesRequest{})
+	resp, err := client.List(ctx, &podresourcesapi.ListPodResourcesRequest{}, grpc.MaxCallRecvMsgSize(math.MaxInt32))
 	if err != nil {
 		return nil, fmt.Errorf("failure getting pod resources; err: %w", err)
 	}
