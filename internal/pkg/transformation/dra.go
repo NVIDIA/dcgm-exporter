@@ -84,7 +84,7 @@ func (m *DRAResourceSliceManager) GetUUID(pool, device string) string {
 	defer m.mu.RUnlock()
 	uuid, _ := m.deviceToUUID[key]
 
-	slog.Info("Found UUID: %s for %s", uuid, key)
+	slog.Info(fmt.Sprintf("Found UUID: %s for %s", uuid, key))
 	return uuid
 }
 

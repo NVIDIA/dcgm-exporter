@@ -444,7 +444,7 @@ func (p *PodMapper) toDeviceToPod(
 						draDeviceName := claimResource.GetDeviceName()
 						uuid := p.ResourceSliceManager.GetUUID(draPoolName, draDeviceName)
 						if uuid == "" {
-							slog.Info("No UUID for %s/%s", draPoolName, draDeviceName)
+							slog.Info(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
 							continue
 						}
 
