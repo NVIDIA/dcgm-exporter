@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,15 +26,15 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
 
 const (
 	informerResyncPeriod = 10 * time.Minute
 )
 
-func NewDRAResourceSliceManager(cfg *appconfig.Config) (*DRAResourceSliceManager, error) {
-	client, err := appconfig.GetKubeClient()
+func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
+	client, err := kubeclient.GetKubeClient()
 	if err != nil {
 		return nil, fmt.Errorf("error getting kube client: %w", err)
 	}

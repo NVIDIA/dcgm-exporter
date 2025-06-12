@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
 
 func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
@@ -41,7 +42,7 @@ func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 
 	if c.ConfigMapData != undefinedConfigMapData {
 		var client kubernetes.Interface
-		client, err = appconfig.GetKubeClient()
+		client, err = kubeclient.GetKubeClient()
 		if err != nil {
 			slog.Error(err.Error())
 			os.Exit(1)

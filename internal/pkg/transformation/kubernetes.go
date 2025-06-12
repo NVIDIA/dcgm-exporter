@@ -87,16 +87,9 @@ func (p *PodMapper) iterateGPUDevices(devicePods *podresourcesapi.ListPodResourc
 
 func NewPodMapper(c *appconfig.Config) *PodMapper {
 	slog.Info("Kubernetes metrics collection enabled!")
-	resourceSliceManager, err := NewDRAResourceSliceManager(c)
-	if err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
-	}
-	slog.Info("Started DRAResourceSliceManager")
 
-	return &PodMapper{
-		Config:               c,
-		ResourceSliceManager: resourceSliceManager,
+	pm := &PodMapper{
+		Config: c,
 	}
 
 	if !c.KubernetesEnablePodLabels {
@@ -117,7 +110,16 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 
 	podMapper.Client = clientset
 
-	return podMapper
+	if c.KubernetesEnableDRA {
+		resourceSliceManager, err := NewDRAResourceSliceManager()
+		if err != nil {
+			slog.Error(err.Error())
+			os.Exit(1)
+		}
+		pm.ResourceSliceManager = resourceSliceManager
+		slog.Info("Started DRAResourceSliceManager")
+	}
+	return pm
 }
 
 func (p *PodMapper) Name() string {

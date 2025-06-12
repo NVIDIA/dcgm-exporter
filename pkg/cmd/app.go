@@ -96,6 +96,7 @@ const (
 	CLIDumpDirectory              = "dump-directory"
 	CLIDumpRetention              = "dump-retention"
 	CLIDumpCompression            = "dump-compression"
+	CLIKubernetesEnableDRA        = "kubernetes-enable-dra"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -306,6 +307,10 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   true,
 			Usage:   "Use gzip compression for debug dump files",
 			EnvVars: []string{"DCGM_EXPORTER_DUMP_COMPRESSION"},
+			Name:    CLIKubernetesEnableDRA,
+			Value:   false,
+			Usage:   "Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource Allocation (DRA) API.",
+			EnvVars: []string{"KUBERNETES_ENABLE_DRA"},
 		},
 	}
 
@@ -702,6 +707,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 			Retention:   c.Int(CLIDumpRetention),
 			Compression: c.Bool(CLIDumpCompression),
 		},
+		KubernetesEnableDRA:        c.Bool(CLIKubernetesEnableDRA),
 	}, nil
 }
 

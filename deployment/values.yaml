@@ -163,8 +163,6 @@ extraVolumeMounts:
     subPath: default-counters.csv
 
 extraEnv: []
-#- name: EXTRA_VAR
-#  value: "TheStringValue"
 
 # Path to the kubelet socket for /pod-resources
 kubeletPath: "/var/lib/kubelet/pod-resources"
@@ -224,6 +222,11 @@ debugDump:
   retention: 24
   # Use gzip compression for debug dump files
   compression: true
+
+# Enable DRA
+kubernetesDRA:
+  enabled: false
+
 
 # Customized list of metrics to emit. Expected to be in the same format (CSV) as the default list.
 # Must be the complete list and is not additive. If unset, the default list will take effect.
