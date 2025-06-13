@@ -57,4 +57,5 @@ type Config struct {
 	HPCJobMappingDir           string
 	NvidiaResourceNames        []string
 	KubernetesVirtualGPUs      bool
+	KubernetesEnableDRA        bool
 }

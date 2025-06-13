@@ -50,9 +50,20 @@ var (
 func NewPodMapper(c *appconfig.Config) *PodMapper {
 	slog.Info("Kubernetes metrics collection enabled!")
 
-	return &PodMapper{
+	pm := &PodMapper{
 		Config: c,
 	}
+
+	if c.KubernetesEnableDRA {
+		resourceSliceManager, err := NewDRAResourceSliceManager()
+		if err != nil {
+			slog.Error(err.Error())
+			os.Exit(1)
+		}
+		pm.ResourceSliceManager = resourceSliceManager
+		slog.Info("Started DRAResourceSliceManager")
+	}
+	return pm
 }
 
 func (p *PodMapper) Name() string {
@@ -139,7 +150,6 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 			if err != nil {
 				return err
 			}
-
 			podInfo, exists := deviceToPod[deviceID]
 			if exists {
 				if !p.Config.UseOldNamespace {
@@ -151,6 +161,16 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 				}
+				if len(podInfo.DynamicResources) > 0 {
+					for _, dr := range podInfo.DynamicResources {
+						metrics[counter][j].Attributes[draClaimName] = dr.ClaimName
+						metrics[counter][j].Attributes[draClaimNamespace] = dr.ClaimNamespace
+						metrics[counter][j].Attributes[draDriverName] = dr.DriverName
+						metrics[counter][j].Attributes[draPoolName] = dr.PoolName
+						metrics[counter][j].Attributes[draDeviceName] = dr.DeviceName
+					}
+				}
+
 			}
 		}
 	}
@@ -279,20 +299,47 @@ func (p *PodMapper) toDeviceToPod(
 
 	for _, pod := range devicePods.GetPodResources() {
 		for _, container := range pod.GetContainers() {
-			for _, device := range container.GetDevices() {
+			podInfo := PodInfo{
+				Name:      pod.GetName(),
+				Namespace: pod.GetNamespace(),
+				Container: container.GetName(),
+			}
 
+			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 {
+				for _, dr := range dynamicResources {
+					for _, claimResource := range dr.GetClaimResources() {
+						draDriverName := claimResource.GetDriverName()
+						if draDriverName != DRAGPUDriverName {
+							continue
+						}
+						draPoolName := claimResource.GetPoolName()
+						draDeviceName := claimResource.GetDeviceName()
+						uuid := p.ResourceSliceManager.GetUUID(draPoolName, draDeviceName)
+						if uuid == "" {
+							slog.Info(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
+							continue
+						}
+
+						drInfo := DynamicResourceInfo{
+							ClaimName:      dr.GetClaimName(),
+							ClaimNamespace: dr.GetClaimNamespace(),
+							DriverName:     draDriverName,
+							PoolName:       draPoolName,
+							DeviceName:     draDeviceName,
+						}
+						podInfo.DynamicResources = append(podInfo.DynamicResources, drInfo)
+						deviceToPodMap[uuid] = podInfo
+					}
+
+				}
+			}
+			for _, device := range container.GetDevices() {
 				resourceName := device.GetResourceName()
 				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
 					// Mig resources appear differently than GPU resources
 					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
 						continue
 					}
-				}
-
-				podInfo := PodInfo{
-					Name:      pod.GetName(),
-					Namespace: pod.GetNamespace(),
-					Container: container.GetName(),
 				}
 
 				for _, deviceID := range device.GetDeviceIds() {

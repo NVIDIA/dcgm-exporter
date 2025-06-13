@@ -91,6 +91,7 @@ const (
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 	CLINvidiaResourceNames        = "nvidia-resource-names"
 	CLIKubernetesVirtualGPUs      = "kubernetes-virtual-gpus"
+	CLIKubernetesEnableDRA        = "kubernetes-enable-dra"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -271,6 +272,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins when using GPU sharing strategies, e.g. time-sharing or MPS.",
 			EnvVars: []string{"KUBERNETES_VIRTUAL_GPUS"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesEnableDRA,
+			Value:   false,
+			Usage:   "Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource Allocation (DRA) API.",
+			EnvVars: []string{"KUBERNETES_ENABLE_DRA"},
 		},
 	}
 
@@ -661,6 +668,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
 		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
 		KubernetesVirtualGPUs:      c.Bool(CLIKubernetesVirtualGPUs),
+		KubernetesEnableDRA:        c.Bool(CLIKubernetesEnableDRA),
 	}, nil
 }
 
