@@ -27,6 +27,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
@@ -38,6 +42,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
@@ -449,5 +454,120 @@ func TestGetSharedGPU(t *testing.T) {
 				t.Errorf("expected: %t, got: %t", tc.wantOK, gotOK)
 			}
 		})
+	}
+}
+
+func TestProcessPodMapper_WithLabels(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	pods := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"gpu-pod-0", map[string]string{"valid_label_key": "label-value"}},
+		{"gpu-pod-1", map[string]string{"invalid.label/key": "another-value"}},
+	}
+
+	// Create fake Kubernetes clientset with pods containing labels
+	objects := make([]runtime.Object, len(pods))
+	for i, pod := range pods {
+		objects[i] = &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.name,
+				Namespace: "default",
+				Labels:    pod.labels,
+			},
+		}
+	}
+	clientset := fake.NewSimpleClientset(objects...)
+
+	// Setup mock gRPC server
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	gpus := []string{"gpu-uuid-0", "gpu-uuid-1"}
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	// Create PodMapper with label support enabled
+	podMapper := NewPodMapper(&appconfig.Config{
+		KubernetesEnablePodLabels: true,
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
+	// Inject the fake clientset
+	podMapper.Client = clientset
+
+	// Setup metrics
+	metrics := collector.MetricsByCounter{}
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], collector.Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+			Counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+		})
+	}
+
+	// Setup mock device info
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGPU := deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "00000000-0000-0000-0000-000000000000",
+			GPU:  0,
+		},
+		MigEnabled: false,
+	}
+
+	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	for i := range gpus {
+		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+	}
+
+	// Process metrics
+	err := podMapper.Process(metrics, mockDeviceInfo)
+	require.NoError(t, err)
+
+	// Verify that labels were added and sanitized correctly
+	for i, metric := range metrics[counter] {
+		pod := pods[i]
+
+		// Verify pod attributes were set
+		require.Contains(t, metric.Attributes, podAttribute)
+		require.Contains(t, metric.Attributes, namespaceAttribute)
+		require.Contains(t, metric.Attributes, containerAttribute)
+		require.Equal(t, pod.name, metric.Attributes[podAttribute])
+		require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+		require.Equal(t, "default", metric.Attributes[containerAttribute])
+
+		// Verify labels were sanitized and added
+		expectedLabelCount := len(pod.labels)
+		require.Equal(t, expectedLabelCount, len(metric.Labels),
+			"Expected %d labels for pod %s, but got %d", expectedLabelCount, pod.name, len(metric.Labels))
+
+		for key, value := range pod.labels {
+			sanitizedKey := utils.SanitizeLabelName(key)
+			require.Contains(t, metric.Labels, sanitizedKey,
+				"Expected sanitized key '%s' to exist in labels", sanitizedKey)
+			require.Equal(t, value, metric.Labels[sanitizedKey],
+				"Expected sanitized key '%s' to map to value '%s'", sanitizedKey, value)
+		}
 	}
 }

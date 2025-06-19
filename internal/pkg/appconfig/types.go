@@ -33,6 +33,7 @@ type Config struct {
 	Address                    string
 	CollectInterval            int
 	Kubernetes                 bool
+	KubernetesEnablePodLabels  bool
 	KubernetesGPUIdType        KubernetesGPUIDType
 	CollectDCP                 bool
 	UseOldNamespace            bool
