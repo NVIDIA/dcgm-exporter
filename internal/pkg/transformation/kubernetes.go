@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"regexp"
 	"slices"
@@ -30,6 +31,9 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -50,9 +54,28 @@ var (
 func NewPodMapper(c *appconfig.Config) *PodMapper {
 	slog.Info("Kubernetes metrics collection enabled!")
 
-	return &PodMapper{
+	podMapper := &PodMapper{
 		Config: c,
 	}
+
+	if !c.KubernetesEnablePodLabels {
+		return podMapper
+	}
+
+	clusterConfig, err := rest.InClusterConfig()
+	if err != nil {
+		slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
+		return podMapper
+	}
+
+	clientset, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
+		return podMapper
+	}
+
+	podMapper.Client = clientset
+	return podMapper
 }
 
 func (p *PodMapper) Name() string {
@@ -151,6 +174,8 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 				}
+
+				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
 		}
 	}
@@ -211,6 +236,7 @@ func getSharedGPU(deviceID string) (string, bool) {
 // GPU states.
 func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
+	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
 
 	for _, pod := range devicePods.GetPodResources() {
 		for _, container := range pod.GetContainers() {
@@ -224,11 +250,7 @@ func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodRes
 					}
 				}
 
-				podInfo := PodInfo{
-					Name:      pod.GetName(),
-					Namespace: pod.GetNamespace(),
-					Container: container.GetName(),
-				}
+				podInfo := p.createPodInfo(pod, container, labelCache)
 
 				for _, deviceID := range device.GetDeviceIds() {
 					if vgpu, ok := getSharedGPU(deviceID); ok {
@@ -276,6 +298,7 @@ func (p *PodMapper) toDeviceToPod(
 	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
+	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
 
 	for _, pod := range devicePods.GetPodResources() {
 		for _, container := range pod.GetContainers() {
@@ -289,11 +312,7 @@ func (p *PodMapper) toDeviceToPod(
 					}
 				}
 
-				podInfo := PodInfo{
-					Name:      pod.GetName(),
-					Namespace: pod.GetNamespace(),
-					Container: container.GetName(),
-				}
+				podInfo := p.createPodInfo(pod, container, labelCache)
 
 				for _, deviceID := range device.GetDeviceIds() {
 					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
@@ -332,4 +351,60 @@ func (p *PodMapper) toDeviceToPod(
 	}
 
 	return deviceToPodMap
+}
+
+// createPodInfo creates a PodInfo struct with labels if enabled
+func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, labelCache map[string]map[string]string) PodInfo {
+	labels := map[string]string{}
+	if p.Config.KubernetesEnablePodLabels {
+		// Use cache key combining namespace and name
+		cacheKey := pod.GetNamespace() + "/" + pod.GetName()
+		if cachedLabels, exists := labelCache[cacheKey]; exists {
+			labels = cachedLabels
+		} else {
+			// Only make API call if not in cache
+			if podLabels, err := p.getPodLabels(pod.GetNamespace(), pod.GetName()); err != nil {
+				slog.Warn("Couldn't get pod labels",
+					"pod", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"error", err)
+				labelCache[cacheKey] = map[string]string{} // Cache empty result to avoid repeated failures
+			} else {
+				labels = podLabels
+				labelCache[cacheKey] = podLabels // Cache successful result
+			}
+		}
+	}
+
+	return PodInfo{
+		Name:      pod.GetName(),
+		Namespace: pod.GetNamespace(),
+		Container: container.GetName(),
+		Labels:    labels,
+	}
+}
+
+// getPodLabels fetches labels from a Kubernetes pod via the API server.
+// It sanitizes label names to ensure they are valid for Prometheus metrics.
+func (p *PodMapper) getPodLabels(namespace, podName string) (map[string]string, error) {
+	if p.Client == nil {
+		return nil, fmt.Errorf("kubernetes client is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+
+	pod, err := p.Client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Sanitize label names
+	sanitizedLabels := make((map[string]string), len(pod.Labels))
+	for k, v := range pod.Labels {
+		sanitizedKey := utils.SanitizeLabelName(k)
+		sanitizedLabels[sanitizedKey] = v
+	}
+
+	return sanitizedLabels, nil
 }
