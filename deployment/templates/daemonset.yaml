@@ -112,6 +112,10 @@ spec:
         env:
         - name: "DCGM_EXPORTER_KUBERNETES"
           value: "true"
+        {{- if .Values.kubernetes.enablePodLabels }}
+        - name: "DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"
+          value: "true"
+        {{- end }}
         - name: "DCGM_EXPORTER_LISTEN"
           value: "{{ .Values.service.address }}"
         - name: NODE_NAME

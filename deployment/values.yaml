@@ -194,6 +194,19 @@ basicAuth:
   #Object containing <user>:<passwords> key-value pairs for each user that will have access via basic authentication
   users: {}
 
+# Kubernetes integration settings
+kubernetes:
+  # Enable Kubernetes pod labels in metrics
+  # When enabled, metrics will include labels from the pods that are using the GPUs
+  # This requires cluster-level read permissions to pods
+  enablePodLabels: false
+
+  # RBAC settings for Kubernetes integration
+  rbac:
+    # Automatically creates ClusterRole and ClusterRoleBinding for pod access when enablePodLabels is true
+    # Set to false if you want to manage RBAC resources manually
+    create: true
+
 # Customized list of metrics to emit. Expected to be in the same format (CSV) as the default list.
 # Must be the complete list and is not additive. If unset, the default list will take effect.
 # customMetrics: |
