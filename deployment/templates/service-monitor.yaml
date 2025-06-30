@@ -36,5 +36,5 @@ spec:
     interval: "{{ .Values.serviceMonitor.interval }}"
     honorLabels: {{ .Values.serviceMonitor.honorLabels }}
     relabelings:
-      {{ toYaml .Values.serviceMonitor.relabelings | nindent 6 }}
+      {{- toYaml .Values.serviceMonitor.relabelings | nindent 6 }}
 {{- end -}}
