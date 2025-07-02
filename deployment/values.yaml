@@ -96,7 +96,7 @@ service:
   # Accepts either "Cluster" or "Local", more detail: https://kubernetes.io/docs/reference/networking/virtual-ips/#traffic-policies
   # Choose Local if you want to route internal traffic within the node only
   internalTrafficPolicy: Cluster
-  # Choose Local if you want to route external traffic to preserve the original IP
+  # Choose Local if you want to route external traffic to only route to ready node-local endpoints
   externalTrafficPolicy: Cluster
   clusterIP: ""
   port: 9400
