@@ -118,7 +118,7 @@ func TestGetters(t *testing.T) {
 	}
 
 	assert.Equal(t, uint(len(fakeDevices)), deviceInfo.GPUCount(), "GPU count mismatch")
-	assert.Equal(t, fakeDeviceInfo[:], deviceInfo.GPUs(), "GPUs mismatch")
+	assert.Equal(t, fakeDeviceInfo[:deviceInfo.GPUCount()], deviceInfo.GPUs(), "GPUs mismatch")
 	assert.Equal(t, fakeDeviceInfo[0], deviceInfo.GPU(uint(0)), "GPU mismatch")
 	assert.Equal(t, fakeSwitches, deviceInfo.Switches(), "Switches mismatch")
 	assert.Equal(t, fakeSwitches[1], deviceInfo.Switch(uint(1)), "Switch mismatch")
@@ -2415,16 +2415,18 @@ func TestIsCoreWatched(t *testing.T) {
 
 func TestSetMigProfileNames(t *testing.T) {
 	config := &appconfig.Config{
-		UseRemoteHE: false,
+		EnableDCGMLog: true,
+		DCGMLogLevel:  "DEBUG",
 	}
-	dcgmprovider.Initialize(config)
+	dcgmprovider.SmartDCGMInit(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	tests := []struct {
 		name       string
 		deviceInfo Info
-		values     []dcgm.FieldValue_v2
-		valid      bool
+
+		values []dcgm.FieldValue_v2
+		valid  bool
 	}{
 		{
 			name: "MIG profile found",

@@ -297,10 +297,13 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				socketPath := tmpDir + "/kubelet.sock"
 				server := grpc.NewServer()
 				config := &appconfig.Config{
-					UseRemoteHE: false,
+					UseRemoteHE:   false,
+					Kubernetes:    true,
+					EnableDCGMLog: true,
+					DCGMLogLevel:  "DEBUG",
 				}
 
-				dcgmprovider.Initialize(config)
+				dcgmprovider.SmartDCGMInit(t, config)
 				defer dcgmprovider.Client().Cleanup()
 
 				gpus := tc.PODGPUIDs

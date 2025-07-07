@@ -18,13 +18,18 @@ package framework
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	helm "github.com/mittwald/go-helm-client"
 	helmValues "github.com/mittwald/go-helm-client/values"
+	ginkgo "github.com/onsi/ginkgo/v2"
+	"helm.sh/helm/v3/pkg/storage/driver"
 	restclient "k8s.io/client-go/rest"
 )
 
@@ -125,12 +130,125 @@ func WithJSONValues(values ...string) HelmChartValueOption {
 	}
 }
 
+// addDebugArgumentIfNotPresent adds --debug to arguments if it's not already present
+func addDebugArgumentIfNotPresent(values *helmValues.Options) {
+	// Look for arguments in Values
+	for i, value := range values.Values {
+		if len(value) > 10 && value[:10] == "arguments=" {
+			// Check if --debug is already present
+			if !containsDebug(value) {
+				fmt.Fprintln(ginkgo.GinkgoWriter, "Before modification:", value)
+
+				// Parse the arguments format
+				// Expected format: arguments={-f=/etc/dcgm-exporter/default-counters.csv}
+				// We need to convert this to: arguments={-f=/etc/dcgm-exporter/default-counters.csv, --debug}
+
+				// Extract the content between curly braces
+				start := strings.Index(value, "{")
+				end := strings.LastIndex(value, "}")
+
+				if start != -1 && end != -1 && end > start {
+					// Extract the arguments content
+					argsContent := value[start+1 : end]
+
+					// Add --debug to the arguments content with comma separator
+					if argsContent != "" {
+						argsContent += ", --debug"
+					} else {
+						argsContent = "--debug"
+					}
+
+					// Reconstruct the value in the original format
+					values.Values[i] = "arguments={" + argsContent + "}"
+					fmt.Fprintln(ginkgo.GinkgoWriter, "After modification:", values.Values[i])
+				}
+			}
+			return
+		}
+	}
+
+	// Also check for array format arguments[0]=...
+	debugAdded := false
+	for _, value := range values.Values {
+		if strings.HasPrefix(value, "arguments[") {
+			// Check if this value already contains --debug
+			if containsDebug(value) {
+				debugAdded = true
+				continue
+			}
+
+			// Find the highest index to add --debug after it
+			highestIndex := -1
+			for _, v := range values.Values {
+				if strings.HasPrefix(v, "arguments[") {
+					// Extract index from arguments[index]=value
+					parts := strings.SplitN(v, "=", 2)
+					if len(parts) == 2 {
+						indexPart := strings.TrimPrefix(parts[0], "arguments[")
+						indexPart = strings.TrimSuffix(indexPart, "]")
+						if index, err := strconv.Atoi(indexPart); err == nil && index > highestIndex {
+							highestIndex = index
+						}
+					}
+				}
+			}
+
+			if !debugAdded {
+				// Add --debug as the next index
+				debugIndex := highestIndex + 1
+				values.Values = append(values.Values, fmt.Sprintf("arguments[%d]=--debug", debugIndex))
+				debugAdded = true
+				fmt.Fprintln(ginkgo.GinkgoWriter, "Added --debug as arguments[", debugIndex, "]=--debug")
+			}
+		}
+	}
+
+	// Fallback: if no arguments keys or indexed entries were found, add arguments[0]=--debug
+	if !debugAdded {
+		values.Values = append(values.Values, "arguments[0]=--debug")
+		fmt.Fprintln(ginkgo.GinkgoWriter, "Added --debug as arguments[0]=--debug (fallback)")
+	}
+}
+
+// containsDebug checks if the arguments string contains --debug
+func containsDebug(arguments string) bool {
+	return strings.Contains(arguments, "--debug")
+}
+
 // Install deploys the helm chart
 func (c *HelmClient) Install(ctx context.Context, chartOpts HelmChartOptions, valuesOptions ...HelmChartValueOption) (string, error) {
 	values := helmValues.Options{}
 
 	for _, valueOption := range valuesOptions {
 		valueOption(&values)
+	}
+
+	// Add --debug argument if not present
+	addDebugArgumentIfNotPresent(&values)
+
+	// Print the chart values being used
+	fmt.Fprintln(ginkgo.GinkgoWriter, "Chart values being used:")
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  Chart:", c.chart)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  Namespace:", c.namespace)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  GenerateName:", chartOpts.GenerateName)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  ReleaseName:", chartOpts.ReleaseName)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  Wait:", chartOpts.Wait)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  Timeout:", chartOpts.Timeout)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  CleanupOnFail:", chartOpts.CleanupOnFail)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "  DryRun:", chartOpts.DryRun)
+
+	if len(values.Values) > 0 {
+		fmt.Fprintln(ginkgo.GinkgoWriter, "  Values:")
+		for _, value := range values.Values {
+			fmt.Fprintln(ginkgo.GinkgoWriter, "    ", value)
+		}
+	}
+
+	if len(values.JSONValues) > 0 {
+		fmt.Fprintln(ginkgo.GinkgoWriter, "  JSONValues:")
+		for _, value := range values.JSONValues {
+			fmt.Fprintln(ginkgo.GinkgoWriter, "    ", value)
+		}
 	}
 
 	chartSpec := helm.ChartSpec{
@@ -156,11 +274,52 @@ func (c *HelmClient) Install(ctx context.Context, chartOpts HelmChartOptions, va
 		return "", fmt.Errorf("error installing the chart; err: %w", err)
 	}
 
+	// Print the release values after successful installation
+	if err := c.GetReleaseValues(res.Name); err != nil {
+		fmt.Fprintln(ginkgo.GinkgoWriter, "Warning: Failed to get release values after installation:", err)
+	}
+
 	return res.Name, err
 }
 
 func (c *HelmClient) Uninstall(releaseName string) error {
-	return c.client.UninstallReleaseByName(releaseName)
+	err := c.client.UninstallReleaseByName(releaseName)
+	if err != nil {
+		// Check if the error indicates the release doesn't exist
+		// This makes the uninstall operation idempotent
+		if errors.Is(err, driver.ErrReleaseNotFound) {
+			// Release doesn't exist, which is fine for cleanup operations
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// GetReleaseValues retrieves and prints the values stored by Helm for a specific release
+func (c *HelmClient) GetReleaseValues(releaseName string) error {
+	// Get the release values from Helm (allValues=true to get all values, not just user-provided ones)
+	values, err := c.client.GetReleaseValues(releaseName, true)
+	if err != nil {
+		return fmt.Errorf("failed to get release values for %s: %w", releaseName, err)
+	}
+
+	// Print the values in a readable format
+	fmt.Fprintln(ginkgo.GinkgoWriter, "Helm release values for:", releaseName)
+	fmt.Fprintln(ginkgo.GinkgoWriter, "======================================")
+
+	// Convert values to JSON for better readability
+	jsonData, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		// Fallback to printing as string if JSON conversion fails
+		fmt.Fprintln(ginkgo.GinkgoWriter, "Values (raw):", values)
+		return nil
+	}
+
+	fmt.Fprintln(ginkgo.GinkgoWriter, string(jsonData))
+	fmt.Fprintln(ginkgo.GinkgoWriter, "======================================")
+
+	return nil
 }
 
 func (c *HelmClient) Cleanup() error {

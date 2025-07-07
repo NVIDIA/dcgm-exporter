@@ -29,7 +29,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname"
-	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/prerequisites"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
@@ -92,6 +92,10 @@ const (
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 	CLINvidiaResourceNames        = "nvidia-resource-names"
 	CLIKubernetesVirtualGPUs      = "kubernetes-virtual-gpus"
+	CLIDumpEnabled                = "dump-enabled"
+	CLIDumpDirectory              = "dump-directory"
+	CLIDumpRetention              = "dump-retention"
+	CLIDumpCompression            = "dump-compression"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -279,6 +283,30 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins when using GPU sharing strategies, e.g. time-sharing or MPS.",
 			EnvVars: []string{"KUBERNETES_VIRTUAL_GPUS"},
 		},
+		&cli.BoolFlag{
+			Name:    CLIDumpEnabled,
+			Value:   false,
+			Usage:   "Enable file-based debugging dumps for troubleshooting",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_ENABLED"},
+		},
+		&cli.StringFlag{
+			Name:    CLIDumpDirectory,
+			Value:   "/tmp/dcgm-exporter-debug",
+			Usage:   "Directory to store debug dump files",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_DIRECTORY"},
+		},
+		&cli.IntFlag{
+			Name:    CLIDumpRetention,
+			Value:   24,
+			Usage:   "Retention period for debug dump files in hours (0 = no cleanup)",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_RETENTION"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIDumpCompression,
+			Value:   true,
+			Usage:   "Use gzip compression for debug dump files",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_COMPRESSION"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -314,17 +342,16 @@ func newOSWatcher(sigs ...os.Signal) chan os.Signal {
 }
 
 func action(c *cli.Context) (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	return stdout.Capture(ctx, func() error {
+	return stdout.Capture(context.Background(), func() error {
 		// The purpose of this function is to capture any panic that may occur
 		// during initialization and return an error.
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("Encountered a failure.", slog.String(StackTrace, string(debug.Stack())))
+				slog.Error("Encountered a failure.", slog.String(logging.StackTrace, string(debug.Stack())))
 				err = fmt.Errorf("encountered a failure; err: %v", r)
 			}
 		}()
-		return startDCGMExporter(c, cancel)
+		return startDCGMExporter(c)
 	})
 }
 
@@ -341,15 +368,15 @@ func configureLogger(c *cli.Context) error {
 		logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
 		slog.SetDefault(logger)
 	case "json":
-		logger := slog.New(slog.NewJSONHandler(os.Stderr, &opts))
-		slog.SetDefault(logger)
+		// Use our custom JSON handler that properly handles complex structs
+		logging.SetupGlobalLogger(os.Stderr, &opts)
 	default:
 		return fmt.Errorf("invalid %s parameter values: %s", CLILogFormat, logFormat)
 	}
 	return nil
 }
 
-func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
+func startDCGMExporter(c *cli.Context) error {
 	if err := configureLogger(c); err != nil {
 		return err
 	}
@@ -669,6 +696,12 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
 		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
 		KubernetesVirtualGPUs:      c.Bool(CLIKubernetesVirtualGPUs),
+		DumpConfig: appconfig.DumpConfig{
+			Enabled:     c.Bool(CLIDumpEnabled),
+			Directory:   c.String(CLIDumpDirectory),
+			Retention:   c.Int(CLIDumpRetention),
+			Compression: c.Bool(CLIDumpCompression),
+		},
 	}, nil
 }
 

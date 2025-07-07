@@ -132,6 +132,14 @@ func TestGetHostname(t *testing.T) {
 			},
 			want: "test-hostname",
 		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote hostname is name",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "localhost:5555",
+			},
+			want: "localhost",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

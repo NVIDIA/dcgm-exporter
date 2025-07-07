@@ -17,7 +17,10 @@
 package collector
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -55,23 +58,19 @@ func (e *EntityCollectorTuple) Collector() Collector {
 }
 
 type Metric struct {
-	Counter counters.Counter
-	Value   string
-
-	GPU          string
-	GPUUUID      string
-	GPUDevice    string
-	GPUModelName string
-	GPUPCIBusID  string
-
-	UUID string
-
-	MigProfile    string
-	GPUInstanceID string
-	Hostname      string
-
-	Labels     map[string]string
-	Attributes map[string]string
+	Counter       counters.Counter  `json:"counter"`
+	Value         string            `json:"value"`
+	GPU           string            `json:"gpu"`
+	GPUUUID       string            `json:"gpu_uuid"`
+	GPUDevice     string            `json:"gpu_device"`
+	GPUModelName  string            `json:"gpu_model"`
+	GPUPCIBusID   string            `json:"pci_bus_id"`
+	UUID          string            `json:"uuid"`
+	MigProfile    string            `json:"mig_profile,omitempty"`
+	GPUInstanceID string            `json:"gpu_instance_id,omitempty"`
+	Hostname      string            `json:"hostname"`
+	Labels        map[string]string `json:"labels"`
+	Attributes    map[string]string `json:"attributes"`
 }
 
 func (m Metric) GetIDOfType(idType appconfig.KubernetesGPUIDType) (string, error) {
@@ -90,3 +89,87 @@ func (m Metric) GetIDOfType(idType appconfig.KubernetesGPUIDType) (string, error
 
 // MetricsByCounter represents a map where each Counter is associated with a slice of Metric objects
 type MetricsByCounter map[counters.Counter][]Metric
+
+// MarshalJSON implements custom JSON marshaling for MetricsByCounter
+func (m MetricsByCounter) MarshalJSON() ([]byte, error) {
+	metrics := make(map[string]any)
+
+	// Use range over function for cleaner iteration
+	for counter, metricList := range m {
+		counterStr := counter.FieldName
+		// Always include full metric details using original structs
+		metrics[counterStr] = metricList
+	}
+
+	result := map[string]any{
+		"metrics": metrics,
+	}
+
+	return json.Marshal(result)
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for MetricsByCounter
+func (m *MetricsByCounter) UnmarshalJSON(data []byte) error {
+	var result struct {
+		Metrics map[string][]Metric `json:"metrics"`
+	}
+
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal metrics: %w", err)
+	}
+
+	// Convert the map[string][]Metric to map[counters.Counter][]Metric
+	*m = make(MetricsByCounter)
+	for fieldName, metricList := range result.Metrics {
+		// Create a counter for each field name
+		counter := counters.Counter{
+			FieldName: fieldName,
+		}
+		// Use the first metric to populate counter details
+		if len(metricList) > 0 {
+			counter.FieldID = metricList[0].Counter.FieldID
+			counter.PromType = metricList[0].Counter.PromType
+		}
+		(*m)[counter] = metricList
+	}
+
+	return nil
+}
+
+// String implements the Stringer interface to return JSON representation
+func (m MetricsByCounter) String() string {
+	jsonData, err := m.MarshalJSON()
+	if err != nil {
+		return fmt.Sprintf("error marshaling metrics: %v", err)
+	}
+	return string(jsonData)
+}
+
+// GoString implements the GoStringer interface to return Go syntax representation
+func (m MetricsByCounter) GoString() string {
+	var result strings.Builder
+	result.WriteString("MetricsByCounter{")
+
+	first := true
+	for counter, metrics := range m {
+		if !first {
+			result.WriteString(", ")
+		}
+		first = false
+
+		result.WriteString(fmt.Sprintf("%q: %#v", counter.FieldName, metrics))
+	}
+
+	result.WriteString("}")
+	return result.String()
+}
+
+// ToBase64 returns the JSON representation encoded as base64
+func (m MetricsByCounter) ToBase64() string {
+	jsonData, err := m.MarshalJSON()
+	if err != nil {
+		return fmt.Sprintf("error marshaling metrics: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(jsonData)
+}
