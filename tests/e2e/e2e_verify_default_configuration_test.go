@@ -41,37 +41,16 @@ var VerifyDefaultHelmConfiguration = func(
 ) bool {
 	return Context("and uses a default helm configuration", Label("default"), func() {
 		var (
-			helmReleaseName string
-			dcgmExpPod      *corev1.Pod
-			workloadPod     *corev1.Pod
+			dcgmExpPod  *corev1.Pod
+			workloadPod *corev1.Pod
 		)
 
 		AfterAll(func(ctx context.Context) {
-			shouldUninstallHelmChart(helmClient, helmReleaseName)
+			// Helm releases will be cleaned up in AfterSuite
 		})
 
 		It("should install dcgm-exporter helm chart", func(ctx context.Context) {
-			By(fmt.Sprintf("Helm chart installation: %q chart started.",
-				testContext.chart))
-
-			values := getDefaultHelmValues()
-
-			var err error
-
-			helmReleaseName, err = helmClient.Install(ctx, framework.HelmChartOptions{
-				CleanupOnFail: true,
-				GenerateName:  true,
-				Timeout:       5 * time.Minute,
-				Wait:          true,
-				DryRun:        false,
-			}, framework.WithValues(values...))
-			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v",
-				testContext.chart, err)
-
-			By(fmt.Sprintf("Helm chart installation: %q completed.",
-				testContext.chart))
-			By(fmt.Sprintf("Helm chart installation: new %q release name.",
-				helmReleaseName))
+			shouldInstallHelmChart(ctx, helmClient, []string{})
 		})
 
 		It("should create dcgm-exporter pod", func(ctx context.Context) {
@@ -102,7 +81,7 @@ var VerifyDefaultHelmConfiguration = func(
 				isReady, err := kubeClient.CheckPodStatus(ctx,
 					testContext.namespace,
 					workloadPod.Name, func(namespace, podName string, status corev1.PodStatus) (bool, error) {
-						return status.Phase == corev1.PodSucceeded, nil
+						return status.Phase == corev1.PodRunning, nil
 					})
 				if err != nil {
 					Fail(fmt.Sprintf("Workload pod creation: Checking pod status: Failed with error: %v", err))
@@ -111,7 +90,7 @@ var VerifyDefaultHelmConfiguration = func(
 				return isReady
 			}).WithPolling(time.Second).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
 
-			By("Workload pod creation: completed")
+			By("Workload pod creation: completed - long-running pod is now active")
 		})
 
 		It("should wait for 30 seconds, to read metrics", func() {

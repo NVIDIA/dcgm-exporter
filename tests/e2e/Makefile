@@ -67,5 +67,10 @@ e2e-default:
 		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
 		--ginkgo.label-filter=default
 
+e2e-labels:
+	@$(TEST_CMD) \
+		-arguments="{-f=/etc/dcgm-exporter/default-counters.csv}" \
+		--ginkgo.label-filter=labels
+
 binary:
 	go test -c --tags="e2e" .

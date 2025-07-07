@@ -18,6 +18,7 @@ package integration_test
 
 import (
 	"fmt"
+	"log/slog"
 	"reflect"
 	"testing"
 
@@ -41,6 +42,24 @@ const (
 	containerAttribute = "container"
 )
 
+func smartDCGMInit(t *testing.T, config *appconfig.Config) {
+	t.Helper()
+	config.UseRemoteHE = false
+	dcgmprovider.Initialize(config)
+	_, err := dcgmprovider.Client().GetAllDeviceCount()
+	if err != nil {
+		slog.Info("Embedded DCGM failed, trying remote host engine")
+		config.UseRemoteHE = true
+		config.RemoteHEInfo = "localhost:5555"
+		dcgmprovider.Initialize(config)
+		// Check if remote initialization also failed
+		_, err = dcgmprovider.Client().GetAllDeviceCount()
+		require.NoError(t, err, "Both embedded and remote DCGM initialization failed")
+	} else {
+		slog.Info("Embedded DCGM initialized successfully")
+	}
+}
+
 func TestProcessPodMapper(t *testing.T) {
 	testutils.RequireLinux(t)
 
@@ -48,10 +67,13 @@ func TestProcessPodMapper(t *testing.T) {
 	defer cleanup()
 
 	config := &appconfig.Config{
-		UseRemoteHE: false,
+		UseRemoteHE:   false,
+		Kubernetes:    true,
+		EnableDCGMLog: true,
+		DCGMLogLevel:  "DEBUG",
 	}
 
-	dcgmprovider.Initialize(config)
+	smartDCGMInit(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	c := testDCGMGPUCollector(t, testutils.SampleCounters)

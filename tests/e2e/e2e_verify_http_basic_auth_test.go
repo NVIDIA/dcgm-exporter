@@ -38,21 +38,17 @@ var VerifyHelmConfigurationWhenHttpBasicAuthEnabled = func(kubeClient *framework
 	testRunLabels map[string]string,
 ) bool {
 	return Context("and HTTP basic auth is enabled", Label("basicAuth"), func() {
-		var (
-			helmReleaseName string
-			dcgmExpPod      *corev1.Pod
-		)
+		var dcgmExpPod *corev1.Pod
 
 		AfterAll(func(ctx context.Context) {
-			shouldUninstallHelmChart(helmClient, helmReleaseName)
+			// Helm releases will be cleaned up in AfterSuite
 		})
 
 		userName := "alice"
 		userPassword := "Pa$$w0rd"
 
 		It("should install dcgm-exporter helm chart", func(ctx context.Context) {
-			By(fmt.Sprintf("Helm chart installation: %q chart started.",
-				testContext.chart))
+			By(fmt.Sprintf("Helm chart installation: %q chart started.", testContext.chart))
 
 			values := getDefaultHelmValues()
 
@@ -72,7 +68,7 @@ var VerifyHelmConfigurationWhenHttpBasicAuthEnabled = func(kubeClient *framework
 
 			jsonValues = append(jsonValues, fmt.Sprintf("basicAuth=%s", string(basicAuthValueJson)))
 
-			helmReleaseName, err = helmClient.Install(ctx, framework.HelmChartOptions{
+			helmReleaseName, err := helmClient.Install(ctx, framework.HelmChartOptions{
 				CleanupOnFail: true,
 				GenerateName:  true,
 				Timeout:       5 * time.Minute,
@@ -81,10 +77,11 @@ var VerifyHelmConfigurationWhenHttpBasicAuthEnabled = func(kubeClient *framework
 			}, framework.WithValues(values...), framework.WithJSONValues(jsonValues...))
 			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v", testContext.chart, err)
 
-			By(fmt.Sprintf("Helm chart installation: %q completed.",
-				testContext.chart))
-			By(fmt.Sprintf("Helm chart installation: new %q release name.",
-				helmReleaseName))
+			By(fmt.Sprintf("Helm chart installation: %q completed.", testContext.chart))
+			By(fmt.Sprintf("Helm chart installation: new %q release name.", helmReleaseName))
+
+			// Track the release for cleanup
+			addHelmRelease(helmReleaseName)
 		})
 
 		It("should create dcgm-exporter pod", func(ctx context.Context) {

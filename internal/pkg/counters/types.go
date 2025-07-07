@@ -21,10 +21,10 @@ import (
 )
 
 type Counter struct {
-	FieldID   dcgm.Short
-	FieldName string
-	PromType  string
-	Help      string
+	FieldID   dcgm.Short `json:"field_id"`
+	FieldName string     `json:"field_name"`
+	PromType  string     `json:"prom_type"`
+	Help      string     `json:"help"`
 }
 
 func (c Counter) IsLabel() bool {
