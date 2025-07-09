@@ -223,7 +223,8 @@ debugDump:
   # Use gzip compression for debug dump files
   compression: true
 
-# Enable DRA
+# Enable DRA to capture metrics associated with GPUs managed by NVIDIA k8s-dra-driver (https://github.com/NVIDIA/k8s-dra-driver-gpu)
+# default: false
 kubernetesDRA:
   enabled: false
 
