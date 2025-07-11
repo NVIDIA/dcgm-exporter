@@ -123,6 +123,13 @@ serviceMonitor:
     #   targetLabel: nodename
     #   replacement: $1
     #   action: replace
+  metricRelabelings: []
+    # - action: replace
+    #   regex: original_metrics_name 
+    #   replacement: new_metrics_name
+    #   sourceLabels:
+    #   - name
+    #   targetLabel: __name__
 
 nodeSelector: {}
   #node: gpu
