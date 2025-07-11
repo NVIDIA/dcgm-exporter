@@ -13,3 +13,13 @@
   kubectl -n {{ include "dcgm-exporter.namespace" . }} port-forward $POD_NAME 8080:{{ .Values.service.port }} &
   echo "Visit http://127.0.0.1:8080/metrics to use your application"
 {{- end }}
+
+{{- if .Values.debugDump.enabled }}
+2. Debug dump functionality is enabled:
+   - Debug files are stored in: {{ .Values.debugDump.directory }}
+   - Retention period: {{ .Values.debugDump.retention }} hours
+   - Compression: {{ .Values.debugDump.compression }}
+   
+   To access debug files on a node:
+   kubectl exec -n {{ include "dcgm-exporter.namespace" . }} <pod-name> -- ls -la {{ .Values.debugDump.directory }}
+{{- end }}

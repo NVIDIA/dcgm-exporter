@@ -32,7 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
-	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/ptr"
 
 	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
@@ -59,12 +59,19 @@ var expectedCPUMetrics = map[string]bool{
 	testutils.SampleCPUUtilTotalCounter.FieldName: true,
 }
 
-func setupTest() func() {
+func setupTest(t *testing.T) func() {
 	config := &appconfig.Config{
-		UseRemoteHE: false,
+		EnableDCGMLog: true,
+		DCGMLogLevel:  "DEBUG",
+		GPUDeviceOptions: appconfig.DeviceOptions{
+			Flex:       true,
+			MajorRange: []int{-1},
+			MinorRange: []int{-1},
+		},
 	}
 
-	dcgmprovider.Initialize(config)
+	// Use SmartDCGMInit instead of regular Initialize
+	dcgmprovider.SmartDCGMInit(t, config)
 
 	return func() {
 		defer dcgmprovider.Client().Cleanup()
@@ -129,7 +136,6 @@ func mockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
 
 func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	config := &appconfig.Config{
-		UseRemoteHE: false,
 		GPUDeviceOptions: appconfig.DeviceOptions{
 			Flex:       true,
 			MajorRange: []int{-1},
@@ -137,8 +143,8 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		},
 	}
 
-	dcgmprovider.Initialize(config)
-	defer dcgmprovider.Client().Cleanup()
+	teardownTest := setupTest(t)
+	defer teardownTest()
 
 	allCounters := []counters.Counter{
 		{
@@ -193,7 +199,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather(t *testing.T) {
-	teardownTest := setupTest()
+	teardownTest := setupTest(t)
 	defer teardownTest()
 	runOnlyWithLiveGPUs(t)
 	testutils.RequireLinux(t)
@@ -288,7 +294,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		gpuIDsAsString[i] = fmt.Sprint(g)
 	}
 
-	v1alpha1.RegisterPodResourcesListerServer(server,
+	v1.RegisterPodResourcesListerServer(server,
 		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpuIDsAsString))
 	// Tell that the app is running on K8S
 	config.Kubernetes = true
@@ -349,9 +355,10 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
-	teardownTest := setupTest()
+	teardownTest := setupTest(t)
 	defer teardownTest()
 	runOnlyWithLiveGPUs(t)
+	testutils.RequireLinux(t)
 
 	hostname := "local-test"
 	config := &appconfig.Config{
@@ -479,9 +486,10 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 }
 
 func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
-	teardownTest := setupTest()
+	teardownTest := setupTest(t)
 	defer teardownTest()
 	runOnlyWithLiveGPUs(t)
+	testutils.RequireLinux(t)
 
 	hostname := "local-test"
 	config := &appconfig.Config{
@@ -584,9 +592,10 @@ func getFakeGPUMetrics(metricValues []collector.Metric, gpuIDs []uint) []collect
 }
 
 func TestXIDCollector_Gather_Encode(t *testing.T) {
-	teardownTest := setupTest()
+	teardownTest := setupTest(t)
 	defer teardownTest()
 	runOnlyWithLiveGPUs(t)
+	testutils.RequireLinux(t)
 
 	hostname := "local-test"
 	config := &appconfig.Config{
@@ -795,6 +804,11 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 }
 
 func TestXIDCollector_NewXIDCollector(t *testing.T) {
+	teardownTest := setupTest(t)
+	defer teardownTest()
+	runOnlyWithLiveGPUs(t)
+	testutils.RequireLinux(t)
+
 	config := &appconfig.Config{
 		UseRemoteHE: false,
 		GPUDeviceOptions: appconfig.DeviceOptions{
@@ -803,9 +817,6 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 	}
-
-	dcgmprovider.Initialize(config)
-	defer dcgmprovider.Client().Cleanup()
 
 	allCounters := []counters.Counter{
 		{
@@ -886,8 +897,13 @@ func filterMetrics(metricValues []collector.Metric, condition func(metric collec
 func TestDCGMCollector(t *testing.T) {
 	config := &appconfig.Config{
 		UseRemoteHE: false,
+		GPUDeviceOptions: appconfig.DeviceOptions{
+			Flex:       true,
+			MajorRange: []int{-1},
+			MinorRange: []int{-1},
+		},
 	}
-	dcgmprovider.Initialize(config)
+	dcgmprovider.SmartDCGMInit(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	dcgmCollector := testDCGMGPUCollector(t, testutils.SampleCounters)
@@ -1048,10 +1064,20 @@ func testDCGMCPUCollector(t *testing.T, counters []counters.Counter) *collector.
 }
 
 func TestGPUCollector_GetMetrics(t *testing.T) {
-	teardownTest := setupTest()
-	defer teardownTest()
+	config := &appconfig.Config{
+		GPUDeviceOptions: appconfig.DeviceOptions{
+			Flex:       true,
+			MajorRange: []int{-1},
+			MinorRange: []int{-1},
+		},
+		NoHostname:      false,
+		UseOldNamespace: false,
+		UseFakeGPUs:     false,
+	}
 
+	dcgmprovider.SmartDCGMInit(t, config)
 	runOnlyWithLiveGPUs(t)
+
 	// Create fake GPU
 	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
@@ -1082,19 +1108,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		},
 	}
 
-	dOpt := appconfig.DeviceOptions{
-		Flex:       true,
-		MajorRange: []int{-1},
-		MinorRange: []int{-1},
-	}
-	config := appconfig.Config{
-		GPUDeviceOptions: dOpt,
-		NoHostname:       false,
-		UseOldNamespace:  false,
-		UseFakeGPUs:      false,
-	}
-
-	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(intputCounters, &config)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(intputCounters, config)
 	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher,
 		int64(config.CollectInterval))
 	require.NoError(t, err)
@@ -1102,7 +1116,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	gpuItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	c, err := collector.NewDCGMCollector(intputCounters, "", &config, gpuItem)
+	c, err := collector.NewDCGMCollector(intputCounters, "", config, gpuItem)
 	require.NoError(t, err)
 
 	defer c.Cleanup()

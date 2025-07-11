@@ -133,6 +133,7 @@ func TestMetrics(t *testing.T) {
 			transformer: func() transformation.Transform {
 				mockTransformation := mocktransformation.NewMockTransform(ctrl)
 				mockTransformation.EXPECT().Process(gomock.Any(), gomock.Any()).Return(errors.New("boom")).AnyTimes()
+				mockTransformation.EXPECT().Name().Return("mock-transformer").AnyTimes()
 				return mockTransformation
 			},
 			assert: func(t *testing.T, recorder *httptest.ResponseRecorder) {

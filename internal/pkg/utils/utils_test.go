@@ -129,3 +129,26 @@ func TestCleanupOnError(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeLabelName(t *testing.T) {
+	t.Run("Sanitize label with invalid characters", func(t *testing.T) {
+		input := "label.with.dots/and-slashes"
+		expected := "label_with_dots_and_slashes"
+		got := SanitizeLabelName(input)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("Sanitize label with special characters", func(t *testing.T) {
+		input := "label@with#special!chars"
+		expected := "label_with_special_chars"
+		got := SanitizeLabelName(input)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("Keep valid label unchanged", func(t *testing.T) {
+		input := "valid_label_name"
+		expected := "valid_label_name"
+		got := SanitizeLabelName(input)
+		assert.Equal(t, expected, got)
+	})
+}

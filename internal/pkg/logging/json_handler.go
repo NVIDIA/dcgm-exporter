@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,11 +14,16 @@
  * limitations under the License.
  */
 
-package devicewatcher
+package logging
 
-const (
-	DCGM_ST_NOT_CONFIGURED = "Setting not configured"
-
-	maxKeepAge     = 600.0 // How long to keep data for this field in seconds
-	maxKeepSamples = 0     // Maximum number of samples to keep. 0=no limit
+import (
+	"io"
+	"log/slog"
 )
+
+// SetupGlobalLogger configures the default logger with JSON handler
+func SetupGlobalLogger(w io.Writer, opts *slog.HandlerOptions) {
+	handler := slog.NewJSONHandler(w, opts)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+}

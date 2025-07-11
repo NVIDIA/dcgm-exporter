@@ -27,6 +27,10 @@ var os osinterface.OS = osinterface.RealOS{}
 
 // GetHostname return a hostname where metric was collected.
 func GetHostname(config *appconfig.Config) (string, error) {
+	if config.Kubernetes {
+		/* in kubernetes, the remote hostname is generic and local, so it's not useful */
+		return getLocalHostname()
+	}
 	if config.UseRemoteHE {
 		return parseRemoteHostname(config)
 	}

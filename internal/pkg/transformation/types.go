@@ -20,6 +20,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"k8s.io/client-go/kubernetes"
 )
 
 //go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/transformations/mock_transformer.go -package=transformation -copyright_file=../../../hack/header.txt . Transform
@@ -31,6 +32,7 @@ type Transform interface {
 
 type PodMapper struct {
 	Config *appconfig.Config
+	Client kubernetes.Interface
 }
 
 type PodInfo struct {
@@ -38,4 +40,5 @@ type PodInfo struct {
 	Namespace string
 	Container string
 	VGPU      string
+	Labels    map[string]string
 }

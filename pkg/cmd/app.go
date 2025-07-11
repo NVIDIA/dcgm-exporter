@@ -21,7 +21,6 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/fsnotify/fsnotify"
 	"github.com/urfave/cli/v2"
-	"go.uber.org/automaxprocs/maxprocs"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -30,7 +29,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname"
-	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/prerequisites"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
@@ -70,6 +69,7 @@ const (
 	CLIAddress                    = "address"
 	CLICollectInterval            = "collect-interval"
 	CLIKubernetes                 = "kubernetes"
+	CLIKubernetesEnablePodLabels  = "kubernetes-enable-pod-labels"
 	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
 	CLIUseOldNamespace            = "use-old-namespace"
 	CLIRemoteHEInfo               = "remote-hostengine-info"
@@ -92,6 +92,10 @@ const (
 	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
 	CLINvidiaResourceNames        = "nvidia-resource-names"
 	CLIKubernetesVirtualGPUs      = "kubernetes-virtual-gpus"
+	CLIDumpEnabled                = "dump-enabled"
+	CLIDumpDirectory              = "dump-directory"
+	CLIDumpRetention              = "dump-retention"
+	CLIDumpCompression            = "dump-compression"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -164,6 +168,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   "localhost:5555",
 			Usage:   "Connect to remote hostengine at <HOST>:<PORT>",
 			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesEnablePodLabels,
+			Value:   false,
+			Usage:   "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
 		},
 		&cli.StringFlag{
 			Name:  CLIKubernetesGPUIDType,
@@ -273,6 +283,30 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins when using GPU sharing strategies, e.g. time-sharing or MPS.",
 			EnvVars: []string{"KUBERNETES_VIRTUAL_GPUS"},
 		},
+		&cli.BoolFlag{
+			Name:    CLIDumpEnabled,
+			Value:   false,
+			Usage:   "Enable file-based debugging dumps for troubleshooting",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_ENABLED"},
+		},
+		&cli.StringFlag{
+			Name:    CLIDumpDirectory,
+			Value:   "/tmp/dcgm-exporter-debug",
+			Usage:   "Directory to store debug dump files",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_DIRECTORY"},
+		},
+		&cli.IntFlag{
+			Name:    CLIDumpRetention,
+			Value:   24,
+			Usage:   "Retention period for debug dump files in hours (0 = no cleanup)",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_RETENTION"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIDumpCompression,
+			Value:   true,
+			Usage:   "Use gzip compression for debug dump files",
+			EnvVars: []string{"DCGM_EXPORTER_DUMP_COMPRESSION"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -308,17 +342,16 @@ func newOSWatcher(sigs ...os.Signal) chan os.Signal {
 }
 
 func action(c *cli.Context) (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	return stdout.Capture(ctx, func() error {
+	return stdout.Capture(context.Background(), func() error {
 		// The purpose of this function is to capture any panic that may occur
 		// during initialization and return an error.
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("Encountered a failure.", slog.String(StackTrace, string(debug.Stack())))
+				slog.Error("Encountered a failure.", slog.String(logging.StackTrace, string(debug.Stack())))
 				err = fmt.Errorf("encountered a failure; err: %v", r)
 			}
 		}()
-		return startDCGMExporter(c, cancel)
+		return startDCGMExporter(c)
 	})
 }
 
@@ -335,113 +368,120 @@ func configureLogger(c *cli.Context) error {
 		logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
 		slog.SetDefault(logger)
 	case "json":
-		logger := slog.New(slog.NewJSONHandler(os.Stderr, &opts))
-		slog.SetDefault(logger)
+		// Use our custom JSON handler that properly handles complex structs
+		logging.SetupGlobalLogger(os.Stderr, &opts)
 	default:
 		return fmt.Errorf("invalid %s parameter values: %s", CLILogFormat, logFormat)
 	}
 	return nil
 }
 
-func startDCGMExporter(c *cli.Context, cancel context.CancelFunc) error {
-restart:
+func startDCGMExporter(c *cli.Context) error {
 	if err := configureLogger(c); err != nil {
 		return err
 	}
 
-	// Initialize automaxprocs with desired logging format.
-	_, err := maxprocs.Set(maxprocs.Logger(func(msg string, args ...interface{}) {
-		slog.Info(fmt.Sprintf(msg, args))
-	}))
-	if err != nil {
-		slog.Info(fmt.Sprintf("failed to set GOMAXPROCS: %v", err))
-	}
+	for {
+		// Create a new context for this run of the exporter
+		// Runs are ended by various events (signals from OS or DCGM)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-	var version string
-	if c != nil && c.App != nil {
-		version = c.App.Version
-	}
+		var version string
+		if c != nil && c.App != nil {
+			version = c.App.Version
+		}
 
-	slog.Info("Starting dcgm-exporter", slog.String("Version", version))
+		slog.Info("Starting dcgm-exporter", slog.String("Version", version))
 
-	config, err := contextToConfig(c)
-	if err != nil {
-		return err
-	}
+		config, err := contextToConfig(c)
+		if err != nil {
+			return err
+		}
 
-	slog.Debug(fmt.Sprintf("Command line: %s", strings.Join(os.Args, " ")))
-	slog.Debug("Loaded configuration", slog.String(DumpKey, fmt.Sprintf("%+v", config)))
+		err = prerequisites.Validate()
+		if err != nil {
+			return err
+		}
 
-	err = prerequisites.Validate()
-	if err != nil {
-		return err
-	}
+		// Initialize DCGM Provider Instance
+		dcgmprovider.Initialize(config)
+		dcgmCleanup := dcgmprovider.Client().Cleanup
 
-	// Initialize DCGM Provider Instance
-	dcgmprovider.Initialize(config)
-	defer dcgmprovider.Client().Cleanup()
+		// Initialize NVML Provider Instance
+		nvmlprovider.Initialize()
+		nvmlCleanup := nvmlprovider.Client().Cleanup
 
-	slog.Info("DCGM successfully initialized!")
+		slog.Info("DCGM successfully initialized!")
+		slog.Info("NVML provider successfully initialized!")
 
-	// Initialize NVML Provider Instance
-	nvmlprovider.Initialize()
-	defer nvmlprovider.Client().Cleanup()
+		fillConfigMetricGroups(config)
 
-	slog.Info("NVML provider successfully initialized!")
+		cs := getCounters(config)
 
-	fillConfigMetricGroups(config)
+		deviceWatchListManager := startDeviceWatchListManager(cs, config)
 
-	cs := getCounters(config)
+		hostname, err := hostname.GetHostname(config)
+		if err != nil {
+			nvmlCleanup()
+			dcgmCleanup()
+			return err
+		}
 
-	deviceWatchListManager := startDeviceWatchListManager(cs, config)
+		cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostname, config)
 
-	hostname, err := hostname.GetHostname(config)
-	if err != nil {
-		return err
-	}
+		cRegistry := registry.NewRegistry()
+		for _, entityCollector := range cf.NewCollectors() {
+			cRegistry.Register(entityCollector)
+		}
 
-	cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostname, config)
+		ch := make(chan string, 10)
 
-	cRegistry := registry.NewRegistry()
-	for _, entityCollector := range cf.NewCollectors() {
-		cRegistry.Register(entityCollector)
-	}
+		var wg sync.WaitGroup
+		stop := make(chan interface{})
 
-	defer func() {
+		wg.Add(1)
+
+		server, cleanup, err := server.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
+		if err != nil {
+			cRegistry.Cleanup()
+			nvmlCleanup()
+			dcgmCleanup()
+			return err
+		}
+
+		go server.Run(ctx, stop, &wg)
+
+		sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+
+		go watchCollectorsFile(config.CollectorsFile, reloadMetricsServer(sigs))
+
+		sig := <-sigs
+		slog.Info("Received signal", slog.String("signal", sig.String()))
+		close(stop)
+		cancel() // Cancel the context for this iteration
+		err = utils.WaitWithTimeout(&wg, time.Second*2)
+		if err != nil {
+			slog.Error(err.Error())
+			cRegistry.Cleanup()
+			nvmlCleanup()
+			dcgmCleanup()
+			cleanup()
+			fatal()
+		}
+
+		// Call cleanup functions before continuing the loop
 		cRegistry.Cleanup()
-	}()
+		nvmlCleanup()
+		dcgmCleanup()
+		cleanup()
 
-	ch := make(chan string, 10)
+		if sig != syscall.SIGHUP {
+			return nil
+		}
 
-	var wg sync.WaitGroup
-	stop := make(chan interface{})
-
-	wg.Add(1)
-
-	server, cleanup, err := server.NewMetricsServer(config, ch, deviceWatchListManager, cRegistry)
-	defer cleanup()
-	if err != nil {
-		return err
-	}
-
-	go server.Run(stop, &wg)
-
-	sigs := newOSWatcher(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
-
-	go watchCollectorsFile(config.CollectorsFile, reloadMetricsServer(sigs))
-
-	sig := <-sigs
-	slog.Info("Received signal", slog.String("signal", sig.String()))
-	close(stop)
-	cancel()
-	err = utils.WaitWithTimeout(&wg, time.Second*2)
-	if err != nil {
-		slog.Error(err.Error())
-		fatal()
-	}
-
-	if sig == syscall.SIGHUP {
-		goto restart
+		// For SIGHUP, we'll continue the loop after cleanup
+		slog.Info("Restarting dcgm-exporter after signal")
 	}
 
 	return nil
@@ -632,6 +672,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		Address:                    c.String(CLIAddress),
 		CollectInterval:            c.Int(CLICollectInterval),
 		Kubernetes:                 c.Bool(CLIKubernetes),
+		KubernetesEnablePodLabels:  c.Bool(CLIKubernetesEnablePodLabels),
 		KubernetesGPUIdType:        appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:                 true,
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
@@ -655,6 +696,12 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
 		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
 		KubernetesVirtualGPUs:      c.Bool(CLIKubernetesVirtualGPUs),
+		DumpConfig: appconfig.DumpConfig{
+			Enabled:     c.Bool(CLIDumpEnabled),
+			Directory:   c.String(CLIDumpDirectory),
+			Retention:   c.Int(CLIDumpRetention),
+			Compression: c.Bool(CLIDumpCompression),
+		},
 	}, nil
 }
 

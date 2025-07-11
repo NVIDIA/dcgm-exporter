@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"regexp"
 	"slices"
@@ -30,7 +31,10 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -47,12 +51,64 @@ var (
 	gkeVirtualGPUDeviceIDSeparator = "/vgpu"
 )
 
+// DeviceProcessingFunc is a callback function type for processing devices
+type DeviceProcessingFunc func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices)
+
+// iterateGPUDevices encapsulates the common pattern of iterating through pods, containers, and devices
+// while filtering for NVIDIA GPU resources. It calls the provided callback for each valid device.
+func (p *PodMapper) iterateGPUDevices(devicePods *podresourcesapi.ListPodResourcesResponse, processDevice DeviceProcessingFunc) {
+	for _, pod := range devicePods.GetPodResources() {
+		for _, container := range pod.GetContainers() {
+			for _, device := range container.GetDevices() {
+				resourceName := device.GetResourceName()
+
+				// Apply NVIDIA resource filtering
+				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
+					// MIG resources appear differently than GPU resources
+					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
+						slog.Debug("Skipping non-NVIDIA resource",
+							"resourceName", resourceName,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"deviceIds", device.GetDeviceIds())
+						continue
+					}
+				}
+
+				// Call the processing function for valid devices
+				processDevice(pod, container, device)
+			}
+		}
+	}
+}
+
 func NewPodMapper(c *appconfig.Config) *PodMapper {
 	slog.Info("Kubernetes metrics collection enabled!")
 
-	return &PodMapper{
+	podMapper := &PodMapper{
 		Config: c,
 	}
+
+	if !c.KubernetesEnablePodLabels {
+		return podMapper
+	}
+
+	clusterConfig, err := rest.InClusterConfig()
+	if err != nil {
+		slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
+		return podMapper
+	}
+
+	clientset, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
+		return podMapper
+	}
+
+	podMapper.Client = clientset
+
+	return podMapper
 }
 
 func (p *PodMapper) Name() string {
@@ -79,7 +135,52 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 		return err
 	}
 
-	slog.Debug(fmt.Sprintf("Podresources API response: %+v", pods))
+	// Log detailed GPU allocation information for debugging purposes
+	slog.Debug("Pod resources API response details",
+		"podsWithResources", len(pods.GetPodResources()),
+		"fullResponse", fmt.Sprintf("%+v", pods))
+
+	// Log device plugin status and GPU allocation details
+	totalGPUsAllocated := 0
+	totalContainersWithGPUs := 0
+	podGPUCounts := make(map[string]int) // Track GPU count per pod
+
+	p.iterateGPUDevices(pods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
+		podKey := pod.GetNamespace() + "/" + pod.GetName()
+		podGPUCounts[podKey] += len(device.GetDeviceIds())
+		totalContainersWithGPUs++
+		slog.Debug("Found GPU device allocation",
+			"pod", pod.GetName(),
+			"namespace", pod.GetNamespace(),
+			"container", container.GetName(),
+			"resourceName", device.GetResourceName(),
+			"deviceIds", device.GetDeviceIds())
+	})
+
+	// Log per-pod GPU allocation status
+	for _, pod := range pods.GetPodResources() {
+		podKey := pod.GetNamespace() + "/" + pod.GetName()
+		podGPUs := podGPUCounts[podKey]
+		if podGPUs > 0 {
+			totalGPUsAllocated += podGPUs
+			slog.Debug("Pod has GPU allocations",
+				"pod", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"totalGPUs", podGPUs)
+		} else {
+			slog.Debug("Pod has NO GPU allocations",
+				"pod", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"totalContainers", len(pod.GetContainers()))
+		}
+	}
+
+	slog.Debug("GPU allocation summary",
+		"totalPods", len(pods.GetPodResources()),
+		"totalGPUsAllocated", totalGPUsAllocated,
+		"totalContainersWithGPUs", totalContainersWithGPUs,
+		"devicePluginWorking", totalGPUsAllocated > 0)
+
 	if p.Config.KubernetesVirtualGPUs {
 		deviceToPods := p.toDeviceToSharingPods(pods, deviceInfo)
 
@@ -127,6 +228,8 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 		return nil
 	}
 
+	slog.Debug("KubernetesVirtualGPUs is disabled, using device to pod mapping")
+
 	deviceToPod := p.toDeviceToPod(pods, deviceInfo)
 
 	slog.Debug(fmt.Sprintf("Device to pod mapping: %+v", deviceToPod))
@@ -151,6 +254,8 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 				}
+
+				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
 		}
 	}
@@ -211,63 +316,50 @@ func getSharedGPU(deviceID string) (string, bool) {
 // GPU states.
 func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
+	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
 
-	for _, pod := range devicePods.GetPodResources() {
-		for _, container := range pod.GetContainers() {
-			for _, device := range container.GetDevices() {
+	p.iterateGPUDevices(devicePods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
+		podInfo := p.createPodInfo(pod, container, labelCache)
 
-				resourceName := device.GetResourceName()
-				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
-					// Mig resources appear differently than GPU resources
-					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
-						continue
-					}
-				}
-
-				podInfo := PodInfo{
-					Name:      pod.GetName(),
-					Namespace: pod.GetNamespace(),
-					Container: container.GetName(),
-				}
-
-				for _, deviceID := range device.GetDeviceIds() {
-					if vgpu, ok := getSharedGPU(deviceID); ok {
-						podInfo.VGPU = vgpu
-					}
-					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
-						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
-						if err == nil {
-							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
-								uint(migDevice.GPUInstanceID))
-							deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
-						}
-						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
-						deviceToPodsMap[gpuUUID] = append(deviceToPodsMap[gpuUUID], podInfo)
-					} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
-						var gpuIndex string
-						var gpuInstanceID string
-						for groupIdx, group := range gkeMigDeviceIDMatches {
-							switch groupIdx {
-							case 1:
-								gpuIndex = group
-							case 2:
-								gpuInstanceID = group
-							}
-						}
-						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
-						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
-					} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
-						deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]] = append(deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]], podInfo)
-					} else if strings.Contains(deviceID, "::") {
-						gpuInstanceID := strings.Split(deviceID, "::")[0]
-						deviceToPodsMap[gpuInstanceID] = append(deviceToPodsMap[gpuInstanceID], podInfo)
-					}
-					// Default mapping between deviceID and pod information
-					deviceToPodsMap[deviceID] = append(deviceToPodsMap[deviceID], podInfo)
-				}
+		for _, deviceID := range device.GetDeviceIds() {
+			if vgpu, ok := getSharedGPU(deviceID); ok {
+				podInfo.VGPU = vgpu
 			}
+			if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
+				migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+				if err == nil {
+					// Check for potential integer overflow before conversion
+					if migDevice.GPUInstanceID >= 0 {
+						giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
+							uint(migDevice.GPUInstanceID))
+						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+					}
+				}
+				gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+				deviceToPodsMap[gpuUUID] = append(deviceToPodsMap[gpuUUID], podInfo)
+			} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
+				var gpuIndex string
+				var gpuInstanceID string
+				for groupIdx, group := range gkeMigDeviceIDMatches {
+					switch groupIdx {
+					case 1:
+						gpuIndex = group
+					case 2:
+						gpuInstanceID = group
+					}
+				}
+				giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
+				deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+			} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+				deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]] = append(deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]], podInfo)
+			} else if strings.Contains(deviceID, "::") {
+				gpuInstanceID := strings.Split(deviceID, "::")[0]
+				deviceToPodsMap[gpuInstanceID] = append(deviceToPodsMap[gpuInstanceID], podInfo)
+			}
+			// Default mapping between deviceID and pod information
+			deviceToPodsMap[deviceID] = append(deviceToPodsMap[deviceID], podInfo)
 		}
-	}
+	})
 
 	return deviceToPodsMap
 }
@@ -276,36 +368,146 @@ func (p *PodMapper) toDeviceToPod(
 	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
+	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
 
+	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
+
+	// Log all resource names found across all pods for debugging
+	allResourceNames := make(map[string]bool)
 	for _, pod := range devicePods.GetPodResources() {
 		for _, container := range pod.GetContainers() {
 			for _, device := range container.GetDevices() {
+				allResourceNames[device.GetResourceName()] = true
+			}
+		}
+	}
+	if len(allResourceNames) > 0 {
+		slog.Debug("Found resource names in pod resources", "resourceNames", maps.Keys(allResourceNames))
+	} else {
+		slog.Debug("No resource names found in any pod resources")
+	}
 
+	for _, pod := range devicePods.GetPodResources() {
+		slog.Debug("Processing pod",
+			"podName", pod.GetName(),
+			"namespace", pod.GetNamespace(),
+			"totalContainers", len(pod.GetContainers()))
+
+		for _, container := range pod.GetContainers() {
+			slog.Debug("Processing container",
+				"podName", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"containerName", container.GetName(),
+				"totalDevices", len(container.GetDevices()))
+
+			// Add debugging for containers with no devices
+			if len(container.GetDevices()) == 0 {
+				slog.Debug("Container has no devices allocated",
+					"podName", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"containerName", container.GetName())
+			}
+
+			for _, device := range container.GetDevices() {
 				resourceName := device.GetResourceName()
+				slog.Debug("Processing device",
+					"podName", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"containerName", container.GetName(),
+					"resourceName", resourceName,
+					"deviceIds", device.GetDeviceIds())
+
 				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
 					// Mig resources appear differently than GPU resources
 					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
+						slog.Debug("Skipping non-NVIDIA resource",
+							"resourceName", resourceName,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
 						continue
 					}
 				}
 
-				podInfo := PodInfo{
-					Name:      pod.GetName(),
-					Namespace: pod.GetNamespace(),
-					Container: container.GetName(),
-				}
+				podInfo := p.createPodInfo(pod, container, labelCache)
+				slog.Debug("Created pod info",
+					"podInfo", fmt.Sprintf("%+v", podInfo),
+					"podName", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"containerName", container.GetName(),
+					"resourceName", resourceName,
+					"deviceIds", device.GetDeviceIds(),
+				)
 
 				for _, deviceID := range device.GetDeviceIds() {
+					slog.Debug("Processing device ID", "deviceID", deviceID,
+						"podName", pod.GetName(),
+						"namespace", pod.GetNamespace(),
+						"containerName", container.GetName(),
+						"resourceName", resourceName,
+						"deviceIds", device.GetDeviceIds(),
+					)
+
 					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
+						slog.Debug("Processing MIG device", "deviceID", deviceID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
 						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
 						if err == nil {
-							giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
-								uint(migDevice.GPUInstanceID))
-							deviceToPodMap[giIdentifier] = podInfo
+							// Check for potential integer overflow before conversion
+							if migDevice.GPUInstanceID >= 0 {
+								giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
+									uint(migDevice.GPUInstanceID))
+								slog.Debug("Mapped MIG device to GPU instance",
+									"deviceID", deviceID,
+									"giIdentifier", giIdentifier,
+									"podName", pod.GetName(),
+									"namespace", pod.GetNamespace(),
+									"containerName", container.GetName(),
+									"resourceName", resourceName,
+									"deviceIds", device.GetDeviceIds(),
+								)
+								deviceToPodMap[giIdentifier] = podInfo
+							}
+						} else {
+							slog.Debug("Failed to get MIG device info",
+								"deviceID", deviceID,
+								"error", err,
+								"podName", pod.GetName(),
+								"namespace", pod.GetNamespace(),
+								"containerName", container.GetName(),
+								"resourceName", resourceName,
+								"deviceIds", device.GetDeviceIds(),
+							)
 						}
 						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+						slog.Debug("Mapped MIG device to GPU UUID",
+							"deviceID", deviceID,
+							"gpuUUID", gpuUUID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
 						deviceToPodMap[gpuUUID] = podInfo
 					} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
+						slog.Debug("Processing GKE MIG device",
+							"deviceID", deviceID,
+							"matches", gkeMigDeviceIDMatches,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
 						var gpuIndex string
 						var gpuInstanceID string
 						for groupIdx, group := range gkeMigDeviceIDMatches {
@@ -317,19 +519,114 @@ func (p *PodMapper) toDeviceToPod(
 							}
 						}
 						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
+						slog.Debug("Mapped GKE MIG device",
+							"deviceID", deviceID,
+							"giIdentifier", giIdentifier,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
 						deviceToPodMap[giIdentifier] = podInfo
 					} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
-						deviceToPodMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]] = podInfo
+						gpuID := strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]
+						slog.Debug("Mapped GKE virtual GPU device",
+							"deviceID", deviceID,
+							"gpuID", gpuID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						deviceToPodMap[gpuID] = podInfo
 					} else if strings.Contains(deviceID, "::") {
 						gpuInstanceID := strings.Split(deviceID, "::")[0]
+						slog.Debug("Mapped GPU instance device",
+							"deviceID", deviceID,
+							"gpuInstanceID", gpuInstanceID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
 						deviceToPodMap[gpuInstanceID] = podInfo
 					}
 					// Default mapping between deviceID and pod information
+					slog.Debug("Default device mapping",
+						"deviceID", deviceID,
+						"podName", pod.GetName(),
+						"namespace", pod.GetNamespace(),
+						"containerName", container.GetName(),
+						"resourceName", resourceName,
+						"deviceIds", device.GetDeviceIds(),
+					)
 					deviceToPodMap[deviceID] = podInfo
 				}
 			}
 		}
 	}
 
+	slog.Debug("Completed toDeviceToPod transformation",
+		"totalMappings", len(deviceToPodMap),
+		"deviceToPodMap", fmt.Sprintf("%+v", deviceToPodMap))
 	return deviceToPodMap
+}
+
+// createPodInfo creates a PodInfo struct with labels if enabled
+func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, labelCache map[string]map[string]string) PodInfo {
+	labels := map[string]string{}
+	if p.Config.KubernetesEnablePodLabels {
+		// Use cache key combining namespace and name
+		cacheKey := pod.GetNamespace() + "/" + pod.GetName()
+		if cachedLabels, exists := labelCache[cacheKey]; exists {
+			labels = cachedLabels
+		} else {
+			// Only make API call if not in cache
+			if podLabels, err := p.getPodLabels(pod.GetNamespace(), pod.GetName()); err != nil {
+				slog.Warn("Couldn't get pod labels",
+					"pod", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"error", err)
+				labelCache[cacheKey] = map[string]string{} // Cache empty result to avoid repeated failures
+			} else {
+				labels = podLabels
+				labelCache[cacheKey] = podLabels // Cache successful result
+			}
+		}
+	}
+
+	return PodInfo{
+		Name:      pod.GetName(),
+		Namespace: pod.GetNamespace(),
+		Container: container.GetName(),
+		Labels:    labels,
+	}
+}
+
+// getPodLabels fetches labels from a Kubernetes pod via the API server.
+// It sanitizes label names to ensure they are valid for Prometheus metrics.
+func (p *PodMapper) getPodLabels(namespace, podName string) (map[string]string, error) {
+	if p.Client == nil {
+		return nil, fmt.Errorf("kubernetes client is not initialized")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+
+	pod, err := p.Client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Sanitize label names
+	sanitizedLabels := make((map[string]string), len(pod.Labels))
+	for k, v := range pod.Labels {
+		sanitizedKey := utils.SanitizeLabelName(k)
+		sanitizedLabels[sanitizedKey] = v
+	}
+
+	return sanitizedLabels, nil
 }
