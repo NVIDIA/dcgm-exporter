@@ -31,9 +31,11 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -108,6 +110,15 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 
 	podMapper.Client = clientset
 
+	if c.KubernetesEnableDRA {
+		resourceSliceManager, err := NewDRAResourceSliceManager()
+		if err != nil {
+			slog.Error(err.Error())
+			os.Exit(1)
+		}
+		podMapper.ResourceSliceManager = resourceSliceManager
+		slog.Info("Started DRAResourceSliceManager")
+	}
 	return podMapper
 }
 
@@ -242,7 +253,6 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 			if err != nil {
 				return err
 			}
-
 			podInfo, exists := deviceToPod[deviceID]
 			if exists {
 				if !p.Config.UseOldNamespace {
@@ -256,6 +266,17 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				}
 
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
+
+				if len(podInfo.DynamicResources) > 0 {
+					for _, dr := range podInfo.DynamicResources {
+						metrics[counter][j].Attributes[draClaimName] = dr.ClaimName
+						metrics[counter][j].Attributes[draClaimNamespace] = dr.ClaimNamespace
+						metrics[counter][j].Attributes[draDriverName] = dr.DriverName
+						metrics[counter][j].Attributes[draPoolName] = dr.PoolName
+						metrics[counter][j].Attributes[draDeviceName] = dr.DeviceName
+					}
+				}
+
 			}
 		}
 	}
@@ -406,6 +427,41 @@ func (p *PodMapper) toDeviceToPod(
 					"podName", pod.GetName(),
 					"namespace", pod.GetNamespace(),
 					"containerName", container.GetName())
+			}
+
+			podInfo := PodInfo{
+				Name:      pod.GetName(),
+				Namespace: pod.GetNamespace(),
+				Container: container.GetName(),
+			}
+
+			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 {
+				for _, dr := range dynamicResources {
+					for _, claimResource := range dr.GetClaimResources() {
+						draDriverName := claimResource.GetDriverName()
+						if draDriverName != DRAGPUDriverName {
+							continue
+						}
+						draPoolName := claimResource.GetPoolName()
+						draDeviceName := claimResource.GetDeviceName()
+						uuid := p.ResourceSliceManager.GetUUID(draPoolName, draDeviceName)
+						if uuid == "" {
+							slog.Info(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
+							continue
+						}
+
+						drInfo := DynamicResourceInfo{
+							ClaimName:      dr.GetClaimName(),
+							ClaimNamespace: dr.GetClaimNamespace(),
+							DriverName:     draDriverName,
+							PoolName:       draPoolName,
+							DeviceName:     draDeviceName,
+						}
+						podInfo.DynamicResources = append(podInfo.DynamicResources, drInfo)
+						deviceToPodMap[uuid] = podInfo
+					}
+
+				}
 			}
 
 			for _, device := range container.GetDevices() {

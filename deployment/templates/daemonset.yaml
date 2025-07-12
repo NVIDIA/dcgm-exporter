@@ -140,6 +140,10 @@ spec:
         - name: "DCGM_EXPORTER_WEB_CONFIG_FILE"
           value: /etc/dcgm-exporter/web-config.yaml
         {{- end }}
+        {{- if .Values.kubernetesDRA.enabled }}
+        - name: "KUBERNETES_ENABLE_DRA"
+          value: "true"
+        {{- end }}
         {{- if .Values.extraEnv }}
         {{- toYaml .Values.extraEnv | nindent 8 }}
         {{- end }}

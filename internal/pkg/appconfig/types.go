@@ -67,4 +67,5 @@ type Config struct {
 	NvidiaResourceNames        []string
 	KubernetesVirtualGPUs      bool
 	DumpConfig                 DumpConfig // Configuration for file-based dumps
+	KubernetesEnableDRA        bool
 }
