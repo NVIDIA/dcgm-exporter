@@ -1,4 +1,4 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.8.1-base-ubi9
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubi9
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
@@ -63,6 +63,7 @@ LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 ARG DCGM_VERSION
 
 RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
+	&& dnf upgrade --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
 	&& dnf install --nodocs --setopt=install_weak_deps=False -y datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap \
 	&& dnf -y clean all\
 	&& rm -rf /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \

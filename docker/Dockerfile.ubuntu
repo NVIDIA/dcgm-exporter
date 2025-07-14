@@ -1,4 +1,4 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.8.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
@@ -70,7 +70,7 @@ COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
 ENV DEBIAN_FRONTEND=noninteractive
-RUN echo "$TARGETARCH" && apt-get -qq update && apt-get -qq install -y --no-install-recommends \
+RUN echo "$TARGETARCH" && apt-get -qq update && apt-get upgrade -y --no-install-recommends && apt-get -qq install -y --no-install-recommends \
     datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap2-bin \
     && apt-get -qq -y clean \
     && apt-get -qq -y autoclean \

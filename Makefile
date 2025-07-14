@@ -60,13 +60,13 @@ endif
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.8.1-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.8.1-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 

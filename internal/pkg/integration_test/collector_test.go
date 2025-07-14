@@ -330,15 +330,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	// We get metric value with 0 index
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
 
-	for i := 0; i < len(metricValues); i++ {
-		gpuID, err := strconv.ParseUint(metricValues[i].GPU, 10, 64)
-		if err == nil {
-			if !slices.Contains(gpuIDs, uint(gpuID)) {
-				metricValues = append(metricValues[:i], metricValues[i+1:]...)
-			}
-		}
-	}
-
+	metricValues = getFakeGPUMetrics(metricValues, gpuIDs)
 	// We expect 9 records, because we have 3 fake GPU and each GPU experienced 3 CLOCK_EVENTS
 	require.Len(t, metricValues, 9)
 	for _, val := range metricValues {
@@ -580,7 +572,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 }
 
 func getFakeGPUMetrics(metricValues []collector.Metric, gpuIDs []uint) []collector.Metric {
-	for i := 0; i < len(metricValues); i++ {
+	for i := len(metricValues) - 1; i >= 0; i-- {
 		gpuID, err := strconv.ParseUint(metricValues[i].GPU, 10, 64)
 		if err == nil {
 			if !slices.Contains(gpuIDs, uint(gpuID)) {
