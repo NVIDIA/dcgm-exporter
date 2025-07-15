@@ -28,4 +28,11 @@ const (
 	oldPodAttribute       = "pod_name"
 	oldNamespaceAttribute = "pod_namespace"
 	oldContainerAttribute = "container_name"
+	draClaimName          = "dra_claim_name"
+	draClaimNamespace     = "dra_claim_namespace"
+	draDriverName         = "dra_driver_name"
+	draPoolName           = "dra_pool_name"
+	draDeviceName         = "dra_device_name"
+
+	DRAGPUDriverName = "gpu.nvidia.com"
 )

@@ -574,3 +574,76 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 		}
 	}
 }
+
+func TestPodDRAInfo(t *testing.T) {
+	dra := &podresourcesapi.DynamicResource{
+		ClaimName:      "claim1",
+		ClaimNamespace: "ns1",
+		ClaimResources: []*podresourcesapi.ClaimResource{{
+			DriverName: DRAGPUDriverName,
+			PoolName:   "poolA",
+			DeviceName: "gpu-x",
+		}},
+	}
+
+	tests := []struct {
+		name         string
+		deviceToUUID map[string]string
+		wantUUIDs    []string
+	}{
+		{
+			name:         "uuid-exists",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			wantUUIDs:    []string{"GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+		},
+		{
+			name:         "uuid-updated",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-UUID-Updated"},
+			wantUUIDs:    []string{"GPU-UUID-Updated"},
+		},
+		{
+			name:         "no-uuid",
+			deviceToUUID: map[string]string{},
+			wantUUIDs:    nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			draMgr := &DRAResourceSliceManager{deviceToUUID: tc.deviceToUUID}
+			pm := &PodMapper{
+				Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
+				ResourceSliceManager: draMgr,
+			}
+
+			resp := &podresourcesapi.ListPodResourcesResponse{
+				PodResources: []*podresourcesapi.PodResources{{
+					Name:      "pod1",
+					Namespace: "default",
+					Containers: []*podresourcesapi.ContainerResources{{
+						Name:             "ctr1",
+						DynamicResources: []*podresourcesapi.DynamicResource{dra},
+					}},
+				}},
+			}
+
+			got := pm.toDeviceToPod(resp, nil)
+
+			assert.Len(t, got, len(tc.wantUUIDs), "map size")
+			for _, want := range tc.wantUUIDs {
+				assert.Contains(t, got, want, "expected key %q", want)
+			}
+
+			if len(tc.wantUUIDs) == 1 {
+				pi := got[tc.wantUUIDs[0]]
+				require.Len(t, pi.DynamicResources, 1)
+				dr := pi.DynamicResources[0]
+				assert.Equal(t, "claim1", dr.ClaimName)
+				assert.Equal(t, "ns1", dr.ClaimNamespace)
+				assert.Equal(t, DRAGPUDriverName, dr.DriverName)
+				assert.Equal(t, "poolA", dr.PoolName)
+				assert.Equal(t, "gpu-x", dr.DeviceName)
+			}
+		})
+	}
+}

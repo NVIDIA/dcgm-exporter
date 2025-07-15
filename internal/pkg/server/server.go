@@ -73,7 +73,6 @@ func NewMetricsServer(
 		deviceWatchListManager: deviceWatchListManager,
 		fileDumper:             fileDumper,
 	}
-
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
@@ -94,7 +93,22 @@ func NewMetricsServer(
 	router.HandleFunc("/health", serverv1.Health)
 	router.HandleFunc("/metrics", serverv1.Metrics)
 
-	return serverv1, func() {}, nil
+	var podMapper *transformation.PodMapper
+	for _, t := range serverv1.transformations {
+		if pm, ok := t.(*transformation.PodMapper); ok {
+			podMapper = pm
+			break
+		}
+	}
+
+	cleanup := func() {
+		if podMapper != nil && c.KubernetesEnableDRA {
+			slog.Info("Stopping ResourceSliceManager")
+			podMapper.ResourceSliceManager.Stop()
+		}
+	}
+
+	return serverv1, cleanup, nil
 }
 
 func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}, wg *sync.WaitGroup) {

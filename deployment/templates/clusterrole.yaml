@@ -1,4 +1,4 @@
-{{- if and .Values.kubernetes.enablePodLabels .Values.kubernetes.rbac.create }}
+{{- if or (and .Values.kubernetes.enablePodLabels .Values.kubernetes.rbac.create) .Values.kubernetesDRA.enabled }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
 rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list"]
+- apiGroups: ["", "resource.k8s.io"]
+  resources: ["pods", "resourceslices"]
+  verbs: ["get", "list", "watch"]
 {{- end }}
