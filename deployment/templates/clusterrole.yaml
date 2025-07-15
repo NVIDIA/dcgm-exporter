@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
 rules:
-- apiGroups: ["resource.k8s.io"]
+- apiGroups: ["", "resource.k8s.io"]
   resources: ["pods", "resourceslices"]
   verbs: ["get", "list", "watch"]
 {{- end }}

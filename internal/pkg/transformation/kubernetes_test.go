@@ -460,7 +460,6 @@ func TestGetSharedGPU(t *testing.T) {
 	}
 }
 
-
 func TestProcessPodMapper_WithLabels(t *testing.T) {
 	testutils.RequireLinux(t)
 
@@ -574,6 +573,7 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 				"Expected sanitized key '%s' to map to value '%s'", sanitizedKey, value)
 		}
 	}
+}
 
 func TestPodDRAInfo(t *testing.T) {
 	dra := &podresourcesapi.DynamicResource{
