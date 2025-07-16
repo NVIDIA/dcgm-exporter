@@ -17,6 +17,8 @@
 package deviceinfo
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -46,7 +48,7 @@ func (s *Info) GPUCount() uint {
 }
 
 func (s *Info) GPUs() []GPUInfo {
-	return s.gpus[:]
+	return s.gpus[:s.gpuCount]
 }
 
 func (s *Info) GPU(i uint) GPUInfo {
@@ -353,19 +355,19 @@ func (s *Info) gpuInstanceIDExists(gpuInstanceID int) bool {
 	return false
 }
 
-func (s *Info) cpuIDExists(cpuId int) bool {
+func (s *Info) cpuIDExists(cpuID int) bool {
 	for _, cpu := range s.cpus {
-		if cpu.EntityId == uint(cpuId) {
+		if cpu.EntityId == uint(cpuID) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Info) cpuCoreIDExists(coreId int) bool {
+func (s *Info) cpuCoreIDExists(coreID int) bool {
 	for _, cpu := range s.cpus {
 		for _, core := range cpu.Cores {
-			if core == uint(coreId) {
+			if core == uint(coreID) {
 				return true
 			}
 		}
@@ -373,19 +375,19 @@ func (s *Info) cpuCoreIDExists(coreId int) bool {
 	return false
 }
 
-func (s *Info) switchIDExists(switchId int) bool {
+func (s *Info) switchIDExists(switchID int) bool {
 	for _, sw := range s.switches {
-		if sw.EntityId == uint(switchId) {
+		if sw.EntityId == uint(switchID) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Info) linkIDExists(linkId int) bool {
+func (s *Info) linkIDExists(linkID int) bool {
 	for _, sw := range s.switches {
 		for _, link := range sw.NvLinks {
-			if link.Index == uint(linkId) {
+			if link.Index == uint(linkID) {
 				return true
 			}
 		}
@@ -594,4 +596,85 @@ func GetGPUInstanceIdentifier(deviceInfo Provider, gpuuuid string, gpuInstanceID
 	}
 
 	return ""
+}
+
+// ToBase64 returns the JSON representation of device info encoded as base64
+func (s *Info) ToBase64() string {
+	jsonData, err := json.Marshal(s)
+	if err != nil {
+		return fmt.Sprintf("error marshaling device info: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(jsonData)
+}
+
+// ToBase64Provider is a standalone function that works with any deviceinfo.Provider
+func ToBase64Provider(provider Provider) string {
+	if info, ok := provider.(*Info); ok {
+		return info.ToBase64()
+	}
+
+	// Log warning and return empty JSON when type assertion fails
+	slog.Warn("Failed to convert deviceinfo.Provider to *Info, returning empty JSON")
+	return base64.StdEncoding.EncodeToString([]byte("{}"))
+}
+
+// MarshalJSON implements custom JSON marshaling for Info
+func (s *Info) MarshalJSON() ([]byte, error) {
+	result := map[string]any{
+		"gpu_count":      s.GPUCount(),
+		"gpus":           s.GPUs(),
+		"switches":       s.Switches(),
+		"cpus":           s.CPUs(),
+		"gpu_options":    s.GOpts(),
+		"switch_options": s.SOpts(),
+		"cpu_options":    s.COpts(),
+		"info_type":      s.InfoType(),
+	}
+	return json.Marshal(result)
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for Info
+func (s *Info) UnmarshalJSON(data []byte) error {
+	var result struct {
+		GPUCount      uint                    `json:"gpu_count"`
+		GPUs          []GPUInfo               `json:"gpus"`
+		Switches      []SwitchInfo            `json:"switches"`
+		CPUs          []CPUInfo               `json:"cpus"`
+		GPUOptions    appconfig.DeviceOptions `json:"gpu_options"`
+		SwitchOptions appconfig.DeviceOptions `json:"switch_options"`
+		CPUOptions    appconfig.DeviceOptions `json:"cpu_options"`
+		InfoType      dcgm.Field_Entity_Group `json:"info_type"`
+	}
+
+	err := json.Unmarshal(data, &result)
+	if err != nil {
+		return fmt.Errorf("failed to unmarshal device info: %w", err)
+	}
+
+	// Populate the Info struct fields
+	s.gOpt = result.GPUOptions
+	s.sOpt = result.SwitchOptions
+	s.cOpt = result.CPUOptions
+	s.infoType = result.InfoType
+
+	// Copy GPUs to the fixed-size array
+	if len(result.GPUs) > int(dcgm.MAX_NUM_DEVICES) {
+		return fmt.Errorf("too many GPUs: %d, maximum allowed: %d", len(result.GPUs), dcgm.MAX_NUM_DEVICES)
+	}
+
+	// Verify consistency between original gpu_count from JSON and actual GPU slice length
+	// This prevents silent overwrites and ensures data consistency
+	if result.GPUCount != uint(len(result.GPUs)) {
+		return fmt.Errorf("data inconsistency: gpu_count field (%d) does not match actual GPU slice length (%d)", result.GPUCount, len(result.GPUs))
+	}
+
+	// Only set gpuCount after validation to ensure consistency
+	s.gpuCount = result.GPUCount
+	copy(s.gpus[:], result.GPUs)
+
+	// Copy other slices
+	s.switches = result.Switches
+	s.cpus = result.CPUs
+
+	return nil
 }

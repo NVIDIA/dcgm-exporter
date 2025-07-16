@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 4.2.3-4.1.3-ubuntu22.04
+  tag: 4.2.3-4.2.0-ubuntu22.04
 
 # Change the following reference to "/etc/dcgm-exporter/default-counters.csv"
 # to stop profiling metrics from DCGM
@@ -127,6 +127,13 @@ serviceMonitor:
     #   targetLabel: nodename
     #   replacement: $1
     #   action: replace
+  metricRelabelings: []
+    # - action: replace
+    #   regex: original_metrics_name 
+    #   replacement: new_metrics_name
+    #   sourceLabels:
+    #   - name
+    #   targetLabel: __name__
 
 nodeSelector: {}
   #node: gpu
@@ -160,8 +167,6 @@ extraVolumeMounts:
     subPath: default-counters.csv
 
 extraEnv: []
-#- name: EXTRA_VAR
-#  value: "TheStringValue"
 
 # Path to the kubelet socket for /pod-resources
 kubeletPath: "/var/lib/kubelet/pod-resources"
@@ -210,6 +215,23 @@ kubernetes:
     # Automatically creates ClusterRole and ClusterRoleBinding for pod access when enablePodLabels is true
     # Set to false if you want to manage RBAC resources manually
     create: true
+
+# Runtime object debug dump configuration for troubleshooting
+debugDump:
+  # Enable file-based debugging dumps for troubleshooting
+  enabled: false
+  # Directory to store debug dump files
+  directory: "/tmp/dcgm-exporter-debug"
+  # Retention period for debug dump files in hours (0 = no cleanup)
+  retention: 24
+  # Use gzip compression for debug dump files
+  compression: true
+
+# Enable DRA to capture metrics associated with GPUs managed by NVIDIA k8s-dra-driver (https://github.com/NVIDIA/k8s-dra-driver-gpu)
+# default: false
+kubernetesDRA:
+  enabled: false
+
 
 # Customized list of metrics to emit. Expected to be in the same format (CSV) as the default list.
 # Must be the complete list and is not additive. If unset, the default list will take effect.
@@ -292,3 +314,10 @@ kubernetes:
   # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
   # DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
   # DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
+
+livenessProbe:
+  initialDelaySeconds: 45
+  periodSeconds: 5
+
+readinessProbe:
+  initialDelaySeconds: 45

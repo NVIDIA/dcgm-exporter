@@ -36,6 +36,7 @@
                 "-f",
                 "./etc/default-counters.csv",
                 "--debug",
+                "--dump-enabled",
                 "-r",
                 "localhost:5555"
             ]

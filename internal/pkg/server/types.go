@@ -23,6 +23,7 @@ import (
 	"github.com/prometheus/exporter-toolkit/web"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/debug"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
@@ -39,4 +40,5 @@ type MetricsServer struct {
 	config                 *appconfig.Config
 	transformations        []transformation.Transform
 	deviceWatchListManager devicewatchlistmanager.Manager
+	fileDumper             *debug.FileDumper
 }

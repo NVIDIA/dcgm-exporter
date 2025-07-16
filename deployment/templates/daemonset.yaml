@@ -95,6 +95,12 @@ spec:
       {{- with .Values.extraConfigMapVolumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
+      {{- if .Values.debugDump.enabled }}
+      - name: "debug-dumps"
+        hostPath:
+          path: {{ .Values.debugDump.directory }}
+          type: DirectoryOrCreate
+      {{- end }}
       containers:
       - name: exporter
         securityContext:
@@ -108,6 +114,14 @@ spec:
         args:
         {{- range $.Values.arguments }}
         - {{ . }}
+        {{- end }}
+        {{- if .Values.debugDump.enabled }}
+        - "--dump-enabled"
+        - "--dump-directory={{ .Values.debugDump.directory }}"
+        - "--dump-retention={{ .Values.debugDump.retention }}"
+        {{- if .Values.debugDump.compression }}
+        - "--dump-compression"
+        {{- end }}
         {{- end }}
         env:
         - name: "DCGM_EXPORTER_KUBERNETES"
@@ -125,6 +139,10 @@ spec:
         {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
         - name: "DCGM_EXPORTER_WEB_CONFIG_FILE"
           value: /etc/dcgm-exporter/web-config.yaml
+        {{- end }}
+        {{- if .Values.kubernetesDRA.enabled }}
+        - name: "KUBERNETES_ENABLE_DRA"
+          value: "true"
         {{- end }}
         {{- if .Values.extraEnv }}
         {{- toYaml .Values.extraEnv | nindent 8 }}
@@ -148,6 +166,10 @@ spec:
         {{- if .Values.extraVolumeMounts }}
         {{- toYaml .Values.extraVolumeMounts | nindent 8 }}
         {{- end }}
+        {{- if .Values.debugDump.enabled }}
+        - name: "debug-dumps"
+          mountPath: {{ .Values.debugDump.directory }}
+        {{- end }}
         livenessProbe:
           {{- if not $.Values.basicAuth.users }}
           httpGet:
@@ -158,8 +180,8 @@ spec:
           tcpSocket:
               port: {{ .Values.service.port }}
           {{- end }}
-          initialDelaySeconds: 45
-          periodSeconds: 5
+          initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
         readinessProbe:
           {{- if not $.Values.basicAuth.users }}
           httpGet:
@@ -170,7 +192,7 @@ spec:
           tcpSocket:
               port: {{ .Values.service.port }}
           {{- end }}
-          initialDelaySeconds: 45
+          initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
         {{- if .Values.resources }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
