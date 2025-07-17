@@ -92,7 +92,7 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 		Config: c,
 	}
 
-	if !c.KubernetesEnablePodLabels {
+	if !c.KubernetesEnablePodLabels && !c.KubernetesEnableDRA {
 		return podMapper
 	}
 
@@ -113,8 +113,8 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	if c.KubernetesEnableDRA {
 		resourceSliceManager, err := NewDRAResourceSliceManager()
 		if err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
+			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
+			return podMapper
 		}
 		podMapper.ResourceSliceManager = resourceSliceManager
 		slog.Info("Started DRAResourceSliceManager")
@@ -268,12 +268,12 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 
 				if len(podInfo.DynamicResources) > 0 {
-					for _, dr := range podInfo.DynamicResources {
-						metrics[counter][j].Attributes[draClaimName] = dr.ClaimName
-						metrics[counter][j].Attributes[draClaimNamespace] = dr.ClaimNamespace
-						metrics[counter][j].Attributes[draDriverName] = dr.DriverName
-						metrics[counter][j].Attributes[draPoolName] = dr.PoolName
-						metrics[counter][j].Attributes[draDeviceName] = dr.DeviceName
+					for i, dr := range podInfo.DynamicResources {
+						metrics[counter][j].Attributes[fmt.Sprintf("%s_%d", draClaimName, i)] = dr.ClaimName
+						metrics[counter][j].Attributes[fmt.Sprintf("%s_%d", draClaimNamespace, i)] = dr.ClaimNamespace
+						metrics[counter][j].Attributes[fmt.Sprintf("%s_%d", draDriverName, i)] = dr.DriverName
+						metrics[counter][j].Attributes[fmt.Sprintf("%s_%d", draPoolName, i)] = dr.PoolName
+						metrics[counter][j].Attributes[fmt.Sprintf("%s_%d", draDeviceName, i)] = dr.DeviceName
 					}
 				}
 
@@ -429,13 +429,14 @@ func (p *PodMapper) toDeviceToPod(
 					"containerName", container.GetName())
 			}
 
-			podInfo := PodInfo{
-				Name:      pod.GetName(),
-				Namespace: pod.GetNamespace(),
-				Container: container.GetName(),
-			}
+            podInfo := p.createPodInfo(pod, container, labelCache)
+            slog.Debug("Created pod info",
+                "podInfo", fmt.Sprintf("%+v", podInfo),
+                "podName", pod.GetName(),
+                "namespace", pod.GetNamespace(),
+                "containerName", container.GetName())
 
-			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 {
+			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 && p.ResourceSliceManager != nil {
 				for _, dr := range dynamicResources {
 					for _, claimResource := range dr.GetClaimResources() {
 						draDriverName := claimResource.GetDriverName()
@@ -458,9 +459,18 @@ func (p *PodMapper) toDeviceToPod(
 							DeviceName:     draDeviceName,
 						}
 						podInfo.DynamicResources = append(podInfo.DynamicResources, drInfo)
-						deviceToPodMap[uuid] = podInfo
-					}
 
+						podInfoCopy := PodInfo{
+							Name:             podInfo.Name,
+							Namespace:        podInfo.Namespace,
+							Container:        podInfo.Container,
+							VGPU:             podInfo.VGPU,
+							Labels:           maps.Clone(podInfo.Labels),
+							DynamicResources: make([]DynamicResourceInfo, len(podInfo.DynamicResources)),
+						}
+						copy(podInfoCopy.DynamicResources, podInfo.DynamicResources)
+						deviceToPodMap[uuid] = podInfoCopy
+					}
 				}
 			}
 
@@ -487,16 +497,6 @@ func (p *PodMapper) toDeviceToPod(
 						continue
 					}
 				}
-
-				podInfo := p.createPodInfo(pod, container, labelCache)
-				slog.Debug("Created pod info",
-					"podInfo", fmt.Sprintf("%+v", podInfo),
-					"podName", pod.GetName(),
-					"namespace", pod.GetNamespace(),
-					"containerName", container.GetName(),
-					"resourceName", resourceName,
-					"deviceIds", device.GetDeviceIds(),
-				)
 
 				for _, deviceID := range device.GetDeviceIds() {
 					slog.Debug("Processing device ID", "deviceID", deviceID,
