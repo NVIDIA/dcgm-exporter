@@ -2,7 +2,7 @@ ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubi9
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
-ARG GOLANG_VERSION=1.22.5
+ARG GOLANG_VERSION=1.23.10
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \

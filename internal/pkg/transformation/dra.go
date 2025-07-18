@@ -48,7 +48,7 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		deviceToUUID: make(map[string]string),
 	}
 
-	informer.AddEventHandler(&cache.FilteringResourceEventHandler{
+	_, err = informer.AddEventHandler(&cache.FilteringResourceEventHandler{
 		FilterFunc: func(obj interface{}) bool {
 			s := obj.(*resourcev1beta1.ResourceSlice)
 			return s.Spec.Driver == DRAGPUDriverName
@@ -59,6 +59,9 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 			DeleteFunc: m.onDelete,
 		},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("error adding event handler: %w", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelContext = cancel
@@ -82,7 +85,7 @@ func (m *DRAResourceSliceManager) GetUUID(pool, device string) string {
 	key := pool + "/" + device
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	uuid, _ := m.deviceToUUID[key]
+	uuid := m.deviceToUUID[key]
 
 	slog.Info(fmt.Sprintf("Found UUID: %s for %s", uuid, key))
 	return uuid

@@ -429,12 +429,12 @@ func (p *PodMapper) toDeviceToPod(
 					"containerName", container.GetName())
 			}
 
-            podInfo := p.createPodInfo(pod, container, labelCache)
-            slog.Debug("Created pod info",
-                "podInfo", fmt.Sprintf("%+v", podInfo),
-                "podName", pod.GetName(),
-                "namespace", pod.GetNamespace(),
-                "containerName", container.GetName())
+			podInfo := p.createPodInfo(pod, container, labelCache)
+			slog.Debug("Created pod info",
+				"podInfo", fmt.Sprintf("%+v", podInfo),
+				"podName", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"containerName", container.GetName())
 
 			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 && p.ResourceSliceManager != nil {
 				for _, dr := range dynamicResources {

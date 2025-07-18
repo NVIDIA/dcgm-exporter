@@ -21,12 +21,12 @@ import (
 	"sync"
 
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
-	"k8s.io/client-go/kubernetes"
 )
 
 //go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/transformations/mock_transformer.go -package=transformation -copyright_file=../../../hack/header.txt . Transform
