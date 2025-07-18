@@ -48,7 +48,7 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		deviceToUUID: make(map[string]string),
 	}
 
-	informer.AddEventHandler(&cache.FilteringResourceEventHandler{
+	_, err = informer.AddEventHandler(&cache.FilteringResourceEventHandler{
 		FilterFunc: func(obj interface{}) bool {
 			s := obj.(*resourcev1beta1.ResourceSlice)
 			return s.Spec.Driver == DRAGPUDriverName
