@@ -102,7 +102,7 @@ func NewMetricsServer(
 	}
 
 	cleanup := func() {
-		if podMapper != nil && c.KubernetesEnableDRA {
+		if podMapper != nil && c.KubernetesEnableDRA && podMapper.ResourceSliceManager != nil {
 			slog.Info("Stopping ResourceSliceManager")
 			podMapper.ResourceSliceManager.Stop()
 		}
