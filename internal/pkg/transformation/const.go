@@ -21,6 +21,7 @@ const (
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
+	uidAttribute       = "pod_uid"
 	vgpuAttribute      = "vgpu"
 
 	hpcJobAttribute = "hpc_job"

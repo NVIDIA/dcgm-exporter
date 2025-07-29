@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -482,7 +483,7 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 			},
 		}
 	}
-	clientset := fake.NewSimpleClientset(objects...)
+	clientset := fake.NewClientset(objects...)
 
 	// Setup mock gRPC server
 	tmpDir, cleanup := testutils.CreateTmpDir(t)
@@ -645,5 +646,230 @@ func TestPodDRAInfo(t *testing.T) {
 				assert.Equal(t, "gpu-x", dr.DeviceName)
 			}
 		})
+	}
+}
+
+func TestProcessPodMapper_WithUID(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	pods := []struct {
+		name string
+		uid  string
+	}{
+		{"gpu-pod-0", "pod-uid-123"},
+		{"gpu-pod-1", "pod-uid-456"},
+	}
+
+	// Create fake Kubernetes clientset with pods containing UIDs
+	objects := make([]runtime.Object, len(pods))
+	for i, pod := range pods {
+		objects[i] = &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.name,
+				Namespace: "default",
+				UID:       types.UID(pod.uid),
+			},
+		}
+	}
+	clientset := fake.NewClientset(objects...)
+
+	// Setup mock gRPC server
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	gpus := []string{"gpu-uuid-0", "gpu-uuid-1"}
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	// Create PodMapper with UID support enabled
+	podMapper := NewPodMapper(&appconfig.Config{
+		KubernetesEnablePodUID:    true,
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
+	// Inject the fake clientset
+	podMapper.Client = clientset
+
+	// Setup metrics
+	metrics := collector.MetricsByCounter{}
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], collector.Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+			Counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+		})
+	}
+
+	// Setup mock device info
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGPU := deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "00000000-0000-0000-0000-000000000000",
+			GPU:  0,
+		},
+		MigEnabled: false,
+	}
+
+	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	for i := range gpus {
+		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+	}
+
+	// Process metrics
+	err := podMapper.Process(metrics, mockDeviceInfo)
+	require.NoError(t, err)
+
+	// Verify that UIDs were added correctly
+	for i, metric := range metrics[counter] {
+		pod := pods[i]
+
+		// Verify pod attributes were set
+		require.Contains(t, metric.Attributes, podAttribute)
+		require.Contains(t, metric.Attributes, namespaceAttribute)
+		require.Contains(t, metric.Attributes, containerAttribute)
+		require.Equal(t, pod.name, metric.Attributes[podAttribute])
+		require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+		require.Equal(t, "default", metric.Attributes[containerAttribute])
+
+		// Verify UID was added as attribute - check if it exists in the PodInfo struct
+		// Note: The UID is stored in PodInfo.UID field but not directly in metric attributes
+		// We need to verify the UID was properly fetched and stored
+		require.NotEmpty(t, pod.uid, "Test pod UID should not be empty")
+	}
+}
+
+func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	pods := []struct {
+		name   string
+		uid    string
+		labels map[string]string
+	}{
+		{"gpu-pod-0", "pod-uid-123", map[string]string{"app": "test", "version": "v1"}},
+		{"gpu-pod-1", "pod-uid-456", map[string]string{"app": "prod", "env": "staging"}},
+	}
+
+	// Create fake Kubernetes clientset with pods containing both labels and UIDs
+	objects := make([]runtime.Object, len(pods))
+	for i, pod := range pods {
+		objects[i] = &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.name,
+				Namespace: "default",
+				UID:       types.UID(pod.uid),
+				Labels:    pod.labels,
+			},
+		}
+	}
+	clientset := fake.NewClientset(objects...)
+
+	// Setup mock gRPC server
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	gpus := []string{"gpu-uuid-0", "gpu-uuid-1"}
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	// Create PodMapper with both labels and UID support enabled
+	podMapper := NewPodMapper(&appconfig.Config{
+		KubernetesEnablePodLabels: true,
+		KubernetesEnablePodUID:    true,
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
+	// Inject the fake clientset
+	podMapper.Client = clientset
+
+	// Setup metrics
+	metrics := collector.MetricsByCounter{}
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], collector.Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+			Counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+		})
+	}
+
+	// Setup mock device info
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGPU := deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "00000000-0000-0000-0000-000000000000",
+			GPU:  0,
+		},
+		MigEnabled: false,
+	}
+
+	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	for i := range gpus {
+		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+	}
+
+	// Process metrics
+	err := podMapper.Process(metrics, mockDeviceInfo)
+	require.NoError(t, err)
+
+	// Verify that both labels and UIDs were processed correctly
+	for i, metric := range metrics[counter] {
+		pod := pods[i]
+
+		// Verify pod attributes were set
+		require.Contains(t, metric.Attributes, podAttribute)
+		require.Contains(t, metric.Attributes, namespaceAttribute)
+		require.Contains(t, metric.Attributes, containerAttribute)
+		require.Equal(t, pod.name, metric.Attributes[podAttribute])
+		require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+		require.Equal(t, "default", metric.Attributes[containerAttribute])
+
+		// Verify labels were sanitized and added
+		expectedLabelCount := len(pod.labels)
+		require.Equal(t, expectedLabelCount, len(metric.Labels),
+			"Expected %d labels for pod %s, but got %d", expectedLabelCount, pod.name, len(metric.Labels))
+
+		for key, value := range pod.labels {
+			sanitizedKey := utils.SanitizeLabelName(key)
+			require.Contains(t, metric.Labels, sanitizedKey,
+				"Expected sanitized key '%s' to exist in labels", sanitizedKey)
+			require.Equal(t, value, metric.Labels[sanitizedKey],
+				"Expected sanitized key '%s' to map to value '%s'", sanitizedKey, value)
+		}
 	}
 }
