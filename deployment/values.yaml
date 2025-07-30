@@ -206,9 +206,14 @@ kubernetes:
   # This requires cluster-level read permissions to pods
   enablePodLabels: false
 
+  # Enable Kubernetes pod UID in metrics
+  # When enabled, metrics will include the pod UID as an attribute for the pods that are using the GPUs
+  # This requires cluster-level read permissions to pods
+  enablePodUID: false
+
   # RBAC settings for Kubernetes integration
   rbac:
-    # Automatically creates ClusterRole and ClusterRoleBinding for pod access when enablePodLabels is true
+    # Automatically creates ClusterRole and ClusterRoleBinding for pod access when enablePodLabels or enablePodUID is true
     # Set to false if you want to manage RBAC resources manually
     create: true
 

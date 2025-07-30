@@ -130,6 +130,10 @@ spec:
         - name: "DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"
           value: "true"
         {{- end }}
+        {{- if .Values.kubernetes.enablePodUID }}
+        - name: "DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"
+          value: "true"
+        {{- end }}
         - name: "DCGM_EXPORTER_LISTEN"
           value: "{{ .Values.service.address }}"
         - name: NODE_NAME
