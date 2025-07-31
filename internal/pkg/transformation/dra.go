@@ -167,7 +167,7 @@ func (m *DRAResourceSliceManager) onDelete(obj interface{}) {
 
 	for _, dev := range slice.Spec.Devices {
 		key := pool + "/" + dev.Name
-		slog.Debug("Removing device for %s", key)
+		slog.Debug(fmt.Sprintf("Removing device for %s", key))
 		delete(m.deviceToUUID, key)
 		delete(m.migDevices, key)
 	}
