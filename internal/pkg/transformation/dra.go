@@ -46,6 +46,7 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		factory:      factory,
 		informer:     informer,
 		deviceToUUID: make(map[string]string),
+		migDevices:   make(map[string]*DRAMigDeviceInfo),
 	}
 
 	_, err = informer.AddEventHandler(&cache.FilteringResourceEventHandler{
@@ -80,15 +81,36 @@ func (m *DRAResourceSliceManager) Stop() {
 	}
 }
 
-// GetUUID returns the UUID for the given pool/device, if known.
-func (m *DRAResourceSliceManager) GetUUID(pool, device string) string {
+// GetDeviceInfo returns the mapping UUID and MIG device info if applicable
+// For MIG devices: returns (parentUUID, *DRAMigDeviceInfo)
+// For full GPUs: returns (deviceUUID, nil)
+func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *DRAMigDeviceInfo) {
 	key := pool + "/" + device
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	uuid := m.deviceToUUID[key]
 
-	slog.Info(fmt.Sprintf("Found UUID: %s for %s", uuid, key))
-	return uuid
+	// Check if this is a MIG device
+	if migInfo, exists := m.migDevices[key]; exists {
+		// MIG device - return parent UUID and MIG info
+		slog.Debug(fmt.Sprintf("Found MIG device for %s with parent UUID: %s", key, migInfo.ParentUUID))
+		return migInfo.ParentUUID, migInfo
+	}
+
+	// Full GPU device - return device UUID with no MIG info
+	if uuid, exists := m.deviceToUUID[key]; exists {
+		slog.Debug(fmt.Sprintf("Found GPU device for %s with UUID: %s", uuid, key))
+		return uuid, nil
+	}
+
+	slog.Info(fmt.Sprintf("No UUID found for %s", key))
+	return "", nil
+}
+
+func getAttrString(attrs map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute, key resourcev1beta1.QualifiedName) string {
+	if attr, ok := attrs[key]; ok && attr.StringValue != nil {
+		return *attr.StringValue
+	}
+	return ""
 }
 
 func (m *DRAResourceSliceManager) onAddOrUpdate(obj interface{}) {
@@ -102,8 +124,36 @@ func (m *DRAResourceSliceManager) onAddOrUpdate(obj interface{}) {
 		if dev.Basic == nil || dev.Basic.Attributes == nil {
 			continue
 		}
-		if attr, ok := dev.Basic.Attributes["uuid"]; ok && attr.StringValue != nil {
-			m.deviceToUUID[pool+"/"+dev.Name] = *attr.StringValue
+		key := pool + "/" + dev.Name
+		attr := dev.Basic.Attributes
+
+		deviceType := getAttrString(attr, "type")
+		switch deviceType {
+		case "gpu":
+			if uuid := getAttrString(attr, "uuid"); uuid != "" {
+				m.deviceToUUID[key] = uuid
+				slog.Debug(fmt.Sprintf("Added gpu device [key:%s] with UUID: %s", key, uuid))
+			}
+
+		case "mig":
+			parentUUID := getAttrString(attr, "parentUUID")
+			profile := getAttrString(attr, "profile")
+			migUUID := getAttrString(attr, "uuid")
+
+			// Only create MIG device if we have required parent UUID
+			if parentUUID != "" {
+				m.migDevices[key] = &DRAMigDeviceInfo{
+					MIGDeviceUUID: migUUID,
+					Profile:       profile,
+					ParentUUID:    parentUUID,
+				}
+				slog.Debug(fmt.Sprintf("Added MIG device %s (profile: %s) with parent: %s", migUUID, profile, parentUUID))
+			} else {
+				slog.Debug(fmt.Sprintf("MIG device %s missing parent UUID", migUUID))
+			}
+
+		default:
+			slog.Warn(fmt.Sprintf("Device [key:%s] has unknown type: %s", key, deviceType))
 		}
 	}
 }
@@ -116,6 +166,9 @@ func (m *DRAResourceSliceManager) onDelete(obj interface{}) {
 	defer m.mu.Unlock()
 
 	for _, dev := range slice.Spec.Devices {
-		delete(m.deviceToUUID, pool+"/"+dev.Name)
+		key := pool + "/" + dev.Name
+		slog.Debug("Removing device for %s", key)
+		delete(m.deviceToUUID, key)
+		delete(m.migDevices, key)
 	}
 }
