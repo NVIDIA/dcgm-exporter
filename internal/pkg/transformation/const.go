@@ -34,5 +34,8 @@ const (
 	draPoolName           = "dra_pool_name"
 	draDeviceName         = "dra_device_name"
 
+	draMigProfile    = "dra_mig_profile"
+	draMigDeviceUUID = "dra_mig_device_uuid"
+
 	DRAGPUDriverName = "gpu.nvidia.com"
 )
