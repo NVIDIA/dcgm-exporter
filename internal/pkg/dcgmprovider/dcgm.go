@@ -254,3 +254,7 @@ func (d dcgmProvider) HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse
 func (d dcgmProvider) GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error) {
 	return dcgm.GetGroupInfo(groupID)
 }
+
+func (d dcgmProvider) GetNvLinkP2PStatus() (dcgm.NvLinkP2PStatus, error) {
+	return dcgm.GetNvLinkP2PStatus()
+}

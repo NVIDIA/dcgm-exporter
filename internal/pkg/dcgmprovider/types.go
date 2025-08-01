@@ -58,4 +58,5 @@ type DCGM interface {
 	HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error)
 	HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse, error)
 	GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error)
+	GetNvLinkP2PStatus() (dcgm.NvLinkP2PStatus, error)
 }
