@@ -81,7 +81,7 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 		var modifiedMetrics []collector.Metric
 		for _, metric := range metrics[counter] {
 			jobs, exists := gpuToJobMap[metric.GPU]
-			if exists {
+			if exists && len(jobs) != 0 {
 				for _, job := range jobs {
 					modifiedMetric, err := utils.DeepCopy(metric)
 					if err != nil {
