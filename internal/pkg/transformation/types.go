@@ -48,7 +48,7 @@ type PodInfo struct {
 	Container        string
 	VGPU             string
 	Labels           map[string]string
-	DynamicResources []DynamicResourceInfo
+	DynamicResources *DynamicResourceInfo
 }
 
 type DRAResourceSliceManager struct {
@@ -56,7 +56,8 @@ type DRAResourceSliceManager struct {
 	informer      cache.SharedIndexInformer
 	cancelContext context.CancelFunc
 	mu            sync.RWMutex
-	deviceToUUID  map[string]string
+	deviceToUUID  map[string]string            // pool/device -> UUID (for full GPUs)
+	migDevices    map[string]*DRAMigDeviceInfo // pool/device -> MIG info (for MIG devices)
 }
 
 type DynamicResourceInfo struct {
@@ -65,4 +66,12 @@ type DynamicResourceInfo struct {
 	DriverName     string
 	PoolName       string
 	DeviceName     string
+	// MIG-specific information
+	MIGInfo *DRAMigDeviceInfo
+}
+
+type DRAMigDeviceInfo struct {
+	MIGDeviceUUID string
+	Profile       string
+	ParentUUID    string
 }

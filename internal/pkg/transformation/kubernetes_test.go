@@ -589,28 +589,53 @@ func TestPodDRAInfo(t *testing.T) {
 	tests := []struct {
 		name         string
 		deviceToUUID map[string]string
+		migDevices   map[string]*DRAMigDeviceInfo
 		wantUUIDs    []string
+		isMIG        bool
 	}{
 		{
 			name:         "uuid-exists",
 			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
 			wantUUIDs:    []string{"GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			isMIG:        false,
 		},
 		{
 			name:         "uuid-updated",
 			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-UUID-Updated"},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
 			wantUUIDs:    []string{"GPU-UUID-Updated"},
+			isMIG:        false,
 		},
 		{
 			name:         "no-uuid",
 			deviceToUUID: map[string]string{},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
 			wantUUIDs:    nil,
+			isMIG:        false,
+		},
+		{
+			name:         "mig-device",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "MIG-12345"},
+			migDevices: map[string]*DRAMigDeviceInfo{
+				"poolA/gpu-x": {
+					MIGDeviceUUID: "MIG-12345",
+					Profile:       "1g.12gb",
+					ParentUUID:    "GPU-parent-uuid",
+				},
+			},
+			wantUUIDs: []string{"GPU-parent-uuid"}, // Should map to parent UUID
+			isMIG:     true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			draMgr := &DRAResourceSliceManager{deviceToUUID: tc.deviceToUUID}
+			draMgr := &DRAResourceSliceManager{
+				deviceToUUID: tc.deviceToUUID,
+				migDevices:   tc.migDevices,
+			}
+
 			pm := &PodMapper{
 				Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
 				ResourceSliceManager: draMgr,
@@ -627,7 +652,7 @@ func TestPodDRAInfo(t *testing.T) {
 				}},
 			}
 
-			got := pm.toDeviceToPod(resp, nil)
+			got := pm.toDeviceToPodsDRA(resp)
 
 			assert.Len(t, got, len(tc.wantUUIDs), "map size")
 			for _, want := range tc.wantUUIDs {
@@ -636,14 +661,27 @@ func TestPodDRAInfo(t *testing.T) {
 
 			if len(tc.wantUUIDs) == 1 {
 				pi := got[tc.wantUUIDs[0]]
-				require.Len(t, pi.DynamicResources, 1)
-				dr := pi.DynamicResources[0]
+				require.Len(t, pi, 1, "should have one pod info")
+
+				dr := *pi[0].DynamicResources
+				require.NotNil(t, dr, "dynamic resources should not be nil")
+
 				assert.Equal(t, "claim1", dr.ClaimName)
 				assert.Equal(t, "ns1", dr.ClaimNamespace)
 				assert.Equal(t, DRAGPUDriverName, dr.DriverName)
 				assert.Equal(t, "poolA", dr.PoolName)
 				assert.Equal(t, "gpu-x", dr.DeviceName)
+
+				if tc.isMIG {
+					require.NotNil(t, dr.MIGInfo, "MIG info should not be nil for MIG device")
+					assert.Equal(t, "MIG-12345", dr.MIGInfo.MIGDeviceUUID)
+					assert.Equal(t, "1g.12gb", dr.MIGInfo.Profile)
+					assert.Equal(t, "GPU-parent-uuid", dr.MIGInfo.ParentUUID)
+				} else {
+					assert.Nil(t, dr.MIGInfo, "MIG info should be nil for full GPU device")
+				}
 			}
+
 		})
 	}
 }
