@@ -46,6 +46,7 @@ type PodInfo struct {
 	Name             string
 	Namespace        string
 	Container        string
+	UID              string
 	VGPU             string
 	Labels           map[string]string
 	DynamicResources []DynamicResourceInfo
@@ -57,6 +58,12 @@ type DRAResourceSliceManager struct {
 	cancelContext context.CancelFunc
 	mu            sync.RWMutex
 	deviceToUUID  map[string]string
+}
+
+// PodMetadata holds pod metadata from API server
+type PodMetadata struct {
+	UID    string
+	Labels map[string]string
 }
 
 type DynamicResourceInfo struct {
