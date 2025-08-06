@@ -19,6 +19,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -491,7 +492,7 @@ func shouldCheckIfPodIsReady(ctx context.Context, kubeClient *framework.KubeClie
 							}
 						}
 
-						return false, fmt.Errorf(crashDetails)
+						return false, errors.New(crashDetails)
 					}
 				}
 
