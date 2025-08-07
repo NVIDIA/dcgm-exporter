@@ -70,6 +70,7 @@ const (
 	CLICollectInterval            = "collect-interval"
 	CLIKubernetes                 = "kubernetes"
 	CLIKubernetesEnablePodLabels  = "kubernetes-enable-pod-labels"
+	CLIKubernetesEnablePodUID     = "kubernetes-enable-pod-uid"
 	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
 	CLIUseOldNamespace            = "use-old-namespace"
 	CLIRemoteHEInfo               = "remote-hostengine-info"
@@ -175,6 +176,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesEnablePodUID,
+			Value:   false,
+			Usage:   "Enable kubernetes pod UID in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"},
 		},
 		&cli.StringFlag{
 			Name:  CLIKubernetesGPUIDType,
@@ -680,6 +687,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		CollectInterval:            c.Int(CLICollectInterval),
 		Kubernetes:                 c.Bool(CLIKubernetes),
 		KubernetesEnablePodLabels:  c.Bool(CLIKubernetesEnablePodLabels),
+		KubernetesEnablePodUID:     c.Bool(CLIKubernetesEnablePodUID),
 		KubernetesGPUIdType:        appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		CollectDCP:                 true,
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
