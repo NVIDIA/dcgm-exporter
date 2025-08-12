@@ -1,7 +1,7 @@
 apiVersion: v2
 name: dcgm-exporter
 description: A Helm chart for DCGM exporter
-version: "4.0.1"
+version: "4.4.0"
 kubeVersion: ">= 1.19.0-0"
 appVersion: "4.4.0"
 sources:
