@@ -30,7 +30,7 @@ DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local
-all: ubuntu22.04 ubi9
+all: ubuntu22.04 ubi9 distroless
 
 binary:
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
@@ -49,6 +49,7 @@ check-format:
 push:
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
+	$(MAKE) distroless OUTPUT=type=registry
 
 local:
 ifeq ($(shell uname -p),aarch64)
@@ -69,6 +70,9 @@ ubuntu%: --docker-build-%
 ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
+distroless: DOCKERFILE = docker/Dockerfile.distroless
+distroless: IMAGE_TAG = distroless
+distroless: --docker-build-distroless
 
 --docker-build-%:
 	@echo "Building for $@"
