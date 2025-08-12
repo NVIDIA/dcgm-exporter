@@ -17,11 +17,14 @@
 package cmd
 
 import (
+	"flag"
+	"strconv"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v2"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -32,6 +35,9 @@ import (
 
 func Test_getDeviceWatchListManager(t *testing.T) {
 	config := &appconfig.Config{
+		UseRemoteHE:         false,
+		EnableDCGMLog:       true,
+		DCGMLogLevel:        "DEBUG",
 		GPUDeviceOptions:    appconfig.DeviceOptions{},
 		SwitchDeviceOptions: appconfig.DeviceOptions{},
 		CPUDeviceOptions:    appconfig.DeviceOptions{},
@@ -183,7 +189,7 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 		},
 	}
 
-	dcgmprovider.Initialize(config)
+	dcgmprovider.SmartDCGMInit(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	for _, tt := range tests {
@@ -193,6 +199,133 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 				t.Skip(tt.name)
 			}
 			tt.assertion(t, got)
+		})
+	}
+}
+
+func Test_contextToConfig_DumpConfig(t *testing.T) {
+	tests := []struct {
+		name           string
+		flags          map[string]string
+		expectedConfig appconfig.DumpConfig
+	}{
+		{
+			name: "Default dump config",
+			flags: map[string]string{
+				CLIGPUDevices: "f",
+			},
+			expectedConfig: appconfig.DumpConfig{
+				Enabled:     false,
+				Directory:   "/tmp/dcgm-exporter-debug",
+				Retention:   24,
+				Compression: true,
+			},
+		},
+		{
+			name: "Enabled dump config with custom settings",
+			flags: map[string]string{
+				CLIGPUDevices:      "f",
+				CLIDumpEnabled:     "true",
+				CLIDumpDirectory:   "/custom/debug/dir",
+				CLIDumpRetention:   "48",
+				CLIDumpCompression: "false",
+			},
+			expectedConfig: appconfig.DumpConfig{
+				Enabled:     true,
+				Directory:   "/custom/debug/dir",
+				Retention:   48,
+				Compression: false,
+			},
+		},
+		{
+			name: "Enabled dump config with no retention",
+			flags: map[string]string{
+				CLIGPUDevices:    "f",
+				CLIDumpEnabled:   "true",
+				CLIDumpRetention: "0",
+			},
+			expectedConfig: appconfig.DumpConfig{
+				Enabled:     true,
+				Directory:   "/tmp/dcgm-exporter-debug",
+				Retention:   0,
+				Compression: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a mock CLI context with the test flags
+			app := cli.NewApp()
+			app.Flags = []cli.Flag{
+				&cli.StringFlag{Name: CLIGPUDevices},
+				&cli.StringFlag{Name: CLISwitchDevices},
+				&cli.StringFlag{Name: CLICPUDevices},
+				&cli.StringFlag{Name: CLIDCGMLogLevel},
+				&cli.BoolFlag{Name: CLIDumpEnabled},
+				&cli.StringFlag{Name: CLIDumpDirectory},
+				&cli.IntFlag{Name: CLIDumpRetention},
+				&cli.BoolFlag{Name: CLIDumpCompression},
+			}
+
+			// Set up the context with test values
+			set := flag.NewFlagSet("test", 0)
+
+			// Set defaults for required flags if not present
+			if _, ok := tt.flags[CLIGPUDevices]; !ok {
+				set.String(CLIGPUDevices, "f", "")
+			}
+			if _, ok := tt.flags[CLISwitchDevices]; !ok {
+				set.String(CLISwitchDevices, "f", "")
+			}
+			if _, ok := tt.flags[CLICPUDevices]; !ok {
+				set.String(CLICPUDevices, "f", "")
+			}
+			if _, ok := tt.flags[CLIDCGMLogLevel]; !ok {
+				set.String(CLIDCGMLogLevel, "NONE", "")
+			}
+			// Set defaults for dump config flags if not present
+			if _, ok := tt.flags[CLIDumpEnabled]; !ok {
+				set.Bool(CLIDumpEnabled, false, "")
+			}
+			if _, ok := tt.flags[CLIDumpDirectory]; !ok {
+				set.String(CLIDumpDirectory, "/tmp/dcgm-exporter-debug", "")
+			}
+			if _, ok := tt.flags[CLIDumpRetention]; !ok {
+				set.Int(CLIDumpRetention, 24, "")
+			}
+			if _, ok := tt.flags[CLIDumpCompression]; !ok {
+				set.Bool(CLIDumpCompression, true, "")
+			}
+
+			for name, value := range tt.flags {
+				// Find the matching flag in app.Flags
+				for _, flag := range app.Flags {
+					if flag.Names()[0] == name {
+						switch flag.(type) {
+						case *cli.StringFlag:
+							set.String(name, value, "")
+						case *cli.BoolFlag:
+							set.Bool(name, value == "true", "")
+						case *cli.IntFlag:
+							if intVal, err := strconv.Atoi(value); err == nil {
+								set.Int(name, intVal, "")
+							}
+						}
+						break
+					}
+				}
+			}
+
+			// Create a cli.Context from the populated FlagSet
+			context := cli.NewContext(app, set, nil)
+
+			// Call the real contextToConfig function to obtain the config
+			config, err := contextToConfig(context)
+			require.NoError(t, err)
+
+			// Assert equality against the config returned by contextToConfig
+			assert.Equal(t, tt.expectedConfig, config.DumpConfig)
 		})
 	}
 }

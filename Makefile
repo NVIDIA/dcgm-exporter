@@ -21,7 +21,7 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.22.9
+GOLANG_VERSION := 1.24.5
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -30,9 +30,9 @@ DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local
-all: update-version ubuntu22.04 ubi9
+all: ubuntu22.04 ubi9
 
-binary: update-version
+binary:
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: generate
@@ -46,7 +46,7 @@ check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
 	test $$(gofmt -l cmd | tee /dev/stderr | wc -l) -eq 0
 
-push: update-version
+push:
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
 
@@ -60,13 +60,13 @@ endif
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 
@@ -76,6 +76,7 @@ ubuntu22.04: IMAGE_TAG = ubuntu22.04
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
 		--progress=plain \
+		--no-cache \
 		--platform $(PLATFORMS) \
 		--build-arg BASEIMAGE="$(BASE_IMAGE)" \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
@@ -142,7 +143,7 @@ validate-modules:
 
 .PHONY: tools
 tools: ## Install required tools and utilities
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.55.2
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
 	go install github.com/axw/gocov/gocov@latest
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install mvdan.cc/gofumpt@latest

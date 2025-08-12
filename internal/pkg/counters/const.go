@@ -25,4 +25,5 @@ const (
 	DCGMExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
 	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
 	DCGMExpGPUHealthStatus  = "DCGM_EXP_GPU_HEALTH_STATUS"
+	DCGMExpP2PStatus        = "DCGM_EXP_P2P_STATUS"
 )

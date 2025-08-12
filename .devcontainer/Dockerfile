@@ -1,5 +1,5 @@
-FROM nvcr.io/nvidia/cuda:12.6.3-base-ubuntu22.04
-ARG GOLANG_VERSION=1.22.5
+FROM nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
+ARG GOLANG_VERSION=1.24.5
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
@@ -65,10 +65,10 @@ RUN set -eux; \
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz
 ENV GOTOOLCHAIN=local
-ENV GOPATH /go
-ENV PATH $GOPATH/bin:$PATH
+ENV GOPATH=/go
+ENV PATH=$GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
-ENV PATH $PATH:/usr/local/go/bin
+ENV PATH=$PATH:/usr/local/go/bin
 
 # Required for DCGM metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32

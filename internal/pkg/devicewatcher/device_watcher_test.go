@@ -1808,7 +1808,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1823,7 +1823,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1841,7 +1841,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1859,7 +1859,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1877,7 +1877,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1896,7 +1896,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1914,7 +1914,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetById(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
 				}
 			},
 			want: func() []dcgm.Short {

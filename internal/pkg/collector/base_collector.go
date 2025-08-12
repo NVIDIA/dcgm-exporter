@@ -78,7 +78,7 @@ func (c *baseExpCollector) getLabelsFromCounters(mi devicemonitoring.Info, label
 			continue
 		}
 
-		counter, err := findCounterField(c.labelsCounters, val.FieldId)
+		counter, err := findCounterField(c.labelsCounters, val.FieldID)
 		if err != nil {
 			continue
 		}

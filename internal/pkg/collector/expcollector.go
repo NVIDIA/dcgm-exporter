@@ -54,12 +54,12 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 
 		for _, val := range values {
 			if val.Status == 0 {
-				if _, exists := mapEntityIDToValues[val.EntityId]; !exists {
-					mapEntityIDToValues[val.EntityId] = map[int64]int{}
+				if _, exists := mapEntityIDToValues[val.EntityID]; !exists {
+					mapEntityIDToValues[val.EntityID] = map[int64]int{}
 				}
 
 				for _, v := range c.fieldValueParser(val.Int64()) {
-					mapEntityIDToValues[val.EntityId][v] += 1
+					mapEntityIDToValues[val.EntityID][v] += 1
 				}
 			}
 		}

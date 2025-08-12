@@ -34,6 +34,7 @@ import (
 type MockExec struct {
 	ctrl     *gomock.Controller
 	recorder *MockExecMockRecorder
+	isgomock struct{}
 }
 
 // MockExecMockRecorder is the mock recorder for MockExec.
@@ -54,10 +55,10 @@ func (m *MockExec) EXPECT() *MockExecMockRecorder {
 }
 
 // Command mocks base method.
-func (m *MockExec) Command(arg0 string, arg1 ...string) exec.Cmd {
+func (m *MockExec) Command(name string, arg ...string) exec.Cmd {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0}
-	for _, a := range arg1 {
+	varargs := []any{name}
+	for _, a := range arg {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "Command", varargs...)
@@ -66,8 +67,8 @@ func (m *MockExec) Command(arg0 string, arg1 ...string) exec.Cmd {
 }
 
 // Command indicates an expected call of Command.
-func (mr *MockExecMockRecorder) Command(arg0 any, arg1 ...any) *gomock.Call {
+func (mr *MockExecMockRecorder) Command(name any, arg ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0}, arg1...)
+	varargs := append([]any{name}, arg...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Command", reflect.TypeOf((*MockExec)(nil).Command), varargs...)
 }

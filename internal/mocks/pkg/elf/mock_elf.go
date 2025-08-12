@@ -34,6 +34,7 @@ import (
 type MockELF struct {
 	ctrl     *gomock.Controller
 	recorder *MockELFMockRecorder
+	isgomock struct{}
 }
 
 // MockELFMockRecorder is the mock recorder for MockELF.
@@ -54,16 +55,16 @@ func (m *MockELF) EXPECT() *MockELFMockRecorder {
 }
 
 // Open mocks base method.
-func (m *MockELF) Open(arg0 string) (*elf.File, error) {
+func (m *MockELF) Open(name string) (*elf.File, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Open", arg0)
+	ret := m.ctrl.Call(m, "Open", name)
 	ret0, _ := ret[0].(*elf.File)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Open indicates an expected call of Open.
-func (mr *MockELFMockRecorder) Open(arg0 any) *gomock.Call {
+func (mr *MockELFMockRecorder) Open(name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockELF)(nil).Open), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockELF)(nil).Open), name)
 }

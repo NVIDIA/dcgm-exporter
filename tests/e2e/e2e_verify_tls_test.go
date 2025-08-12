@@ -39,39 +39,14 @@ var VerifyHelmConfigurationWhenTLSEnabled = func(
 	testRunLabels map[string]string,
 ) bool {
 	return Context("and TLS is enabled", Label("tls"), func() {
-		var (
-			helmReleaseName string
-			dcgmExpPod      *corev1.Pod
-		)
+		var dcgmExpPod *corev1.Pod
 
 		AfterAll(func(ctx context.Context) {
-			shouldUninstallHelmChart(helmClient, helmReleaseName)
+			// Helm releases will be cleaned up in AfterSuite
 		})
 
 		It("should install dcgm-exporter helm chart", func(ctx context.Context) {
-			By(fmt.Sprintf("Helm chart installation: %q chart started.",
-				testContext.chart))
-
-			values := getDefaultHelmValues()
-
-			values = append(values, "tlsServerConfig.enabled=true")
-
-			var err error
-
-			helmReleaseName, err = helmClient.Install(ctx, framework.HelmChartOptions{
-				CleanupOnFail: true,
-				GenerateName:  true,
-				Timeout:       5 * time.Minute,
-				Wait:          true,
-				DryRun:        false,
-			}, framework.WithValues(values...))
-			Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: %q chart failed with error err: %v",
-				testContext.chart, err)
-
-			By(fmt.Sprintf("Helm chart installation: %q completed.",
-				testContext.chart))
-			By(fmt.Sprintf("Helm chart installation: new %q release name.",
-				helmReleaseName))
+			shouldInstallHelmChart(ctx, helmClient, []string{"tlsServerConfig.enabled=true"})
 		})
 
 		It("should create dcgm-exporter pod", func(ctx context.Context) {

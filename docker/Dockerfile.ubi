@@ -1,8 +1,8 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.6.3-base-ubi9
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubi9
 
 FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
-ARG GOLANG_VERSION=1.22.5
+ARG GOLANG_VERSION=1.24.5
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
@@ -63,16 +63,10 @@ LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 ARG DCGM_VERSION
 
 RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
-	&& dnf install --nodocs --setopt=install_weak_deps=False -y datacenter-gpu-manager-4-core libcap \
+	&& dnf upgrade --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
+	&& dnf install --nodocs --setopt=install_weak_deps=False -y datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap \
 	&& dnf -y clean all\
-	&& rm -rf /var/cache/yum\
-	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
-	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
-	&& rm -rf /usr/lib64/libdcgm_cublas_proxy*.so \
-	&& rm -rf /usr/local/dcgm/scripts \
-	&& rm -f /usr/include/*.h /usr/bin/DcgmProfTesterKernels.ptx /usr/bin/dcgmproftester* \
-	&& rm -rf /var/lib/rpm/rpmdb.sqlite /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \
-	&& rm -rf /usr/share/doc && rm -rf /usr/share/man \
+	&& rm -rf /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \
 	&& ldconfig
 
 COPY ./LICENSE ./licenses/LICENSE

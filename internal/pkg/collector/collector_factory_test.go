@@ -119,7 +119,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 			},
 		},
 		{
-			name: fmt.Sprintf("Collector enabled for the %s but DCGM returns error", dcgm.FE_GPU.String()),
+			name: fmt.Sprintf("Collector enabled for the %s even when DCGM returns error", dcgm.FE_GPU.String()),
 			cs: &counters.CounterSet{
 				DCGMCounters: []counters.Counter{dcgmCounter},
 			},
@@ -137,7 +137,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, errors.New("boom")).AnyTimes()
 			},
-			wantsPanic: true,
+			wantsPanic: false,
 		},
 		{
 			name: "DCGM_EXP_CLOCK_EVENTS_COUNT collector is enabled",
@@ -312,7 +312,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockDCGM.EXPECT().HealthSet(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
 				mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil).AnyTimes()
-				mockDCGM.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+				mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(dcgm.FieldHandle{}, nil)
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(nil).AnyTimes()
@@ -507,7 +507,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockDCGM.EXPECT().HealthSet(gomock.Any(), gomock.Eq(dcgm.DCGM_HEALTH_WATCH_ALL)).Return(nil)
 				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil)
-				mockDCGM.EXPECT().GetGpuInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+				mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
 					return strings.HasPrefix(x.(string), "gpu-collector-group")
 				})).Return(dcgm.GroupHandle{}, errors.New("boom!"))

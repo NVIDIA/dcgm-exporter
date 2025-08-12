@@ -24,29 +24,31 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
+var _ DCGM = &dcgmProvider{}
+
 type DCGM interface {
 	AddEntityToGroup(dcgm.GroupHandle, dcgm.Field_Entity_Group, uint) error
 	AddLinkEntityToGroup(dcgm.GroupHandle, uint, uint) error
 	CreateFakeEntities(entities []dcgm.MigHierarchyInfo) ([]uint, error)
 	CreateGroup(string) (dcgm.GroupHandle, error)
-	DestroyGroup(groupId dcgm.GroupHandle) error
+	DestroyGroup(groupID dcgm.GroupHandle) error
 	EntitiesGetLatestValues([]dcgm.GroupEntityPair, []dcgm.Short, uint) ([]dcgm.FieldValue_v2, error)
 	EntityGetLatestValues(dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	Fv2_String(fv dcgm.FieldValue_v2) string
-	FieldGetById(dcgm.Short) dcgm.FieldMeta
+	FieldGetByID(dcgm.Short) dcgm.FieldMeta
 	FieldGroupCreate(string, []dcgm.Short) (dcgm.FieldHandle, error)
 	FieldGroupDestroy(dcgm.FieldHandle) error
 	GetAllDeviceCount() (uint, error)
-	GetCpuHierarchy() (dcgm.CpuHierarchy_v1, error)
+	GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error)
 	GetDeviceInfo(uint) (dcgm.Device, error)
 	GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error)
-	GetGpuInstanceHierarchy() (dcgm.MigHierarchy_v2, error)
+	GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error)
 	GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error)
 	GetSupportedDevices() ([]uint, error)
 	GetSupportedMetricGroups(uint) ([]dcgm.MetricGroup, error)
 	GetValuesSince(dcgm.GroupHandle, dcgm.FieldHandle, time.Time) ([]dcgm.FieldValue_v2, time.Time, error)
 	GroupAllGPUs() dcgm.GroupHandle
-	InjectFieldValue(gpu uint, fieldID uint, fieldType uint, status int, ts int64, value interface{}) error
+	InjectFieldValue(gpu uint, fieldID dcgm.Short, fieldType uint, status int, ts int64, value interface{}) error
 	LinkGetLatestValues(uint, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	NewDefaultGroup(string) (dcgm.GroupHandle, error)
 	UpdateAllFields() error
@@ -56,4 +58,5 @@ type DCGM interface {
 	HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error)
 	HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse, error)
 	GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error)
+	GetNvLinkP2PStatus() (dcgm.NvLinkP2PStatus, error)
 }

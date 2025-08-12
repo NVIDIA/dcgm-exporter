@@ -18,12 +18,13 @@ package integration_test
 
 import (
 	"fmt"
+	"log/slog"
 	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"k8s.io/kubelet/pkg/apis/podresources/v1alpha1"
+	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -41,6 +42,24 @@ const (
 	containerAttribute = "container"
 )
 
+func smartDCGMInit(t *testing.T, config *appconfig.Config) {
+	t.Helper()
+	config.UseRemoteHE = false
+	dcgmprovider.Initialize(config)
+	_, err := dcgmprovider.Client().GetAllDeviceCount()
+	if err != nil {
+		slog.Info("Embedded DCGM failed, trying remote host engine")
+		config.UseRemoteHE = true
+		config.RemoteHEInfo = "localhost:5555"
+		dcgmprovider.Initialize(config)
+		// Check if remote initialization also failed
+		_, err = dcgmprovider.Client().GetAllDeviceCount()
+		require.NoError(t, err, "Both embedded and remote DCGM initialization failed")
+	} else {
+		slog.Info("Embedded DCGM initialized successfully")
+	}
+}
+
 func TestProcessPodMapper(t *testing.T) {
 	testutils.RequireLinux(t)
 
@@ -48,10 +67,13 @@ func TestProcessPodMapper(t *testing.T) {
 	defer cleanup()
 
 	config := &appconfig.Config{
-		UseRemoteHE: false,
+		UseRemoteHE:   false,
+		Kubernetes:    true,
+		EnableDCGMLog: true,
+		DCGMLogLevel:  "DEBUG",
 	}
 
-	dcgmprovider.Initialize(config)
+	smartDCGMInit(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	c := testDCGMGPUCollector(t, testutils.SampleCounters)
@@ -67,7 +89,7 @@ func TestProcessPodMapper(t *testing.T) {
 	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
 	gpus := getGPUUUIDs(arbirtaryMetric)
-	v1alpha1.RegisterPodResourcesListerServer(server,
+	v1.RegisterPodResourcesListerServer(server,
 		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
 
 	cleanup = testutils.StartMockServer(t, server, socketPath)

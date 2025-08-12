@@ -33,7 +33,7 @@ func TestToMetric(t *testing.T) {
 	fieldValue[0] = 42
 	values := []dcgm.FieldValue_v1{
 		{
-			FieldId:   150,
+			FieldID:   150,
 			FieldType: dcgm.DCGM_FT_INT64,
 			Value:     fieldValue,
 		},
@@ -144,7 +144,7 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 			fieldValue[0] = tc.fieldValue
 			values := []dcgm.FieldValue_v1{
 				{
-					FieldId:   dcgm.DCGM_FI_DEV_XID_ERRORS,
+					FieldID:   dcgm.DCGM_FI_DEV_XID_ERRORS,
 					FieldType: dcgm.DCGM_FT_INT64,
 					Value:     fieldValue,
 				},

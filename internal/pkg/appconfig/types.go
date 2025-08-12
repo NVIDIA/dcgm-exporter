@@ -28,11 +28,20 @@ type DeviceOptions struct {
 	MinorRange []int // The indices of each GPUInstance/NvLink to monitor, or -1 to monitor all
 }
 
+// DumpConfig controls file-based debugging dumps
+type DumpConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`         // Enable file-based dumps
+	Directory   string `yaml:"directory" json:"directory"`     // Directory to store dump files
+	Retention   int    `yaml:"retention" json:"retention"`     // Retention period in hours (0 = no cleanup)
+	Compression bool   `yaml:"compression" json:"compression"` // Use gzip compression for dump files
+}
+
 type Config struct {
 	CollectorsFile             string
 	Address                    string
 	CollectInterval            int
 	Kubernetes                 bool
+	KubernetesEnablePodLabels  bool
 	KubernetesGPUIdType        KubernetesGPUIDType
 	CollectDCP                 bool
 	UseOldNamespace            bool
@@ -56,4 +65,7 @@ type Config struct {
 	PodResourcesKubeletSocket  string
 	HPCJobMappingDir           string
 	NvidiaResourceNames        []string
+	KubernetesVirtualGPUs      bool
+	DumpConfig                 DumpConfig // Configuration for file-based dumps
+	KubernetesEnableDRA        bool
 }
