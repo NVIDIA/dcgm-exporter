@@ -20,7 +20,7 @@ const (
 	undefinedConfigMapData = "none"
 
 	cpuFieldsStart = 1100
-	dcpFieldsStart = 1000
+	dcpFieldsStart = 1099
 
 	DCGMExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
 	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
