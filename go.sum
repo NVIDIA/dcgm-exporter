@@ -22,6 +22,8 @@ github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
 github.com/NVIDIA/go-dcgm v0.0.0-20250731202351-984cbc9b6270 h1:Qz7CJ3PCn/qRj/1jr3qNqmg2zDleO6RXc6txcp7BHFI=
 github.com/NVIDIA/go-dcgm v0.0.0-20250731202351-984cbc9b6270/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
+github.com/NVIDIA/go-dcgm v0.0.0-20250814030002-9097b5c5a1bf h1:WtJsvMPj/aBvo+lD4tAxxcObtOJ8U5HUp1I5b2HP9ls=
+github.com/NVIDIA/go-dcgm v0.0.0-20250814030002-9097b5c5a1bf/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
 github.com/NVIDIA/go-nvml v0.12.4-1 h1:WKUvqshhWSNTfm47ETRhv0A0zJyr1ncCuHiXwoTrBEc=
 github.com/NVIDIA/go-nvml v0.12.4-1/go.mod h1:8Llmj+1Rr+9VGGwZuRer5N/aCjxGuR5nPb/9ebBiIEQ=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=
