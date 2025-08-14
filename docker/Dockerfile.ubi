@@ -1,6 +1,6 @@
 ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubi9
 
-FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
 ARG GOLANG_VERSION=1.24.5
 

@@ -1,6 +1,9 @@
 ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
 
-FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
+#####
+# Stage 1: Build the dcgm-exporter binary
+#####
+FROM --platform=$BUILDPLATFORM ubuntu:18.04 AS builder
 
 ARG GOLANG_VERSION=1.24.5
 
@@ -48,14 +51,38 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 	export LD_LIBRARY_PATH=/usr/aarch64-linux-gnu/lib:$LD_LIBRARY_PATH; \
 	fi && \
 	GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=1 make install
+
 RUN apt-get update && apt-get install -y file && rm -rf /var/lib/apt/lists/*
 RUN file /usr/bin/dcgm-exporter
 
-FROM --platform=$TARGETARCH ${BASEIMAGE}
+#####
+# Stage 2: Build a normal container with all the libraries and utilities
+#####
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04 AS origin
 
 ARG VERSION
-ARG DCGM_VERSION
-ARG DIST_DIR
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN echo "$TARGETARCH" && apt-get -qq update && apt-get upgrade -y --no-install-recommends && apt-get -qq install -y --no-install-recommends \
+    datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap2-bin \
+    && apt-get -qq -y clean \
+    && apt-get -qq -y autoclean \
+    && apt-get -qq autoremove -y \
+    && rm -rf /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
+    && ldconfig \
+    && ls -l /usr/lib/*-linux-gnu/libdcgm*
+
+COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
+RUN uname -a
+RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
+
+#####
+# Stage 3: Copy the binary, libraries, and utilities from full container
+#####
+FROM --platform=$TARGETARCH gcr.io/distroless/cc-debian12:latest
+
+ARG VERSION
 ARG TARGETARCH
 
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
@@ -69,23 +96,28 @@ LABEL description="See summary"
 COPY ./LICENSE ./licenses/LICENSE
 COPY --from=builder /usr/bin/dcgm-exporter /usr/bin/
 COPY etc /etc/dcgm-exporter
-ENV DEBIAN_FRONTEND=noninteractive
-RUN echo "$TARGETARCH" && apt-get -qq update && apt-get upgrade -y --no-install-recommends && apt-get -qq install -y --no-install-recommends \
-    datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap2-bin \
-    && apt-get -qq -y clean \
-    && apt-get -qq -y autoclean \
-    && apt-get -qq autoremove -y \
-    && rm -rf /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* \
-    && ldconfig
+
+# Copy DCGM libraries from full container
+COPY --from=origin /usr/lib/*-linux-gnu/libdcgm* /usr/lib/
+COPY --from=origin /usr/lib/*-linux-gnu/libnvperf_dcgm* /usr/lib
+COPY --from=origin /usr/local/dcgm/dcgm-exporter-entrypoint.sh /usr/bin/
+
+# The following are needed to run setcap at runtime and validate libdcgm.so
+COPY --from=origin /usr/bin/sh /usr/bin/
+COPY --from=origin /usr/bin/sh /bin/
+COPY --from=origin /usr/bin/echo /usr/bin/
+COPY --from=origin /usr/sbin/setcap /usr/bin/
+COPY --from=origin /usr/lib/*-linux-gnu/libcap.so* /usr/lib/
+COPY --from=origin /usr/lib/*-linux-gnu/libtinfo.so* /usr/lib/
+COPY --from=origin /usr/bin/env /usr/bin/
+COPY --from=origin /usr/bin/bash /usr/bin/
+COPY --from=origin /usr/sbin/ldconfig.real /sbin/
+
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 # disable all constraints on the configurations required by NVIDIA container toolkit
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
-
 ENV NO_SETCAP=""
-COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
-RUN uname -a
-RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 
-ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/dcgm-exporter-entrypoint.sh"]

@@ -681,7 +681,6 @@ func TestPodDRAInfo(t *testing.T) {
 					assert.Nil(t, dr.MIGInfo, "MIG info should be nil for full GPU device")
 				}
 			}
-
 		})
 	}
 }

@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ldconfig #Must refresh the cache to find libdcgm.so
 # We want to setcap only when the container is started with the right caps
-DCGM_EXPORTER=$(readlink -f $(which dcgm-exporter))
+DCGM_EXPORTER=/usr/bin/dcgm-exporter
 if [ -z "$NO_SETCAP" ]; then
    if setcap 'cap_sys_admin=+ep' $DCGM_EXPORTER; then
       if ! $DCGM_EXPORTER -v 1>/dev/null 2>/dev/null; then
