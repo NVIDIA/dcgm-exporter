@@ -268,7 +268,6 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
 		}
-
 	}
 
 	if p.Config.KubernetesEnableDRA {
