@@ -92,7 +92,7 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 		Config: c,
 	}
 
-	if !c.KubernetesEnablePodLabels && !c.KubernetesEnableDRA {
+	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
 		return podMapper
 	}
 
@@ -227,6 +227,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
 						metric.Attributes[oldContainerAttribute] = pi.Container
 					}
+					metric.Attributes[uidAttribute] = pi.UID
 					if pi.VGPU != "" {
 						metric.Attributes[vgpuAttribute] = pi.VGPU
 					}
@@ -264,7 +265,8 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 				}
-
+				
+				metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
 		}
@@ -463,10 +465,10 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 // GPU states.
 func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
-	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
+	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	p.iterateGPUDevices(devicePods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
-		podInfo := p.createPodInfo(pod, container, labelCache)
+		podInfo := p.createPodInfo(pod, container, metadataCache)
 
 		for _, deviceID := range device.GetDeviceIds() {
 			if vgpu, ok := getSharedGPU(deviceID); ok {
@@ -515,7 +517,7 @@ func (p *PodMapper) toDeviceToPod(
 	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
-	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
+	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
 
@@ -555,7 +557,7 @@ func (p *PodMapper) toDeviceToPod(
 					"containerName", container.GetName())
 			}
 
-			podInfo := p.createPodInfo(pod, container, labelCache)
+			podInfo := p.createPodInfo(pod, container, metadataCache)
 			slog.Debug("Created pod info",
 				"podInfo", fmt.Sprintf("%+v", podInfo),
 				"podName", pod.GetName(),
@@ -719,40 +721,64 @@ func (p *PodMapper) toDeviceToPod(
 	return deviceToPodMap
 }
 
-// createPodInfo creates a PodInfo struct with labels if enabled
-func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, labelCache map[string]map[string]string) PodInfo {
+// createPodInfo creates a PodInfo struct with metadata if enabled
+func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, metadataCache map[string]PodMetadata) PodInfo {
 	labels := map[string]string{}
-	if p.Config.KubernetesEnablePodLabels {
-		// Use cache key combining namespace and name
-		cacheKey := pod.GetNamespace() + "/" + pod.GetName()
-		if cachedLabels, exists := labelCache[cacheKey]; exists {
-			labels = cachedLabels
-		} else {
-			// Only make API call if not in cache
-			if podLabels, err := p.getPodLabels(pod.GetNamespace(), pod.GetName()); err != nil {
-				slog.Warn("Couldn't get pod labels",
-					"pod", pod.GetName(),
-					"namespace", pod.GetNamespace(),
-					"error", err)
-				labelCache[cacheKey] = map[string]string{} // Cache empty result to avoid repeated failures
-			} else {
-				labels = podLabels
-				labelCache[cacheKey] = podLabels // Cache successful result
+	uid := ""
+	cacheKey := pod.GetNamespace() + "/" + pod.GetName()
+
+	// Check if we have cached metadata
+	cachedMetadata, hasCache := metadataCache[cacheKey]
+
+	// Determine if we need labels
+	needLabels := p.Config.KubernetesEnablePodLabels && (cachedMetadata.Labels == nil)
+
+	// Determine if we need UID
+	needUID := p.Config.KubernetesEnablePodUID && cachedMetadata.UID == ""
+
+	// Only make API call if we need something that's not cached
+	if needLabels || needUID {
+		if podMetadata, err := p.getPodMetadata(pod.GetNamespace(), pod.GetName()); err != nil {
+			slog.Warn("Couldn't get pod metadata",
+				"pod", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"error", err)
+			// Cache empty result to avoid repeated failures, but preserve existing cache data
+			if !hasCache {
+				metadataCache[cacheKey] = PodMetadata{}
 			}
+		} else {
+			// Update cache with new data, preserving existing data if we didn't fetch it
+			if needLabels {
+				cachedMetadata.Labels = podMetadata.Labels
+			}
+			if needUID {
+				cachedMetadata.UID = podMetadata.UID
+			}
+			metadataCache[cacheKey] = cachedMetadata
 		}
+	}
+
+	// Extract the data we need based on config flags
+	if p.Config.KubernetesEnablePodLabels {
+		labels = cachedMetadata.Labels
+	}
+	if p.Config.KubernetesEnablePodUID {
+		uid = cachedMetadata.UID
 	}
 
 	return PodInfo{
 		Name:      pod.GetName(),
 		Namespace: pod.GetNamespace(),
 		Container: container.GetName(),
+		UID:       uid,
 		Labels:    labels,
 	}
 }
 
-// getPodLabels fetches labels from a Kubernetes pod via the API server.
+// getPodMetadata fetches metadata (labels and UID) from a Kubernetes pod via the API server.
 // It sanitizes label names to ensure they are valid for Prometheus metrics.
-func (p *PodMapper) getPodLabels(namespace, podName string) (map[string]string, error) {
+func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, error) {
 	if p.Client == nil {
 		return nil, fmt.Errorf("kubernetes client is not initialized")
 	}
@@ -766,11 +792,14 @@ func (p *PodMapper) getPodLabels(namespace, podName string) (map[string]string, 
 	}
 
 	// Sanitize label names
-	sanitizedLabels := make((map[string]string), len(pod.Labels))
+	sanitizedLabels := make(map[string]string, len(pod.Labels))
 	for k, v := range pod.Labels {
 		sanitizedKey := utils.SanitizeLabelName(k)
 		sanitizedLabels[sanitizedKey] = v
 	}
 
-	return sanitizedLabels, nil
+	return &PodMetadata{
+		UID:    string(pod.UID),
+		Labels: sanitizedLabels,
+	}, nil
 }

@@ -46,6 +46,7 @@ type PodInfo struct {
 	Name             string
 	Namespace        string
 	Container        string
+	UID              string
 	VGPU             string
 	Labels           map[string]string
 	DynamicResources *DynamicResourceInfo
@@ -58,6 +59,12 @@ type DRAResourceSliceManager struct {
 	mu            sync.RWMutex
 	deviceToUUID  map[string]string            // pool/device -> UUID (for full GPUs)
 	migDevices    map[string]*DRAMigDeviceInfo // pool/device -> MIG info (for MIG devices)
+}
+
+// PodMetadata holds pod metadata from API server
+type PodMetadata struct {
+	UID    string
+	Labels map[string]string
 }
 
 type DynamicResourceInfo struct {
