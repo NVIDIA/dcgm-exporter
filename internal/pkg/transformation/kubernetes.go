@@ -375,7 +375,7 @@ func getSharedGPU(deviceID string) (string, bool) {
 
 func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourcesResponse) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
-	labelCache := make(map[string]map[string]string) // Cache to avoid duplicate API calls
+	labelCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	slog.Debug("Processing pod dynamic resources", "totalPods", len(devicePods.GetPodResources()))
 	// Track pod+namespace+container combinations per device
