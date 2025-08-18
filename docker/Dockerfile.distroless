@@ -1,4 +1,4 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.0.0-base-ubuntu22.04
 
 #####
 # Stage 1: Build the dcgm-exporter binary
@@ -58,7 +58,7 @@ RUN file /usr/bin/dcgm-exporter
 #####
 # Stage 2: Build a normal container with all the libraries and utilities
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04 AS origin
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.0-base-ubuntu22.04 AS origin
 
 ARG VERSION
 ARG TARGETARCH
@@ -80,7 +80,7 @@ RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 #####
 # Stage 3: Copy the binary, libraries, and utilities from full container
 #####
-FROM --platform=$TARGETARCH gcr.io/distroless/cc-debian12:latest
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.11
 
 ARG VERSION
 ARG TARGETARCH
@@ -112,6 +112,8 @@ COPY --from=origin /usr/lib/*-linux-gnu/libtinfo.so* /usr/lib/
 COPY --from=origin /usr/bin/env /usr/bin/
 COPY --from=origin /usr/bin/bash /usr/bin/
 COPY --from=origin /usr/sbin/ldconfig.real /sbin/
+COPY --from=origin /etc/passwd /etc/
+COPY --from=origin /etc/group /etc/
 
 # Required for DCP metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
@@ -119,5 +121,6 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NO_SETCAP=""
+USER root:root
 
 ENTRYPOINT ["/usr/bin/dcgm-exporter-entrypoint.sh"]
