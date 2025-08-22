@@ -28,6 +28,7 @@ OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
+DIST_DIR       := cmd/dcgm-exporter
 
 .PHONY: all binary install check-format local
 all: ubuntu22.04 ubi9 distroless
