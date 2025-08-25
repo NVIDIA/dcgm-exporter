@@ -21,6 +21,7 @@ const (
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
+	uidAttribute       = "pod_uid"
 	vgpuAttribute      = "vgpu"
 
 	hpcJobAttribute = "hpc_job"
@@ -33,6 +34,9 @@ const (
 	draDriverName         = "dra_driver_name"
 	draPoolName           = "dra_pool_name"
 	draDeviceName         = "dra_device_name"
+
+	draMigProfile    = "dra_mig_profile"
+	draMigDeviceUUID = "dra_mig_device_uuid"
 
 	DRAGPUDriverName = "gpu.nvidia.com"
 )

@@ -101,6 +101,10 @@ spec:
           path: {{ .Values.debugDump.directory }}
           type: DirectoryOrCreate
       {{- end }}
+      {{- with .Values.initContainers }}
+      initContainers:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
       - name: exporter
         securityContext:
@@ -128,6 +132,10 @@ spec:
           value: "true"
         {{- if .Values.kubernetes.enablePodLabels }}
         - name: "DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"
+          value: "true"
+        {{- end }}
+        {{- if .Values.kubernetes.enablePodUID }}
+        - name: "DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"
           value: "true"
         {{- end }}
         - name: "DCGM_EXPORTER_LISTEN"

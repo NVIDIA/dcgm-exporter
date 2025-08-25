@@ -21,7 +21,7 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.23.10
+GOLANG_VERSION := 1.24.5
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -30,7 +30,7 @@ DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 
 .PHONY: all binary install check-format local
-all: ubuntu22.04 ubi9
+all: ubuntu22.04 ubi9 distroless
 
 binary:
 	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
@@ -49,6 +49,7 @@ check-format:
 push:
 	$(MAKE) ubuntu22.04 OUTPUT=type=registry
 	$(MAKE) ubi9 OUTPUT=type=registry
+	$(MAKE) distroless OUTPUT=type=registry
 
 local:
 ifeq ($(shell uname -p),aarch64)
@@ -60,15 +61,18 @@ endif
 ubi%: DOCKERFILE = docker/Dockerfile.ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.0.0-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.0.0-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
+distroless: DOCKERFILE = docker/Dockerfile.distroless
+distroless: IMAGE_TAG = distroless
+distroless: --docker-build-distroless
 
 --docker-build-%:
 	@echo "Building for $@"

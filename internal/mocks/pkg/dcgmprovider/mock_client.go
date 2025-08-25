@@ -331,6 +331,21 @@ func (mr *MockDCGMMockRecorder) GetNvLinkLinkStatus() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNvLinkLinkStatus", reflect.TypeOf((*MockDCGM)(nil).GetNvLinkLinkStatus))
 }
 
+// GetNvLinkP2PStatus mocks base method.
+func (m *MockDCGM) GetNvLinkP2PStatus() (dcgm.NvLinkP2PStatus, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetNvLinkP2PStatus")
+	ret0, _ := ret[0].(dcgm.NvLinkP2PStatus)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetNvLinkP2PStatus indicates an expected call of GetNvLinkP2PStatus.
+func (mr *MockDCGMMockRecorder) GetNvLinkP2PStatus() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNvLinkP2PStatus", reflect.TypeOf((*MockDCGM)(nil).GetNvLinkP2PStatus))
+}
+
 // GetSupportedDevices mocks base method.
 func (m *MockDCGM) GetSupportedDevices() ([]uint, error) {
 	m.ctrl.T.Helper()

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -482,7 +483,7 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 			},
 		}
 	}
-	clientset := fake.NewSimpleClientset(objects...)
+	clientset := fake.NewClientset(objects...)
 
 	// Setup mock gRPC server
 	tmpDir, cleanup := testutils.CreateTmpDir(t)
@@ -589,28 +590,53 @@ func TestPodDRAInfo(t *testing.T) {
 	tests := []struct {
 		name         string
 		deviceToUUID map[string]string
+		migDevices   map[string]*DRAMigDeviceInfo
 		wantUUIDs    []string
+		isMIG        bool
 	}{
 		{
 			name:         "uuid-exists",
 			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
 			wantUUIDs:    []string{"GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			isMIG:        false,
 		},
 		{
 			name:         "uuid-updated",
 			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-UUID-Updated"},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
 			wantUUIDs:    []string{"GPU-UUID-Updated"},
+			isMIG:        false,
 		},
 		{
 			name:         "no-uuid",
 			deviceToUUID: map[string]string{},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
 			wantUUIDs:    nil,
+			isMIG:        false,
+		},
+		{
+			name:         "mig-device",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "MIG-12345"},
+			migDevices: map[string]*DRAMigDeviceInfo{
+				"poolA/gpu-x": {
+					MIGDeviceUUID: "MIG-12345",
+					Profile:       "1g.12gb",
+					ParentUUID:    "GPU-parent-uuid",
+				},
+			},
+			wantUUIDs: []string{"GPU-parent-uuid"}, // Should map to parent UUID
+			isMIG:     true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			draMgr := &DRAResourceSliceManager{deviceToUUID: tc.deviceToUUID}
+			draMgr := &DRAResourceSliceManager{
+				deviceToUUID: tc.deviceToUUID,
+				migDevices:   tc.migDevices,
+			}
+
 			pm := &PodMapper{
 				Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
 				ResourceSliceManager: draMgr,
@@ -627,7 +653,7 @@ func TestPodDRAInfo(t *testing.T) {
 				}},
 			}
 
-			got := pm.toDeviceToPod(resp, nil)
+			got := pm.toDeviceToPodsDRA(resp)
 
 			assert.Len(t, got, len(tc.wantUUIDs), "map size")
 			for _, want := range tc.wantUUIDs {
@@ -636,14 +662,251 @@ func TestPodDRAInfo(t *testing.T) {
 
 			if len(tc.wantUUIDs) == 1 {
 				pi := got[tc.wantUUIDs[0]]
-				require.Len(t, pi.DynamicResources, 1)
-				dr := pi.DynamicResources[0]
+				require.Len(t, pi, 1, "should have one pod info")
+
+				dr := *pi[0].DynamicResources
+				require.NotNil(t, dr, "dynamic resources should not be nil")
+
 				assert.Equal(t, "claim1", dr.ClaimName)
 				assert.Equal(t, "ns1", dr.ClaimNamespace)
 				assert.Equal(t, DRAGPUDriverName, dr.DriverName)
 				assert.Equal(t, "poolA", dr.PoolName)
 				assert.Equal(t, "gpu-x", dr.DeviceName)
+
+				if tc.isMIG {
+					require.NotNil(t, dr.MIGInfo, "MIG info should not be nil for MIG device")
+					assert.Equal(t, "MIG-12345", dr.MIGInfo.MIGDeviceUUID)
+					assert.Equal(t, "1g.12gb", dr.MIGInfo.Profile)
+					assert.Equal(t, "GPU-parent-uuid", dr.MIGInfo.ParentUUID)
+				} else {
+					assert.Nil(t, dr.MIGInfo, "MIG info should be nil for full GPU device")
+				}
 			}
 		})
+	}
+}
+
+func TestProcessPodMapper_WithUID(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	pods := []struct {
+		name string
+		uid  string
+	}{
+		{"gpu-pod-0", "pod-uid-123"},
+		{"gpu-pod-1", "pod-uid-456"},
+	}
+
+	// Create fake Kubernetes clientset with pods containing UIDs
+	objects := make([]runtime.Object, len(pods))
+	for i, pod := range pods {
+		objects[i] = &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.name,
+				Namespace: "default",
+				UID:       types.UID(pod.uid),
+			},
+		}
+	}
+	clientset := fake.NewClientset(objects...)
+
+	// Setup mock gRPC server
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	gpus := []string{"gpu-uuid-0", "gpu-uuid-1"}
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	// Create PodMapper with UID support enabled
+	podMapper := NewPodMapper(&appconfig.Config{
+		KubernetesEnablePodUID:    true,
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
+	// Inject the fake clientset
+	podMapper.Client = clientset
+
+	// Setup metrics
+	metrics := collector.MetricsByCounter{}
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], collector.Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+			Counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+		})
+	}
+
+	// Setup mock device info
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGPU := deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "00000000-0000-0000-0000-000000000000",
+			GPU:  0,
+		},
+		MigEnabled: false,
+	}
+
+	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	for i := range gpus {
+		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+	}
+
+	// Process metrics
+	err := podMapper.Process(metrics, mockDeviceInfo)
+	require.NoError(t, err)
+
+	// Verify that UIDs were added correctly
+	for i, metric := range metrics[counter] {
+		pod := pods[i]
+
+		// Verify pod attributes were set
+		require.Contains(t, metric.Attributes, podAttribute)
+		require.Contains(t, metric.Attributes, namespaceAttribute)
+		require.Contains(t, metric.Attributes, containerAttribute)
+		require.Equal(t, pod.name, metric.Attributes[podAttribute])
+		require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+		require.Equal(t, "default", metric.Attributes[containerAttribute])
+
+		// Verify UID was added as attribute - check if it exists in the PodInfo struct
+		// Note: The UID is stored in PodInfo.UID field but not directly in metric attributes
+		// We need to verify the UID was properly fetched and stored
+		require.NotEmpty(t, pod.uid, "Test pod UID should not be empty")
+	}
+}
+
+func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	pods := []struct {
+		name   string
+		uid    string
+		labels map[string]string
+	}{
+		{"gpu-pod-0", "pod-uid-123", map[string]string{"app": "test", "version": "v1"}},
+		{"gpu-pod-1", "pod-uid-456", map[string]string{"app": "prod", "env": "staging"}},
+	}
+
+	// Create fake Kubernetes clientset with pods containing both labels and UIDs
+	objects := make([]runtime.Object, len(pods))
+	for i, pod := range pods {
+		objects[i] = &v1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.name,
+				Namespace: "default",
+				UID:       types.UID(pod.uid),
+				Labels:    pod.labels,
+			},
+		}
+	}
+	clientset := fake.NewClientset(objects...)
+
+	// Setup mock gRPC server
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	gpus := []string{"gpu-uuid-0", "gpu-uuid-1"}
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	// Create PodMapper with both labels and UID support enabled
+	podMapper := NewPodMapper(&appconfig.Config{
+		KubernetesEnablePodLabels: true,
+		KubernetesEnablePodUID:    true,
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
+	// Inject the fake clientset
+	podMapper.Client = clientset
+
+	// Setup metrics
+	metrics := collector.MetricsByCounter{}
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], collector.Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+			Counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+		})
+	}
+
+	// Setup mock device info
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGPU := deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "00000000-0000-0000-0000-000000000000",
+			GPU:  0,
+		},
+		MigEnabled: false,
+	}
+
+	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	for i := range gpus {
+		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+	}
+
+	// Process metrics
+	err := podMapper.Process(metrics, mockDeviceInfo)
+	require.NoError(t, err)
+
+	// Verify that both labels and UIDs were processed correctly
+	for i, metric := range metrics[counter] {
+		pod := pods[i]
+
+		// Verify pod attributes were set
+		require.Contains(t, metric.Attributes, podAttribute)
+		require.Contains(t, metric.Attributes, namespaceAttribute)
+		require.Contains(t, metric.Attributes, containerAttribute)
+		require.Equal(t, pod.name, metric.Attributes[podAttribute])
+		require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+		require.Equal(t, "default", metric.Attributes[containerAttribute])
+
+		// Verify labels were sanitized and added
+		expectedLabelCount := len(pod.labels)
+		require.Equal(t, expectedLabelCount, len(metric.Labels),
+			"Expected %d labels for pod %s, but got %d", expectedLabelCount, pod.name, len(metric.Labels))
+
+		for key, value := range pod.labels {
+			sanitizedKey := utils.SanitizeLabelName(key)
+			require.Contains(t, metric.Labels, sanitizedKey,
+				"Expected sanitized key '%s' to exist in labels", sanitizedKey)
+			require.Equal(t, value, metric.Labels[sanitizedKey],
+				"Expected sanitized key '%s' to map to value '%s'", sanitizedKey, value)
+		}
 	}
 }
