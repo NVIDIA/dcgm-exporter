@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"k8s.io/client-go/informers"
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
@@ -40,6 +41,9 @@ type PodMapper struct {
 	Config               *appconfig.Config
 	Client               kubernetes.Interface
 	ResourceSliceManager *DRAResourceSliceManager
+	informer             coreinformers.PodInformer
+	podCacheMu           sync.RWMutex
+	podCache             map[string]PodMetadata
 }
 
 type PodInfo struct {
