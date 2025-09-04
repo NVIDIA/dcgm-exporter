@@ -32,13 +32,22 @@ import (
 )
 
 type hpcMapper struct {
-	Config *appconfig.Config
+	Config           *appconfig.Config
+	missingDirectory bool
 }
 
 func newHPCMapper(c *appconfig.Config) *hpcMapper {
 	slog.Info(fmt.Sprintf("HPC job mapping is enabled and watch for the %q directory", c.HPCJobMappingDir))
+	_, err := os.Stat(c.HPCJobMappingDir)
+	missingDirectory := false
+	if err != nil && os.IsNotExist(err) {
+		missingDirectory = true
+		slog.Error(fmt.Sprintf("HPC job mapping file directory '%s' not found on initialization.",
+			c.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
+	}
 	return &hpcMapper{
-		Config: c,
+		Config:           c,
+		missingDirectory: missingDirectory,
 	}
 }
 
@@ -49,9 +58,14 @@ func (p *hpcMapper) Name() string {
 func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
 	_, err := os.Stat(p.Config.HPCJobMappingDir)
 	if err != nil {
+		if os.IsNotExist(err) && p.missingDirectory {
+			return nil
+		}
 		slog.Error(fmt.Sprintf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.",
 			p.Config.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
 		return nil
+	} else {
+		p.missingDirectory = false
 	}
 
 	gpuFiles, err := getGPUFiles(p.Config.HPCJobMappingDir)

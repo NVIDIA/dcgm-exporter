@@ -77,6 +77,10 @@ func TestHPCProcess(t *testing.T) {
 				mDirEntryDamagedFile.EXPECT().Info().Return(nil, errors.New("boom")).AnyTimes()
 				mDirEntryDamagedFile.EXPECT().Name().Return("iamerror").AnyTimes()
 
+				// newHPCMapper()
+				mOS.EXPECT().Stat(gomock.Eq("/var/run/nvidia/slurm"))
+
+				// Process()
 				mOS.EXPECT().Stat(gomock.Eq("/var/run/nvidia/slurm"))
 				mOS.EXPECT().ReadDir(gomock.Eq("/var/run/nvidia/slurm")).
 					Return([]fs.DirEntry{
