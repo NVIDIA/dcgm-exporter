@@ -93,30 +93,33 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 
 	podMapper := &PodMapper{
 		Config: c,
+		Client: c.KubernetesClient,
 	}
 
 	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
 		return podMapper
 	}
 
-	clusterConfig, err := rest.InClusterConfig()
-	if err != nil {
-		slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
-		return podMapper
-	}
+	if podMapper.Client == nil {
+		clusterConfig, err := rest.InClusterConfig()
+		if err != nil {
+			slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
+			return podMapper
+		}
 
-	clientset, err := kubernetes.NewForConfig(clusterConfig)
-	if err != nil {
-		slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
-		return podMapper
+		clientset, err := kubernetes.NewForConfig(clusterConfig)
+		if err != nil {
+			slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
+			return podMapper
+		}
+		podMapper.Client = clientset
 	}
-
-	podMapper.Client = clientset
 
 	if c.KubernetesEnablePodLabels || c.KubernetesEnablePodUID {
-		factory := informers.NewSharedInformerFactory(clientset, 30*time.Second)
+		factory := informers.NewSharedInformerFactory(podMapper.Client, 30*time.Second)
 		podInformer := factory.Core().V1().Pods()
 		podMapper.informer = podInformer
+		podMapper.podCache = make(map[string]PodMetadata)
 
 		podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {

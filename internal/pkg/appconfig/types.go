@@ -18,6 +18,7 @@ package appconfig
 
 import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"k8s.io/client-go/kubernetes"
 )
 
 type KubernetesGPUIDType string
@@ -69,4 +70,5 @@ type Config struct {
 	KubernetesVirtualGPUs      bool
 	DumpConfig                 DumpConfig // Configuration for file-based dumps
 	KubernetesEnableDRA        bool
+	KubernetesClient           kubernetes.Interface
 }
