@@ -234,8 +234,13 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					newmetrics = append(newmetrics, metric)
 				}
 			}
-			// Upsert the annotated metrics into the final map.
-			metrics[counter] = newmetrics
+			// Upsert the annotated series into the final map only if we found any
+			// pods using the devices for the metric. Otherwise, leave the original
+			// metric unmodified so we still have monitoring when pods aren't using
+			// GPUs.
+			if len(newmetrics) > 0 {
+				metrics[counter] = newmetrics
+			}
 		}
 		return nil
 	}
@@ -265,7 +270,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
 					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 				}
-				
+
 				metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
 				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
 			}
@@ -321,7 +326,13 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					}
 				}
 			}
-			metrics[counter] = newmetrics
+			// Upsert the annotated series into the final map only if we found any
+			// pods using the devices for the metric. Otherwise, leave the original
+			// metric unmodified so we still have monitoring when pods aren't using
+			// GPUs.
+			if len(newmetrics) > 0 {
+				metrics[counter] = newmetrics
+			}
 		}
 		return nil
 	}
