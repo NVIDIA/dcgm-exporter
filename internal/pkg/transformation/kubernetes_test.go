@@ -502,9 +502,8 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 		KubernetesEnablePodLabels: true,
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
+		KubernetesClient:          clientset,
 	})
-	// Inject the fake clientset
-	podMapper.Client = clientset
 
 	// Setup metrics
 	metrics := collector.MetricsByCounter{}
@@ -727,9 +726,8 @@ func TestProcessPodMapper_WithUID(t *testing.T) {
 		KubernetesEnablePodUID:    true,
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
+		KubernetesClient:          clientset,
 	})
-	// Inject the fake clientset
-	podMapper.Client = clientset
 
 	// Setup metrics
 	metrics := collector.MetricsByCounter{}
@@ -837,9 +835,8 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 		KubernetesEnablePodUID:    true,
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
+		KubernetesClient:          clientset,
 	})
-	// Inject the fake clientset
-	podMapper.Client = clientset
 
 	// Setup metrics
 	metrics := collector.MetricsByCounter{}
