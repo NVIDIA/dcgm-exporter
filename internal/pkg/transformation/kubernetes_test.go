@@ -59,6 +59,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 		PODGPUIDs            []string
 		NvidiaResourceNames  []string
 		KubernetesVirtualGPU bool
+		KubernetesEnableDRA  bool
 		VGPUs                []string
 	}
 
@@ -282,15 +283,38 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			KubernetesVirtualGPU: true,
 			VGPUs:                []string{"4", "5"},
 		},
+		{
+			KubernetesGPUIDType: appconfig.GPUUID,
+			ResourceName:        "nvidia.com/mig-1g.10gb",
+			MetricMigProfile:    "1g.10gb",
+			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			// Simulate no pods using the GPUs.
+			PODGPUIDs:            []string{},
+			MetricGPUDevice:      "0",
+			GPUInstanceID:        3,
+			KubernetesVirtualGPU: true,
+		},
+		{
+			KubernetesGPUIDType: appconfig.GPUUID,
+			ResourceName:        "nvidia.com/mig-1g.10gb",
+			MetricMigProfile:    "1g.10gb",
+			MetricGPUID:         "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5",
+			// Simulate no pods using the GPUs.
+			PODGPUIDs:           []string{},
+			MetricGPUDevice:     "0",
+			GPUInstanceID:       3,
+			KubernetesEnableDRA: true,
+		},
 	}
 
 	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("when type %s, pod device ids %s metric device id %s and gpu device %s with virtual GPUs: %t",
+		t.Run(fmt.Sprintf("when type %s, pod device ids %s metric device id %s and gpu device %s with virtual GPUs: %t and DRA: %t",
 			tc.KubernetesGPUIDType,
 			tc.PODGPUIDs,
 			tc.MetricGPUID,
 			tc.MetricGPUDevice,
 			tc.KubernetesVirtualGPU,
+			tc.KubernetesEnableDRA,
 		),
 			func(t *testing.T) {
 				tmpDir, cleanup := testutils.CreateTmpDir(t)
@@ -330,6 +354,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 					PodResourcesKubeletSocket: socketPath,
 					NvidiaResourceNames:       tc.NvidiaResourceNames,
 					KubernetesVirtualGPUs:     tc.KubernetesVirtualGPU,
+					KubernetesEnableDRA:       tc.KubernetesEnableDRA,
 				})
 				require.NotNil(t, podMapper)
 				metrics := collector.MetricsByCounter{}
@@ -369,20 +394,29 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				err := podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
 				assert.Len(t, metrics, 1)
-				if tc.KubernetesVirtualGPU {
-					assert.Len(t, metrics[counter], len(gpus))
+
+				// We shouldn't omit metrics just because pods aren't using the GPUs.
+				if len(metrics[counter]) < 1 {
+					t.Errorf("expected at least one metric, got 0 for counter: %s", counter.FieldName)
 				}
 
 				for i, metric := range metrics[counter] {
-					require.Contains(t, metric.Attributes, podAttribute)
-					require.Contains(t, metric.Attributes, namespaceAttribute)
-					require.Contains(t, metric.Attributes, containerAttribute)
+					// Only require pod attributes when we expect a pod to be using the GPU.
+					if len(tc.PODGPUIDs) > 0 {
+						require.Contains(t, metric.Attributes, podAttribute)
+						require.Contains(t, metric.Attributes, namespaceAttribute)
+						require.Contains(t, metric.Attributes, containerAttribute)
 
-					// TODO currently we rely on ordering and implicit expectations of the mock implementation
-					// This should be a table comparison
-					require.Equal(t, fmt.Sprintf("gpu-pod-%d", i), metric.Attributes[podAttribute])
-					require.Equal(t, "default", metric.Attributes[namespaceAttribute])
-					require.Equal(t, "default", metric.Attributes[containerAttribute])
+						// TODO currently we rely on ordering and implicit expectations of the mock implementation
+						// This should be a table comparison
+						require.Equal(t, fmt.Sprintf("gpu-pod-%d", i), metric.Attributes[podAttribute])
+						require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+						require.Equal(t, "default", metric.Attributes[containerAttribute])
+					} else {
+						require.NotContains(t, metric.Attributes, podAttribute)
+						require.NotContains(t, metric.Attributes, namespaceAttribute)
+						require.NotContains(t, metric.Attributes, containerAttribute)
+					}
 
 					// Assert virtual GPU attributes.
 					vgpu, ok := metric.Attributes[vgpuAttribute]
