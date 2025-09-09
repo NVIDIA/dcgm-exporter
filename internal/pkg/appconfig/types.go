@@ -69,4 +69,5 @@ type Config struct {
 	KubernetesVirtualGPUs      bool
 	DumpConfig                 DumpConfig // Configuration for file-based dumps
 	KubernetesEnableDRA        bool
+	DisableStartupValidate     bool
 }
