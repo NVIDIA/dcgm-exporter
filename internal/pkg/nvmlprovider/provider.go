@@ -90,10 +90,6 @@ func (n nvmlProvider) preCheck() error {
 	return nil
 }
 
-func (n *nvmlProvider) IsInitialized() bool {
-	return n.initialized
-}
-
 // GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
 func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 	if err := n.preCheck(); err != nil {
