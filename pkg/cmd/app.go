@@ -82,6 +82,7 @@ const (
 	CLIConfigMapData              = "configmap-data"
 	CLIWebSystemdSocket           = "web-systemd-socket"
 	CLIWebConfigFile              = "web-config-file"
+	CLIFailOnNVMLInitError        = "fail-on-nvml-init-error"
 	CLIXIDCountWindowSize         = "xid-count-window-size"
 	CLIReplaceBlanksInModelName   = "replace-blanks-in-model-name"
 	CLIDebugMode                  = "debug"
@@ -223,6 +224,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   "",
 			Usage:   "Web configuration file following webConfig spec: https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.",
 			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIFailOnNVMLInitError,
+			Value:   false,
+			Usage:   "Fail the application if NVML initialization fails",
+			EnvVars: []string{"DCGM_EXPORTER_FAIL_ON_NVML_INIT_ERROR"},
 		},
 		&cli.IntFlag{
 			Name:    CLIXIDCountWindowSize,
@@ -433,7 +440,11 @@ func startDCGMExporter(c *cli.Context) error {
 		dcgmCleanup := dcgmprovider.Client().Cleanup
 
 		// Initialize NVML Provider Instance
-		nvmlprovider.Initialize()
+		err = nvmlprovider.Initialize()
+		if err != nil && config.FailOnNVMLInitError {
+			return err // exit if we can't initialize nvml
+		}
+
 		nvmlCleanup := nvmlprovider.Client().Cleanup
 
 		slog.Info("DCGM successfully initialized!")
@@ -507,8 +518,6 @@ func startDCGMExporter(c *cli.Context) error {
 		// For SIGHUP, we'll continue the loop after cleanup
 		slog.Info("Restarting dcgm-exporter after signal")
 	}
-
-	return nil
 }
 
 func startDeviceWatchListManager(
@@ -711,6 +720,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		ConfigMapData:              c.String(CLIConfigMapData),
 		WebSystemdSocket:           c.Bool(CLIWebSystemdSocket),
 		WebConfigFile:              c.String(CLIWebConfigFile),
+		FailOnNVMLInitError:        c.Bool(CLIFailOnNVMLInitError),
 		XIDCountWindowSize:         c.Int(CLIXIDCountWindowSize),
 		ReplaceBlanksInModelName:   c.Bool(CLIReplaceBlanksInModelName),
 		Debug:                      c.Bool(CLIDebugMode),
