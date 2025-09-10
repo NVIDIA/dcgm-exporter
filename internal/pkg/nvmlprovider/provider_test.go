@@ -107,9 +107,15 @@ func Test_newNVMLProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var nvmlProvider NVML
+			var err error
+			nvmlProvider, err = newNVMLProvider()
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
 			want := tt.preRunFunc()
 			defer reset()
-			assert.Equalf(t, want, newNVMLProvider(), "Unexpected Output")
+			assert.Equalf(t, want, nvmlProvider, "Unexpected Output")
 		})
 	}
 }
