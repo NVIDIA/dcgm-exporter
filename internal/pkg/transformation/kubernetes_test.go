@@ -303,7 +303,7 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 			PODGPUIDs:           []string{},
 			MetricGPUDevice:     "0",
 			GPUInstanceID:       3,
-			KubernetesEnableDRA: true,
+			KubernetesEnableDRA: false,
 		},
 	}
 
