@@ -82,7 +82,6 @@ const (
 	CLIConfigMapData              = "configmap-data"
 	CLIWebSystemdSocket           = "web-systemd-socket"
 	CLIWebConfigFile              = "web-config-file"
-	CLIFailOnNVMLInitError        = "fail-on-nvml-init-error"
 	CLIXIDCountWindowSize         = "xid-count-window-size"
 	CLIReplaceBlanksInModelName   = "replace-blanks-in-model-name"
 	CLIDebugMode                  = "debug"
@@ -224,12 +223,6 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   "",
 			Usage:   "Web configuration file following webConfig spec: https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.",
 			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
-		},
-		&cli.BoolFlag{
-			Name:    CLIFailOnNVMLInitError,
-			Value:   false,
-			Usage:   "Fail the application if NVML initialization fails",
-			EnvVars: []string{"DCGM_EXPORTER_FAIL_ON_NVML_INIT_ERROR"},
 		},
 		&cli.IntFlag{
 			Name:    CLIXIDCountWindowSize,
@@ -429,7 +422,6 @@ func startDCGMExporter(c *cli.Context) error {
 
 		// Only validate prerequisites if not disabled.
 		if !config.DisableStartupValidate {
-			config.FailOnNVMLInitError = true // enable failure on NVML Init Error
 			err = prerequisites.Validate()
 			if err != nil {
 				return err
@@ -442,7 +434,7 @@ func startDCGMExporter(c *cli.Context) error {
 
 		// Initialize NVML Provider Instance
 		err = nvmlprovider.Initialize()
-		if err != nil && config.FailOnNVMLInitError {
+		if err != nil && !config.DisableStartupValidate {
 			return err // exit if we can't initialize nvml
 		}
 
@@ -721,7 +713,6 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		ConfigMapData:              c.String(CLIConfigMapData),
 		WebSystemdSocket:           c.Bool(CLIWebSystemdSocket),
 		WebConfigFile:              c.String(CLIWebConfigFile),
-		FailOnNVMLInitError:        c.Bool(CLIFailOnNVMLInitError),
 		XIDCountWindowSize:         c.Int(CLIXIDCountWindowSize),
 		ReplaceBlanksInModelName:   c.Bool(CLIReplaceBlanksInModelName),
 		Debug:                      c.Bool(CLIDebugMode),

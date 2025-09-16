@@ -57,7 +57,6 @@ type Config struct {
 	MetricGroups               []dcgm.MetricGroup
 	WebSystemdSocket           bool
 	WebConfigFile              string
-	FailOnNVMLInitError        bool
 	XIDCountWindowSize         int
 	ReplaceBlanksInModelName   bool
 	Debug                      bool
