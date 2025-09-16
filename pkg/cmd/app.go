@@ -429,6 +429,7 @@ func startDCGMExporter(c *cli.Context) error {
 
 		// Only validate prerequisites if not disabled.
 		if !config.DisableStartupValidate {
+			config.FailOnNVMLInitError = true // enable failure on NVML Init Error
 			err = prerequisites.Validate()
 			if err != nil {
 				return err
