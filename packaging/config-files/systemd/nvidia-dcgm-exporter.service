@@ -22,8 +22,8 @@ After=nvidia-dcgm.service
 User=root
 PrivateTmp=false
 
-StandardOutput=append:/var/dcgm-exporter.log
-StandardError=append:/var/dcgm-exporter.log
+StandardOutput=append:/var/log/dcgm-exporter.log
+StandardError=append:/var/log/dcgm-exporter.log
 
 ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/default-counters.csv
 

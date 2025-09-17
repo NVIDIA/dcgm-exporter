@@ -1,4 +1,4 @@
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.0.0-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04
 
 #####
 # Stage 1: Build the dcgm-exporter binary
@@ -58,7 +58,7 @@ RUN file /usr/bin/dcgm-exporter
 #####
 # Stage 2: Build a normal container with all the libraries and utilities
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.0-base-ubuntu22.04 AS origin
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS origin
 
 ARG VERSION
 ARG TARGETARCH
@@ -80,7 +80,7 @@ RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 #####
 # Stage 3: Copy the binary, libraries, and utilities from full container
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.11
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.12
 
 ARG VERSION
 ARG TARGETARCH

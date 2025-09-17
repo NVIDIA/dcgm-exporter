@@ -71,4 +71,5 @@ type Config struct {
 	DumpConfig                 DumpConfig // Configuration for file-based dumps
 	KubernetesEnableDRA        bool
 	KubernetesClient           kubernetes.Interface
+	DisableStartupValidate     bool
 }
