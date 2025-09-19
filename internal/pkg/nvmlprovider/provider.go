@@ -35,8 +35,13 @@ type MIGDeviceInfo struct {
 var nvmlInterface NVML
 
 // Initialize sets up the Singleton NVML interface.
-func Initialize() {
-	nvmlInterface = newNVMLProvider()
+func Initialize() error {
+	var err error
+	nvmlInterface, err = newNVMLProvider()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // reset clears the current NVML interface instance.
@@ -59,11 +64,11 @@ type nvmlProvider struct {
 	initialized bool
 }
 
-func newNVMLProvider() NVML {
+func newNVMLProvider() (NVML, error) {
 	// Check if a NVML client already exists and return it if so.
 	if Client() != nil && Client().(nvmlProvider).initialized {
 		slog.Info("NVML already initialized.")
-		return Client()
+		return Client(), nil
 	}
 
 	slog.Info("Attempting to initialize NVML library.")
@@ -71,10 +76,10 @@ func newNVMLProvider() NVML {
 	if ret != nvml.SUCCESS {
 		err := errors.New(nvml.ErrorString(ret))
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
-		return nvmlProvider{initialized: false}
+		return nvmlProvider{initialized: false}, err
 	}
 
-	return nvmlProvider{initialized: true}
+	return nvmlProvider{initialized: true}, nil
 }
 
 func (n nvmlProvider) preCheck() error {

@@ -433,7 +433,11 @@ func startDCGMExporter(c *cli.Context) error {
 		dcgmCleanup := dcgmprovider.Client().Cleanup
 
 		// Initialize NVML Provider Instance
-		nvmlprovider.Initialize()
+		err = nvmlprovider.Initialize()
+		if err != nil && !config.DisableStartupValidate {
+			return err // exit if we can't initialize nvml
+		}
+
 		nvmlCleanup := nvmlprovider.Client().Cleanup
 
 		slog.Info("DCGM successfully initialized!")
@@ -507,8 +511,6 @@ func startDCGMExporter(c *cli.Context) error {
 		// For SIGHUP, we'll continue the loop after cleanup
 		slog.Info("Restarting dcgm-exporter after signal")
 	}
-
-	return nil
 }
 
 func startDeviceWatchListManager(
