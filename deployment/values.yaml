@@ -51,6 +51,9 @@ namespaceOverride: ""
 
 # Defines the runtime class that will be used by the pod
 runtimeClassName: ""
+# Defines the priority class that will be used by the pod
+priorityClassName: "system-node-critical"
+
 # Defines serviceAccount names for components.
 serviceAccount:
   # Specifies whether a service account should be created
