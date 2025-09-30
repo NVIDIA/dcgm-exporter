@@ -32,9 +32,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/informers"
+
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
@@ -90,25 +93,66 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 
 	podMapper := &PodMapper{
 		Config: c,
+		Client: c.KubernetesClient,
 	}
 
 	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
 		return podMapper
 	}
 
-	clusterConfig, err := rest.InClusterConfig()
-	if err != nil {
-		slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
-		return podMapper
+	if podMapper.Client == nil {
+		clusterConfig, err := rest.InClusterConfig()
+		if err != nil {
+			slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
+			return podMapper
+		}
+
+		clientset, err := kubernetes.NewForConfig(clusterConfig)
+		if err != nil {
+			slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
+			return podMapper
+		}
+		podMapper.Client = clientset
 	}
 
-	clientset, err := kubernetes.NewForConfig(clusterConfig)
-	if err != nil {
-		slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
-		return podMapper
-	}
+	if c.KubernetesEnablePodLabels || c.KubernetesEnablePodUID {
+		factory := informers.NewSharedInformerFactory(podMapper.Client, 30*time.Second)
+		podInformer := factory.Core().V1().Pods()
+		podMapper.informer = podInformer
+		podMapper.podCache = make(map[string]PodMetadata)
 
-	podMapper.Client = clientset
+		podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) {
+				if pod, ok := obj.(*corev1.Pod); ok {
+					podMapper.cachePod(pod)
+				}
+			},
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				if pod, ok := newObj.(*corev1.Pod); ok {
+					podMapper.cachePod(pod)
+				}
+			},
+			DeleteFunc: func(obj interface{}) {
+				if pod, ok := obj.(*corev1.Pod); ok {
+					podMapper.deleteCachedPod(pod.Namespace, pod.Name)
+					return
+				}
+				if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+					if pod, ok := tombstone.Obj.(*corev1.Pod); ok {
+						podMapper.deleteCachedPod(pod.Namespace, pod.Name)
+					}
+				}
+			},
+		})
+
+		stopCh := make(chan struct{})
+		factory.Start(stopCh)
+		if !cache.WaitForCacheSync(stopCh, podInformer.Informer().HasSynced) {
+			slog.Warn("Pod informer cache failed to sync; pod metadata may be unavailable initially")
+		} else {
+			slog.Info("Pod informer cache synced")
+		}
+	}
 
 	if c.KubernetesEnableDRA {
 		resourceSliceManager, err := NewDRAResourceSliceManager()
@@ -734,83 +778,49 @@ func (p *PodMapper) toDeviceToPod(
 
 // createPodInfo creates a PodInfo struct with metadata if enabled
 func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, metadataCache map[string]PodMetadata) PodInfo {
-	labels := map[string]string{}
-	uid := ""
-	cacheKey := pod.GetNamespace() + "/" + pod.GetName()
-
-	// Check if we have cached metadata
-	cachedMetadata, hasCache := metadataCache[cacheKey]
-
-	// Determine if we need labels
-	needLabels := p.Config.KubernetesEnablePodLabels && (cachedMetadata.Labels == nil)
-
-	// Determine if we need UID
-	needUID := p.Config.KubernetesEnablePodUID && cachedMetadata.UID == ""
-
-	// Only make API call if we need something that's not cached
-	if needLabels || needUID {
-		if podMetadata, err := p.getPodMetadata(pod.GetNamespace(), pod.GetName()); err != nil {
-			slog.Warn("Couldn't get pod metadata",
-				"pod", pod.GetName(),
-				"namespace", pod.GetNamespace(),
-				"error", err)
-			// Cache empty result to avoid repeated failures, but preserve existing cache data
-			if !hasCache {
-				metadataCache[cacheKey] = PodMetadata{}
-			}
-		} else {
-			// Update cache with new data, preserving existing data if we didn't fetch it
-			if needLabels {
-				cachedMetadata.Labels = podMetadata.Labels
-			}
-			if needUID {
-				cachedMetadata.UID = podMetadata.UID
-			}
-			metadataCache[cacheKey] = cachedMetadata
-		}
-	}
-
-	// Extract the data we need based on config flags
-	if p.Config.KubernetesEnablePodLabels {
-		labels = cachedMetadata.Labels
-	}
-	if p.Config.KubernetesEnablePodUID {
-		uid = cachedMetadata.UID
+	var md PodMetadata
+	if p.Config.KubernetesEnablePodLabels || p.Config.KubernetesEnablePodUID {
+		md = p.getPodMetadata(pod.GetNamespace(), pod.GetName())
 	}
 
 	return PodInfo{
 		Name:      pod.GetName(),
 		Namespace: pod.GetNamespace(),
 		Container: container.GetName(),
-		UID:       uid,
-		Labels:    labels,
+		UID:       md.UID,
+		Labels:    md.Labels,
 	}
 }
 
-// getPodMetadata fetches metadata (labels and UID) from a Kubernetes pod via the API server.
-// It sanitizes label names to ensure they are valid for Prometheus metrics.
-func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, error) {
-	if p.Client == nil {
-		return nil, fmt.Errorf("kubernetes client is not initialized")
+func (p *PodMapper) cachePod(pod *corev1.Pod) {
+	if pod == nil {
+		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	pod, err := p.Client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Sanitize label names
 	sanitizedLabels := make(map[string]string, len(pod.Labels))
 	for k, v := range pod.Labels {
 		sanitizedKey := utils.SanitizeLabelName(k)
 		sanitizedLabels[sanitizedKey] = v
 	}
-
-	return &PodMetadata{
+	md := PodMetadata{
 		UID:    string(pod.UID),
 		Labels: sanitizedLabels,
-	}, nil
+	}
+	key := pod.Namespace + "/" + pod.Name
+	p.podCacheMu.Lock()
+	defer p.podCacheMu.Unlock()
+	p.podCache[key] = md
+}
+
+func (p *PodMapper) deleteCachedPod(namespace, name string) {
+	key := namespace + "/" + name
+	p.podCacheMu.Lock()
+	defer p.podCacheMu.Unlock()
+	delete(p.podCache, key)
+}
+
+func (p *PodMapper) getPodMetadata(namespace, name string) PodMetadata {
+	key := namespace + "/" + name
+	p.podCacheMu.RLock()
+	defer p.podCacheMu.RUnlock()
+	return p.podCache[key]
 }
