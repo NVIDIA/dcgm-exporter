@@ -103,6 +103,10 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 							slog.String(logging.ErrorKey, err.Error()))
 						continue
 					}
+					if modifiedMetric.Attributes == nil {
+						slog.Debug("modifiedMetric.Attributes is nil, making an empty map")
+						modifiedMetric.Attributes = make(map[string]string)
+					}
 					modifiedMetric.Attributes[hpcJobAttribute] = job
 					modifiedMetrics = append(modifiedMetrics, modifiedMetric)
 				}
