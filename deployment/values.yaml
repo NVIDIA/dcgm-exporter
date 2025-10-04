@@ -215,6 +215,16 @@ kubernetes:
   # This requires cluster-level read permissions to pods
   enablePodUID: false
 
+  # Pod label filtering configuration
+  # Filter which pod labels are included in metrics using regex patterns
+  # Empty list means all labels are included (default behavior)
+  # Examples:
+  #   podLabelAllowlistRegex:
+  #     - "^app$"                         # Exact match for "app" label
+  #     - "^app\\.kubernetes\\.io/.*"     # All labels starting with app.kubernetes.io/
+  #     - "^(tier|environment|version)$"  # Match tier, environment, or version labels
+  podLabelAllowlistRegex: []
+
   # RBAC settings for Kubernetes integration
   rbac:
     # Automatically creates ClusterRole and ClusterRoleBinding for pod access when enablePodLabels or enablePodUID is true
