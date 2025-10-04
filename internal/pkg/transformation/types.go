@@ -18,6 +18,7 @@ package transformation
 
 import (
 	"context"
+	"regexp"
 	"sync"
 
 	"k8s.io/client-go/informers"
@@ -40,6 +41,14 @@ type PodMapper struct {
 	Config               *appconfig.Config
 	Client               kubernetes.Interface
 	ResourceSliceManager *DRAResourceSliceManager
+	labelFilterCache     *LabelFilterCache
+}
+
+// LabelFilterCache provides efficient caching for label filtering decisions
+type LabelFilterCache struct {
+	compiledPatterns []*regexp.Regexp // Pre-compiled regex patterns
+	allowedLabels    sync.Map         // map[string]bool - cache of label keys we've already checked
+	enabled          bool             // Whether filtering is enabled (has patterns)
 }
 
 type PodInfo struct {
