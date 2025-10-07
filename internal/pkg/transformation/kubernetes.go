@@ -873,12 +873,10 @@ func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
 		return true
 	}
 
-	// Check cache first
 	if result, ok := cache.allowedLabels.Load(labelKey); ok {
 		return result.(bool)
 	}
 
-	// Cache miss: evaluate against pre-compiled patterns
 	allowed := false
 	for _, compiledPattern := range cache.compiledPatterns {
 		if compiledPattern.MatchString(labelKey) {
@@ -887,7 +885,6 @@ func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
 		}
 	}
 
-	// Store result in cache for future lookups
 	cache.allowedLabels.Store(labelKey, allowed)
 
 	return allowed

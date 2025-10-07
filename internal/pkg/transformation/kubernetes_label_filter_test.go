@@ -250,24 +250,19 @@ func TestShouldIncludeLabel_Caching(t *testing.T) {
 		labelFilterCache: newLabelFilterCache(patterns),
 	}
 
-	// First call - should execute regex and cache result
 	result1 := podMapper.shouldIncludeLabel("app")
 	assert.True(t, result1, "First call should return true for 'app'")
 
-	// Verify it was cached
 	cached, ok := podMapper.labelFilterCache.allowedLabels.Load("app")
 	assert.True(t, ok, "Result should be cached")
 	assert.True(t, cached.(bool), "Cached value should be true")
 
-	// Second call - should use cached value
 	result2 := podMapper.shouldIncludeLabel("app")
 	assert.True(t, result2, "Second call should return cached true for 'app'")
 
-	// Test with excluded label
 	result3 := podMapper.shouldIncludeLabel("excluded-label")
 	assert.False(t, result3, "Should return false for non-matching label")
 
-	// Verify exclusion was cached
 	cached2, ok2 := podMapper.labelFilterCache.allowedLabels.Load("excluded-label")
 	assert.True(t, ok2, "Exclusion should be cached")
 	assert.False(t, cached2.(bool), "Cached exclusion value should be false")
@@ -370,7 +365,6 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a fake pod with the test labels
 			pod := &v1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-pod",
@@ -380,10 +374,8 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 				},
 			}
 
-			// Create fake Kubernetes client
 			fakeClient := fake.NewSimpleClientset(pod)
 
-			// Create PodMapper with allowlist config
 			config := &appconfig.Config{
 				KubernetesEnablePodLabels:        true,
 				KubernetesPodLabelAllowlistRegex: tt.allowlistPatterns,
@@ -395,33 +387,12 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 				labelFilterCache: newLabelFilterCache(config.KubernetesPodLabelAllowlistRegex),
 			}
 
-			// Call getPodMetadata
 			metadata, err := podMapper.getPodMetadata("default", "test-pod")
 			require.NoError(t, err, "getPodMetadata should not return error")
 			require.NotNil(t, metadata, "metadata should not be nil")
 
-			// Verify UID is set correctly
 			assert.Equal(t, "test-uid-123", metadata.UID, "UID should match")
-
-			// Verify labels match expected (after filtering and sanitization)
-			assert.Equal(t, len(tt.expectedLabels), len(metadata.Labels),
-				"Number of labels should match expected after filtering")
-
-			for expectedKey, expectedValue := range tt.expectedLabels {
-				assert.Contains(t, metadata.Labels, expectedKey,
-					"Expected label key '%s' to be present", expectedKey)
-				assert.Equal(t, expectedValue, metadata.Labels[expectedKey],
-					"Expected label '%s' to have value '%s'", expectedKey, expectedValue)
-			}
-
-			// Verify filtered labels are NOT present
-			for labelKey := range tt.podLabels {
-				sanitizedKey := utils.SanitizeLabelName(labelKey)
-				if _, expected := tt.expectedLabels[sanitizedKey]; !expected {
-					assert.NotContains(t, metadata.Labels, sanitizedKey,
-						"Filtered label '%s' should not be present", sanitizedKey)
-				}
-			}
+			assert.Equal(t, tt.expectedLabels, metadata.Labels)
 		})
 	}
 }
