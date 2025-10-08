@@ -46,6 +46,7 @@ type GPUInfo struct {
 	DeviceInfo   dcgm.Device
 	GPUInstances []GPUInstanceInfo
 	MigEnabled   bool
+	NvLinks      []dcgm.NvLinkStatus
 }
 
 type GPUInstanceInfo struct {

@@ -109,8 +109,8 @@ func (d dcgmProvider) AddEntityToGroup(
 	return dcgm.AddEntityToGroup(groupID, entityGroupID, entityID)
 }
 
-func (d dcgmProvider) AddLinkEntityToGroup(groupID dcgm.GroupHandle, index uint, parentID uint) error {
-	return dcgm.AddLinkEntityToGroup(groupID, index, parentID)
+func (d dcgmProvider) AddLinkEntityToGroup(groupID dcgm.GroupHandle, index uint, entityGroupID dcgm.Field_Entity_Group, parentID uint) error {
+	return dcgm.AddLinkEntityToGroup(groupID, index, entityGroupID, parentID)
 }
 
 func (d dcgmProvider) CreateFakeEntities(entities []dcgm.MigHierarchyInfo) ([]uint, error) {
@@ -203,10 +203,10 @@ func (d dcgmProvider) InjectFieldValue(
 	return dcgm.InjectFieldValue(gpu, fieldID, fieldType, status, ts, value)
 }
 
-func (d dcgmProvider) LinkGetLatestValues(index uint, parentID uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
+func (d dcgmProvider) LinkGetLatestValues(index uint, parentType dcgm.Field_Entity_Group, parentID uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
 	error,
 ) {
-	return dcgm.LinkGetLatestValues(index, parentID, fields)
+	return dcgm.LinkGetLatestValues(index, parentType, parentID, fields)
 }
 
 func (d dcgmProvider) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {

@@ -280,6 +280,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				// Times 2 because the wantFunc is also calling the same method
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).Times(2)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
@@ -338,6 +339,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				// Times 2 because the wantFunc is also calling the same method
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).Times(2)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
@@ -403,6 +405,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				// Times 2 because the wantFunc is also calling the same method
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).Times(2)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
@@ -471,6 +474,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				// Times 2 because the wantFunc is also calling the same method
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).Times(2)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
@@ -557,6 +561,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				// Times 2 because the wantFunc is also calling the same method
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).Times(2)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(
@@ -614,6 +619,7 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				// Times 2 because the wantFunc is also calling the same method
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).Times(2)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil).Times(2)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).Times(2)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil).Times(2)
 			},
 			wantFunc: func(

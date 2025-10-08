@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
@@ -100,7 +101,17 @@ func TestProcessPodMapper(t *testing.T) {
 		PodResourcesKubeletSocket: socketPath,
 	})
 	require.NoError(t, err)
-	var deviceInfo deviceinfo.Provider
+
+	// Create a real deviceInfo provider since this is an integration test
+	deviceInfo, err := deviceinfo.Initialize(
+		appconfig.DeviceOptions{Flex: true}, // gOpt
+		appconfig.DeviceOptions{},           // sOpt
+		appconfig.DeviceOptions{},           // cOpt
+		false,                               // useFakeGPUs
+		dcgm.FE_GPU,                         // entityType
+	)
+	require.NoError(t, err)
+
 	err = podMapper.Process(out, deviceInfo)
 	require.NoError(t, err)
 

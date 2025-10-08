@@ -67,7 +67,7 @@ func TestMetricsByCounter_GoString(t *testing.T) {
 					},
 				},
 			},
-			expected: `MetricsByCounter{"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}}}}`,
+			expected: `MetricsByCounter{"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}}`,
 		},
 	}
 
@@ -134,8 +134,8 @@ func TestMetricsByCounter_GoString_MultipleCounters(t *testing.T) {
 	result := metrics.GoString()
 
 	// Since Go maps don't guarantee order, we need to check that both counters are present
-	require.Contains(t, result, `"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}}`)
-	require.Contains(t, result, `"DCGM_FI_DEV_POWER_USAGE": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x9b, FieldName:"DCGM_FI_DEV_POWER_USAGE", PromType:"gauge", Help:"Power usage info"}, Value:"150", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}}`)
+	require.Contains(t, result, `"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}`)
+	require.Contains(t, result, `"DCGM_FI_DEV_POWER_USAGE": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x9b, FieldName:"DCGM_FI_DEV_POWER_USAGE", PromType:"gauge", Help:"Power usage info"}, Value:"150", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}`)
 	require.Contains(t, result, "MetricsByCounter{")
 	require.Contains(t, result, "}")
 

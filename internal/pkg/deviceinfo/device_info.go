@@ -99,6 +99,14 @@ func Initialize(
 	case dcgm.FE_LINK:
 		deviceInfo.infoType = dcgm.FE_LINK
 		err = deviceInfo.initializeNvSwitchInfo(sOpt)
+		if err != nil {
+			slog.Warn("Failed to initialize NvSwitch/NvLink info", "error", err)
+		}
+		err = deviceInfo.initializeGPUInfo(gOpt, useFakeGPUs)
+		if err != nil {
+			slog.Warn("Failed to initialize GPU/NvLink info", "error", err)
+		}
+		err = nil
 	case dcgm.FE_SWITCH:
 		deviceInfo.infoType = dcgm.FE_SWITCH
 		err = deviceInfo.initializeNvSwitchInfo(sOpt)
@@ -138,6 +146,23 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 				s.gpus[i].DeviceInfo.UUID = fmt.Sprintf("fake%d", i)
 			} else {
 				return err
+			}
+		}
+	}
+
+	links, err := dcgmprovider.Client().GetNvLinkLinkStatus()
+	if err == nil {
+		for i := 0; i < len(s.gpus); i++ {
+		// monitor only the nvlinks as per the device options input
+			if gOpt.Flex || s.shouldMonitor(gOpt.MajorRange, s.gpus[i].DeviceInfo.GPU) {
+				var matchingLinks []dcgm.NvLinkStatus
+				for _, link := range links {
+					if link.ParentType == dcgm.FE_GPU && link.ParentId == s.gpus[i].DeviceInfo.GPU {
+						matchingLinks = append(matchingLinks, link)
+					}
+				}
+
+				s.gpus[i].NvLinks = matchingLinks
 			}
 		}
 	}

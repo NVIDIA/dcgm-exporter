@@ -148,6 +148,10 @@ func MockSwitchDeviceInfo(
 
 	mockSystemInfo.EXPECT().Switches().Return(mockSwitches).AnyTimes()
 	mockSystemInfo.EXPECT().InfoType().Return(infoType).AnyTimes()
+	// Add expectation for GPUs() call that createNVLinkGroups makes
+	mockSystemInfo.EXPECT().GPUs().Return([]deviceinfo.GPUInfo{}).AnyTimes()
+	// Add expectations for GPU-related methods that monitorAllLinks calls
+	mockSystemInfo.EXPECT().GPUCount().Return(uint(0)).AnyTimes()
 
 	return mockSystemInfo
 }

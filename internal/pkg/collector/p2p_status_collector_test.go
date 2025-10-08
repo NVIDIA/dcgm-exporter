@@ -111,6 +111,7 @@ func TestNewP2PStatusCollector(t *testing.T) {
 	mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
 	mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{GPU: 0}, nil).AnyTimes()
 	mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+	mockDCGM.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
 
 	/******** Mock Device Info *********/
 	gOpts := appconfig.DeviceOptions{
@@ -171,6 +172,7 @@ func TestP2PStatusCollector_GetMetrics(t *testing.T) {
 	mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{GPU: 0}, nil).AnyTimes()
 	mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(1))).Return(dcgm.Device{GPU: 1}, nil).AnyTimes()
 	mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
+	mockDCGM.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
 
 	/******** Mock Device Info *********/
 	gOpts := appconfig.DeviceOptions{

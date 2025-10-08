@@ -194,6 +194,33 @@ func (d *DeviceWatcher) createNVLinkGroups(deviceInfo deviceinfo.Provider) ([]dc
 	var cleanups []func()
 	var err error
 
+	/* Create per-gpu link groups */
+	for _, gpu := range deviceInfo.GPUs() {
+
+		var groupLinkCount int
+		var groupID dcgm.GroupHandle
+		for _, link := range gpu.NvLinks {
+			if groupLinkCount == 0 {
+				var cleanup func()
+
+				groupID, cleanup, err = createGroup()
+				if err != nil {
+					return nil, cleanups, err
+				}
+
+				cleanups = append(cleanups, cleanup)
+				groups = append(groups, groupID)
+			}
+
+			groupLinkCount++
+
+			err = dcgmprovider.Client().AddLinkEntityToGroup(groupID, link.Index, dcgm.FE_GPU, gpu.DeviceInfo.GPU)
+			if err != nil {
+				slog.Warn(fmt.Sprintf("could not add link %d on GPU %d to group %d: %s", link.Index, gpu.DeviceInfo.GPU, groupID, err))
+			}
+		}
+	}
+
 	/* Create per-switch link groups */
 	for _, sw := range deviceInfo.Switches() {
 		if !deviceInfo.IsSwitchWatched(sw.EntityId) {
@@ -226,9 +253,9 @@ func (d *DeviceWatcher) createNVLinkGroups(deviceInfo deviceinfo.Provider) ([]dc
 
 			groupLinkCount++
 
-			err = dcgmprovider.Client().AddLinkEntityToGroup(groupID, link.Index, link.ParentId)
+			err = dcgmprovider.Client().AddLinkEntityToGroup(groupID, link.Index, dcgm.FE_SWITCH, link.ParentId)
 			if err != nil {
-				return groups, cleanups, err
+				slog.Warn(fmt.Sprintf("could not add link %d on NvSwitch %d to group %d: %s", link.Index, link.ParentId, groupID, err))
 			}
 		}
 	}

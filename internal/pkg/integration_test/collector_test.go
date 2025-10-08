@@ -130,6 +130,7 @@ func mockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
 	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(),
 		gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(mockDevice, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
 
 	return mockDCGMProvider
 }

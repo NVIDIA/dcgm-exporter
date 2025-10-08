@@ -166,6 +166,7 @@ func TestInitialize(t *testing.T) {
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 			},
 			expectedOutput: func() *Info {
@@ -276,10 +277,15 @@ func TestInitialize(t *testing.T) {
 			sOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_LINK,
 			mockCalls: func() {
+				// Mock calls for initializeNvSwitchInfo
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return([]uint{1}, nil)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{
 					{ParentId: uint(1), ParentType: dcgm.FE_SWITCH, Index: uint(1)},
 				}, nil)
+				// Mock calls for initializeGPUInfo (called for FE_LINK)
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{Count: 0}, nil)
 			},
 			expectedOutput: func() *Info {
 				return &Info{
@@ -328,10 +334,32 @@ func TestInitialize(t *testing.T) {
 			sOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_LINK,
 			mockCalls: func() {
+				// Mock calls for initializeNvSwitchInfo (will return error but is ignored for FE_LINK)
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(dcgm.FE_SWITCH).Return([]uint{uint(0)},
 					fmt.Errorf("some error"))
+				// Mock calls for initializeGPUInfo (called for FE_LINK even if initializeNvSwitchInfo fails)
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{Count: 0}, nil)
 			},
-			wantErr: true,
+			expectedOutput: func() *Info {
+				return &Info{
+					gpuCount: 0,
+					gpus:     [dcgm.MAX_NUM_DEVICES]GPUInfo{},
+					switches: []SwitchInfo{},
+					cpus:     nil,
+					gOpt:     appconfig.DeviceOptions{},
+					sOpt:     appconfig.DeviceOptions{Flex: true},
+					cOpt:     appconfig.DeviceOptions{},
+					infoType: dcgm.FE_LINK,
+				}
+			},
+			assertions: func(expected, actual *Info) {
+				assert.Equal(t, expected.gpuCount, actual.gpuCount, "GPU count mismatch")
+				assert.Equal(t, len(expected.switches), len(actual.switches), "Switches length mismatch")
+				assert.Equal(t, expected.infoType, actual.infoType, "Info type mismatch")
+			},
+			wantErr: false,
 		},
 		{
 			name:       "initialize CPUs",
@@ -448,6 +476,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			mockCalls: func() {
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{
 					Count: 0,
 				}, nil)
@@ -479,6 +508,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 			},
 			expectedOutput: map[uint]GPUInfo{
@@ -501,6 +531,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				mockHierarchy.EntityList[0] = fakeGPUs[1]
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 
 				for i := 0; i < len(fakeDevices); i++ {
@@ -533,6 +564,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 			mockCalls: func() {
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{},
 					fmt.Errorf("some error"))
 			},
@@ -567,6 +599,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
@@ -628,6 +661,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
@@ -699,6 +733,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			mockCalls: func() {
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(gomock.Any(), gomock.Any(),
 					gomock.Any()).Return([]dcgm.FieldValue_v2{}, fmt.Errorf("some error"))
@@ -828,6 +863,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
@@ -1059,6 +1095,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
@@ -1144,6 +1181,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
@@ -1229,6 +1267,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)
@@ -1263,6 +1302,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 				}
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(fakeMigHierarchy, nil)
 				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
 					gomock.Any()).Return(mockEntitiesResult, nil)

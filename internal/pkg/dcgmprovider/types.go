@@ -28,7 +28,7 @@ var _ DCGM = &dcgmProvider{}
 
 type DCGM interface {
 	AddEntityToGroup(dcgm.GroupHandle, dcgm.Field_Entity_Group, uint) error
-	AddLinkEntityToGroup(dcgm.GroupHandle, uint, uint) error
+	AddLinkEntityToGroup(dcgm.GroupHandle, uint, dcgm.Field_Entity_Group, uint) error
 	CreateFakeEntities(entities []dcgm.MigHierarchyInfo) ([]uint, error)
 	CreateGroup(string) (dcgm.GroupHandle, error)
 	DestroyGroup(groupID dcgm.GroupHandle) error
@@ -49,7 +49,7 @@ type DCGM interface {
 	GetValuesSince(dcgm.GroupHandle, dcgm.FieldHandle, time.Time) ([]dcgm.FieldValue_v2, time.Time, error)
 	GroupAllGPUs() dcgm.GroupHandle
 	InjectFieldValue(gpu uint, fieldID dcgm.Short, fieldType uint, status int, ts int64, value interface{}) error
-	LinkGetLatestValues(uint, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
+	LinkGetLatestValues(uint, dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	NewDefaultGroup(string) (dcgm.GroupHandle, error)
 	UpdateAllFields() error
 	WatchFieldsWithGroupEx(dcgm.FieldHandle, dcgm.GroupHandle, int64, float64, int32) error

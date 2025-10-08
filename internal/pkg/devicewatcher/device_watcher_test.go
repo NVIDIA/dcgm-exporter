@@ -91,10 +91,10 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle, mockFieldGroupHandle dcgm.FieldHandle) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
@@ -159,15 +159,23 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle, mockFieldGroupHandle dcgm.FieldHandle) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1),
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH,
 					uint(1)).Return(fmt.Errorf("some error"))
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(fmt.Errorf("some other error"))
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
+
+				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+
+				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
+					gomock.Any(), gomock.Any()).Return(nil)
+				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[1], gomock.Any(),
+					gomock.Any(), gomock.Any()).Return(nil)
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "Watch Switch Links but got FieldGroupCreate Error",
@@ -207,10 +215,10 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle, mockFieldGroupHandle dcgm.FieldHandle) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
@@ -257,10 +265,10 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle, mockFieldGroupHandle dcgm.FieldHandle) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
@@ -684,7 +692,7 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 			if !tt.wantErr {
 				assert.Nil(t, err, "expected no error")
 			} else {
-				assert.NotNil(t, err, "expected no error.")
+				assert.NotNil(t, err, "expected an error.")
 				assert.Nil(t, gotFuncs, "expected cleanup functions to be nil")
 			}
 		})
@@ -983,7 +991,7 @@ func TestDeviceWatcher_createGenericGroup(t *testing.T) {
 				assert.Nil(t, err, "expected no error")
 				assert.Equal(t, mockGroupID, gotGroupID, "expected group IDs to be the same.")
 			} else {
-				assert.NotNil(t, err, "expected no error.")
+				assert.NotNil(t, err, "expected an error.")
 			}
 		})
 	}
@@ -1288,7 +1296,7 @@ func TestDeviceWatcher_createCPUCoreGroups(t *testing.T) {
 				assert.Nil(t, err, "expected no error")
 				assert.Equal(t, mockGroupIDs, gotGroupIDs, "expected group IDs to be the same.")
 			} else {
-				assert.NotNil(t, err, "expected no error.")
+				assert.NotNil(t, err, "expected an error.")
 			}
 		})
 	}
@@ -1343,10 +1351,10 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle) func() {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
@@ -1413,7 +1421,7 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 			},
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle) func() {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 
 				return doNothing
@@ -1453,8 +1461,8 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle) func() {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
@@ -1491,7 +1499,7 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 			},
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle) func() {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 
 				return doNothing
@@ -1603,8 +1611,8 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle) func() {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], fmt.Errorf("random error"))
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				return doNothing
 			},
@@ -1642,16 +1650,16 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 			mockDCGMFunc: func(mockGroupHandles []dcgm.GroupHandle) func() {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[1], nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), uint(0)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), uint(1)).Return(nil)
-				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1),
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(0), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH,
 					uint(1)).Return(fmt.Errorf("some error"))
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(fmt.Errorf("some other error"))
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 				return doNothing
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -1672,7 +1680,7 @@ func TestDeviceWatcher_createNVLinkGroups(t *testing.T) {
 				assert.Nil(t, err, "expected no error")
 				assert.Equal(t, mockGroupIDs, gotGroupIDs, "expected group IDs to be the same.")
 			} else {
-				assert.NotNil(t, err, "expected no error.")
+				assert.NotNil(t, err, "expected an error.")
 			}
 		})
 	}
@@ -1774,7 +1782,7 @@ func Test_newFieldGroup(t *testing.T) {
 				assert.Nil(t, err, "expected no error")
 				assert.Equal(t, mockFieldGroupIDs, gotFieldGroupIDs, "expected field group IDs to be the same.")
 			} else {
-				assert.NotNil(t, err, "expected no error.")
+				assert.NotNil(t, err, "expected an error.")
 			}
 		})
 	}
