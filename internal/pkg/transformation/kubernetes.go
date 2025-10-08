@@ -89,7 +89,8 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	slog.Info("Kubernetes metrics collection enabled!")
 
 	podMapper := &PodMapper{
-		Config: c,
+		Config:           c,
+		labelFilterCache: newLabelFilterCache(c.KubernetesPodLabelAllowlistRegex),
 	}
 
 	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
@@ -120,6 +121,43 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 		slog.Info("Started DRAResourceSliceManager")
 	}
 	return podMapper
+}
+
+// newLabelFilterCache creates a new cache with pre-compiled regex patterns
+func newLabelFilterCache(patterns []string) *LabelFilterCache {
+	cache := &LabelFilterCache{
+		enabled: len(patterns) > 0,
+	}
+
+	if !cache.enabled {
+		return cache
+	}
+
+	// Pre-compile all regex patterns at initialization time
+	cache.compiledPatterns = make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			slog.Warn("Failed to compile pod label allowlist regex pattern, skipping",
+				"pattern", pattern,
+				"error", err)
+			continue
+		}
+		cache.compiledPatterns = append(cache.compiledPatterns, compiled)
+		slog.Info("Compiled pod label allowlist pattern", "pattern", pattern)
+	}
+
+	// If all patterns failed to compile, disable filtering
+	if len(cache.compiledPatterns) == 0 {
+		cache.enabled = false
+		slog.Warn("No valid regex patterns for pod label filtering, all labels will be included")
+	} else {
+		slog.Info("Pod label filtering enabled",
+			"patterns", len(cache.compiledPatterns),
+			"originalPatterns", len(patterns))
+	}
+
+	return cache
 }
 
 func (p *PodMapper) Name() string {
@@ -788,7 +826,7 @@ func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *
 }
 
 // getPodMetadata fetches metadata (labels and UID) from a Kubernetes pod via the API server.
-// It sanitizes label names to ensure they are valid for Prometheus metrics.
+// It sanitizes label names to ensure they are valid for Prometheus metrics and applies allowlist filtering.
 func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, error) {
 	if p.Client == nil {
 		return nil, fmt.Errorf("kubernetes client is not initialized")
@@ -802,9 +840,18 @@ func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, err
 		return nil, err
 	}
 
-	// Sanitize label names
-	sanitizedLabels := make(map[string]string, len(pod.Labels))
+	// Sanitize and filter label names
+	sanitizedLabels := make(map[string]string)
 	for k, v := range pod.Labels {
+		// Apply allowlist filtering if configured
+		if !p.shouldIncludeLabel(k) {
+			slog.Debug("Filtering out pod label",
+				"label", k,
+				"pod", podName,
+				"namespace", namespace)
+			continue
+		}
+
 		sanitizedKey := utils.SanitizeLabelName(k)
 		sanitizedLabels[sanitizedKey] = v
 	}
@@ -813,4 +860,32 @@ func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, err
 		UID:    string(pod.UID),
 		Labels: sanitizedLabels,
 	}, nil
+}
+
+// shouldIncludeLabel checks if a label should be included based on the allowlist regex patterns.
+// Uses a two-tier cache to avoid expensive regex matching:
+// 1. Check sync.Map for previously evaluated label keys
+// 2. If not cached, evaluate against pre-compiled regex patterns and cache the result
+func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
+	cache := p.labelFilterCache
+
+	if !cache.enabled {
+		return true
+	}
+
+	if result, ok := cache.allowedLabels.Load(labelKey); ok {
+		return result.(bool)
+	}
+
+	allowed := false
+	for _, compiledPattern := range cache.compiledPatterns {
+		if compiledPattern.MatchString(labelKey) {
+			allowed = true
+			break
+		}
+	}
+
+	cache.allowedLabels.Store(labelKey, allowed)
+
+	return allowed
 }

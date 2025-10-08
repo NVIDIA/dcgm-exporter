@@ -65,40 +65,41 @@ const (
 )
 
 const (
-	CLIFieldsFile                 = "collectors"
-	CLIAddress                    = "address"
-	CLICollectInterval            = "collect-interval"
-	CLIKubernetes                 = "kubernetes"
-	CLIKubernetesEnablePodLabels  = "kubernetes-enable-pod-labels"
-	CLIKubernetesEnablePodUID     = "kubernetes-enable-pod-uid"
-	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
-	CLIUseOldNamespace            = "use-old-namespace"
-	CLIRemoteHEInfo               = "remote-hostengine-info"
-	CLIGPUDevices                 = "devices"
-	CLISwitchDevices              = "switch-devices"
-	CLICPUDevices                 = "cpu-devices"
-	CLINoHostname                 = "no-hostname"
-	CLIUseFakeGPUs                = "fake-gpus"
-	CLIConfigMapData              = "configmap-data"
-	CLIWebSystemdSocket           = "web-systemd-socket"
-	CLIWebConfigFile              = "web-config-file"
-	CLIXIDCountWindowSize         = "xid-count-window-size"
-	CLIReplaceBlanksInModelName   = "replace-blanks-in-model-name"
-	CLIDebugMode                  = "debug"
-	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
-	CLIEnableDCGMLog              = "enable-dcgm-log"
-	CLIDCGMLogLevel               = "dcgm-log-level"
-	CLILogFormat                  = "log-format"
-	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
-	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
-	CLINvidiaResourceNames        = "nvidia-resource-names"
-	CLIKubernetesVirtualGPUs      = "kubernetes-virtual-gpus"
-	CLIDumpEnabled                = "dump-enabled"
-	CLIDumpDirectory              = "dump-directory"
-	CLIDumpRetention              = "dump-retention"
-	CLIDumpCompression            = "dump-compression"
-	CLIKubernetesEnableDRA        = "kubernetes-enable-dra"
-	CLIDisableStartupValidate     = "disable-startup-validate"
+	CLIFieldsFile                       = "collectors"
+	CLIAddress                          = "address"
+	CLICollectInterval                  = "collect-interval"
+	CLIKubernetes                       = "kubernetes"
+	CLIKubernetesEnablePodLabels        = "kubernetes-enable-pod-labels"
+	CLIKubernetesEnablePodUID           = "kubernetes-enable-pod-uid"
+	CLIKubernetesGPUIDType              = "kubernetes-gpu-id-type"
+	CLIKubernetesPodLabelAllowlistRegex = "kubernetes-pod-label-allowlist-regex"
+	CLIUseOldNamespace                  = "use-old-namespace"
+	CLIRemoteHEInfo                     = "remote-hostengine-info"
+	CLIGPUDevices                       = "devices"
+	CLISwitchDevices                    = "switch-devices"
+	CLICPUDevices                       = "cpu-devices"
+	CLINoHostname                       = "no-hostname"
+	CLIUseFakeGPUs                      = "fake-gpus"
+	CLIConfigMapData                    = "configmap-data"
+	CLIWebSystemdSocket                 = "web-systemd-socket"
+	CLIWebConfigFile                    = "web-config-file"
+	CLIXIDCountWindowSize               = "xid-count-window-size"
+	CLIReplaceBlanksInModelName         = "replace-blanks-in-model-name"
+	CLIDebugMode                        = "debug"
+	CLIClockEventsCountWindowSize       = "clock-events-count-window-size"
+	CLIEnableDCGMLog                    = "enable-dcgm-log"
+	CLIDCGMLogLevel                     = "dcgm-log-level"
+	CLILogFormat                        = "log-format"
+	CLIPodResourcesKubeletSocket        = "pod-resources-kubelet-socket"
+	CLIHPCJobMappingDir                 = "hpc-job-mapping-dir"
+	CLINvidiaResourceNames              = "nvidia-resource-names"
+	CLIKubernetesVirtualGPUs            = "kubernetes-virtual-gpus"
+	CLIDumpEnabled                      = "dump-enabled"
+	CLIDumpDirectory                    = "dump-directory"
+	CLIDumpRetention                    = "dump-retention"
+	CLIDumpCompression                  = "dump-compression"
+	CLIKubernetesEnableDRA              = "kubernetes-enable-dra"
+	CLIDisableStartupValidate           = "disable-startup-validate"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -190,6 +191,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage: fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'",
 				appconfig.GPUUID, appconfig.DeviceName),
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"},
+		},
+		&cli.StringSliceFlag{
+			Name:    CLIKubernetesPodLabelAllowlistRegex,
+			Value:   cli.NewStringSlice(),
+			Usage:   "Regex patterns for filtering pod labels to include in metrics (comma-separated). Empty means include all labels. This parameter is effective only when '--kubernetes-enable-pod-labels' is true.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_POD_LABEL_ALLOWLIST_REGEX"},
 		},
 		&cli.StringFlag{
 			Name:    CLIGPUDevices,
@@ -694,35 +701,36 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 	}
 
 	return &appconfig.Config{
-		CollectorsFile:             c.String(CLIFieldsFile),
-		Address:                    c.String(CLIAddress),
-		CollectInterval:            c.Int(CLICollectInterval),
-		Kubernetes:                 c.Bool(CLIKubernetes),
-		KubernetesEnablePodLabels:  c.Bool(CLIKubernetesEnablePodLabels),
-		KubernetesEnablePodUID:     c.Bool(CLIKubernetesEnablePodUID),
-		KubernetesGPUIdType:        appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
-		CollectDCP:                 true,
-		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
-		UseRemoteHE:                c.IsSet(CLIRemoteHEInfo),
-		RemoteHEInfo:               c.String(CLIRemoteHEInfo),
-		GPUDeviceOptions:           gOpt,
-		SwitchDeviceOptions:        sOpt,
-		CPUDeviceOptions:           cOpt,
-		NoHostname:                 c.Bool(CLINoHostname),
-		UseFakeGPUs:                c.Bool(CLIUseFakeGPUs),
-		ConfigMapData:              c.String(CLIConfigMapData),
-		WebSystemdSocket:           c.Bool(CLIWebSystemdSocket),
-		WebConfigFile:              c.String(CLIWebConfigFile),
-		XIDCountWindowSize:         c.Int(CLIXIDCountWindowSize),
-		ReplaceBlanksInModelName:   c.Bool(CLIReplaceBlanksInModelName),
-		Debug:                      c.Bool(CLIDebugMode),
-		ClockEventsCountWindowSize: c.Int(CLIClockEventsCountWindowSize),
-		EnableDCGMLog:              c.Bool(CLIEnableDCGMLog),
-		DCGMLogLevel:               dcgmLogLevel,
-		PodResourcesKubeletSocket:  c.String(CLIPodResourcesKubeletSocket),
-		HPCJobMappingDir:           c.String(CLIHPCJobMappingDir),
-		NvidiaResourceNames:        c.StringSlice(CLINvidiaResourceNames),
-		KubernetesVirtualGPUs:      c.Bool(CLIKubernetesVirtualGPUs),
+		CollectorsFile:                   c.String(CLIFieldsFile),
+		Address:                          c.String(CLIAddress),
+		CollectInterval:                  c.Int(CLICollectInterval),
+		Kubernetes:                       c.Bool(CLIKubernetes),
+		KubernetesEnablePodLabels:        c.Bool(CLIKubernetesEnablePodLabels),
+		KubernetesEnablePodUID:           c.Bool(CLIKubernetesEnablePodUID),
+		KubernetesGPUIdType:              appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		KubernetesPodLabelAllowlistRegex: c.StringSlice(CLIKubernetesPodLabelAllowlistRegex),
+		CollectDCP:                       true,
+		UseOldNamespace:                  c.Bool(CLIUseOldNamespace),
+		UseRemoteHE:                      c.IsSet(CLIRemoteHEInfo),
+		RemoteHEInfo:                     c.String(CLIRemoteHEInfo),
+		GPUDeviceOptions:                 gOpt,
+		SwitchDeviceOptions:              sOpt,
+		CPUDeviceOptions:                 cOpt,
+		NoHostname:                       c.Bool(CLINoHostname),
+		UseFakeGPUs:                      c.Bool(CLIUseFakeGPUs),
+		ConfigMapData:                    c.String(CLIConfigMapData),
+		WebSystemdSocket:                 c.Bool(CLIWebSystemdSocket),
+		WebConfigFile:                    c.String(CLIWebConfigFile),
+		XIDCountWindowSize:               c.Int(CLIXIDCountWindowSize),
+		ReplaceBlanksInModelName:         c.Bool(CLIReplaceBlanksInModelName),
+		Debug:                            c.Bool(CLIDebugMode),
+		ClockEventsCountWindowSize:       c.Int(CLIClockEventsCountWindowSize),
+		EnableDCGMLog:                    c.Bool(CLIEnableDCGMLog),
+		DCGMLogLevel:                     dcgmLogLevel,
+		PodResourcesKubeletSocket:        c.String(CLIPodResourcesKubeletSocket),
+		HPCJobMappingDir:                 c.String(CLIHPCJobMappingDir),
+		NvidiaResourceNames:              c.StringSlice(CLINvidiaResourceNames),
+		KubernetesVirtualGPUs:            c.Bool(CLIKubernetesVirtualGPUs),
 		DumpConfig: appconfig.DumpConfig{
 			Enabled:     c.Bool(CLIDumpEnabled),
 			Directory:   c.String(CLIDumpDirectory),
