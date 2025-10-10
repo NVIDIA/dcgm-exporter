@@ -34,6 +34,13 @@ DCGM_FI_DEV_XID_ERRORS,              gauge,   Value of the last XID error encoun
 # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in us).
 # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in us).
 
+# DCGM Exporter fields
+
+# DCGM_EXP_CLOCK_EVENTS_COUNT, counter, reported clock events
+# DCGM_EXP_XID_ERRORS_COUNT, counter, reported XIDs during last window
+# DCGM_EXP_GPU_HEALTH_STATUS, counter, DCGM reported health status
+# DCGM_EXP_P2P_STATUS, counter, P2P NvLink status
+
 # Memory usage
 DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
 DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).

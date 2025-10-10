@@ -80,7 +80,7 @@ RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 #####
 # Stage 3: Copy the binary, libraries, and utilities from full container
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.12
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.13
 
 ARG VERSION
 ARG TARGETARCH
