@@ -27,7 +27,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 // TestNewLabelFilterCache tests the initialization of the label filter cache
