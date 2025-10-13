@@ -97,10 +97,14 @@ service:
   # When enabled, the helm chart will create service
   enable: true
   type: ClusterIP
-  # Accepts either "Cluster" or "Local", choose Local if you want to route internal traffic within the node only
+  # Accepts either "Cluster" or "Local", more detail: https://kubernetes.io/docs/reference/networking/virtual-ips/#traffic-policies
+  # Choose Local if you want to route internal traffic within the node only
   internalTrafficPolicy: Cluster
+  # Choose Local if you want to route external traffic to only route to ready node-local endpoints
+  externalTrafficPolicy: Cluster
   clusterIP: ""
   port: 9400
+  nodePort: null
   address: ":9400"
   # Annotations to add to the service
   annotations: {}
