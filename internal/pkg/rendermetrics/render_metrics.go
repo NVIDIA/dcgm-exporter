@@ -57,26 +57,30 @@ var (
 {{- end }}
 {{ end }}`
 
-	switchMetricsFormat = `
-{{- range $counter, $metrics := . -}}
-# HELP {{ $counter.FieldName }} {{ $counter.Help }}
-# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
-{{- range $metric := $metrics }}
-{{ $counter.FieldName }}{nvswitch="{{ $metric.GPU }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
-
-{{- range $k, $v := $metric.Labels -}}
-	,{{ $k }}="{{ $v }}"
-{{- end -}}
-} {{ $metric.Value -}}
-{{- end }}
-{{ end }}`
-
 	linkMetricsFormat = `
 {{- range $counter, $metrics := . -}}
 # HELP {{ $counter.FieldName }} {{ $counter.Help }}
 # TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
 {{- range $metric := $metrics }}
-{{ $counter.FieldName }}{nvlink="{{ $metric.GPU }}",nvswitch="{{ $metric.GPUDevice }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
+{{ $counter.FieldName }}{nvlink="{{ $metric.NvLink }}"{{if $metric.NvSwitch}},nvswitch="{{ $metric.NvSwitch }}"{{end}}{{if $metric.GPU}},gpu="{{ $metric.GPU }}"{{end}}{{if $metric.GPUUUID}},gpu_uuid="{{ $metric.GPUUUID }}"{{end}}{{if $metric.GPUPCIBusID}},pci_bus_id="{{ $metric.GPUPCIBusID }}"{{end}}{{if $metric.GPUDevice}},device="{{ $metric.GPUDevice }}"{{end}}{{if $metric.GPUModelName}},model_name="{{ $metric.GPUModelName }}"{{end}}{{if $metric.MigProfile}},GPU_I_PROFILE="{{ $metric.MigProfile }}",GPU_I_ID="{{ $metric.GPUInstanceID }}"{{end}}{{if $metric.Hostname}},hostname="{{ $metric.Hostname }}"{{end}}
+
+{{- range $k, $v := $metric.Labels -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
+{{- range $k, $v := $metric.Attributes -}}
+	,{{ $k }}="{{ $v }}"
+{{- end -}}
+
+} {{ $metric.Value -}}
+{{- end }}
+{{ end }}`
+
+	switchMetricsFormat = `
+{{- range $counter, $metrics := . -}}
+# HELP {{ $counter.FieldName }} {{ $counter.Help }}
+# TYPE {{ $counter.FieldName }} {{ $counter.PromType }}
+{{- range $metric := $metrics }}
+{{ $counter.FieldName }}{nvswitch="{{ $metric.NvSwitch }}"{{if $metric.Hostname }},Hostname="{{ $metric.Hostname }}"{{end}}
 
 {{- range $k, $v := $metric.Labels -}}
 	,{{ $k }}="{{ $v }}"

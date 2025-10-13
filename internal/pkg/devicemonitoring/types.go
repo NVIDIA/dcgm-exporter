@@ -27,4 +27,5 @@ type Info struct {
 	DeviceInfo   dcgm.Device
 	InstanceInfo *deviceinfo.GPUInstanceInfo
 	ParentId     uint
+	ParentType   dcgm.Field_Entity_Group
 }

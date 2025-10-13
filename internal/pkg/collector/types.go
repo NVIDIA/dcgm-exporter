@@ -58,19 +58,22 @@ func (e *EntityCollectorTuple) Collector() Collector {
 }
 
 type Metric struct {
-	Counter       counters.Counter  `json:"counter"`
-	Value         string            `json:"value"`
-	GPU           string            `json:"gpu"`
-	GPUUUID       string            `json:"gpu_uuid"`
-	GPUDevice     string            `json:"gpu_device"`
-	GPUModelName  string            `json:"gpu_model"`
-	GPUPCIBusID   string            `json:"pci_bus_id"`
-	UUID          string            `json:"uuid"`
-	MigProfile    string            `json:"mig_profile,omitempty"`
-	GPUInstanceID string            `json:"gpu_instance_id,omitempty"`
-	Hostname      string            `json:"hostname"`
-	Labels        map[string]string `json:"labels"`
-	Attributes    map[string]string `json:"attributes"`
+	Counter       counters.Counter        `json:"counter"`
+	Value         string                  `json:"value"`
+	GPU           string                  `json:"gpu,omitempty"`
+	GPUUUID       string                  `json:"gpu_uuid,omitempty"`
+	GPUDevice     string                  `json:"gpu_device,omitempty"`
+	GPUModelName  string                  `json:"gpu_model,omitempty"`
+	GPUPCIBusID   string                  `json:"pci_bus_id,omitempty"`
+	UUID          string                  `json:"uuid,omitempty"`
+	MigProfile    string                  `json:"mig_profile,omitempty"`
+	NvSwitch      string                  `json:"nv_switch,omitempty"`
+	NvLink        string                  `json:"nv_link,omitempty"`
+	GPUInstanceID string                  `json:"gpu_instance_id,omitempty"`
+	Hostname      string                  `json:"hostname"`
+	Labels        map[string]string       `json:"labels"`
+	Attributes    map[string]string       `json:"attributes"`
+	ParentType    dcgm.Field_Entity_Group `json:"parent_type"`
 }
 
 func (m Metric) GetIDOfType(idType appconfig.KubernetesGPUIDType) (string, error) {

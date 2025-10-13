@@ -29,7 +29,10 @@ func GetMonitoredEntities(deviceInfo deviceinfo.Provider) []Info {
 	case dcgm.FE_SWITCH:
 		monitoring = monitorAllSwitches(deviceInfo)
 	case dcgm.FE_LINK:
-		monitoring = monitorAllLinks(deviceInfo)
+		var links []Info
+		monitoring = monitorAllGPUNvLinks(deviceInfo)
+		links = monitorAllNvSwitchNvLinks(deviceInfo)
+		monitoring = append(monitoring, links...)
 	case dcgm.FE_CPU:
 		monitoring = monitorAllCPUs(deviceInfo)
 	case dcgm.FE_CPU_CORE:
@@ -83,6 +86,7 @@ func monitorAllGPUs(deviceInfo deviceinfo.Provider) []Info {
 			deviceInfo.GPU(i).DeviceInfo,
 			nil,
 			PARENT_ID_IGNORED,
+			dcgm.FE_NONE,
 		}
 		monitoring = append(monitoring, mi)
 	}
@@ -101,6 +105,7 @@ func monitorAllGPUInstances(deviceInfo deviceinfo.Provider, addFlexibly bool) []
 				deviceInfo.GPU(i).DeviceInfo,
 				nil,
 				PARENT_ID_IGNORED,
+				dcgm.FE_NONE,
 			}
 			monitoring = append(monitoring, mi)
 		} else {
@@ -113,6 +118,7 @@ func monitorAllGPUInstances(deviceInfo deviceinfo.Provider, addFlexibly bool) []
 					deviceInfo.GPU(i).DeviceInfo,
 					&deviceInfo.GPU(i).GPUInstances[j],
 					PARENT_ID_IGNORED,
+					dcgm.FE_GPU,
 				}
 				monitoring = append(monitoring, mi)
 			}
@@ -135,6 +141,7 @@ func monitorAllCPUs(deviceInfo deviceinfo.Provider) []Info {
 			dcgm.Device{},
 			nil,
 			PARENT_ID_IGNORED,
+			dcgm.FE_NONE,
 		}
 		monitoring = append(monitoring, mi)
 	}
@@ -160,6 +167,7 @@ func monitorAllCPUCores(deviceInfo deviceinfo.Provider) []Info {
 				dcgm.Device{},
 				nil,
 				cpu.EntityId,
+				dcgm.FE_CPU,
 			}
 			monitoring = append(monitoring, mi)
 		}
@@ -181,6 +189,7 @@ func monitorAllSwitches(deviceInfo deviceinfo.Provider) []Info {
 			dcgm.Device{},
 			nil,
 			PARENT_ID_IGNORED,
+			dcgm.FE_NONE,
 		}
 		monitoring = append(monitoring, mi)
 	}
@@ -188,7 +197,7 @@ func monitorAllSwitches(deviceInfo deviceinfo.Provider) []Info {
 	return monitoring
 }
 
-func monitorAllLinks(deviceInfo deviceinfo.Provider) []Info {
+func monitorAllNvSwitchNvLinks(deviceInfo deviceinfo.Provider) []Info {
 	var monitoring []Info
 
 	for _, sw := range deviceInfo.Switches() {
@@ -210,6 +219,30 @@ func monitorAllLinks(deviceInfo deviceinfo.Provider) []Info {
 				dcgm.Device{},
 				nil,
 				link.ParentId,
+				dcgm.FE_SWITCH,
+			}
+			monitoring = append(monitoring, mi)
+		}
+	}
+
+	return monitoring
+}
+
+func monitorAllGPUNvLinks(deviceInfo deviceinfo.Provider) []Info {
+	var monitoring []Info
+
+	for i := uint(0); i < deviceInfo.GPUCount(); i++ {
+		for _, link := range deviceInfo.GPU(i).NvLinks {
+			if link.State != dcgm.LS_UP {
+				continue
+			}
+
+			mi := Info{
+				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: link.Index},
+				deviceInfo.GPU(i).DeviceInfo,
+				nil,
+				link.ParentId,
+				dcgm.FE_GPU,
 			}
 			monitoring = append(monitoring, mi)
 		}
@@ -226,6 +259,7 @@ func monitorGPU(deviceInfo deviceinfo.Provider, gpuID int) *Info {
 				deviceInfo.GPU(i).DeviceInfo,
 				nil,
 				PARENT_ID_IGNORED,
+				dcgm.FE_NONE,
 			}
 		}
 	}
@@ -242,6 +276,7 @@ func monitorGPUInstance(deviceInfo deviceinfo.Provider, gpuInstanceID int) *Info
 					deviceInfo.GPU(i).DeviceInfo,
 					&instance,
 					PARENT_ID_IGNORED,
+					dcgm.FE_GPU,
 				}
 			}
 		}

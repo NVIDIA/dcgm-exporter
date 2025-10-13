@@ -172,6 +172,7 @@ func TestMetrics(t *testing.T) {
 			mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 			mockDeviceInfo.EXPECT().InfoType().Return(tt.group).AnyTimes()
 			mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
+			mockDeviceInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
 
 			defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(
 				mockDeviceInfo,
@@ -236,6 +237,7 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_CPU).AnyTimes()
 	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(0)).AnyTimes()
 
 	defaultDeviceWatchList := *devicewatchlistmanager.NewWatchList(
 		mockDeviceInfo,

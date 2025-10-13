@@ -25,12 +25,23 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 )
 
 func TestToMetric(t *testing.T) {
 	fieldValue := [4096]byte{}
 	fieldValue[0] = 42
+	mi := devicemonitoring.Info{
+		DeviceInfo: dcgm.Device{
+			UUID: "fake0",
+			Identifiers: dcgm.DeviceIdentifiers{
+				Model: "NVIDIA T400 4GB",
+			},
+			PCI: dcgm.PCIInfo{
+				BusID: "00000000:0000:0000.0",
+			},
+		},
+	}
 	values := []dcgm.FieldValue_v1{
 		{
 			FieldID:   150,
@@ -47,18 +58,6 @@ func TestToMetric(t *testing.T) {
 			Help:      "Temperature Help info",
 		},
 	}
-
-	d := dcgm.Device{
-		UUID: "fake0",
-		Identifiers: dcgm.DeviceIdentifiers{
-			Model: "NVIDIA T400 4GB",
-		},
-		PCI: dcgm.PCIInfo{
-			BusID: "00000000:0000:0000.0",
-		},
-	}
-
-	var instanceInfo *deviceinfo.GPUInstanceInfo = nil
 
 	type testCase struct {
 		replaceBlanksInModelName bool
@@ -79,15 +78,15 @@ func TestToMetric(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("When replaceBlanksInModelName is %t", tc.replaceBlanksInModelName), func(t *testing.T) {
 			metrics := make(map[counters.Counter][]Metric)
-			toMetric(metrics, values, c, d, instanceInfo, false, "", tc.replaceBlanksInModelName)
+			toMetric(metrics, values, c, mi, false, "", tc.replaceBlanksInModelName)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
 			assert.Equal(t, "42", metricValues[0].Value)
 			assert.Equal(t, tc.expectedGPUModelName, metricValues[0].GPUModelName)
 
-			assert.Equal(t, d.UUID, metricValues[0].GPUUUID)
-			assert.Equal(t, d.PCI.BusID, metricValues[0].GPUPCIBusID)
+			assert.Equal(t, mi.DeviceInfo.UUID, metricValues[0].GPUUUID)
+			assert.Equal(t, mi.DeviceInfo.PCI.BusID, metricValues[0].GPUPCIBusID)
 		})
 	}
 }
@@ -102,7 +101,8 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 		},
 	}
 
-	d := dcgm.Device{
+	mi := devicemonitoring.Info{
+		DeviceInfo: dcgm.Device{
 		UUID: "fake0",
 		Identifiers: dcgm.DeviceIdentifiers{
 			Model: "NVIDIA T400 4GB",
@@ -110,9 +110,8 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 		PCI: dcgm.PCIInfo{
 			BusID: "00000000:0000:0000.0",
 		},
+		},
 	}
-
-	var instanceInfo *deviceinfo.GPUInstanceInfo = nil
 
 	type testCase struct {
 		name        string
@@ -151,7 +150,7 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 			}
 
 			metrics := make(map[counters.Counter][]Metric)
-			toMetric(metrics, values, c, d, instanceInfo, false, "", false)
+			toMetric(metrics, values, c, mi, false, "", false)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
@@ -161,8 +160,8 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 			assert.Contains(t, metricValues[0].Attributes, "err_msg")
 			assert.Equal(t, tc.expectedErr, metricValues[0].Attributes["err_msg"])
 
-			assert.Equal(t, d.UUID, metricValues[0].GPUUUID)
-			assert.Equal(t, d.PCI.BusID, metricValues[0].GPUPCIBusID)
+			assert.Equal(t, mi.DeviceInfo.UUID, metricValues[0].GPUUUID)
+			assert.Equal(t, mi.DeviceInfo.PCI.BusID, metricValues[0].GPUPCIBusID)
 		})
 	}
 }

@@ -313,7 +313,9 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
 				mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil).AnyTimes()
 				mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil).AnyTimes()
-				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(dcgm.FieldHandle{}, nil)
+				mockDCGM.EXPECT().AddLinkEntityToGroup(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+				mockDCGM.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
+				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(dcgm.FieldHandle{}, nil).AnyTimes()
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(nil).AnyTimes()
 				setupDCGMMockForDCGMExpMetrics([]dcgm.Short{230})(mockDCGM)
@@ -508,6 +510,7 @@ func Test_collectorFactory_Register(t *testing.T) {
 				mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 				mockDCGM.EXPECT().GetDeviceInfo(gomock.Eq(uint(0))).Return(dcgm.Device{}, nil)
 				mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+				mockDCGM.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
 				mockDCGM.EXPECT().CreateGroup(gomock.Cond(func(x any) bool {
 					return strings.HasPrefix(x.(string), "gpu-collector-group")
 				})).Return(dcgm.GroupHandle{}, errors.New("boom!"))

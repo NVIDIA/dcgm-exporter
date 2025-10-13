@@ -70,17 +70,17 @@ func (mr *MockDCGMMockRecorder) AddEntityToGroup(arg0, arg1, arg2 any) *gomock.C
 }
 
 // AddLinkEntityToGroup mocks base method.
-func (m *MockDCGM) AddLinkEntityToGroup(arg0 dcgm.GroupHandle, arg1, arg2 uint) error {
+func (m *MockDCGM) AddLinkEntityToGroup(arg0 dcgm.GroupHandle, arg1 uint, arg2 dcgm.Field_Entity_Group, arg3 uint) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AddLinkEntityToGroup", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "AddLinkEntityToGroup", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // AddLinkEntityToGroup indicates an expected call of AddLinkEntityToGroup.
-func (mr *MockDCGMMockRecorder) AddLinkEntityToGroup(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) AddLinkEntityToGroup(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddLinkEntityToGroup", reflect.TypeOf((*MockDCGM)(nil).AddLinkEntityToGroup), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddLinkEntityToGroup", reflect.TypeOf((*MockDCGM)(nil).AddLinkEntityToGroup), arg0, arg1, arg2, arg3)
 }
 
 // Cleanup mocks base method.
@@ -465,18 +465,18 @@ func (mr *MockDCGMMockRecorder) InjectFieldValue(gpu, fieldID, fieldType, status
 }
 
 // LinkGetLatestValues mocks base method.
-func (m *MockDCGM) LinkGetLatestValues(arg0, arg1 uint, arg2 []dcgm.Short) ([]dcgm.FieldValue_v1, error) {
+func (m *MockDCGM) LinkGetLatestValues(arg0 uint, arg1 dcgm.Field_Entity_Group, arg2 uint, arg3 []dcgm.Short) ([]dcgm.FieldValue_v1, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "LinkGetLatestValues", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "LinkGetLatestValues", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].([]dcgm.FieldValue_v1)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // LinkGetLatestValues indicates an expected call of LinkGetLatestValues.
-func (mr *MockDCGMMockRecorder) LinkGetLatestValues(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockDCGMMockRecorder) LinkGetLatestValues(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LinkGetLatestValues", reflect.TypeOf((*MockDCGM)(nil).LinkGetLatestValues), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LinkGetLatestValues", reflect.TypeOf((*MockDCGM)(nil).LinkGetLatestValues), arg0, arg1, arg2, arg3)
 }
 
 // NewDefaultGroup mocks base method.

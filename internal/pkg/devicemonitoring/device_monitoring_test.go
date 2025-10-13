@@ -115,6 +115,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -126,6 +127,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -176,6 +178,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -218,6 +221,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -229,6 +233,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -271,6 +276,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -304,6 +310,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -315,6 +322,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -347,6 +355,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -358,6 +367,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -392,6 +402,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -403,6 +414,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: uint(1)},
@@ -411,6 +423,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -456,12 +469,14 @@ func TestGetMonitoredEntities(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_SWITCH,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_SWITCH,
 				},
 			},
 		},
@@ -478,6 +493,7 @@ func TestGetMonitoredEntities(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -505,12 +521,14 @@ func TestGetMonitoredEntities(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_CPU,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_CPU,
 				},
 			},
 		},
@@ -638,6 +656,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -665,6 +684,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: uint(1)},
@@ -673,6 +693,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -706,6 +727,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -733,6 +755,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -744,6 +767,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -769,6 +793,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -780,6 +805,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -807,6 +833,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -818,6 +845,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: uint(1)},
@@ -826,6 +854,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -853,6 +882,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo1,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 				{
 					Entity: dcgm.GroupEntityPair{
@@ -864,6 +894,7 @@ func Test_monitorAllGPUInstances(t *testing.T) {
 					},
 					InstanceInfo: &testutils.MockGPUInstanceInfo2,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_GPU,
 				},
 			},
 		},
@@ -1017,6 +1048,7 @@ func Test_monitorAllLinks(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_SWITCH,
 				},
 			},
 		},
@@ -1095,12 +1127,14 @@ func Test_monitorAllLinks(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_SWITCH,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_SWITCH,
 				},
 			},
 		},
@@ -1130,6 +1164,7 @@ func Test_monitorAllLinks(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_SWITCH,
 				},
 			},
 		},
@@ -1137,7 +1172,7 @@ func Test_monitorAllLinks(t *testing.T) {
 	for _, tt := range tests {
 		deviceInfo := tt.mockFunc()
 		t.Run(tt.name, func(t *testing.T) {
-			got := monitorAllLinks(deviceInfo)
+			got := monitorAllNvSwitchNvLinks(deviceInfo)
 			assert.Equalf(t, tt.want, got, "Unexpected Output")
 		})
 	}
@@ -1170,6 +1205,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -1195,12 +1231,14 @@ func Test_monitorAllCPUs(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -1226,6 +1264,7 @@ func Test_monitorAllCPUs(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     PARENT_ID_IGNORED,
+					ParentType:   dcgm.FE_NONE,
 				},
 			},
 		},
@@ -1282,6 +1321,7 @@ func Test_monitorAllCPUCores(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_CPU,
 				},
 			},
 		},
@@ -1341,24 +1381,28 @@ func Test_monitorAllCPUCores(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_CPU,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_CPU,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: uint(0)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_CPU,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_CPU,
 				},
 			},
 		},
@@ -1386,12 +1430,14 @@ func Test_monitorAllCPUCores(t *testing.T) {
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     0,
+					ParentType:   dcgm.FE_CPU,
 				},
 				{
 					Entity:       dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: uint(1)},
 					DeviceInfo:   dcgm.Device{},
 					InstanceInfo: nil,
 					ParentId:     1,
+					ParentType:   dcgm.FE_CPU,
 				},
 			},
 		},
@@ -1537,6 +1583,7 @@ func Test_monitorGPUInstance(t *testing.T) {
 				},
 				InstanceInfo: &testutils.MockGPUInstanceInfo1,
 				ParentId:     PARENT_ID_IGNORED,
+				ParentType:   dcgm.FE_GPU,
 			},
 		},
 		{
@@ -1574,6 +1621,7 @@ func Test_monitorGPUInstance(t *testing.T) {
 				},
 				InstanceInfo: &testutils.MockGPUInstanceInfo2,
 				ParentId:     PARENT_ID_IGNORED,
+				ParentType:   dcgm.FE_GPU,
 			},
 		},
 		{
@@ -1597,6 +1645,7 @@ func Test_monitorGPUInstance(t *testing.T) {
 				},
 				InstanceInfo: &testutils.MockGPUInstanceInfo2,
 				ParentId:     PARENT_ID_IGNORED,
+				ParentType:   dcgm.FE_GPU,
 			},
 		},
 	}
