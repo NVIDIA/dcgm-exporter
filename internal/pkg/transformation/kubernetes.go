@@ -334,34 +334,38 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				// with the container info and the shared GPU label, if it exists.
 				// Notably, this will increase the number of unique metrics (i.e. labelsets)
 				// to by the number of containers sharing the GPU.
-				for _, pi := range podInfos {
-					metric, err := utils.DeepCopy(metrics[counter][j])
-					if err != nil {
-						return err
-					}
-					if !p.Config.UseOldNamespace {
-						metric.Attributes[podAttribute] = pi.Name
-						metric.Attributes[namespaceAttribute] = pi.Namespace
-						metric.Attributes[containerAttribute] = pi.Container
-					} else {
-						metric.Attributes[oldPodAttribute] = pi.Name
-						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
-						metric.Attributes[oldContainerAttribute] = pi.Container
-					}
-					if dr := pi.DynamicResources; dr != nil {
-						metric.Attributes[draClaimName] = dr.ClaimName
-						metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
-						metric.Attributes[draDriverName] = dr.DriverName
-						metric.Attributes[draPoolName] = dr.PoolName
-						metric.Attributes[draDeviceName] = dr.DeviceName
+				if podInfos != nil {
+					for _, pi := range podInfos {
+						metric, err := utils.DeepCopy(metrics[counter][j])
+						if err != nil {
+							return err
+						}
+						if !p.Config.UseOldNamespace {
+							metric.Attributes[podAttribute] = pi.Name
+							metric.Attributes[namespaceAttribute] = pi.Namespace
+							metric.Attributes[containerAttribute] = pi.Container
+						} else {
+							metric.Attributes[oldPodAttribute] = pi.Name
+							metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+							metric.Attributes[oldContainerAttribute] = pi.Container
+						}
+						if dr := pi.DynamicResources; dr != nil {
+							metric.Attributes[draClaimName] = dr.ClaimName
+							metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
+							metric.Attributes[draDriverName] = dr.DriverName
+							metric.Attributes[draPoolName] = dr.PoolName
+							metric.Attributes[draDeviceName] = dr.DeviceName
 
-						// Add MIG-specific labels if this is a MIG device
-						if migInfo := dr.MIGInfo; migInfo != nil {
-							metric.Attributes[draMigProfile] = migInfo.Profile
-							metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
+							// Add MIG-specific labels if this is a MIG device
+							if migInfo := dr.MIGInfo; migInfo != nil {
+								metric.Attributes[draMigProfile] = migInfo.Profile
+								metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
+							}
 						}
 						newmetrics = append(newmetrics, metric)
 					}
+				} else {
+					newmetrics = append(newmetrics, metrics[counter][j])
 				}
 			}
 			// Upsert the annotated series into the final map only if we found any
