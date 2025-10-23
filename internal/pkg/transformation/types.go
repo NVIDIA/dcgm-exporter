@@ -17,6 +17,7 @@
 package transformation
 
 import (
+	"container/list"
 	"context"
 	"regexp"
 	"sync"
@@ -46,9 +47,18 @@ type PodMapper struct {
 
 // LabelFilterCache provides efficient caching for label filtering decisions
 type LabelFilterCache struct {
-	compiledPatterns []*regexp.Regexp // Pre-compiled regex patterns
-	allowedLabels    sync.Map         // map[string]bool - cache of label keys we've already checked
-	enabled          bool             // Whether filtering is enabled (has patterns)
+	compiledPatterns []*regexp.Regexp         // Pre-compiled regex patterns
+	cache            map[string]*list.Element // map[labelKey -> list element] - list element of key we've already checked
+	lruList          *list.List               // Doubly-linked list for LRU ordering
+	mu               sync.Mutex               // Protects cache and lruList
+	maxSize          int                      // Maximum number of entries to cache
+	enabled          bool                     // Whether filtering is enabled (has patterns)
+}
+
+// labelCacheEntry represents a cached label filtering result
+type labelCacheEntry struct {
+	key   string // Label key
+	value bool   // Whether the label is allowed
 }
 
 type PodInfo struct {

@@ -83,7 +83,7 @@ func TestNewLabelFilterCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cache := newLabelFilterCache(tt.patterns)
+			cache := newLabelFilterCache(tt.patterns, 1000)
 
 			assert.Equal(t, tt.expectedEnabled, cache.enabled,
 				"Cache enabled state should match expected")
@@ -93,6 +93,13 @@ func TestNewLabelFilterCache(t *testing.T) {
 			// Verify patterns are actually compiled
 			for _, pattern := range cache.compiledPatterns {
 				assert.NotNil(t, pattern, "Compiled pattern should not be nil")
+			}
+
+			// Verify LRU structures are initialized when enabled
+			if cache.enabled {
+				assert.NotNil(t, cache.cache, "Cache map should be initialized")
+				assert.NotNil(t, cache.lruList, "LRU list should be initialized")
+				assert.Equal(t, 1000, cache.maxSize, "Max size should be set")
 			}
 		})
 	}
@@ -229,7 +236,7 @@ func TestShouldIncludeLabel(t *testing.T) {
 				Config: &appconfig.Config{
 					KubernetesPodLabelAllowlistRegex: tt.allowlistPatterns,
 				},
-				labelFilterCache: newLabelFilterCache(tt.allowlistPatterns),
+				labelFilterCache: newLabelFilterCache(tt.allowlistPatterns, 1000),
 			}
 
 			result := podMapper.shouldIncludeLabel(tt.labelKey)
@@ -246,15 +253,20 @@ func TestShouldIncludeLabel_Caching(t *testing.T) {
 		Config: &appconfig.Config{
 			KubernetesPodLabelAllowlistRegex: patterns,
 		},
-		labelFilterCache: newLabelFilterCache(patterns),
+		labelFilterCache: newLabelFilterCache(patterns, 1000),
 	}
 
 	result1 := podMapper.shouldIncludeLabel("app")
 	assert.True(t, result1, "First call should return true for 'app'")
 
-	cached, ok := podMapper.labelFilterCache.allowedLabels.Load("app")
-	assert.True(t, ok, "Result should be cached")
-	assert.True(t, cached.(bool), "Cached value should be true")
+	// Verify it was cached
+	cache := podMapper.labelFilterCache
+	cache.mu.Lock()
+	elem, exists := cache.cache["app"]
+	cache.mu.Unlock()
+	assert.True(t, exists, "Result should be cached")
+	entry := elem.Value.(*labelCacheEntry)
+	assert.True(t, entry.value, "Cached value should be true")
 
 	result2 := podMapper.shouldIncludeLabel("app")
 	assert.True(t, result2, "Second call should return cached true for 'app'")
@@ -262,9 +274,13 @@ func TestShouldIncludeLabel_Caching(t *testing.T) {
 	result3 := podMapper.shouldIncludeLabel("excluded-label")
 	assert.False(t, result3, "Should return false for non-matching label")
 
-	cached2, ok2 := podMapper.labelFilterCache.allowedLabels.Load("excluded-label")
-	assert.True(t, ok2, "Exclusion should be cached")
-	assert.False(t, cached2.(bool), "Cached exclusion value should be false")
+	// Verify exclusion was cached
+	cache.mu.Lock()
+	elem2, exists2 := cache.cache["excluded-label"]
+	cache.mu.Unlock()
+	assert.True(t, exists2, "Exclusion should be cached")
+	entry2 := elem2.Value.(*labelCacheEntry)
+	assert.False(t, entry2.value, "Cached exclusion value should be false")
 }
 
 // TestGetPodMetadata_WithLabelFiltering tests the integration of label filtering with getPodMetadata
@@ -383,7 +399,7 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 			podMapper := &PodMapper{
 				Config:           config,
 				Client:           fakeClient,
-				labelFilterCache: newLabelFilterCache(config.KubernetesPodLabelAllowlistRegex),
+				labelFilterCache: newLabelFilterCache(config.KubernetesPodLabelAllowlistRegex, 1000),
 			}
 
 			metadata, err := podMapper.getPodMetadata("default", "test-pod")

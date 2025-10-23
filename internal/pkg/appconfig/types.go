@@ -45,6 +45,7 @@ type Config struct {
 	KubernetesEnablePodUID           bool
 	KubernetesGPUIdType              KubernetesGPUIDType
 	KubernetesPodLabelAllowlistRegex []string // Regex patterns for filtering pod labels
+	KubernetesPodLabelCacheSize      int      // Maximum number of label keys to cache (<=0 means default size)
 	CollectDCP                       bool
 	UseOldNamespace                  bool
 	UseRemoteHE                      bool
