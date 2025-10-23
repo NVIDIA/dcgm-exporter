@@ -17,6 +17,7 @@
 package transformation
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"log/slog"
@@ -88,9 +89,15 @@ func (p *PodMapper) iterateGPUDevices(devicePods *podresourcesapi.ListPodResourc
 func NewPodMapper(c *appconfig.Config) *PodMapper {
 	slog.Info("Kubernetes metrics collection enabled!")
 
+	// Default cache size if not configured
+	cacheSize := c.KubernetesPodLabelCacheSize
+	if cacheSize <= 0 {
+		cacheSize = 150000 // Default: ~18MB for 150k entries (suitable for large cloud clusters)
+	}
+
 	podMapper := &PodMapper{
 		Config:           c,
-		labelFilterCache: newLabelFilterCache(c.KubernetesPodLabelAllowlistRegex),
+		labelFilterCache: newLabelFilterCache(c.KubernetesPodLabelAllowlistRegex, cacheSize),
 	}
 
 	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
@@ -123,15 +130,20 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	return podMapper
 }
 
-// newLabelFilterCache creates a new cache with pre-compiled regex patterns
-func newLabelFilterCache(patterns []string) *LabelFilterCache {
+// newLabelFilterCache creates a new LRU cache with pre-compiled regex patterns
+func newLabelFilterCache(patterns []string, maxSize int) *LabelFilterCache {
 	cache := &LabelFilterCache{
 		enabled: len(patterns) > 0,
+		maxSize: maxSize,
 	}
 
 	if !cache.enabled {
 		return cache
 	}
+
+	// Initialize LRU cache structures
+	cache.cache = make(map[string]*list.Element)
+	cache.lruList = list.New()
 
 	// Pre-compile all regex patterns at initialization time
 	cache.compiledPatterns = make([]*regexp.Regexp, 0, len(patterns))
@@ -154,7 +166,8 @@ func newLabelFilterCache(patterns []string) *LabelFilterCache {
 	} else {
 		slog.Info("Pod label filtering enabled",
 			"patterns", len(cache.compiledPatterns),
-			"originalPatterns", len(patterns))
+			"originalPatterns", len(patterns),
+			"cacheSize", maxSize)
 	}
 
 	return cache
@@ -863,8 +876,8 @@ func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, err
 }
 
 // shouldIncludeLabel checks if a label should be included based on the allowlist regex patterns.
-// Uses a two-tier cache to avoid expensive regex matching:
-// 1. Check sync.Map for previously evaluated label keys
+// Uses an LRU cache to avoid expensive regex matching while bounding memory:
+// 1. Check cache for previously evaluated label keys
 // 2. If not cached, evaluate against pre-compiled regex patterns and cache the result
 func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
 	cache := p.labelFilterCache
@@ -873,9 +886,15 @@ func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
 		return true
 	}
 
-	// Check cache first
-	if result, ok := cache.allowedLabels.Load(labelKey); ok {
-		return result.(bool)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+
+	// Check if labelKey is in cache
+	if elem, exists := cache.cache[labelKey]; exists {
+		// Cache hit: move to most recently used and return cached value
+		cache.lruList.MoveToFront(elem)
+		entry := elem.Value.(*labelCacheEntry)
+		return entry.value
 	}
 
 	// Cache miss: evaluate against pre-compiled patterns
@@ -887,8 +906,24 @@ func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
 		}
 	}
 
-	// Store result in cache for future lookups
-	cache.allowedLabels.Store(labelKey, allowed)
+	entry := &labelCacheEntry{
+		key:   labelKey,
+		value: allowed,
+	}
+
+	// If cache is at capacity, evict least recently used entry
+	if cache.lruList.Len() >= cache.maxSize {
+		oldest := cache.lruList.Back()
+		if oldest != nil {
+			cache.lruList.Remove(oldest)
+			oldEntry := oldest.Value.(*labelCacheEntry)
+			delete(cache.cache, oldEntry.key)
+		}
+	}
+
+	// Add new entry to front (most recently used)
+	elem := cache.lruList.PushFront(entry)
+	cache.cache[labelKey] = elem
 
 	return allowed
 }
