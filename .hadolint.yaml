@@ -1,0 +1,23 @@
+# Hadolint configuration for dcgm-exporter Dockerfiles
+# https://github.com/hadolint/hadolint
+
+# Ignored rules with justification:
+# - DL3008/DL3041: Package version pinning not used because:
+#   * We intentionally use the latest DCGM version available in NVIDIA repos
+#   * Version control is provided by the versioned CUDA base image (e.g., cuda:13.0.1)
+#   * Allows automatic security patches and bug fixes within compatible versions
+#   * Pinning would require Dockerfile updates for every DCGM patch release
+#   * Build tools (wget, gcc) are ephemeral and don't affect final image
+# - DL3029: --platform flag required for multi-arch builds (amd64/arm64)
+# - DL3002: USER root required for Docker to grant CAP_SYS_ADMIN capability
+#   * Docker only grants capabilities to root processes (UID 0)
+#   * Non-root execution available via --user flag (basic metrics only)
+#   * Documented in Dockerfile with security measures
+ignored:
+  - DL3008  # apt-get version pinning
+  - DL3029  # --platform flag
+  - DL3002  # USER root
+  - DL3041  # dnf version pinning (same reasoning as DL3008)
+  - DL3059  # Multiple consecutive RUN (acceptable for clarity)
+  - SC2086  # ShellCheck - quoting (handled where needed)
+

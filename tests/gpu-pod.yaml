@@ -3,6 +3,7 @@ kind: Pod
 metadata:
   name: nbody-pod
 spec:
+  automountServiceAccountToken: false
   restartPolicy: OnFailure
   containers:
     - name: nbody
@@ -11,4 +12,9 @@ spec:
       args: ["-benchmark", "-i=10000000"]
       resources:
         limits:
+          cpu: 200m
+          memory: 256Mi
           nvidia.com/gpu: 1
+        requests:
+          cpu: 100m
+          memory: 128Mi

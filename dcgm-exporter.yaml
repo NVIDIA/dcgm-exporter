@@ -33,6 +33,7 @@ spec:
         app.kubernetes.io/version: "4.6.0"
       name: "dcgm-exporter"
     spec:
+      automountServiceAccountToken: false
       containers:
       - image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.4.1-4.6.0-ubuntu22.04"
         env:
@@ -48,11 +49,23 @@ spec:
           runAsNonRoot: false
           runAsUser: 0
           capabilities:
-            add: ["SYS_ADMIN"]
+            add: ["SYS_ADMIN"]  # Required for profiling metrics (DCGM_FI_PROF_*)
+            drop: ["ALL"]
+          allowPrivilegeEscalation: false
+          # readOnlyRootFilesystem: true  # Enable if tmpfs volumes are configured
+          # Note: For non-root without profiling metrics, use:
+          # runAsNonRoot: true, runAsUser: 1000, and remove SYS_ADMIN from capabilities.add
         volumeMounts:
         - name: "pod-gpu-resources"
           readOnly: true
           mountPath: "/var/lib/kubelet/pod-resources"
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
       volumes:
       - name: "pod-gpu-resources"
         hostPath:

@@ -23,6 +23,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/capabilities"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -460,6 +461,14 @@ func startDCGMExporter(c *cli.Context) error {
 		fillConfigMetricGroups(config)
 
 		cs := getCounters(config)
+
+		// Log capability information for debugging
+		if config.Debug {
+			capabilities.LogCapabilityInfo()
+		}
+
+		// Check and warn if profiling metrics are requested but CAP_SYS_ADMIN is missing
+		capabilities.WarnIfMissingProfilingCapabilities(cs.HasProfilingMetrics())
 
 		deviceWatchListManager := startDeviceWatchListManager(cs, config)
 
