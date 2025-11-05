@@ -132,7 +132,9 @@ func Test_collectorFactory_Register(t *testing.T) {
 				return mockDeviceWatchListManager
 			},
 			hostname: "testhost",
-			config:   &appconfig.Config{},
+			config: &appconfig.Config{
+				DisableStartupValidate: true,
+			},
 			setupDCGMMock: func(mockDCGM *mockdcgm.MockDCGM) {
 				mockGroupHandle := dcgm.GroupHandle{}
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, errors.New("boom")).AnyTimes()
