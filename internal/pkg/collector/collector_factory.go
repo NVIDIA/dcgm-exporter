@@ -76,7 +76,11 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 			if dcgmCollector, err := cf.enableDCGMCollector(entityWatchList); err != nil {
 				slog.Error(fmt.Sprintf("DCGM collector for entity type '%s' cannot be initialized; err: %v",
 					entityType.String(), err))
-				// Not a fatal error
+				// with config.DisableStartupValidate unset, this is fatal
+				if !cf.config.DisableStartupValidate {
+					os.Exit(1)
+				}
+				// continue to next entity type if config.DisableStartupValidate is set
 			} else {
 				entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
 					entity:    entityType,
