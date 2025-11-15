@@ -170,7 +170,7 @@ You can find the official NVIDIA DCGM-Exporter dashboard here: <https://grafana.
 
 You will also find the `json` file on this repo under `grafana/dcgm-exporter-dashboard.json`
 
-### How to setup centralized monitoring with OpenObserve?
+### You can find the DCGM-Exporter OpenObserve dashboard here
 
 You can find the official NVIDIA DCGM-Exporter dashboard here: <https://github.com/openobserve/dashboards/tree/main/NVIDIA%20GPU%20Monitoring>
 
