@@ -170,6 +170,12 @@ You can find the official NVIDIA DCGM-Exporter dashboard here: <https://grafana.
 
 You will also find the `json` file on this repo under `grafana/dcgm-exporter-dashboard.json`
 
+### You can find the DCGM-Exporter OpenObserve dashboard here
+
+You can find the NVIDIA DCGM-Exporter dashboard here: <https://github.com/openobserve/dashboards/tree/main/NVIDIA%20GPU%20Monitoring>
+
+To integrate DCGM-Exporter with OpenObserve, follow the blog [monitoring GPU with OpenObserve](https://openobserve.ai/blog/how-to-monitor-nvidia-gpu/)
+
 Pull requests are accepted!
 
 ### Building the containers
