@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -75,7 +74,7 @@ func shouldCreateNamespace(ctx context.Context, kubeClient *framework.KubeClient
 				}
 				// Other errors (network, auth, etc.) should not be treated as success
 				return false
-			}).WithTimeout(3*time.Minute).WithPolling(5*time.Second).Should(BeTrue(),
+			}).WithTimeout(namespaceStuckCheckTimeout).WithPolling(pollingIntervalVerySlow).Should(BeTrue(),
 				fmt.Sprintf("Creating namespace: Namespace %q was not deleted within the timeout period.", testContext.namespace))
 		} else {
 			// Namespace exists and is active, clean it up first to ensure a clean state
@@ -153,7 +152,7 @@ func shouldInstallHelmChart(ctx context.Context, helmClient *framework.HelmClien
 	helmReleaseName, err := helmClient.Install(ctx, framework.HelmChartOptions{
 		CleanupOnFail: true,
 		GenerateName:  true,
-		Timeout:       5 * time.Minute,
+		Timeout:       helmInstallTimeout,
 		Wait:          true,
 		DryRun:        false,
 	}, framework.WithValues(values...))
@@ -287,7 +286,7 @@ func shouldCleanupWorkloadPods(ctx context.Context, kubeClient *framework.KubeCl
 		}
 		// All pods are deleted
 		return true
-	}).WithTimeout(1*time.Minute).WithPolling(time.Second).Should(BeTrue(),
+	}).WithTimeout(workloadPodDeletionTimeout).WithPolling(pollingIntervalFast).Should(BeTrue(),
 		"Workload pods were not deleted within the timeout period")
 
 	By("Workload pod cleanup completed")
@@ -303,33 +302,7 @@ func shouldCleanupHelmResources(ctx context.Context, kubeClient *framework.KubeC
 		By(fmt.Sprintf("Warning: Failed to delete ConfigMap: %v", err))
 	}
 
-	// Add a delay to ensure Helm resources are fully cleaned up
-	time.Sleep(2 * time.Second)
-
 	By("Helm resources cleanup completed")
-}
-
-// shouldCleanupTestContext performs complete cleanup for a test context
-func shouldCleanupTestContext(ctx context.Context, kubeClient *framework.KubeClient, helmClient *framework.HelmClient) {
-	// Clean up workload pods for this context
-	By("Context cleanup: Cleaning up workload pods")
-	shouldCleanupWorkloadPods(ctx, kubeClient)
-
-	// Clean up Helm releases for this context
-	By("Context cleanup: Uninstalling Helm releases")
-	releases := getHelmReleases()
-	for _, releaseName := range releases {
-		if releaseName != "" {
-			By(fmt.Sprintf("Context cleanup: Uninstalling Helm release %q", releaseName))
-			shouldUninstallHelmChart(helmClient, releaseName)
-		}
-	}
-	// Clear the releases list for this context
-	clearHelmReleases()
-
-	// Clean up any remaining Helm resources
-	By("Context cleanup: Cleaning up Helm resources")
-	shouldCleanupHelmResources(ctx, kubeClient)
 }
 
 func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient) {
@@ -362,7 +335,7 @@ func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient
 			}
 			// Other errors (network, auth, etc.) should not be treated as success
 			return false
-		}).WithTimeout(2*time.Minute).WithPolling(2*time.Second).Should(BeTrue(),
+		}).WithTimeout(namespaceDeletionTimeout).WithPolling(pollingIntervalSlow).Should(BeTrue(),
 			fmt.Sprintf("Namespace deletion: Namespace %q was not deleted within the timeout period.", testContext.namespace))
 
 		// If normal deletion failed, log a warning
@@ -394,7 +367,7 @@ func shouldCheckIfPodCreated(
 		}
 
 		return false
-	}).WithPolling(500 * time.Millisecond).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
+	}).WithPolling(pollingIntervalFast).Within(podCreationTimeout).WithContext(ctx).Should(BeTrue())
 
 	By("Pod creation verification: completed")
 
@@ -503,7 +476,7 @@ func shouldCheckIfPodIsReady(ctx context.Context, kubeClient *framework.KubeClie
 		}
 
 		return isReady
-	}).WithPolling(time.Second).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
+	}).WithPolling(pollingIntervalNormal).Within(podReadinessTimeout).WithContext(ctx).Should(BeTrue())
 	By("Checking pod status: completed")
 }
 
@@ -535,7 +508,7 @@ func shouldCreateWorkloadPod(ctx context.Context, kubeClient *framework.KubeClie
 		}
 
 		return isReady
-	}).WithPolling(time.Second).Within(15 * time.Minute).WithContext(ctx).Should(BeTrue())
+	}).WithPolling(pollingIntervalNormal).Within(podReadinessTimeout).WithContext(ctx).Should(BeTrue())
 
 	By("Workload pod creation: completed - long-running pod is now active")
 }
@@ -558,7 +531,7 @@ func shouldReadMetrics(ctx context.Context, kubeClient *framework.KubeClient, dc
 		}
 
 		return len(metricsResponse) > 0
-	}).WithPolling(time.Second).Within(time.Minute).WithContext(ctx).Should(BeTrue())
+	}).WithPolling(pollingIntervalFast).Within(metricsReadTimeout).WithContext(ctx).Should(BeTrue())
 
 	By("Read metrics: completed")
 
@@ -667,7 +640,7 @@ func shouldWaitForMetrics(ctx context.Context, kubeClient *framework.KubeClient,
 
 		// Check if we have meaningful metrics (not just empty response)
 		return len(metricsResponse) > 100 // At least 100 bytes to ensure we have actual metrics
-	}).WithPolling(2*time.Second).Within(30*time.Second).WithContext(ctx).Should(BeTrue(),
+	}).WithPolling(pollingIntervalNormal).Within(metricsWaitTimeout).WithContext(ctx).Should(BeTrue(),
 		"Metrics endpoint did not return meaningful data within timeout")
 
 	By("Metrics are now available")

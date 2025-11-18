@@ -17,6 +17,8 @@
 package counters
 
 import (
+	"strings"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
@@ -29,6 +31,10 @@ type Counter struct {
 
 func (c Counter) IsLabel() bool {
 	return c.PromType == "label"
+}
+
+func (c Counter) IsProfilingMetric() bool {
+	return strings.HasPrefix(c.FieldName, "DCGM_FI_PROF_")
 }
 
 type CounterList []Counter
@@ -44,7 +50,20 @@ func (c CounterList) LabelCounters() CounterList {
 	return labelsCounters
 }
 
+func (c CounterList) HasProfilingMetrics() bool {
+	for _, counter := range c {
+		if counter.IsProfilingMetric() {
+			return true
+		}
+	}
+	return false
+}
+
 type CounterSet struct {
 	DCGMCounters     CounterList
 	ExporterCounters CounterList
+}
+
+func (cs *CounterSet) HasProfilingMetrics() bool {
+	return cs.DCGMCounters.HasProfilingMetrics() || cs.ExporterCounters.HasProfilingMetrics()
 }

@@ -33,7 +33,7 @@ MODULE         := github.com/NVIDIA/dcgm-exporter
 all: ubuntu22.04 ubi9 distroless
 
 binary:
-	cd cmd/dcgm-exporter; $(GO) build -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
+	cd cmd/dcgm-exporter; $(GO) build -trimpath -ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
 
 test-main: generate
 	$(GO) test ./... -short
@@ -58,30 +58,35 @@ else
 	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
-ubi%: DOCKERFILE = docker/Dockerfile.ubi
+ubi%: DOCKERFILE = docker/Dockerfile
+ubi%: BUILD_TARGET = runtime-ubi
 ubi%: --docker-build-%
 	@
 ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.0.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
-ubuntu%: DOCKERFILE = docker/Dockerfile.ubuntu
+ubuntu%: DOCKERFILE = docker/Dockerfile
+ubuntu%: BUILD_TARGET = runtime-ubuntu
 ubuntu%: --docker-build-%
 	@
 ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
-distroless: DOCKERFILE = docker/Dockerfile.distroless
+distroless: DOCKERFILE = docker/Dockerfile
+distroless: BUILD_TARGET = runtime-distroless
 distroless: IMAGE_TAG = distroless
 distroless: --docker-build-distroless
 
 --docker-build-%:
-	@echo "Building for $@"
+	@echo "Building for $@ with target $(BUILD_TARGET)"
+	docker buildx inspect
 	DOCKER_BUILDKIT=1 \
 	$(DOCKERCMD) --pull \
 		--output $(OUTPUT) \
 		--progress=plain \
 		--no-cache \
 		--platform $(PLATFORMS) \
+		$(if $(BUILD_TARGET),--target $(BUILD_TARGET)) \
 		--build-arg BASEIMAGE="$(BASE_IMAGE)" \
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
@@ -137,6 +142,24 @@ test-coverage:
 lint:
 	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1
 
+.PHONY: hadolint lint-dockerfiles
+hadolint lint-dockerfiles: ## Lint Dockerfiles with hadolint
+	@echo "Linting Dockerfiles with hadolint..."
+	@if command -v hadolint > /dev/null 2>&1; then \
+		hadolint docker/Dockerfile.ubuntu docker/Dockerfile.ubi docker/Dockerfile.distroless; \
+	elif docker inspect hadolint/hadolint > /dev/null 2>&1; then \
+		docker run --rm -i -v "$(CURDIR)/.hadolint.yaml:/.config/hadolint.yaml" \
+			hadolint/hadolint < docker/Dockerfile.ubuntu && \
+		docker run --rm -i -v "$(CURDIR)/.hadolint.yaml:/.config/hadolint.yaml" \
+			hadolint/hadolint < docker/Dockerfile.ubi && \
+		docker run --rm -i -v "$(CURDIR)/.hadolint.yaml:/.config/hadolint.yaml" \
+			hadolint/hadolint < docker/Dockerfile.distroless; \
+	else \
+		echo "Error: hadolint not found. Install it or run: docker pull hadolint/hadolint"; \
+		exit 1; \
+	fi
+	@echo "✓ All Dockerfiles passed hadolint checks"
+
 .PHONY: validate-modules
 validate-modules:
 	@echo "- Verifying that the dependencies have expected content..."
@@ -144,6 +167,10 @@ validate-modules:
 	@echo "- Checking for any unused/missing packages in go.mod..."
 	go mod tidy
 	@git diff --exit-code -- go.sum go.mod
+
+.PHONY: validate
+validate: validate-modules hadolint check-fmt ## Run all validation checks
+	@echo "✓ All validation checks passed"
 
 .PHONY: tools
 tools: ## Install required tools and utilities
@@ -189,3 +216,8 @@ update-versions: update-version
 # Generate code (Mocks)
 generate:
 	go generate ./...
+
+.PHONY: test-images
+test-images: ## Run Docker image validation tests (requires local images built with 'make local')
+	@echo "Running Docker image tests..."
+	cd tests/docker && $(MAKE) docker-test

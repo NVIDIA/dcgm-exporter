@@ -52,6 +52,23 @@ const (
 	workloadPodName       = "cuda-vector-add"
 	workloadContainerName = "cuda-vector-add"
 	workloadImage         = "nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda11.7.1-ubuntu20.04"
+
+	// Timeout constants for test operations
+	podCreationTimeout         = 2 * time.Minute
+	podReadinessTimeout        = 3 * time.Minute
+	namespaceDeletionTimeout   = 90 * time.Second
+	namespaceStuckCheckTimeout = 2 * time.Minute
+	workloadPodDeletionTimeout = 45 * time.Second
+	metricsReadTimeout         = 1 * time.Minute
+	metricsWaitTimeout         = 30 * time.Second
+	helmInstallTimeout         = 5 * time.Minute
+	httpClientTimeout          = 5 * time.Second
+
+	// Polling interval constants
+	pollingIntervalFast     = 500 * time.Millisecond
+	pollingIntervalNormal   = 1 * time.Second
+	pollingIntervalSlow     = 2 * time.Second
+	pollingIntervalVerySlow = 3 * time.Second
 )
 
 var (
@@ -108,7 +125,7 @@ var _ = BeforeSuite(func(ctx context.Context) {
 				}
 				// Other errors (network, auth, etc.) should not be treated as success
 				return false
-			}).WithTimeout(3*time.Minute).WithPolling(5*time.Second).Should(BeTrue(),
+			}).WithTimeout(namespaceStuckCheckTimeout).WithPolling(pollingIntervalVerySlow).Should(BeTrue(),
 				fmt.Sprintf("Global cleanup: Namespace %q was not deleted within the timeout period.", testContext.namespace))
 		}
 	}
@@ -221,7 +238,7 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(localPort).Should(BeNumerically(">", 0))
 			httpClient := &http.Client{
-				Timeout: 5 * time.Second,
+				Timeout: httpClientTimeout,
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{
 						InsecureSkipVerify: true,
@@ -277,7 +294,7 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(localPort).Should(BeNumerically(">", 0))
 			httpClient := &http.Client{
-				Timeout: 5 * time.Second,
+				Timeout: httpClientTimeout,
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{
 						InsecureSkipVerify: true,

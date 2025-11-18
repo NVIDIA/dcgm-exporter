@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 4.4.1-4.6.0-ubuntu22.04
+  tag: 4.4.2-4.7.0-ubuntu22.04
 
 # Change the following reference to "/etc/dcgm-exporter/default-counters.csv"
 # to stop profiling metrics from DCGM
@@ -89,8 +89,12 @@ securityContext:
   runAsNonRoot: false
   runAsUser: 0
   capabilities:
-    add: ["SYS_ADMIN"]
-  # readOnlyRootFilesystem: true
+    add: ["SYS_ADMIN"]  # Required for profiling metrics (DCGM_FI_PROF_*)
+    drop: ["ALL"]
+  allowPrivilegeEscalation: false
+  # readOnlyRootFilesystem: true  # Enable if tmpfs volumes are configured
+  # Note: For non-root without profiling metrics, use:
+  # runAsNonRoot: true, runAsUser: 1000, and remove SYS_ADMIN from capabilities.add
 
 # Defines the dcgm-exporter service
 service:
@@ -106,13 +110,13 @@ service:
   annotations: {}
 
 # Allows to control pod resources
-resources: {}
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
 serviceMonitor:
   apiVersion: "monitoring.coreos.com/v1"
   enabled: true
@@ -138,7 +142,10 @@ serviceMonitor:
 nodeSelector: {}
   #node: gpu
 
-tolerations: []
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
 #- operator: Exists
 
 affinity: {}
