@@ -330,6 +330,10 @@ func toMetric(
 				attrs["err_msg"] = unknownErr
 			}
 		}
+		if val.FieldType == dcgm.DCGM_FT_STRING {
+			attrs[counter.FieldName] = v // converse string value in prometheus to label , prometheus can't accept string type in value
+			v = "1"                      //set value to number, 1 don't mean anything
+		}
 
 		m := Metric{
 			Counter: counter,
@@ -419,6 +423,9 @@ func toString(value dcgm.FieldValue_v1) string {
 		default:
 			return v
 		}
+	case dcgm.DCGM_FT_BINARY:
+		// I don't know how to convert this variable, I try to value.String() but result is empty
+		return value.String()
 	}
 
 	return FailedToConvert
