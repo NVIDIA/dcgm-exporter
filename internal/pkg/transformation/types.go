@@ -80,7 +80,7 @@ type DRAResourceSliceManager struct {
 	migDevices    map[string]*DRAMigDeviceInfo // pool/device -> MIG info (for MIG devices)
 }
 
-// PodMetadata holds pod metadata from API server
+// PodMetadata holds pod metadata from API server or kubelet
 type PodMetadata struct {
 	UID    string
 	Labels map[string]string
