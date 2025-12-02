@@ -46,6 +46,8 @@ type Config struct {
 	KubernetesGPUIdType              KubernetesGPUIDType
 	KubernetesPodLabelAllowlistRegex []string // Regex patterns for filtering pod labels
 	KubernetesPodLabelCacheSize      int      // Maximum number of label keys to cache (<=0 means default size)
+	KubernetesUseKubeletAPI          bool     // Use kubelet API instead of apiserver for pod metadata
+	KubernetesKubeletURL             string   // Kubelet API URL (e.g. https://127.0.0.1:10250)
 	CollectDCP                       bool
 	UseOldNamespace                  bool
 	UseRemoteHE                      bool
