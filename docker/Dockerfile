@@ -12,36 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASEIMAGE=hub.cloud.ctripcorp.com/nvidia/cuda:13.0.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04
 
 #####
 # Common builder stage - compiles dcgm-exporter with CGO for all targets
 #####
-FROM --platform=$BUILDPLATFORM hub.cloud.ctripcorp.com/library/ubuntu:22.04 AS builder
+FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
 ARG GOLANG_VERSION=1.24.5
-ARG GOLANG_DOWNLOAD_BASE=https://mirrors.tuna.tsinghua.edu.cn/golang
-
-# 构建阶段代理配置（如需走公司代理，请在 docker build 时通过 --build-arg 传入）
-ARG http_proxy
-ARG https_proxy
-ARG no_proxy
-ENV http_proxy=${http_proxy} \
-    https_proxy=${https_proxy} \
-    HTTP_PROXY=${http_proxy} \
-    HTTPS_PROXY=${https_proxy} \
-    no_proxy=${no_proxy} \
-    NO_PROXY=${no_proxy}
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
 # Install build dependencies with cache
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
-    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
-    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
-    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
     apt-get update \
     && apt-get install -y --no-install-recommends \
     wget \
@@ -62,10 +46,10 @@ RUN set -eux; \
     url=; \
     case "$arch" in \
     'amd64') \
-    url="${GOLANG_DOWNLOAD_BASE}/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
     ;; \
     'arm64') \
-    url="${GOLANG_DOWNLOAD_BASE}/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
     ;; \
     *) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
     esac; \
@@ -79,8 +63,7 @@ RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 700 "$GOPATH"
 
 # Download dependencies
 COPY go.mod go.sum ./
-RUN go env -w GOPROXY=https://goproxy.cn,direct && \
-    go mod download
+RUN go mod download
 
 # Copy source code
 COPY cmd/ cmd/
@@ -108,7 +91,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends file && \
 #####
 # Ubuntu 22.04 runtime target
 #####
-FROM --platform=$TARGETARCH hub.cloud.ctripcorp.com/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-ubuntu
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-ubuntu
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -190,7 +173,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # UBI9 runtime target
 #####
-FROM --platform=$TARGETARCH hub.cloud.ctripcorp.com/nvidia/cuda:13.0.1-base-ubi9 AS runtime-ubi
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubi9 AS runtime-ubi
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -269,7 +252,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # Distroless helper stage - builds full Ubuntu container with DCGM libraries
 #####
-FROM --platform=$TARGETARCH hub.cloud.ctripcorp.com/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-distroless-helper
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-distroless-helper
 
 ARG TARGETARCH
 
@@ -291,7 +274,7 @@ RUN uname -a
 #####
 # Distroless runtime target - minimal container image
 #####
-FROM --platform=$TARGETARCH hub.cloud.ctripcorp.com/nvidia/distroless/cc:v3.1.13 AS runtime-distroless
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.13 AS runtime-distroless
 
 ARG VERSION
 ARG TARGETARCH
@@ -367,4 +350,3 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 USER root:root
 
 ENTRYPOINT ["/usr/bin/dcgm-exporter-entrypoint.sh"]
-
