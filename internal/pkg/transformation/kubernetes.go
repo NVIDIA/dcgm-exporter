@@ -874,10 +874,10 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
 
-	// 1. 读取 ServiceAccount token 和 CA 文件
+	// 1. Read ServiceAccount token and CA files
 	tokenBytes, err := os.ReadFile(saTokenPath)
 	if err != nil {
-		// 读取 token 失败时打日志，方便排查挂载或权限问题
+		// Log failure to read token to help diagnose mount or permission issues
 		slog.Warn("Failed to read serviceaccount token for kubelet /pods",
 			"path", saTokenPath,
 			"error", err,
@@ -888,7 +888,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 
 	caPEM, err := os.ReadFile(saCAPath)
 	if err != nil {
-		// 读取 CA 失败时打日志
+		// Log failure to read CA file
 		slog.Warn("Failed to read serviceaccount CA for kubelet /pods",
 			"path", saCAPath,
 			"error", err,
@@ -898,7 +898,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 
 	rootCAs := x509.NewCertPool()
 	if !rootCAs.AppendCertsFromPEM(caPEM) {
-		// CA 解析失败时打日志
+		// Log failure when CA certificate cannot be parsed/appended
 		slog.Warn("Failed to append CA certs for kubelet /pods",
 			"path", saCAPath,
 		)
@@ -921,7 +921,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	}
 	url := strings.TrimRight(base, "/") + "/pods"
 
-	// 记录实际访问的 kubelet 地址，方便确认是否访问到预期节点
+	// Record the actual kubelet URL being accessed to verify the target node
 	slog.Debug("Querying kubelet /pods",
 		"url", url,
 		"namespace", namespace,
@@ -930,7 +930,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		// 构造请求失败时打日志
+		// Log failure to build HTTP request
 		slog.Warn("Failed to build kubelet /pods request",
 			"url", url,
 			"error", err,
@@ -942,7 +942,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	// 4. Call kubelet
 	resp, err := client.Do(req)
 	if err != nil {
-		// 请求 kubelet 失败时打日志
+		// Log failure when requesting kubelet /pods
 		slog.Warn("Failed to query kubelet /pods",
 			"url", url,
 			"error", err,
@@ -958,7 +958,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	)
 
 	if resp.StatusCode != http.StatusOK {
-		// 非 200 状态码时打 Warn，方便排查 401/403/500 等问题
+		// Log non-200 status codes to help diagnose 401/403/500 and similar issues
 		slog.Warn("Unexpected status from kubelet /pods",
 			"url", url,
 			"statusCode", resp.StatusCode,
@@ -970,7 +970,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	// 5. Decode PodList
 	var podList corev1.PodList
 	if err := json.NewDecoder(resp.Body).Decode(&podList); err != nil {
-		// 解码返回结果失败时打日志
+		// Log failure to decode kubelet /pods response
 		slog.Warn("Failed to decode kubelet /pods response",
 			"url", url,
 			"error", err,
@@ -978,7 +978,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 		return nil, fmt.Errorf("failed to decode kubelet /pods response: %w", err)
 	}
 
-	// 打日志观察 kubelet 返回的 Pod 数量，方便排查“目标 Pod 是否在 kubelet 视图中”
+	// Log the number of pods returned by kubelet to verify whether the target pod is in kubelet's view
 	slog.Debug("Decoded kubelet /pods response",
 		"totalPods", len(podList.Items),
 		"namespace", namespace,
@@ -1004,7 +1004,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 				sanitizedLabels[sanitizedKey] = v
 			}
 
-			// 找到目标 Pod 时打 Debug，确认 UID 和标签数量
+			// Log when the target pod is found, including UID and number of labels
 			slog.Debug("Found pod in kubelet /pods response",
 				"pod", podName,
 				"namespace", namespace,
@@ -1019,7 +1019,7 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 		}
 	}
 
-	// 未在 kubelet 返回中找到目标 Pod，打 Warn 方便分析问题
+	// Log a warning when the target pod is not found in kubelet /pods response
 	slog.Warn("Pod not found in kubelet /pods response",
 		"pod", podName,
 		"namespace", namespace,
