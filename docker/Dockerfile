@@ -21,6 +21,17 @@ FROM --platform=$BUILDPLATFORM hub.cloud.ctripcorp.com/library/ubuntu:22.04 AS b
 
 ARG GOLANG_VERSION=1.24.5
 
+# 构建阶段代理配置（如需走公司代理，请在 docker build 时通过 --build-arg 传入）
+ARG http_proxy
+ARG https_proxy
+ARG no_proxy
+ENV http_proxy=${http_proxy} \
+    https_proxy=${https_proxy} \
+    HTTP_PROXY=${http_proxy} \
+    HTTPS_PROXY=${https_proxy} \
+    no_proxy=${no_proxy} \
+    NO_PROXY=${no_proxy}
+
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
 # Install build dependencies with cache
