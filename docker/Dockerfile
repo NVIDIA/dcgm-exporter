@@ -20,6 +20,7 @@ ARG BASEIMAGE=hub.cloud.ctripcorp.com/nvidia/cuda:13.0.1-base-ubuntu22.04
 FROM --platform=$BUILDPLATFORM hub.cloud.ctripcorp.com/library/ubuntu:22.04 AS builder
 
 ARG GOLANG_VERSION=1.24.5
+ARG GOLANG_DOWNLOAD_BASE=https://mirrors.tuna.tsinghua.edu.cn/golang
 
 # 构建阶段代理配置（如需走公司代理，请在 docker build 时通过 --build-arg 传入）
 ARG http_proxy
@@ -61,10 +62,10 @@ RUN set -eux; \
     url=; \
     case "$arch" in \
     'amd64') \
-    url="https://mirrors.tuna.tsinghua.edu.cn/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    url="${GOLANG_DOWNLOAD_BASE}/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
     ;; \
     'arm64') \
-    url="https://mirrors.tuna.tsinghua.edu.cn/golang/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    url="${GOLANG_DOWNLOAD_BASE}/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
     ;; \
     *) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
     esac; \
