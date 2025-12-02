@@ -26,6 +26,8 @@ WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 # Install build dependencies with cache
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
+    sed -i 's|http://archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
+    sed -i 's|http://security.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
     apt-get update \
     && apt-get install -y --no-install-recommends \
     wget \
@@ -46,10 +48,10 @@ RUN set -eux; \
     url=; \
     case "$arch" in \
     'amd64') \
-    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    url="https://mirrors.tuna.tsinghua.edu.cn/golang/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
     ;; \
     'arm64') \
-    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    url="https://mirrors.tuna.tsinghua.edu.cn/golang/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
     ;; \
     *) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
     esac; \
@@ -63,7 +65,8 @@ RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 700 "$GOPATH"
 
 # Download dependencies
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go env -w GOPROXY=https://goproxy.cn,direct && \
+    go mod download
 
 # Copy source code
 COPY cmd/ cmd/
