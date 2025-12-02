@@ -874,20 +874,34 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
 
-	// 1. Read ServiceAccount token & CA
+	// 1. 读取 ServiceAccount token 和 CA 文件
 	tokenBytes, err := os.ReadFile(saTokenPath)
 	if err != nil {
+		// 读取 token 失败时打日志，方便排查挂载或权限问题
+		slog.Warn("Failed to read serviceaccount token for kubelet /pods",
+			"path", saTokenPath,
+			"error", err,
+		)
 		return nil, fmt.Errorf("failed to read serviceaccount token from %s: %w", saTokenPath, err)
 	}
 	token := strings.TrimSpace(string(tokenBytes))
 
 	caPEM, err := os.ReadFile(saCAPath)
 	if err != nil {
+		// 读取 CA 失败时打日志
+		slog.Warn("Failed to read serviceaccount CA for kubelet /pods",
+			"path", saCAPath,
+			"error", err,
+		)
 		return nil, fmt.Errorf("failed to read serviceaccount CA from %s: %w", saCAPath, err)
 	}
 
 	rootCAs := x509.NewCertPool()
 	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		// CA 解析失败时打日志
+		slog.Warn("Failed to append CA certs for kubelet /pods",
+			"path", saCAPath,
+		)
 		return nil, fmt.Errorf("failed to append CA certs from %s", saCAPath)
 	}
 
@@ -907,8 +921,20 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	}
 	url := strings.TrimRight(base, "/") + "/pods"
 
+	// 记录实际访问的 kubelet 地址，方便确认是否访问到预期节点
+	slog.Debug("Querying kubelet /pods",
+		"url", url,
+		"namespace", namespace,
+		"pod", podName,
+	)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		// 构造请求失败时打日志
+		slog.Warn("Failed to build kubelet /pods request",
+			"url", url,
+			"error", err,
+		)
 		return nil, fmt.Errorf("failed to build kubelet /pods request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -916,19 +942,48 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 	// 4. Call kubelet
 	resp, err := client.Do(req)
 	if err != nil {
+		// 请求 kubelet 失败时打日志
+		slog.Warn("Failed to query kubelet /pods",
+			"url", url,
+			"error", err,
+		)
 		return nil, fmt.Errorf("failed to query kubelet /pods: %w", err)
 	}
 	defer resp.Body.Close()
 
+	slog.Debug("Received response from kubelet /pods",
+		"url", url,
+		"statusCode", resp.StatusCode,
+		"status", resp.Status,
+	)
+
 	if resp.StatusCode != http.StatusOK {
+		// 非 200 状态码时打 Warn，方便排查 401/403/500 等问题
+		slog.Warn("Unexpected status from kubelet /pods",
+			"url", url,
+			"statusCode", resp.StatusCode,
+			"status", resp.Status,
+		)
 		return nil, fmt.Errorf("unexpected status from kubelet /pods: %s", resp.Status)
 	}
 
 	// 5. Decode PodList
 	var podList corev1.PodList
 	if err := json.NewDecoder(resp.Body).Decode(&podList); err != nil {
+		// 解码返回结果失败时打日志
+		slog.Warn("Failed to decode kubelet /pods response",
+			"url", url,
+			"error", err,
+		)
 		return nil, fmt.Errorf("failed to decode kubelet /pods response: %w", err)
 	}
+
+	// 打日志观察 kubelet 返回的 Pod 数量，方便排查“目标 Pod 是否在 kubelet 视图中”
+	slog.Debug("Decoded kubelet /pods response",
+		"totalPods", len(podList.Items),
+		"namespace", namespace,
+		"pod", podName,
+	)
 
 	// 6. Find the specific pod
 	for _, pod := range podList.Items {
@@ -949,12 +1004,27 @@ func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMe
 				sanitizedLabels[sanitizedKey] = v
 			}
 
+			// 找到目标 Pod 时打 Debug，确认 UID 和标签数量
+			slog.Debug("Found pod in kubelet /pods response",
+				"pod", podName,
+				"namespace", namespace,
+				"uid", string(pod.UID),
+				"labelCount", len(sanitizedLabels),
+			)
+
 			return &PodMetadata{
 				UID:    string(pod.UID),
 				Labels: sanitizedLabels,
 			}, nil
 		}
 	}
+
+	// 未在 kubelet 返回中找到目标 Pod，打 Warn 方便分析问题
+	slog.Warn("Pod not found in kubelet /pods response",
+		"pod", podName,
+		"namespace", namespace,
+		"totalPods", len(podList.Items),
+	)
 
 	return nil, fmt.Errorf("pod %s/%s not found in kubelet /pods response", namespace, podName)
 }
