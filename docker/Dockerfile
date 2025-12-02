@@ -26,8 +26,10 @@ WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 # Install build dependencies with cache
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
-    sed -i 's|http://archive.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
-    sed -i 's|http://security.ubuntu.com|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list && \
+    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy main restricted universe multiverse" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy-security main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy-updates main restricted universe multiverse" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.ops.ctripcorp.com/latest/ubuntu/ jammy-backports main restricted universe multiverse" >> /etc/apt/sources.list && \
     apt-get update \
     && apt-get install -y --no-install-recommends \
     wget \
