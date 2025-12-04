@@ -41,6 +41,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
@@ -177,6 +178,82 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
+func (p *PodMapper) createPerProcessMetrics(
+	val collector.Metric,
+	counter counters.Counter,
+	originalMetric collector.Metric,
+	dataMap *perProcessDataMap,
+) ([]collector.Metric, error) {
+	metricsKey := getMIGMetricsKey(val.GPUUUID, val.GPUInstanceID)
+	if dataMap.metrics[metricsKey] == nil {
+		metricsKey = val.GPUUUID
+	}
+
+	devicePods := dataMap.deviceToPods[metricsKey]
+	if len(devicePods) == 0 {
+		return nil, nil
+	}
+
+	data := dataMap.metrics[metricsKey]
+	podValues := buildPodValueMap(dataMap.pidToPod, data, counter.FieldName)
+	maps.Copy(podValues, buildIdlePodValues(podValues, devicePods))
+
+	var result []collector.Metric
+	for _, podInfo := range devicePods {
+		value, ok := podValues[podInfo.UID]
+		if !ok {
+			continue
+		}
+
+		metric, err := utils.DeepCopy(originalMetric)
+		if err != nil {
+			return nil, err
+		}
+		metric.Value = value
+
+		if !p.Config.UseOldNamespace {
+			metric.Attributes[podAttribute] = podInfo.Name
+			metric.Attributes[namespaceAttribute] = podInfo.Namespace
+			metric.Attributes[containerAttribute] = podInfo.Container
+		} else {
+			metric.Attributes[oldPodAttribute] = podInfo.Name
+			metric.Attributes[oldNamespaceAttribute] = podInfo.Namespace
+			metric.Attributes[oldContainerAttribute] = podInfo.Container
+		}
+		metric.Attributes[uidAttribute] = podInfo.UID
+		if podInfo.VGPU != "" {
+			metric.Attributes[vgpuAttribute] = podInfo.VGPU
+		}
+
+		result = append(result, metric)
+	}
+
+	return result, nil
+}
+
+func buildPodValueMap(pidToPod map[uint32]*PodInfo, data *perProcessMetrics, fieldName string) map[string]string {
+	podValues := make(map[string]string)
+	if data == nil {
+		return podValues
+	}
+	for pid, podInfo := range pidToPod {
+		if value, ok := data.getValueForMetric(fieldName, pid); ok {
+			podValues[podInfo.UID] = value
+		}
+	}
+	return podValues
+}
+
+func buildIdlePodValues(existingValues map[string]string, devicePods []PodInfo) map[string]string {
+	idleValues := make(map[string]string)
+	for _, podInfo := range devicePods {
+		if _, ok := existingValues[podInfo.UID]; !ok {
+			idleValues[podInfo.UID] = "0"
+		}
+	}
+	return idleValues
+}
+
 func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
 	socketPath := p.Config.PodResourcesKubeletSocket
 	_, err := os.Stat(socketPath)
@@ -245,8 +322,12 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 
 	if p.Config.KubernetesVirtualGPUs {
 		deviceToPods := p.toDeviceToSharingPods(pods, deviceInfo)
-
-		slog.Debug(fmt.Sprintf("Device to sharing pods mapping: %+v", deviceToPods))
+		gpuUUIDToDeviceID := getGPUUUIDToDeviceID(deviceInfo, p.Config.KubernetesGPUIdType)
+		processCollector := &perProcessCollector{
+			client:    nvmlprovider.Client(),
+			pidMapper: newPIDToPodMapper(),
+		}
+		perProcessData := processCollector.Collect(gpuUUIDToDeviceID, deviceToPods, deviceInfo)
 
 		// For each counter metric, init a slice to collect metrics to associate with shared virtual GPUs.
 		for counter := range metrics {
@@ -260,6 +341,17 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				}
 
 				podInfos := deviceToPods[deviceID]
+				if isPerProcessMetric(counter.FieldName) {
+					perProcessMetrics, err := p.createPerProcessMetrics(val, counter, metrics[counter][j], perProcessData)
+					if err != nil {
+						return err
+					}
+					if perProcessMetrics != nil {
+						newmetrics = append(newmetrics, metrics[counter][j]) // original device-level metric
+						newmetrics = append(newmetrics, perProcessMetrics...)
+						continue
+					}
+				}
 				// For all containers using the GPU, extract and annotate a metric
 				// with the container info and the shared GPU label, if it exists.
 				// Notably, this will increase the number of unique metrics (i.e. labelsets)
@@ -439,6 +531,19 @@ func getSharedGPU(deviceID string) (string, bool) {
 	return "", false
 }
 
+// stripVGPUSuffix removes the ::N suffix from device IDs.
+// AWS EKS with NVIDIA device plugin reports MIG devices as:
+//
+//	MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55::7
+//
+// This function strips the ::N suffix to get the MIG UUID for NVML lookups.
+func stripVGPUSuffix(deviceID string) string {
+	if base, _, found := strings.Cut(deviceID, "::"); found {
+		return base
+	}
+	return deviceID
+}
+
 func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourcesResponse) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
 	labelCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
@@ -541,7 +646,8 @@ func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodRes
 				podInfo.VGPU = vgpu
 			}
 			if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
-				migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+				migUUID := stripVGPUSuffix(deviceID)
+				migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(migUUID)
 				if err == nil {
 					// Check for potential integer overflow before conversion
 					if migDevice.GPUInstanceID >= 0 {
@@ -550,7 +656,7 @@ func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodRes
 						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
 					}
 				}
-				gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+				gpuUUID := migUUID[len(appconfig.MIG_UUID_PREFIX):]
 				deviceToPodsMap[gpuUUID] = append(deviceToPodsMap[gpuUUID], podInfo)
 			} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
 				var gpuIndex string
@@ -671,7 +777,8 @@ func (p *PodMapper) toDeviceToPod(
 							"resourceName", resourceName,
 							"deviceIds", device.GetDeviceIds(),
 						)
-						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+						migUUID := stripVGPUSuffix(deviceID)
+						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(migUUID)
 						if err == nil {
 							// Check for potential integer overflow before conversion
 							if migDevice.GPUInstanceID >= 0 {
@@ -699,7 +806,7 @@ func (p *PodMapper) toDeviceToPod(
 								"deviceIds", device.GetDeviceIds(),
 							)
 						}
-						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+						gpuUUID := migUUID[len(appconfig.MIG_UUID_PREFIX):]
 						slog.Debug("Mapped MIG device to GPU UUID",
 							"deviceID", deviceID,
 							"gpuUUID", gpuUUID,
