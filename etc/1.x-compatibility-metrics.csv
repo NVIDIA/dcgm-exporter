@@ -27,12 +27,12 @@ dcgm_dec_utilization,      gauge, Decoder utilization (in %).
 
 # Errors and violations
 dcgm_xid_errors,            gauge, Value of the last XID error encountered.
-# dcgm_power_violation,       counter, Throttling duration due to power constraints (in us).
-# dcgm_thermal_violation,     counter, Throttling duration due to thermal constraints (in us).
-# dcgm_sync_boost_violation,  counter, Throttling duration due to sync-boost constraints (in us).
-# dcgm_board_limit_violation, counter, Throttling duration due to board limit constraints (in us).
-# dcgm_low_util_violation,    counter, Throttling duration due to low utilization (in us).
-# dcgm_reliability_violation, counter, Throttling duration due to reliability constraints (in us).
+# dcgm_power_violation,       counter, Throttling duration due to power constraints (in ns).
+# dcgm_thermal_violation,     counter, Throttling duration due to thermal constraints (in ns).
+# dcgm_sync_boost_violation,  counter, Throttling duration due to sync-boost constraints (in ns).
+# dcgm_board_limit_violation, counter, Throttling duration due to board limit constraints (in ns).
+# dcgm_low_util_violation,    counter, Throttling duration due to low utilization (in ns).
+# dcgm_reliability_violation, counter, Throttling duration due to reliability constraints (in ns).
 
 # Memory usage
 dcgm_fb_free, gauge, Framebuffer memory free (in MiB).
