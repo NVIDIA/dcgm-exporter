@@ -28,6 +28,7 @@ type OS interface {
 	IsNotExist(err error) bool
 	MkdirTemp(dir, pattern string) (string, error)
 	Open(name string) (*os.File, error)
+	ReadFile(name string) ([]byte, error)
 	Remove(name string) error
 	RemoveAll(path string) error
 	Stat(name string) (os.FileInfo, error)
@@ -56,6 +57,10 @@ func (RealOS) IsNotExist(err error) bool {
 
 func (RealOS) Open(name string) (*os.File, error) {
 	return os.Open(name)
+}
+
+func (RealOS) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(name)
 }
 
 func (RealOS) MkdirTemp(dir, pattern string) (string, error) {

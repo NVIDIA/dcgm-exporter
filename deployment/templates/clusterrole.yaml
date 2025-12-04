@@ -9,4 +9,7 @@ rules:
 - apiGroups: ["", "resource.k8s.io"]
   resources: ["pods", "resourceslices"]
   verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes/proxy"]
+  verbs: ["get"]
 {{- end }}

@@ -19,10 +19,14 @@ package transformation
 import (
 	"container/list"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"maps"
 	"net"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,6 +37,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -52,6 +57,11 @@ var (
 	// Allow for MIG devices with or without GPU sharing to match in GKE.
 	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)(/vgpu[0-9]+)?$`)
 	gkeVirtualGPUDeviceIDSeparator = "/vgpu"
+)
+
+const (
+	saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	saCAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 )
 
 // DeviceProcessingFunc is a callback function type for processing devices
@@ -98,6 +108,10 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	podMapper := &PodMapper{
 		Config:           c,
 		labelFilterCache: newLabelFilterCache(c.KubernetesPodLabelAllowlistRegex, cacheSize),
+	}
+
+	if c.KubernetesUseKubeletAPI {
+		slog.Info("Using kubelet API for pod metadata instead of apiserver")
 	}
 
 	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
@@ -804,10 +818,21 @@ func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *
 
 	// Only make API call if we need something that's not cached
 	if needLabels || needUID {
-		if podMetadata, err := p.getPodMetadata(pod.GetNamespace(), pod.GetName()); err != nil {
+		var podMetadata *PodMetadata
+		var err error
+
+		// Choose data source based on config: kubelet API or apiserver
+		if p.Config.KubernetesUseKubeletAPI {
+			podMetadata, err = p.getPodMetadataFromKubelet(pod.GetNamespace(), pod.GetName())
+		} else {
+			podMetadata, err = p.getPodMetadata(pod.GetNamespace(), pod.GetName())
+		}
+
+		if err != nil {
 			slog.Warn("Couldn't get pod metadata",
 				"pod", pod.GetName(),
 				"namespace", pod.GetNamespace(),
+				"source", map[bool]string{true: "kubelet", false: "apiserver"}[p.Config.KubernetesUseKubeletAPI],
 				"error", err)
 			// Cache empty result to avoid repeated failures, but preserve existing cache data
 			if !hasCache {
@@ -840,6 +865,150 @@ func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *
 		UID:       uid,
 		Labels:    labels,
 	}
+}
+
+// getPodMetadataFromKubelet fetches metadata (labels and UID) from kubelet /pods API.
+// It sanitizes label names to ensure they are valid for Prometheus metrics and applies allowlist filtering.
+func (p *PodMapper) getPodMetadataFromKubelet(namespace, podName string) (*PodMetadata, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+
+	tokenBytes, err := os.ReadFile(saTokenPath)
+	if err != nil {
+		slog.Warn("Failed to read serviceaccount token for kubelet /pods",
+			"path", saTokenPath,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to read serviceaccount token from %s: %w", saTokenPath, err)
+	}
+
+	token := strings.TrimSpace(string(tokenBytes))
+	caPEM, err := os.ReadFile(saCAPath)
+	if err != nil {
+		slog.Warn("Failed to read serviceaccount CA for kubelet /pods",
+			"path", saCAPath,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to read serviceaccount CA from %s: %w", saCAPath, err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		slog.Warn("Failed to append CA certs for kubelet /pods",
+			"path", saCAPath,
+		)
+		return nil, fmt.Errorf("failed to append CA certs from %s", saCAPath)
+	}
+
+	tlsCfg := &tls.Config{
+		RootCAs: rootCAs,
+	}
+
+	client := &http.Client{
+		Timeout:   connectionTimeout,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}
+
+	base := p.Config.KubernetesKubeletURL
+	if base == "" {
+		base = "https://127.0.0.1:10250"
+	}
+
+	url := strings.TrimRight(base, "/") + "/pods"
+	slog.Debug("Querying kubelet /pods",
+		"url", url,
+		"namespace", namespace,
+		"pod", podName,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		slog.Warn("Failed to build kubelet /pods request",
+			"url", url,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to build kubelet /pods request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Warn("Failed to query kubelet /pods",
+			"url", url,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to query kubelet /pods: %w", err)
+	}
+
+	defer resp.Body.Close()
+
+	slog.Debug("Received response from kubelet /pods",
+		"url", url,
+		"statusCode", resp.StatusCode,
+		"status", resp.Status,
+	)
+
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("Unexpected status from kubelet /pods",
+			"url", url,
+			"statusCode", resp.StatusCode,
+			"status", resp.Status,
+		)
+		return nil, fmt.Errorf("unexpected status from kubelet /pods: %s", resp.Status)
+	}
+
+	var podList corev1.PodList
+	if err := json.NewDecoder(resp.Body).Decode(&podList); err != nil {
+		slog.Warn("Failed to decode kubelet /pods response",
+			"url", url,
+			"error", err,
+		)
+		return nil, fmt.Errorf("failed to decode kubelet /pods response: %w", err)
+	}
+
+	slog.Debug("Decoded kubelet /pods response",
+		"totalPods", len(podList.Items),
+		"namespace", namespace,
+		"pod", podName,
+	)
+
+	for _, pod := range podList.Items {
+		if pod.Namespace == namespace && pod.Name == podName {
+			sanitizedLabels := make(map[string]string)
+			for k, v := range pod.Labels {
+				if !p.shouldIncludeLabel(k) {
+					slog.Debug("Filtering out pod label",
+						"label", k,
+						"pod", podName,
+						"namespace", namespace)
+					continue
+				}
+
+				sanitizedKey := utils.SanitizeLabelName(k)
+				sanitizedLabels[sanitizedKey] = v
+			}
+
+			slog.Debug("Found pod in kubelet /pods response",
+				"pod", podName,
+				"namespace", namespace,
+				"uid", string(pod.UID),
+				"labelCount", len(sanitizedLabels),
+			)
+
+			return &PodMetadata{
+				UID:    string(pod.UID),
+				Labels: sanitizedLabels,
+			}, nil
+		}
+	}
+
+	slog.Warn("Pod not found in kubelet /pods response",
+		"pod", podName,
+		"namespace", namespace,
+		"totalPods", len(podList.Items),
+	)
+
+	return nil, fmt.Errorf("pod %s/%s not found in kubelet /pods response", namespace, podName)
 }
 
 // getPodMetadata fetches metadata (labels and UID) from a Kubernetes pod via the API server.
