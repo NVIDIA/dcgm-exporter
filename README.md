@@ -11,7 +11,7 @@ Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 
 ```shell
-docker run -d --gpus all --cap-add SYS_ADMIN --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.0-ubuntu22.04
+docker run -d --gpus all --cap-add SYS_ADMIN --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.1-ubuntu22.04
 curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge

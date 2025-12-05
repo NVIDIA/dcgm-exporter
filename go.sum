@@ -20,8 +20,10 @@ github.com/Masterminds/sprig/v3 v3.3.0 h1:mQh0Yrg1XPo6vjYXgtf5OtijNAKJRNcTdOOGZe
 github.com/Masterminds/sprig/v3 v3.3.0/go.mod h1:Zy1iXRYNqNLUolqCpL4uhk6SHUMAOSCzdgBfDb35Lz0=
 github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8afzqM=
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
-github.com/NVIDIA/go-dcgm v0.0.0-20250930145140-0b1e78b1ccea h1:QxEF6IB7gHoE491yyG3qSUZv/sAYr+NNSZSa0i8ceHs=
-github.com/NVIDIA/go-dcgm v0.0.0-20250930145140-0b1e78b1ccea/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
+github.com/NVIDIA/go-dcgm v0.0.0-20251024204555-c48e27bf2bf0 h1:8HBjEvIkhLPjSJbpiqfFnEEz3hsRbXfMG2aTdxQeSQk=
+github.com/NVIDIA/go-dcgm v0.0.0-20251024204555-c48e27bf2bf0/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
+github.com/NVIDIA/go-dcgm v0.0.0-20251203192032-7ac2f778d507 h1:bE1jIAa2qbIytl0/rPWigaMcKEY169AtOeqGGUW6qMc=
+github.com/NVIDIA/go-dcgm v0.0.0-20251203192032-7ac2f778d507/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
 github.com/NVIDIA/go-nvml v0.12.4-1 h1:WKUvqshhWSNTfm47ETRhv0A0zJyr1ncCuHiXwoTrBEc=
 github.com/NVIDIA/go-nvml v0.12.4-1/go.mod h1:8Llmj+1Rr+9VGGwZuRer5N/aCjxGuR5nPb/9ebBiIEQ=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=

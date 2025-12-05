@@ -2,7 +2,7 @@
 
 - Machine with NVIDIA GPU
 - Operation system Linux
-- [Golang >= 1.18 installed](https://golang.org/)
+- [Golang >= 1.24 installed](https://golang.org/)
 - [DCGM installed](https://developer.nvidia.com/dcgm)
 
 # Integration Tests

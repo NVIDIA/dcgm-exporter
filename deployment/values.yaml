@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 4.4.2-4.7.0-ubuntu22.04
+  tag: 4.4.2-4.7.1-ubuntu22.04
 
 # Change the following reference to "/etc/dcgm-exporter/default-counters.csv"
 # to stop profiling metrics from DCGM
