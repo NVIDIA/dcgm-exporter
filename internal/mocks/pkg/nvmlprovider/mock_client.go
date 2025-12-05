@@ -66,6 +66,51 @@ func (mr *MockNVMLMockRecorder) Cleanup() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cleanup", reflect.TypeOf((*MockNVML)(nil).Cleanup))
 }
 
+// GetDeviceProcessMemory mocks base method.
+func (m *MockNVML) GetDeviceProcessMemory(gpuUUID string) (map[uint32]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDeviceProcessMemory", gpuUUID)
+	ret0, _ := ret[0].(map[uint32]uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDeviceProcessMemory indicates an expected call of GetDeviceProcessMemory.
+func (mr *MockNVMLMockRecorder) GetDeviceProcessMemory(gpuUUID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeviceProcessMemory", reflect.TypeOf((*MockNVML)(nil).GetDeviceProcessMemory), gpuUUID)
+}
+
+// GetAllMIGDevicesProcessMemory mocks base method.
+func (m *MockNVML) GetAllMIGDevicesProcessMemory(parentGPUUUID string) (map[uint]map[uint32]uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllMIGDevicesProcessMemory", parentGPUUUID)
+	ret0, _ := ret[0].(map[uint]map[uint32]uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllMIGDevicesProcessMemory indicates an expected call of GetAllMIGDevicesProcessMemory.
+func (mr *MockNVMLMockRecorder) GetAllMIGDevicesProcessMemory(parentGPUUUID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllMIGDevicesProcessMemory", reflect.TypeOf((*MockNVML)(nil).GetAllMIGDevicesProcessMemory), parentGPUUUID)
+}
+
+// GetDeviceProcessUtilization mocks base method.
+func (m *MockNVML) GetDeviceProcessUtilization(gpuUUID string) (map[uint32]uint32, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetDeviceProcessUtilization", gpuUUID)
+	ret0, _ := ret[0].(map[uint32]uint32)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetDeviceProcessUtilization indicates an expected call of GetDeviceProcessUtilization.
+func (mr *MockNVMLMockRecorder) GetDeviceProcessUtilization(gpuUUID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeviceProcessUtilization", reflect.TypeOf((*MockNVML)(nil).GetDeviceProcessUtilization), gpuUUID)
+}
+
 // GetMIGDeviceInfoByID mocks base method.
 func (m *MockNVML) GetMIGDeviceInfoByID(arg0 string) (*nvmlprovider.MIGDeviceInfo, error) {
 	m.ctrl.T.Helper()

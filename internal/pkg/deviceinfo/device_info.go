@@ -153,7 +153,7 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 	links, err := dcgmprovider.Client().GetNvLinkLinkStatus()
 	if err == nil {
 		for i := 0; i < len(s.gpus); i++ {
-		// monitor only the nvlinks as per the device options input
+			// monitor only the nvlinks as per the device options input
 			if gOpt.Flex || s.shouldMonitor(gOpt.MajorRange, s.gpus[i].DeviceInfo.GPU) {
 				var matchingLinks []dcgm.NvLinkStatus
 				for _, link := range links {
