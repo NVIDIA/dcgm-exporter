@@ -18,7 +18,6 @@
 
 package nvmlprovider
 
-// NVML interface provides access to NVIDIA Management Library functionality
 type NVML interface {
 	GetMIGDeviceInfoByID(string) (*MIGDeviceInfo, error)
 	// GetDeviceProcessMemory returns memory usage for processes running on the GPU.
@@ -27,9 +26,8 @@ type NVML interface {
 	// GetDeviceProcessUtilization returns SM utilization for processes running on the GPU.
 	// Returns a map from PID to SM utilization percentage.
 	GetDeviceProcessUtilization(gpuUUID string) (map[uint32]uint32, error)
-	// GetAllMIGDevicesProcessMemory returns memory usage for all MIG devices on a parent GPU.
-	// Returns a map from GPU Instance ID to (PID -> memory used in bytes).
-	// Note: Only memory info is available for MIG devices, not SM utilization.
+	// GetAllMIGDevicesProcessMemory returns per-process memory usage for all MIG instances on a GPU.
+	// Returns map[gpuInstanceID (MIG instance)]map[PID]memoryBytes.
 	GetAllMIGDevicesProcessMemory(parentGPUUUID string) (map[uint]map[uint32]uint64, error)
 	Cleanup()
 }

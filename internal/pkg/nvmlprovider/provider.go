@@ -221,9 +221,8 @@ func (n nvmlProvider) GetDeviceProcessUtilization(gpuUUID string) (map[uint32]ui
 	return result, nil
 }
 
-// GetAllMIGDevicesProcessMemory returns memory usage for all MIG devices on a parent GPU.
-// Returns a map from GPU Instance ID to (PID -> memory used in bytes).
-// Note: Only memory info is available for MIG devices, not SM utilization.
+// GetAllMIGDevicesProcessMemory returns per-process memory usage for all MIG instances on a GPU.
+// Returns map[gpuInstanceID (MIG instance)]map[PID]memoryBytes.
 func (n nvmlProvider) GetAllMIGDevicesProcessMemory(parentGPUUUID string) (map[uint]map[uint32]uint64, error) {
 	if err := n.preCheck(); err != nil {
 		return nil, fmt.Errorf("failed to get MIG device process memory: %w", err)

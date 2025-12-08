@@ -31,6 +31,30 @@ func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Error(t, err, "uuid: %v, Device Info: %+v", validMIGUUID, deviceInfo)
 }
 
+func TestGetDeviceProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
+	provider := nvmlProvider{}
+	result, err := provider.GetDeviceProcessMemory("GPU-test-uuid")
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to get device process memory")
+}
+
+func TestGetDeviceProcessUtilization_When_NVML_Not_Initialized(t *testing.T) {
+	provider := nvmlProvider{}
+	result, err := provider.GetDeviceProcessUtilization("GPU-test-uuid")
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to get device process utilization")
+}
+
+func TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
+	provider := nvmlProvider{}
+	result, err := provider.GetAllMIGDevicesProcessMemory("GPU-test-uuid")
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to get MIG device process memory")
+}
+
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 	_ = Initialize()
 	assert.NotNil(t, Client(), "expected NVML Client to be not nil")

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ func (m *mockPIDMapper) buildPIDToPodMap(pids []uint32, pods []PodInfo) map[uint
 }
 
 func TestGetGPUUUIDToDeviceID(t *testing.T) {
+	t.Parallel()
 	gpu0UUID := "GPU-00000000-0000-0000-0000-000000000000"
 	gpu1UUID := "GPU-11111111-1111-1111-1111-111111111111"
 
@@ -67,6 +68,7 @@ func TestGetGPUUUIDToDeviceID(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
@@ -87,20 +89,20 @@ func TestGetGPUUUIDToDeviceID(t *testing.T) {
 }
 
 func TestIsPerProcessMetric(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		fieldName string
 		expected  bool
 	}{
 		{metricGPUUtil, true},
 		{metricFBUsed, true},
-		{metricGREngineActive, true},
 		{"DCGM_FI_DEV_POWER_USAGE", false},
-		{"DCGM_FI_DEV_GPU_TEMP", false},
 		{"", false},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.fieldName, func(t *testing.T) {
+			t.Parallel()
 			result := isPerProcessMetric(tc.fieldName)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -108,6 +110,7 @@ func TestIsPerProcessMetric(t *testing.T) {
 }
 
 func TestPerProcessMetrics_GetAllPIDs(t *testing.T) {
+	t.Parallel()
 	metrics := &perProcessMetrics{
 		pidToSMUtil: map[uint32]uint32{
 			1001: 50,
@@ -128,14 +131,15 @@ func TestPerProcessMetrics_GetAllPIDs(t *testing.T) {
 }
 
 func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
+	t.Parallel()
 	metrics := &perProcessMetrics{
 		pidToSMUtil: map[uint32]uint32{
 			1001: 50,
-			1002: 100,
+			1002: 0,
 		},
 		pidToMemory: map[uint32]uint64{
 			1001: 1024 * 1024 * 1024,
-			1002: 512 * 1024 * 1024,
+			1002: 0,
 		},
 	}
 
@@ -147,31 +151,31 @@ func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 		hasValue  bool
 	}{
 		{
-			name:      "GPU util - 50%",
+			name:      "GPU util",
 			fieldName: metricGPUUtil,
 			pid:       1001,
 			expected:  "50",
 			hasValue:  true,
 		},
 		{
-			name:      "GPU util - 100%",
+			name:      "GPU util zero",
 			fieldName: metricGPUUtil,
 			pid:       1002,
-			expected:  "100",
+			expected:  "0",
 			hasValue:  true,
 		},
 		{
-			name:      "FB used - 1GB",
+			name:      "FB used",
 			fieldName: metricFBUsed,
 			pid:       1001,
 			expected:  "1024",
 			hasValue:  true,
 		},
 		{
-			name:      "FB used - 512MB",
+			name:      "FB used zero",
 			fieldName: metricFBUsed,
 			pid:       1002,
-			expected:  "512",
+			expected:  "0",
 			hasValue:  true,
 		},
 		{
@@ -202,6 +206,7 @@ func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 }
 
 func TestPerProcessMetrics_EmptyMaps(t *testing.T) {
+	t.Parallel()
 	metrics := &perProcessMetrics{
 		pidToSMUtil: make(map[uint32]uint32),
 		pidToMemory: make(map[uint32]uint64),
@@ -216,6 +221,7 @@ func TestPerProcessMetrics_EmptyMaps(t *testing.T) {
 }
 
 func TestPerProcessCollector_Collect(t *testing.T) {
+	t.Parallel()
 	gpu0UUID := "GPU-00000000-0000-0000-0000-000000000000"
 	gpu1UUID := "GPU-11111111-1111-1111-1111-111111111111"
 	podUID0 := "a9c80282-3f6b-4d5b-84d5-a137a6668011"
@@ -385,7 +391,7 @@ func TestPerProcessCollector_Collect(t *testing.T) {
 				gpu1UUID: "nvidia1",
 			},
 			deviceToPods: map[string][]PodInfo{
-				"nvidia0": {{Name: "pod0", Namespace: "ns0", UID: podUID0}},
+				"nvidia0": {{Name: "test-pod", Namespace: "default", UID: podUID0}},
 				"nvidia1": {{Name: "pod1", Namespace: "ns1", UID: podUID1}},
 			},
 			pidToPod: map[uint32]*PodInfo{
@@ -415,6 +421,7 @@ func TestPerProcessCollector_Collect(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 

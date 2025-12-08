@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import (
 )
 
 func isPerProcessMetric(fieldName string) bool {
-	return fieldName == metricGPUUtil || fieldName == metricFBUsed || fieldName == metricGREngineActive
+	return fieldName == metricGPUUtil || fieldName == metricFBUsed
 }
 
 // getGPUUUIDToDeviceID builds a mapping from GPU UUID to device ID based on the specified ID type.

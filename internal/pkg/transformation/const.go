@@ -17,6 +17,7 @@
 package transformation
 
 const (
+	// Note standard resource attributes
 	podAttribute       = "pod"
 	namespaceAttribute = "namespace"
 	containerAttribute = "container"
@@ -39,7 +40,6 @@ const (
 
 	DRAGPUDriverName = "gpu.nvidia.com"
 
-	metricGPUUtil        = "DCGM_FI_DEV_GPU_UTIL"
-	metricFBUsed         = "DCGM_FI_DEV_FB_USED"
-	metricGREngineActive = "DCGM_FI_PROF_GR_ENGINE_ACTIVE"
+	metricGPUUtil = "DCGM_FI_DEV_GPU_UTIL"
+	metricFBUsed  = "DCGM_FI_DEV_FB_USED"
 )

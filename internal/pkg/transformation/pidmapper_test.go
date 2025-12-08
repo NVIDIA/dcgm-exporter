@@ -1,7 +1,5 @@
-//go:build linux
-
 /*
- * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +23,7 @@ import (
 )
 
 func TestExtractPodUID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		path     string
@@ -64,6 +63,7 @@ func TestExtractPodUID(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := extractPodUID(tc.path)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -71,6 +71,7 @@ func TestExtractPodUID(t *testing.T) {
 }
 
 func TestExtractPodUIDFromPaths(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		subsystems map[string]string
@@ -104,6 +105,7 @@ func TestExtractPodUIDFromPaths(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := extractPodUIDFromPaths(tc.subsystems, tc.unified)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -111,6 +113,7 @@ func TestExtractPodUIDFromPaths(t *testing.T) {
 }
 
 func TestBuildPIDToPodMap(t *testing.T) {
+	t.Parallel()
 	mapper := newPIDToPodMapper()
 
 	pods := []PodInfo{

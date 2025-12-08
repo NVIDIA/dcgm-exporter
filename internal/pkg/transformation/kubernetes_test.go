@@ -347,6 +347,9 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
 				mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil).AnyTimes()
+				mockNVMLProvider.EXPECT().GetDeviceProcessMemory(gomock.Any()).Return(map[uint32]uint64{}, nil).AnyTimes()
+				mockNVMLProvider.EXPECT().GetDeviceProcessUtilization(gomock.Any()).Return(map[uint32]uint32{}, nil).AnyTimes()
+				mockNVMLProvider.EXPECT().GetAllMIGDevicesProcessMemory(gomock.Any()).Return(map[uint]map[uint32]uint64{}, nil).AnyTimes()
 				nvmlprovider.SetClient(mockNVMLProvider)
 
 				podMapper := NewPodMapper(&appconfig.Config{
@@ -946,6 +949,7 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 }
 
 func TestBuildPodValueMap(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		pidToPod  map[uint32]*PodInfo
@@ -957,6 +961,15 @@ func TestBuildPodValueMap(t *testing.T) {
 			name:      "nil data returns empty map",
 			pidToPod:  map[uint32]*PodInfo{1001: {UID: "uid1"}},
 			data:      nil,
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{},
+		},
+		{
+			name:     "empty pidToPod returns empty map",
+			pidToPod: map[uint32]*PodInfo{},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 50},
+			},
 			fieldName: metricGPUUtil,
 			expected:  map[string]string{},
 		},
@@ -991,6 +1004,7 @@ func TestBuildPodValueMap(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := buildPodValueMap(tc.pidToPod, tc.data, tc.fieldName)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -998,6 +1012,7 @@ func TestBuildPodValueMap(t *testing.T) {
 }
 
 func TestBuildIdlePodValues(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		existingValues map[string]string
@@ -1026,6 +1041,7 @@ func TestBuildIdlePodValues(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := buildIdlePodValues(tc.existingValues, tc.devicePods)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -1033,6 +1049,7 @@ func TestBuildIdlePodValues(t *testing.T) {
 }
 
 func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
+	t.Parallel()
 	gpuUUID := "GPU-00000000-0000-0000-0000-000000000000"
 	podUID := "a9c80282-3f6b-4d5b-84d5-a137a6668011"
 
@@ -1226,6 +1243,7 @@ func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			podMapper := &PodMapper{
 				Config: &appconfig.Config{
 					UseOldNamespace: tc.useOldNS,
@@ -1245,20 +1263,16 @@ func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
 }
 
 func TestStripVGPUSuffix(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		deviceID string
 		expected string
 	}{
 		{
-			name:     "AWS MIG device ID with vgpu suffix",
+			name:     "MIG device ID with vgpu suffix",
 			deviceID: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55::7",
 			expected: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55",
-		},
-		{
-			name:     "AWS MIG device ID with different vgpu index",
-			deviceID: "MIG-a8d7e63b-588b-5fd8-826d-d1eab19c6f18::9",
-			expected: "MIG-a8d7e63b-588b-5fd8-826d-d1eab19c6f18",
 		},
 		{
 			name:     "Plain MIG UUID without suffix",
@@ -1289,6 +1303,7 @@ func TestStripVGPUSuffix(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			result := stripVGPUSuffix(tc.deviceID)
 			assert.Equal(t, tc.expected, result)
 		})
