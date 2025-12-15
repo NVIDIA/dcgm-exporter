@@ -100,8 +100,8 @@ The DCGM-exporter can include High-Performance Computing (HPC) job information i
 
 These mapping files follow a specific format:
 
-* Each file is named after a unique GPU ID (e.g., 0, 1, 2, etc.).
-* Each line in the file contains JOB IDs that run on the corresponding GPU.
+* Each file is named after either a unique GPU ID or a unique GPU ID and a GPU instance (MIG) ID separated with a "." (e.g., 0, 1, 2.0, 2.1, 3, etc.).
+* Each line in the file contains JOB IDs that run on the corresponding GPU/MIG instance.
 
 #### Enabling HPC Job Mapping on DCGM-Exporter
 

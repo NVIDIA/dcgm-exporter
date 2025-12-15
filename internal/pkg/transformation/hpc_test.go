@@ -66,6 +66,13 @@ func TestHPCProcess(t *testing.T) {
 				mDirEntryGPU1.EXPECT().Info().Return(mFileInfoGPU1, nil).AnyTimes()
 				mDirEntryGPU1.EXPECT().Name().Return("1").AnyTimes()
 
+				mFileInfoGPU3MIG0 := mockos.NewMockFileInfo(ctrl)
+				mFileInfoGPU3MIG0.EXPECT().IsDir().Return(false).AnyTimes()
+
+				mDirEntryGPU3MIG0 := mockos.NewMockDirEntry(ctrl)
+				mDirEntryGPU3MIG0.EXPECT().Info().Return(mFileInfoGPU3MIG0, nil).AnyTimes()
+				mDirEntryGPU3MIG0.EXPECT().Name().Return("3.0").AnyTimes()
+
 				mFileInfoDir := mockos.NewMockFileInfo(ctrl)
 				mFileInfoDir.EXPECT().IsDir().Return(true).AnyTimes()
 
@@ -86,6 +93,7 @@ func TestHPCProcess(t *testing.T) {
 					Return([]fs.DirEntry{
 						mDirEntryGPU0,
 						mDirEntryGPU1,
+						mDirEntryGPU3MIG0,
 						mDirEntryDir,
 						mDirEntryDamagedFile,
 					}, nil).AnyTimes()
@@ -101,8 +109,14 @@ func TestHPCProcess(t *testing.T) {
 				_, _ = slurm1.WriteString("job2-1\n")
 				slurm1.Close()
 
+				slurm3dot0, err := realOS.CreateTemp("", "slurm3dot0")
+				require.NoError(t, err)
+				_, _ = slurm3dot0.WriteString("job3.0-0")
+				slurm3dot0.Close()
+
 				mOS.EXPECT().Open(gomock.Eq("/var/run/nvidia/slurm/0")).Return(realOS.Open(slurm0.Name()))
 				mOS.EXPECT().Open(gomock.Eq("/var/run/nvidia/slurm/1")).Return(realOS.Open(slurm1.Name()))
+				mOS.EXPECT().Open(gomock.Eq("/var/run/nvidia/slurm/3.0")).Return(realOS.Open(slurm3dot0.Name()))
 
 				os = mOS
 				return func() {
@@ -111,13 +125,15 @@ func TestHPCProcess(t *testing.T) {
 					_ = realOS.Remove(slurm0.Name())
 					slurm1.Close()
 					_ = realOS.Remove(slurm1.Name())
+					slurm3dot0.Close()
+					_ = realOS.Remove(slurm3dot0.Name())
 				}
 			},
 			assertion: func(t *testing.T, mbc collector.MetricsByCounter) {
 				require.Len(t, mbc, 1, "metrics are expected for a single counter only.")
 				// We get metric value with 0 index
 				metricValues := mbc[reflect.ValueOf(mbc).MapKeys()[0].Interface().(counters.Counter)]
-				require.Len(t, metricValues, 4, "received unexpected number of metric values.")
+				require.Len(t, metricValues, 5, "received unexpected number of metric values.")
 				// Sort metrics by GPU ID
 				slices.SortFunc(metricValues, func(a, b collector.Metric) int {
 					return cmp.Compare(a.GPU, b.GPU)
@@ -137,6 +153,11 @@ func TestHPCProcess(t *testing.T) {
 				assert.Equal(t, "2", metricValues[3].GPU)
 				assert.Equal(t, "1984", metricValues[3].Value)
 				assert.NotContains(t, metricValues[3].Attributes, hpcJobAttribute)
+
+				assert.Equal(t, "3", metricValues[4].GPU)
+				assert.Equal(t, "0", metricValues[4].GPUInstanceID)
+				assert.Equal(t, "123", metricValues[4].Value)
+				assert.Equal(t, "job3.0-0", metricValues[4].Attributes[hpcJobAttribute])
 			},
 		},
 	}
@@ -191,6 +212,21 @@ func TestHPCProcess(t *testing.T) {
 				Counter: counters.Counter{
 					FieldID:   155,
 					FieldName: "DCGM_FI_DEV_POWER_USAGE",
+					PromType:  "gauge",
+				},
+				Attributes: map[string]string{},
+			})
+
+			metrics[counter] = append(metrics[counter], collector.Metric{
+				GPU:           "3",
+				GPUUUID:       uuid.New().String(),
+				GPUDevice:     "nvidia2",
+				GPUInstanceID: "0",
+				Value:         "123",
+				MigProfile:    "3g.70gb",
+				Counter: counters.Counter{
+					FieldID:   1001,
+					FieldName: "DCGM_FI_PROF_GR_ENGINE_ACTIVE",
 					PromType:  "gauge",
 				},
 				Attributes: map[string]string{},

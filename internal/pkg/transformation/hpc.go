@@ -94,7 +94,16 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 	for counter := range metrics {
 		var modifiedMetrics []collector.Metric
 		for _, metric := range metrics[counter] {
-			jobs, exists := gpuToJobMap[metric.GPU]
+
+			var jobMapKey string
+			if metric.MigProfile != "" {
+				jobMapKey = fmt.Sprintf("%s.%s", metric.GPU, metric.GPUInstanceID)
+			} else {
+				jobMapKey = metric.GPU
+			}
+
+			jobs, exists := gpuToJobMap[jobMapKey]
+
 			if exists && len(jobs) != 0 {
 				for _, job := range jobs {
 					modifiedMetric, err := utils.DeepCopy(metric)
@@ -173,9 +182,9 @@ func getGPUFiles(dirPath string) ([]string, error) {
 			continue // Skip directories
 		}
 
-		_, err = strconv.Atoi(file.Name())
+		_, err = strconv.ParseFloat(file.Name(), 64)
 		if err != nil {
-			slog.Debug(fmt.Sprintf("HPC mapper: file %q name doesn't match with GPU ID convention", file.Name()))
+			slog.Debug(fmt.Sprintf("HPC mapper: file %q name doesn't match with <GPU_ID> or <GPU_ID>.<GPU_INSTANCE_ID> convention", file.Name()))
 			continue
 		}
 		mappingFiles = append(mappingFiles, file.Name())
