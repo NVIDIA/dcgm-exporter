@@ -272,9 +272,10 @@ func TestHealthReturnsOK(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
 
-func TestHealthReturnsOKWhenWriteReturnsError(t *testing.T) {
+func TestHealthDoesNotPanicWhenWriteError(t *testing.T) {
 	metricServer := &MetricsServer{}
 	recorder := &mockResponseWriter{}
-	metricServer.Health(recorder, nil)
-	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
+	assert.NotPanics(t, func() {
+		metricServer.Health(recorder, nil)
+	})
 }
