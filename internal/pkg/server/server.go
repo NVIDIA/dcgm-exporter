@@ -272,7 +272,7 @@ func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	if _, err := w.Write([]byte("OK")); err != nil {
 		slog.Error("Failed to write health response.", slog.String(logging.ErrorKey, err.Error()))
 		return
-	)
+	}
 }
 
 // DumpMetricsToJSON is a helper function for debugging that dumps all metrics to JSON
