@@ -268,11 +268,11 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 
 func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, err := w.Write([]byte("KO"))
-	if err != nil {
-		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
-		http.Error(w, "failed to write response", http.StatusInternalServerError)
-	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if _, err := w.Write([]byte("OK")); err != nil {
+		slog.Error("Failed to write health response.", slog.String(logging.ErrorKey, err.Error()))
+		return
+	)
 }
 
 // DumpMetricsToJSON is a helper function for debugging that dumps all metrics to JSON
