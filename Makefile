@@ -135,8 +135,24 @@ test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
-	sh scripts/test_coverage.sh
-	gocov convert tests.cov  | gocov report
+	@echo "Running unit tests..."
+	gotestsum --format testname -- \
+		$$(go list ./... | grep -v "/tests/e2e/") \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverprofile=unit_coverage.out
+	@echo "Running integration tests..."
+	gotestsum --format testname -- \
+		./internal/pkg/integration_test/... \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverpkg=./internal/pkg/... \
+		-coverprofile=integration_coverage.out
+	@echo "Merging coverage profiles..."
+	gocovmerge unit_coverage.out integration_coverage.out > combined_coverage.out.tmp
+	cat combined_coverage.out.tmp | grep -v "mock_" > tests.cov
+	rm combined_coverage.out.tmp integration_coverage.out unit_coverage.out
+	gocov convert tests.cov | gocov report
 
 .PHONY: lint
 lint:
@@ -179,6 +195,7 @@ tools: ## Install required tools and utilities
 	go install golang.org/x/tools/cmd/goimports@latest
 	go install mvdan.cc/gofumpt@latest
 	go install github.com/wadey/gocovmerge@latest
+	go install gotest.tools/gotestsum@latest
 
 fmt:
 	find . -name '*.go' | xargs gofumpt -l -w

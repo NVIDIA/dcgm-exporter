@@ -183,7 +183,6 @@ func TestMetrics(t *testing.T) {
 			)
 
 			metricServer := &MetricsServer{
-				registry: reg,
 				deviceWatchListManager: func(group dcgm.Field_Entity_Group) devicewatchlistmanager.Manager {
 					mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
 					mockDeviceWatchListManager.EXPECT().EntityWatchList(group).Return(defaultDeviceWatchList,
@@ -194,6 +193,7 @@ func TestMetrics(t *testing.T) {
 					tt.transformer(),
 				},
 			}
+			metricServer.registry.Store(reg)
 
 			recorder := httptest.NewRecorder()
 			metricServer.Metrics(recorder, nil)
@@ -248,7 +248,6 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 	)
 
 	metricServer := &MetricsServer{
-		registry: reg,
 		deviceWatchListManager: func() devicewatchlistmanager.Manager {
 			mockDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
 			mockDeviceWatchListManager.EXPECT().EntityWatchList(dcgm.FE_CPU).Return(defaultDeviceWatchList,
@@ -259,6 +258,7 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 		}(),
 		transformations: []transformation.Transform{},
 	}
+	metricServer.registry.Store(reg)
 	recorder := &mockResponseWriter{}
 	metricServer.Metrics(recorder, nil)
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
@@ -274,8 +274,41 @@ func TestHealthReturnsOK(t *testing.T) {
 
 func TestHealthDoesNotPanicWhenWriteError(t *testing.T) {
 	metricServer := &MetricsServer{}
+	// Set a registry so the code path reaches the write call
+	metricServer.registry.Store(registry.NewRegistry())
 	recorder := &mockResponseWriter{}
 	assert.NotPanics(t, func() {
 		metricServer.Health(recorder, nil)
 	})
+}
+
+func TestHealthReturnsOKWhenRegistryIsNil(t *testing.T) {
+	metricServer := &MetricsServer{}
+	metricServer.registry.Store(nil)
+	recorder := httptest.NewRecorder()
+	metricServer.Health(recorder, nil)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "false", recorder.Header().Get("X-Registry-Available"))
+	assert.Equal(t, "true", recorder.Header().Get("X-Reload-In-Progress"))
+	assert.Contains(t, recorder.Body.String(), "OK - reload in progress")
+}
+
+func TestHealthReturnsOKDuringReload(t *testing.T) {
+	metricServer := &MetricsServer{}
+	metricServer.SetReloadInProgress(true)
+	recorder := httptest.NewRecorder()
+	metricServer.Health(recorder, nil)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "true", recorder.Header().Get("X-Reload-In-Progress"))
+}
+
+func TestHealthReturnsOKWithRegistryAvailable(t *testing.T) {
+	metricServer := &MetricsServer{}
+	reg := registry.NewRegistry()
+	metricServer.registry.Store(reg)
+	recorder := httptest.NewRecorder()
+	metricServer.Health(recorder, nil)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "true", recorder.Header().Get("X-Registry-Available"))
+	assert.NotEqual(t, "true", recorder.Header().Get("X-Reload-In-Progress"))
 }

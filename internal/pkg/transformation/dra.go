@@ -79,6 +79,10 @@ func (m *DRAResourceSliceManager) Stop() {
 	if m.cancelContext != nil {
 		m.cancelContext()
 	}
+	// Ensure factory informers are fully stopped
+	if m.factory != nil {
+		m.factory.Shutdown()
+	}
 }
 
 // GetDeviceInfo returns the mapping UUID and MIG device info if applicable

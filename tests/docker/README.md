@@ -60,7 +60,7 @@ make docker-test-distroless
 REGISTRY=my-registry.io FULL_VERSION=3.0.0-3.1.0 make docker-test
 
 # Test specific version
-FULL_VERSION=4.5.0-5.0.0 make docker-test-ubuntu
+FULL_VERSION=4.4.2-5.0.0 make docker-test-ubuntu
 ```
 
 #### Override Specific Images
@@ -107,7 +107,7 @@ IMAGE_DISTROLESS="" \
 make docker-test
 
 # Test release candidate
-FULL_VERSION=4.5.0-5.0.0-rc1 make docker-test
+FULL_VERSION=4.4.2-5.0.0-rc1 make docker-test
 
 # Test PR build
 REGISTRY=ci.mycompany.com \
@@ -116,7 +116,7 @@ make docker-test-ubuntu
 
 # Compare two versions
 IMAGE_UBUNTU=nvidia/dcgm-exporter:4.4.2-4.7.1-ubuntu22.04 \
-IMAGE_DISTROLESS=nvidia/dcgm-exporter:4.5.0-5.0.0-distroless \
+IMAGE_DISTROLESS=nvidia/dcgm-exporter:4.4.2-5.0.0-distroless \
 IMAGE_UBI="" \
 make docker-test
 ```
@@ -166,10 +166,10 @@ When updating DCGM or exporter versions, the tests are automatically updated:
 make update-version \
   OLD_DCGM_VERSION=4.3.0 \
   NEW_DCGM_VERSION=4.4.2 \
-  OLD_EXPORTER_VERSION=4.5.0 \
+  OLD_EXPORTER_VERSION=4.4.2 \
   NEW_EXPORTER_VERSION=4.7.1
 
-# This will update FULL_VERSION in tests/docker/Makefile from 4.3.0-4.5.0 to 4.4.2-4.7.1
+# This will update FULL_VERSION in tests/docker/Makefile from 4.3.0-4.4.2 to 4.4.2-4.7.1
 ```
 
 After version update:

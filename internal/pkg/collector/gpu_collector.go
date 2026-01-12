@@ -173,15 +173,15 @@ func toSwitchMetric(
 			continue
 		} else {
 			m = Metric{
-				Counter:      counter,
-				Value:        v,
-				UUID:         uuid,
-				NvLink:       fmt.Sprintf("%d", mi.Entity.EntityId),
-				NvSwitch:     fmt.Sprintf("nvswitch%d", mi.ParentId),
-				Hostname:     hostname,
-				Labels:       labels,
-				Attributes:   nil,
-				ParentType:   mi.ParentType,
+				Counter:    counter,
+				Value:      v,
+				UUID:       uuid,
+				NvLink:     fmt.Sprintf("%d", mi.Entity.EntityId),
+				NvSwitch:   fmt.Sprintf("nvswitch%d", mi.ParentId),
+				Hostname:   hostname,
+				Labels:     labels,
+				Attributes: nil,
+				ParentType: mi.ParentType,
 			}
 		}
 

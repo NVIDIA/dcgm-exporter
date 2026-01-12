@@ -53,6 +53,7 @@ type DCGM interface {
 	NewDefaultGroup(string) (dcgm.GroupHandle, error)
 	UpdateAllFields() error
 	WatchFieldsWithGroupEx(dcgm.FieldHandle, dcgm.GroupHandle, int64, float64, int32) error
+	UnwatchFields(dcgm.FieldHandle, dcgm.GroupHandle) error
 	Cleanup()
 	HealthSet(groupID dcgm.GroupHandle, systems dcgm.HealthSystem) error
 	HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error)

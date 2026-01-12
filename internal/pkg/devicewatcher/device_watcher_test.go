@@ -36,14 +36,13 @@ import (
 )
 
 func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-
 	realDCGM := dcgmprovider.Client()
 	defer func() {
 		dcgmprovider.SetClient(realDCGM)
 	}()
-	dcgmprovider.SetClient(mockDCGM)
+
+	var ctrl *gomock.Controller
+	var mockDCGM *mockdcgm.MockDCGM
 
 	tests := []struct {
 		name               string
@@ -95,16 +94,19 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[0], uint(1), dcgm.FE_SWITCH, uint(0)).Return(nil)
 				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH, uint(1)).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
-				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[1], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
+
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[1]).Return(nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 			},
 			wantErr: false,
 		},
@@ -164,16 +166,16 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(0), dcgm.FE_SWITCH, uint(1)).Return(nil)
 				mockDCGM.EXPECT().AddLinkEntityToGroup(mockGroupHandles[1], uint(1), dcgm.FE_SWITCH,
 					uint(1)).Return(fmt.Errorf("some error"))
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
-				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[1], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
+
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 			},
 			wantErr: false,
 		},
@@ -310,13 +312,15 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_GPU, uint(0)).Return(nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_GPU, uint(1)).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
-				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
+
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 			},
 			wantErr: false,
 		},
@@ -411,16 +415,19 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_CPU_CORE, uint(1)).Return(nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[1], dcgm.FE_CPU_CORE, uint(0)).Return(nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[1], dcgm.FE_CPU_CORE, uint(1)).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
-				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[1], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
+
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[1]).Return(nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 			},
 			wantErr: false,
 		},
@@ -513,13 +520,15 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_CPU, uint(0)).Return(nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_CPU, uint(1)).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
-				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
+
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 			},
 			wantErr: false,
 		},
@@ -614,13 +623,15 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandles[0], nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_SWITCH, uint(0)).Return(nil)
 				mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandles[0], dcgm.FE_SWITCH, uint(1)).Return(nil)
-				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 
 				mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldGroupHandle, nil)
-				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[0], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
+
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 			},
 			wantErr: false,
 		},
@@ -676,6 +687,10 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctrl = gomock.NewController(t)
+			mockDCGM = mockdcgm.NewMockDCGM(ctrl)
+			dcgmprovider.SetClient(mockDCGM)
+
 			mockDeviceInfo := tt.mockDeviceInfoFunc()
 			mockGroupIDs := tt.expectGroupIDs()
 			mockFieldGroupIDs := tt.expectFieldGroupID()
@@ -695,6 +710,8 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				assert.NotNil(t, err, "expected an error.")
 				assert.Nil(t, gotFuncs, "expected cleanup functions to be nil")
 			}
+
+			ctrl.Finish()
 		})
 	}
 }

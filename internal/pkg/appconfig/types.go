@@ -17,6 +17,8 @@
 package appconfig
 
 import (
+	"time"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
@@ -72,4 +74,6 @@ type Config struct {
 	DumpConfig                       DumpConfig // Configuration for file-based dumps
 	KubernetesEnableDRA              bool
 	DisableStartupValidate           bool
+	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
+	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
 }

@@ -19,6 +19,7 @@ package server
 import (
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/prometheus/exporter-toolkit/web"
 
@@ -30,15 +31,16 @@ import (
 )
 
 type MetricsServer struct {
-	sync.Mutex
+	sync.RWMutex
 
 	server                 *http.Server
 	webConfig              *web.FlagConfig
 	metrics                string
-	metricsChan            chan string
-	registry               *registry.Registry
+	registry               atomic.Pointer[registry.Registry]
 	config                 *appconfig.Config
 	transformations        []transformation.Transform
 	deviceWatchListManager devicewatchlistmanager.Manager
 	fileDumper             *debug.FileDumper
+
+	reloadInProgress atomic.Bool
 }

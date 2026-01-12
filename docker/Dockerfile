@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.1.0-base-ubuntu22.04
 
 #####
 # Common builder stage - compiles dcgm-exporter with CGO for all targets
 #####
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
-ARG GOLANG_VERSION=1.24.5
+ARG GOLANG_VERSION=1.25.5
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
@@ -91,7 +91,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends file && \
 #####
 # Ubuntu 22.04 runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-ubuntu
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.0-base-ubuntu22.04 AS runtime-ubuntu
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -173,7 +173,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # UBI9 runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubi9 AS runtime-ubi
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.0-base-ubi9 AS runtime-ubi
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -251,7 +251,6 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 
 #####
 # Distroless helper stage - builds full Ubuntu container with DCGM libraries
-#####
 FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-distroless-helper
 
 ARG TARGETARCH
