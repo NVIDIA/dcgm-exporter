@@ -50,6 +50,7 @@ data:
       # Memory usage
       DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
       DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+      DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
 
       # ECC
       # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
@@ -77,6 +78,9 @@ data:
       DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
       DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
       DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
+
+      # Static configuration information. These appear as labels on the other metrics
+      DCGM_FI_DRIVER_VERSION,        label, Driver Version
 
       # DCP metrics
       DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
