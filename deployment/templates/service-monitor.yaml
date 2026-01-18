@@ -34,6 +34,7 @@ spec:
   - port: "metrics"
     path: "/metrics"
     interval: "{{ .Values.serviceMonitor.interval }}"
+    scrapeTimeout: "{{ .Values.serviceMonitor.scrapeTimeout }}"
     honorLabels: {{ .Values.serviceMonitor.honorLabels }}
     relabelings:
       {{ toYaml .Values.serviceMonitor.relabelings | nindent 6 }}

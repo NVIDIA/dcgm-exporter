@@ -121,6 +121,7 @@ serviceMonitor:
   apiVersion: "monitoring.coreos.com/v1"
   enabled: true
   interval: 15s
+  scrapeTimeout: 10s
   honorLabels: false
   additionalLabels: {}
     #monitoring: prometheus
