@@ -372,6 +372,298 @@ const sampleMetricsJSON = `{
         "labels": {},
         "attributes": {}
       }
+    ],
+    "DCGM_FI_DEV_FB_RESERVED": [
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "0",
+        "gpu_uuid": "GPU-be839661-c0f5-7452-284b-b875666df60c",
+        "gpu_device": "nvidia0",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:1B:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "1",
+        "gpu_uuid": "GPU-21c6d9d7-46cd-7e91-99c3-7b6a06a3faea",
+        "gpu_device": "nvidia1",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:43:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "2",
+        "gpu_uuid": "GPU-5d9cc71f-b438-dc00-707d-c6c12bcfede1",
+        "gpu_device": "nvidia2",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:52:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "3",
+        "gpu_uuid": "GPU-81d888ca-dd11-328c-45fa-d6807a1afa6a",
+        "gpu_device": "nvidia3",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:61:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "4",
+        "gpu_uuid": "GPU-c4c7f4f8-af86-6966-c0b2-7c1e40c18347",
+        "gpu_device": "nvidia4",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:9D:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "5",
+        "gpu_uuid": "GPU-7845680c-0e07-1670-c2bb-9f018cd7864b",
+        "gpu_device": "nvidia5",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:C3:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "6",
+        "gpu_uuid": "GPU-f70b214f-9fe8-5a4e-0499-0ff9572959ff",
+        "gpu_device": "nvidia6",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:D1:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 253,
+          "field_name": "DCGM_FI_DEV_FB_RESERVED",
+          "prom_type": "gauge",
+          "help": "Framebuffer memory reserved (in MiB)."
+        },
+        "value": "576",
+        "gpu": "7",
+        "gpu_uuid": "GPU-eb5c9999-ebc3-9a6e-58cc-494befb69b8a",
+        "gpu_device": "nvidia7",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:DF:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      }
+    ],
+    "DCGM_FI_DRIVER_VERSION": [
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "0",
+        "gpu_uuid": "GPU-be839661-c0f5-7452-284b-b875666df60c",
+        "gpu_device": "nvidia0",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:1B:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "1",
+        "gpu_uuid": "GPU-21c6d9d7-46cd-7e91-99c3-7b6a06a3faea",
+        "gpu_device": "nvidia1",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:43:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "2",
+        "gpu_uuid": "GPU-5d9cc71f-b438-dc00-707d-c6c12bcfede1",
+        "gpu_device": "nvidia2",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:52:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "3",
+        "gpu_uuid": "GPU-81d888ca-dd11-328c-45fa-d6807a1afa6a",
+        "gpu_device": "nvidia3",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:61:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "4",
+        "gpu_uuid": "GPU-c4c7f4f8-af86-6966-c0b2-7c1e40c18347",
+        "gpu_device": "nvidia4",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:9D:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "5",
+        "gpu_uuid": "GPU-7845680c-0e07-1670-c2bb-9f018cd7864b",
+        "gpu_device": "nvidia5",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:C3:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "6",
+        "gpu_uuid": "GPU-f70b214f-9fe8-5a4e-0499-0ff9572959ff",
+        "gpu_device": "nvidia6",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:D1:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      },
+      {
+        "counter": {
+          "field_id": 254,
+          "field_name": "DCGM_FI_DRIVER_VERSION",
+          "prom_type": "label",
+          "help": "Driver Version"
+        },
+        "value": "575.51.03",
+        "gpu": "7",
+        "gpu_uuid": "GPU-eb5c9999-ebc3-9a6e-58cc-494befb69b8a",
+        "gpu_device": "nvidia7",
+        "gpu_model": "NVIDIA H100 80GB HBM3",
+        "pci_bus_id": "00000000:DF:00.0",
+        "uuid": "UUID",
+        "hostname": "localhost",
+        "labels": {},
+        "attributes": {}
+      }
     ]
   }
 }`

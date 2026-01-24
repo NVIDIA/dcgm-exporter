@@ -297,6 +297,7 @@ kubernetesDRA:
   # Memory usage
   # DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
   # DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+  # DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
   
   # ECC
   # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
@@ -336,6 +337,9 @@ kubernetesDRA:
   # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
   # DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
   # DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
+
+  # Static configuration information
+  # DCGM_FI_DRIVER_VERSION,        label, Driver Version
 
 livenessProbe:
   initialDelaySeconds: 45
