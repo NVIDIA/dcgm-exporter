@@ -78,9 +78,11 @@ func TestP2PStatusToString(t *testing.T) {
 	}{
 		{LinkStatusOK, 0, LinkStatusOK},
 		{LinkStatusChipsetNotSupported, 1, LinkStatusChipsetNotSupported},
-		{LinkStatusTopologyNotSupported, 2, LinkStatusTopologyNotSupported},
-		{LinkStatusDisabledByRegKey, 3, LinkStatusDisabledByRegKey},
-		{LinkStatusNotSupported, 4, LinkStatusNotSupported},
+		{LinkStatusGPUNotSupported, 2, LinkStatusGPUNotSupported},
+		{LinkStatusTopologyNotSupported, 3, LinkStatusTopologyNotSupported},
+		{LinkStatusDisabledByRegKey, 4, LinkStatusDisabledByRegKey},
+		{LinkStatusNotSupported, 5, LinkStatusNotSupported},
+		{LinkStatusUnknown, 6, LinkStatusUnknown},
 		{LinkStatusUnknown, 99, LinkStatusUnknown},
 	}
 	for _, tt := range tests {
