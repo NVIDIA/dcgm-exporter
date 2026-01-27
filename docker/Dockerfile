@@ -19,7 +19,7 @@ ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.1.0-base-ubuntu22.04
 #####
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
-ARG GOLANG_VERSION=1.25.5
+ARG GOLANG_VERSION=1.24.12
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
@@ -44,16 +44,33 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
     url=; \
+    filename=; \
     case "$arch" in \
     'amd64') \
-    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    filename="go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    url="https://dl.google.com/go/${filename}"; \
     ;; \
     'arm64') \
-    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    filename="go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    url="https://dl.google.com/go/${filename}"; \
     ;; \
     *) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
     esac; \
     wget -O go.tgz "$url" --progress=dot:giga; \
+    \
+    echo "Verifying SHA256 checksum..."; \
+    wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
+    expected_sha256=$(cat go.sha256); \
+    actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
+    if [ "$expected_sha256" != "$actual_sha256" ]; then \
+        echo >&2 "error: SHA256 checksum verification failed"; \
+        echo >&2 "expected: $expected_sha256"; \
+        echo >&2 "actual:   $actual_sha256"; \
+        exit 1; \
+    fi; \
+    echo "SHA256 checksum verified successfully"; \
+    rm go.sha256; \
+    \
     tar -C /usr/local -xzf go.tgz; \
     rm go.tgz
 

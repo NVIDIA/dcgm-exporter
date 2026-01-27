@@ -1,19 +1,39 @@
+version: "2"
 linters:
   enable:
     - contextcheck
     - gocritic
-    - gofmt
-    - goimports
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - misspell
     - staticcheck
     - unused
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - internal/mocks/
+formatters:
+  enable:
+    - gofmt
     - gofumpt
-
-linters-settings:
-  goimports:
-    local-prefixes: github.com/NVIDIA/dcgm-exporter
-
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/NVIDIA/dcgm-exporter
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+      - internal/mocks/

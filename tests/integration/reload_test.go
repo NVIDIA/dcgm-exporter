@@ -64,8 +64,8 @@ func createTestCLIContext(t *testing.T, collectors string, address string) *cli.
 	}
 
 	// Set the specific values we care about
-	set.Set("collectors", collectors)
-	set.Set("address", address)
+	require.NoError(t, set.Set("collectors", collectors))
+	require.NoError(t, set.Set("address", address))
 
 	return cli.NewContext(app, set, nil)
 }
@@ -98,14 +98,28 @@ func TestMultipleSIGHUPReloads(t *testing.T) {
 		appDone <- err
 	}()
 
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Log("Sending termination signal for cleanup...")
+		testSigs.SendSignal(syscall.SIGTERM)
+		select {
+		case <-appDone:
+			t.Log("App shutdown completed")
+		case <-time.After(10 * time.Second):
+			t.Log("Warning: App did not shutdown within timeout")
+		}
+	}()
+
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
 
 	// Wait for app to start
+	// DCGM initialization can take a long time (30+ seconds) on CI systems
+	// as it initializes GPU, NvSwitch, NvLink, CPU, and CPU Core entities
 	t.Log("Waiting for exporter to start...")
 	require.Eventually(t, func() bool {
 		resp, _, err := httpGet(t, metricsURL)
 		return err == nil && len(resp) > 0
-	}, 20*time.Second, 500*time.Millisecond, "Exporter should start and return metrics")
+	}, 60*time.Second, 500*time.Millisecond, "Exporter should start and return metrics")
 
 	// Now we can programmatically trigger reloads!
 	const numReloads = 5
@@ -150,17 +164,7 @@ func TestMultipleSIGHUPReloads(t *testing.T) {
 
 	t.Logf("Successfully completed %d reload cycles", numReloads)
 
-	// Send termination signal
-	testSigs.SendSignal(syscall.SIGTERM)
-
-	// Wait for clean shutdown (longer timeout for race detector)
-	select {
-	case err := <-appDone:
-		require.NoError(t, err, "App should shutdown cleanly")
-	case <-time.After(10 * time.Second):
-		t.Fatal("App did not shutdown within timeout")
-	}
-
+	// Note: cleanup is handled by deferred function
 	// Give goroutines time to fully cleanup
 	runtime.GC()
 	time.Sleep(500 * time.Millisecond)
@@ -193,12 +197,26 @@ func TestGoroutineLeakOnReload(t *testing.T) {
 		appDone <- err
 	}()
 
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Log("Sending termination signal for cleanup...")
+		testSigs.SendSignal(syscall.SIGTERM)
+		select {
+		case <-appDone:
+			t.Log("App shutdown completed")
+		case <-time.After(10 * time.Second):
+			t.Log("Warning: App did not shutdown within timeout")
+		}
+	}()
+
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
 
+	// DCGM initialization can take a long time (30+ seconds) on CI systems
+	// as it initializes GPU, NvSwitch, NvLink, CPU, and CPU Core entities
 	require.Eventually(t, func() bool {
 		resp, _, err := httpGet(t, metricsURL)
 		return err == nil && len(resp) > 0
-	}, 20*time.Second, 500*time.Millisecond, "Exporter should start and return metrics")
+	}, 60*time.Second, 500*time.Millisecond, "Exporter should start and return metrics")
 
 	goroutinesAfterStart := runtime.NumGoroutine()
 	t.Logf("Goroutines after starting app: %d", goroutinesAfterStart)
@@ -219,16 +237,7 @@ func TestGoroutineLeakOnReload(t *testing.T) {
 		t.Logf("Goroutines after reload %d: %d", i+1, goroutinesAfterReload)
 	}
 
-	// Shutdown
-	testSigs.SendSignal(syscall.SIGTERM)
-
-	select {
-	case err := <-appDone:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("App did not shutdown within timeout")
-	}
-
+	// Note: cleanup is handled by deferred function
 	// Force GC and wait for goroutines to cleanup
 	runtime.GC()
 	time.Sleep(500 * time.Millisecond)

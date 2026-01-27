@@ -170,7 +170,7 @@ func (r *Registry) Cleanup() {
 		time.Sleep(sleepTime)
 
 		// Exponential backoff: 1ms, 2ms, 4ms, 8ms, 16ms, ...
-		sleepTime = sleepTime * 2
+		sleepTime *= 2
 		if sleepTime > 100*time.Millisecond {
 			sleepTime = 100 * time.Millisecond // Cap at 100ms
 		}

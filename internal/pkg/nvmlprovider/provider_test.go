@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
@@ -31,7 +32,7 @@ func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 }
 
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
-	Initialize()
+	_ = Initialize()
 	assert.NotNil(t, Client(), "expected NVML Client to be not nil")
 	assert.True(t, Client().(nvmlProvider).initialized, "expected Client to be initialized")
 	defer Client().Cleanup()
@@ -101,7 +102,7 @@ func Test_newNVMLProvider(t *testing.T) {
 		{
 			name: "NVML already initialized",
 			preRunFunc: func() NVML {
-				Initialize()
+				_ = Initialize()
 				return Client()
 			},
 		},
@@ -209,20 +210,20 @@ func TestInitialize_ErrorHandling(t *testing.T) {
 func TestPreCheck(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupFunc     func()
+		setupFunc     func(t *testing.T)
 		expectError   bool
 		errorContains string
 	}{
 		{
 			name: "Initialized provider",
-			setupFunc: func() {
-				Initialize()
+			setupFunc: func(t *testing.T) {
+				require.NoError(t, Initialize())
 			},
 			expectError: false,
 		},
 		{
 			name: "Uninitialized provider",
-			setupFunc: func() {
+			setupFunc: func(t *testing.T) {
 				reset()
 			},
 			expectError:   true,
@@ -232,7 +233,7 @@ func TestPreCheck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.setupFunc()
+			tt.setupFunc(t)
 			defer reset()
 
 			client := Client()
@@ -243,11 +244,9 @@ func TestPreCheck(t *testing.T) {
 				if tt.errorContains != "" {
 					assert.Contains(t, err.Error(), tt.errorContains)
 				}
-			} else {
+			} else if err != nil {
 				// May error if no actual GPU, but shouldn't be initialization error
-				if err != nil {
-					assert.NotContains(t, err.Error(), "NVML not initialized")
-				}
+				assert.NotContains(t, err.Error(), "NVML not initialized")
 			}
 		})
 	}
@@ -350,12 +349,10 @@ func TestGetMIGDeviceInfoByID_EdgeCases(t *testing.T) {
 				if tt.errorContains != "" {
 					assert.Contains(t, err.Error(), tt.errorContains)
 				}
-			} else {
+			} else if err != nil {
 				// For valid format but non-existent device, may still get an error
 				// from trying to access the actual device, which is fine
-				if err != nil {
-					t.Logf("Got error (expected for non-existent device): %v", err)
-				}
+				t.Logf("Got error (expected for non-existent device): %v", err)
 			}
 		})
 	}

@@ -30,12 +30,10 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	v1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 	"k8s.io/utils/ptr"
 
-	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -85,54 +83,6 @@ func runOnlyWithLiveGPUs(t *testing.T) {
 	if len(gpus) < 1 {
 		t.Skip("Skipping test that requires live GPUs. None were found")
 	}
-}
-
-func mockDCGM(ctrl *gomock.Controller) *mockdcgmprovider.MockDCGM {
-	// Mock results outputs
-	mockDevice := dcgm.Device{
-		GPU:  0,
-		UUID: "fake1",
-		PCI: dcgm.PCIInfo{
-			BusID: "00000000:0000:0000.0",
-		},
-	}
-
-	mockMigHierarchy := dcgm.MigHierarchy_v2{
-		Count: 0,
-	}
-
-	mockCPUHierarchy := dcgm.CPUHierarchy_v1{
-		Version: 0,
-		NumCPUs: 1,
-		CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
-			{
-				CPUID:      0,
-				OwnedCores: []uint64{0, 18446744073709551360, 65535},
-			},
-		},
-	}
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(1)
-
-	mockFieldHandle := dcgm.FieldHandle{}
-	mockFieldHandle.SetHandle(1)
-
-	mockDCGMProvider := mockdcgmprovider.NewMockDCGM(ctrl)
-	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
-	mockDCGMProvider.EXPECT().AddEntityToGroup(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockMigHierarchy, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(nil).AnyTimes()
-	mockDCGMProvider.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).Return(mockFieldHandle, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
-	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(),
-		gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(mockDevice, nil).AnyTimes()
-	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil).AnyTimes()
-
-	return mockDCGMProvider
 }
 
 func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
@@ -244,6 +194,13 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
+
+	// Set MajorRange to only watch fake GPUs (avoids topology errors from real GPUs)
+	majorRange := make([]int, len(gpuIDs))
+	for i, id := range gpuIDs {
+		majorRange[i] = int(id) //nolint:gosec // GPU IDs are small, safe conversion
+	}
+	config.GPUDeviceOptions.MajorRange = majorRange
 
 	type clockEventsCountExpectation map[string]string
 	expectations := map[string]clockEventsCountExpectation{}
@@ -361,6 +318,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 		ClockEventsCountWindowSize: int(time.Duration(5) * time.Minute),
+		UseFakeGPUs:                true, // Use only fake GPUs for hardware-independent testing
 	}
 
 	records := [][]string{
@@ -394,6 +352,13 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
+
+	// Set MajorRange to only watch fake GPUs (avoids topology errors from real GPUs)
+	majorRange := make([]int, len(gpuIDs))
+	for i, id := range gpuIDs {
+		majorRange[i] = int(id) //nolint:gosec // GPU IDs are small, safe conversion
+	}
+	config.GPUDeviceOptions.MajorRange = majorRange
 
 	type clockThrottleReasonExpectation map[string]string
 	expectations := map[string]clockThrottleReasonExpectation{}
@@ -492,6 +457,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 		ClockEventsCountWindowSize: int(time.Duration(5) * time.Minute),
+		UseFakeGPUs:                true, // Use only fake GPUs for hardware-independent testing
 	}
 
 	records := [][]string{
@@ -518,6 +484,13 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
+
+	// Set MajorRange to only watch fake GPUs (avoids topology errors from real GPUs)
+	majorRange := make([]int, len(gpuIDs))
+	for i, id := range gpuIDs {
+		majorRange[i] = int(id) //nolint:gosec // GPU IDs are small, safe conversion
+	}
+	config.GPUDeviceOptions.MajorRange = majorRange
 
 	gpuID := gpuIDs[0]
 	err = dcgmprovider.Client().InjectFieldValue(gpuID,
@@ -598,6 +571,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 		XIDCountWindowSize: int(time.Duration(5) * time.Minute),
+		UseFakeGPUs:        true, // Use only fake GPUs for hardware-independent testing
 	}
 
 	records := [][]string{
@@ -639,6 +613,13 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, fakeGPUIDs)
 
+	// Set MajorRange to only watch fake GPUs (avoids topology errors from lost GPUs on CI)
+	majorRange := make([]int, len(fakeGPUIDs))
+	for i, id := range fakeGPUIDs {
+		majorRange[i] = int(id) //nolint:gosec // GPU IDs are small (typically 0-15), safe conversion
+	}
+	config.GPUDeviceOptions.MajorRange = majorRange
+
 	for i, gpuID := range fakeGPUIDs {
 		err = dcgmprovider.Client().InjectFieldValue(gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
@@ -666,7 +647,6 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 			int64(46),
 		)
 		require.NoError(t, err)
-
 	}
 
 	allCounters := []counters.Counter{
@@ -919,69 +899,60 @@ func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.
 		GPUDeviceOptions: dOpt,
 		NoHostname:       false,
 		UseOldNamespace:  false,
-		UseFakeGPUs:      false,
+		UseFakeGPUs:      true, // Always use fake GPUs for consistent, sandbox-friendly tests
 		CollectInterval:  1,
 	}
 
-	// Check if GPUs exist (real or fake from previous test)
-	numGPUs, err := dcgmprovider.Client().GetAllDeviceCount()
+	// Always create fake GPU for consistent, hardware-independent tests
+	entityList := []dcgm.MigHierarchyInfo{
+		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
+	}
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
+	require.NoError(t, err)
+	require.NotEmpty(t, gpuIDs)
+	gpuID := gpuIDs[0]
+
+	// Inject values for all expected metrics on the fake GPU
+	currentTime := time.Now().UnixMicro()
+
+	// Inject temperature
+	err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		dcgm.DCGM_FI_DEV_GPU_TEMP,
+		dcgm.DCGM_FT_INT64,
+		0,
+		currentTime,
+		int64(42))
 	require.NoError(t, err)
 
-	var gpuID uint
-	if numGPUs == 0 {
-		// No GPUs exist - create fake GPU for consistent, hardware-independent tests
-		entityList := []dcgm.MigHierarchyInfo{
-			{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
-		}
-		gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
-		require.NoError(t, err)
-		require.NotEmpty(t, gpuIDs)
-		gpuID = gpuIDs[0]
+	// Inject power usage
+	err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		dcgm.DCGM_FI_DEV_POWER_USAGE,
+		dcgm.DCGM_FT_DOUBLE,
+		0,
+		currentTime,
+		float64(100.5))
+	require.NoError(t, err)
 
-		// Inject values for all expected metrics on the fake GPU
-		currentTime := time.Now().UnixMicro()
+	// Inject energy consumption
+	err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION,
+		dcgm.DCGM_FT_INT64,
+		0,
+		currentTime,
+		int64(50000))
+	require.NoError(t, err)
 
-		// Inject temperature
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_GPU_TEMP,
-			dcgm.DCGM_FT_INT64,
-			0,
-			currentTime,
-			int64(42))
-		require.NoError(t, err)
+	// Inject vGPU license status
+	err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS,
+		dcgm.DCGM_FT_INT64,
+		0,
+		currentTime,
+		int64(0))
+	require.NoError(t, err)
 
-		// Inject power usage
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_POWER_USAGE,
-			dcgm.DCGM_FT_DOUBLE,
-			0,
-			currentTime,
-			float64(100.5))
-		require.NoError(t, err)
-
-		// Inject energy consumption
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION,
-			dcgm.DCGM_FT_INT64,
-			0,
-			currentTime,
-			int64(50000))
-		require.NoError(t, err)
-
-		// Inject vGPU license status
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
-			dcgm.DCGM_FI_DEV_VGPU_LICENSE_STATUS,
-			dcgm.DCGM_FT_INT64,
-			0,
-			currentTime,
-			int64(0))
-		require.NoError(t, err)
-	} else {
-		// GPU(s) already exist (real hardware or fake from previous test)
-		// Use the first GPU
-		gpuID = 0
-	}
-
+	// Set MajorRange to only watch the fake GPU (avoids topology errors from real GPUs)
+	config.GPUDeviceOptions.MajorRange = []int{int(gpuID)} //nolint:gosec // GPU IDs are small (typically 0-15), safe conversion
 	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(counters, &config)
 
 	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher,
@@ -1032,14 +1003,9 @@ func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.
 		}
 	}
 
-	if numGPUs == 0 {
-		// With fake GPU and injected values, we should get all expected metrics
-		require.Equal(t, expectedGPUMetrics, seenMetrics,
-			"Should have collected all expected metrics with fake GPU")
-	} else {
-		// With real GPU or reused fake GPU, just verify we got some metrics
-		require.NotEmpty(t, seenMetrics, "Should have collected at least some metrics")
-	}
+	// With fake GPU and injected values, we should get all expected metrics
+	require.Equal(t, expectedGPUMetrics, seenMetrics,
+		"Should have collected all expected metrics with fake GPU")
 
 	return g
 }
@@ -1050,7 +1016,7 @@ func testDCGMCPUCollectorIfAvailable(t *testing.T, counters []counters.Counter) 
 		CPUDeviceOptions: dOpt,
 		NoHostname:       false,
 		UseOldNamespace:  false,
-		UseFakeGPUs:      false,
+		UseFakeGPUs:      true, // Allow graceful handling of device errors during initialization
 	}
 
 	// Try to use fake CPU for consistent, hardware-independent tests
@@ -1122,7 +1088,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		},
 		NoHostname:      false,
 		UseOldNamespace: false,
-		UseFakeGPUs:     false,
+		UseFakeGPUs:     true, // Use only fake GPUs for hardware-independent testing
 	}
 
 	dcgmprovider.SmartDCGMInit(t, config)
@@ -1145,6 +1111,13 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
 	require.NotEmpty(t, gpuIDs)
+
+	// Set MajorRange to only watch fake GPUs (avoids topology errors from real GPUs)
+	majorRange := make([]int, len(gpuIDs))
+	for i, id := range gpuIDs {
+		majorRange[i] = int(id) //nolint:gosec // GPU IDs are small, safe conversion
+	}
+	config.GPUDeviceOptions.MajorRange = majorRange
 
 	// Inject values for fake GPUs
 	for _, gpuID := range gpuIDs {

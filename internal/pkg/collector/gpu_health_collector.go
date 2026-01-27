@@ -31,7 +31,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
@@ -181,8 +180,8 @@ func NewGPUHealthStatusCollector(
 		destroyErr := dcgmprovider.Client().DestroyGroup(groupID)
 		if destroyErr != nil {
 			logrus.WithFields(logrus.Fields{
-				logging.GroupIDKey: groupID,
-				logrus.ErrorKey:    destroyErr,
+				"groupID":       groupID,
+				logrus.ErrorKey: destroyErr,
 			}).Warn("cannot destroy group")
 		}
 	})

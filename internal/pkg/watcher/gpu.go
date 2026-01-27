@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 // GPUBindUnbindWatcher monitors GPU bind/unbind events using DCGM_FI_BIND_UNBIND_EVENT field
@@ -61,7 +62,11 @@ func (w *GPUBindUnbindWatcher) Watch(ctx context.Context, onChange func()) error
 		}
 		return fmt.Errorf("failed to create bind/unbind field group: %w", err)
 	}
-	defer dcgmprovider.Client().FieldGroupDestroy(fieldGroup)
+	defer func() {
+		if destroyErr := dcgmprovider.Client().FieldGroupDestroy(fieldGroup); destroyErr != nil {
+			slog.Warn("Failed to destroy bind/unbind field group", slog.String("error", destroyErr.Error()))
+		}
+	}()
 
 	// DCGM_FI_BIND_UNBIND_EVENT is a GLOBAL field (DCGM_FE_NONE)
 	// Use GPU ID 0 - ID doesn't matter for global fields

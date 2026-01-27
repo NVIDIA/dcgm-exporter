@@ -485,12 +485,14 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	slog.Info("DCGM successfully initialized!")
 
+	ctx := context.Background()
+
 	// Query DCGM profiling metrics at startup
 	// This is re-queried on every hot reload to handle GPU changes
 	queryDCPMetrics(config, 0)
 
 	// Build initial registry
-	initialRegistry, deviceWatchListManager, err := buildRegistry(c, config)
+	initialRegistry, deviceWatchListManager, err := buildRegistry(ctx, c, config)
 	if err != nil {
 		return err
 	}
@@ -505,11 +507,13 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	// Start HTTP server (runs continuously until shutdown signal)
 	var serverWg sync.WaitGroup
-	ctx := context.Background()
 	stop := make(chan interface{})
 
 	serverWg.Add(1)
-	go metricsServer.Run(ctx, stop, &serverWg)
+	go func() {
+		defer serverWg.Done()
+		metricsServer.Run(ctx, stop)
+	}()
 
 	slog.Info("HTTP server started - ready to serve metrics")
 
@@ -582,10 +586,10 @@ func startDCGMExporter(c *cli.Context) error {
 // buildRegistry creates a new registry with current GPU topology.
 // Called at: startup, hot reload (SIGHUP/file change), GPU bind event.
 // Note: Does NOT query DCP metrics - caller must do this before calling.
-func buildRegistry(_ *cli.Context, config *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+func buildRegistry(ctx context.Context, _ *cli.Context, config *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error) {
 	slog.Info("Building registry for current GPU topology")
 
-	cs := getCounters(config)
+	cs := getCounters(ctx, config)
 
 	deviceWatchListManager := startDeviceWatchListManager(cs, config)
 
@@ -731,7 +735,7 @@ func hotReload(ctx context.Context, server *server.MetricsServer, c *cli.Context
 	slog.Debug("Using DCP metrics from startup (not re-querying)",
 		slog.Uint64("reload_id", reloadID))
 
-	newRegistry, deviceWatchListMgr, err := buildRegistry(c, config)
+	newRegistry, deviceWatchListMgr, err := buildRegistry(ctx, c, config)
 	if err != nil {
 		return fmt.Errorf("failed to build new registry during hot reload: %w", err)
 	}
@@ -826,7 +830,7 @@ func handleGPUTopologyChange(ctx context.Context, server *server.MetricsServer, 
 		slog.Uint64("reload_id", reloadID))
 
 	startTime := time.Now()
-	newRegistry, deviceWatchListMgr, err := buildRegistry(c, config)
+	newRegistry, deviceWatchListMgr, err := buildRegistry(ctx, c, config)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to build registry",
 			slog.Uint64("reload_id", reloadID),
@@ -916,8 +920,8 @@ func appendDCGMXIDErrorsCountDependency(
 	return allCounters
 }
 
-func getCounters(config *appconfig.Config) *counters.CounterSet {
-	cs, err := counters.GetCounterSet(config)
+func getCounters(ctx context.Context, config *appconfig.Config) *counters.CounterSet {
+	cs, err := counters.GetCounterSet(ctx, config)
 	if err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
