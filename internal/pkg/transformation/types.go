@@ -43,6 +43,13 @@ type PodMapper struct {
 	Client               kubernetes.Interface
 	ResourceSliceManager *DRAResourceSliceManager
 	labelFilterCache     *LabelFilterCache
+	// Async processing fields
+	mu              sync.RWMutex
+	stopChan        chan struct{}
+	DeviceInfo      deviceinfo.Provider
+	deviceToPod     map[string]PodInfo
+	deviceToPods    map[string][]PodInfo
+	deviceToPodsDRA map[string][]PodInfo
 }
 
 // LabelFilterCache provides efficient caching for label filtering decisions
