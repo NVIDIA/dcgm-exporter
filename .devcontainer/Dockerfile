@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/cuda:12.9.1-base-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
 ARG GOLANG_VERSION=1.24.12
 ARG USERNAME=developer
 ARG USER_UID=1000

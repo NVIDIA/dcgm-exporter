@@ -25,9 +25,9 @@ make test-images
 ### Default Behavior
 
 By default, tests run against locally built images with the current version:
+- `nvidia/dcgm-exporter:4.5.1-4.8.0-distroless`
 - `nvidia/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04`
 - `nvidia/dcgm-exporter:4.5.1-4.8.0-ubi9`
-- `nvidia/dcgm-exporter:4.5.1-4.8.0-distroless`
 
 (Version is automatically updated by `make update-version` from the root Makefile)
 
@@ -194,10 +194,10 @@ Containers are started with the following flags for GPU access:
 To verify your GPU setup:
 ```bash
 # Check NVIDIA Container Toolkit
-docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+docker run --rm --gpus all nvidia/cuda:13.1.1-base nvidia-smi
 
 # Verify DCGM access
-docker run --rm --gpus all --cap-add SYS_ADMIN nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all --cap-add SYS_ADMIN nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-distroless
 ```
 
 ## Limitations

@@ -35,7 +35,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       containers:
-      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04"
+      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-distroless"
         env:
         - name: "DCGM_EXPORTER_LISTEN"
           value: ":9400"
