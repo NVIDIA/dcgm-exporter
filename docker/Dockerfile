@@ -290,10 +290,20 @@ COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint
 RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 RUN uname -a
 
+# Prepare libraries in a staging directory with correct architecture-specific structure
+RUN set -e; \
+    ARCH_DIR=$(ls -d /usr/lib/*-linux-gnu | head -n1 | xargs basename); \
+    mkdir -p /opt/distroless-libs/$ARCH_DIR; \
+    cp -P /usr/lib/$ARCH_DIR/libdcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libnvperf_dcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libcap.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libtinfo.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    ls -la /opt/distroless-libs/$ARCH_DIR/
+
 #####
 # Distroless runtime target - minimal container image
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.13 AS runtime-distroless
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v4.0.1 AS runtime-distroless
 
 ARG VERSION
 ARG TARGETARCH
@@ -311,18 +321,14 @@ COPY --chown=root:root --chmod=644 ./LICENSE ./licenses/LICENSE
 COPY --from=builder --chown=root:root --chmod=755 /usr/bin/dcgm-exporter /usr/bin/
 COPY --chown=root:root --chmod=755 etc /etc/dcgm-exporter
 
-# Copy DCGM libraries from helper stage
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libdcgm* /usr/lib/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libnvperf_dcgm* /usr/lib/
+# Copy libraries with correct architecture-specific directory structure from helper stage
+COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /opt/distroless-libs/ /usr/lib/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/local/dcgm/dcgm-exporter-entrypoint.sh /usr/bin/
 
 # Copy required utilities for runtime
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /bin/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/echo /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/setcap /usr/bin/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libcap.so* /usr/lib/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libtinfo.so* /usr/lib/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/env /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/bash /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/ldconfig.real /sbin/
@@ -355,13 +361,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 #       drop: ["ALL"]
 #     allowPrivilegeEscalation: false
 #
-# For non-root without profiling metrics:
-#   Docker: docker run --user 1000 ...
-#   Kubernetes: runAsNonRoot: true, runAsUser: 1000
-#   (Profiling metrics will not be available, but basic metrics will work)
-#
 # Security measures in place:
-# - Non-root user (UID 1000) available in distroless base for basic metrics
 # - All files have restrictive permissions (644 for data, 755 for executables/directories)
 # - Runtime capability checking with clear warnings
 # - Deployment configs drop all unnecessary capabilities
