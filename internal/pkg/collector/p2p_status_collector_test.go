@@ -49,16 +49,16 @@ func TestIsDCGMExpP2PStatusEnabled(t *testing.T) {
 		{
 			name: "counter not present",
 			arg: counters.CounterList{
-				{FieldID: 1, FieldName: "random1"},
-				{FieldID: 2, FieldName: "random2"},
+				counters.Counter{FieldID: 1, FieldName: "random1"},
+				counters.Counter{FieldID: 2, FieldName: "random2"},
 			},
 			want: false,
 		},
 		{
 			name: "counter present",
 			arg: counters.CounterList{
-				{FieldID: 1, FieldName: counters.DCGMExpP2PStatus},
-				{FieldID: 2, FieldName: "random2"},
+				counters.Counter{FieldID: 1, FieldName: counters.DCGMExpP2PStatus},
+				counters.Counter{FieldID: 2, FieldName: "random2"},
 			},
 			want: true,
 		},
@@ -78,9 +78,11 @@ func TestP2PStatusToString(t *testing.T) {
 	}{
 		{LinkStatusOK, 0, LinkStatusOK},
 		{LinkStatusChipsetNotSupported, 1, LinkStatusChipsetNotSupported},
-		{LinkStatusTopologyNotSupported, 2, LinkStatusTopologyNotSupported},
-		{LinkStatusDisabledByRegKey, 3, LinkStatusDisabledByRegKey},
-		{LinkStatusNotSupported, 4, LinkStatusNotSupported},
+		{LinkStatusGPUNotSupported, 2, LinkStatusGPUNotSupported},
+		{LinkStatusTopologyNotSupported, 3, LinkStatusTopologyNotSupported},
+		{LinkStatusDisabledByRegKey, 4, LinkStatusDisabledByRegKey},
+		{LinkStatusNotSupported, 5, LinkStatusNotSupported},
+		{LinkStatusUnknown, 6, LinkStatusUnknown},
 		{LinkStatusUnknown, 99, LinkStatusUnknown},
 	}
 	for _, tt := range tests {

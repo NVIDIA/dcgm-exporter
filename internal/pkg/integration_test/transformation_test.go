@@ -18,8 +18,7 @@ package integration_test
 
 import (
 	"fmt"
-	"log/slog"
-	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -43,96 +42,96 @@ const (
 	containerAttribute = "container"
 )
 
-func smartDCGMInit(t *testing.T, config *appconfig.Config) {
-	t.Helper()
-	config.UseRemoteHE = false
-	dcgmprovider.Initialize(config)
-	_, err := dcgmprovider.Client().GetAllDeviceCount()
-	if err != nil {
-		slog.Info("Embedded DCGM failed, trying remote host engine")
-		config.UseRemoteHE = true
-		config.RemoteHEInfo = "localhost:5555"
-		dcgmprovider.Initialize(config)
-		// Check if remote initialization also failed
-		_, err = dcgmprovider.Client().GetAllDeviceCount()
-		require.NoError(t, err, "Both embedded and remote DCGM initialization failed")
-	} else {
-		slog.Info("Embedded DCGM initialized successfully")
-	}
-}
-
+// TestProcessPodMapper tests the pod mapper transformation.
+// This test is isolated from collector tests - it creates its own fake GPU and mock metrics.
 func TestProcessPodMapper(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	tmpDir, cleanup := testutils.CreateTmpDir(t)
 	defer cleanup()
 
+	// Initialize DCGM
 	config := &appconfig.Config{
 		UseRemoteHE:   false,
 		Kubernetes:    true,
 		EnableDCGMLog: true,
 		DCGMLogLevel:  "DEBUG",
+		UseFakeGPUs:   true,
 	}
-
-	smartDCGMInit(t, config)
+	dcgmprovider.Initialize(config)
 	defer dcgmprovider.Client().Cleanup()
 
-	c := testDCGMGPUCollector(t, testutils.SampleCounters)
-	defer c.Cleanup()
-
-	out, err := c.GetMetrics()
+	// Create a fake GPU for this test
+	entityList := []dcgm.MigHierarchyInfo{
+		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
+	}
+	gpuIDs, err := dcgmprovider.Client().CreateFakeEntities(entityList)
 	require.NoError(t, err)
+	require.NotEmpty(t, gpuIDs)
+	gpuID := gpuIDs[0]
 
-	original := out
+	// Create mock metrics with known GPU UUID
+	fakeUUID := fmt.Sprintf("GPU-fake-uuid-%d", gpuID)
+	gpuIDStr := strconv.FormatUint(uint64(gpuID), 10)
 
-	arbirtaryMetric := out[reflect.ValueOf(out).MapKeys()[0].Interface().(counters.Counter)]
+	testCounter := counters.Counter{
+		FieldID:   dcgm.DCGM_FI_DEV_GPU_TEMP,
+		FieldName: "DCGM_FI_DEV_GPU_TEMP",
+		PromType:  "gauge",
+	}
 
+	mockMetrics := collector.MetricsByCounter{
+		testCounter: []collector.Metric{
+			{
+				GPU:        gpuIDStr,
+				GPUUUID:    fakeUUID,
+				Value:      "42",
+				Counter:    testCounter,
+				Attributes: map[string]string{},
+			},
+		},
+	}
+
+	// Set up mock pod resources server with the fake GPU UUID
 	socketPath := tmpDir + "/kubelet.sock"
 	server := grpc.NewServer()
-	gpus := getGPUUUIDs(arbirtaryMetric)
 	v1.RegisterPodResourcesListerServer(server,
-		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, gpus))
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, []string{fakeUUID}))
 
 	cleanup = testutils.StartMockServer(t, server, socketPath)
 	defer cleanup()
 
+	// Create pod mapper
 	podMapper := transformation.NewPodMapper(&appconfig.Config{
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
 	})
-	require.NoError(t, err)
 
-	// Create a real deviceInfo provider since this is an integration test
+	// Create deviceInfo provider restricted to our fake GPU
 	deviceInfo, err := deviceinfo.Initialize(
-		appconfig.DeviceOptions{Flex: true}, // gOpt
-		appconfig.DeviceOptions{},           // sOpt
-		appconfig.DeviceOptions{},           // cOpt
-		false,                               // useFakeGPUs
-		dcgm.FE_GPU,                         // entityType
+		appconfig.DeviceOptions{Flex: true, MajorRange: []int{int(gpuID)}}, //nolint:gosec // GPU IDs are small
+		appconfig.DeviceOptions{},
+		appconfig.DeviceOptions{},
+		true, // useFakeGPUs
+		dcgm.FE_GPU,
 	)
 	require.NoError(t, err)
 
-	err = podMapper.Process(out, deviceInfo)
+	// Process metrics through pod mapper
+	err = podMapper.Process(mockMetrics, deviceInfo)
 	require.NoError(t, err)
 
-	require.Len(t, out, len(original))
-	for _, metrics := range out {
-		for _, metric := range metrics {
+	// Verify pod attributes were added
+	require.Len(t, mockMetrics, 1)
+	for _, metrics := range mockMetrics {
+		for i, metric := range metrics {
 			require.Contains(t, metric.Attributes, podAttribute)
 			require.Contains(t, metric.Attributes, namespaceAttribute)
 			require.Contains(t, metric.Attributes, containerAttribute)
-			require.Equal(t, metric.Attributes[podAttribute], fmt.Sprintf("gpu-pod-%s", metric.GPU))
-			require.Equal(t, metric.Attributes[namespaceAttribute], "default")
-			require.Equal(t, metric.Attributes[containerAttribute], "default")
+			// Mock server creates pod names as gpu-pod-{index} based on position in gpus list
+			require.Equal(t, fmt.Sprintf("gpu-pod-%d", i), metric.Attributes[podAttribute])
+			require.Equal(t, "default", metric.Attributes[namespaceAttribute])
+			require.Equal(t, "default", metric.Attributes[containerAttribute])
 		}
 	}
-}
-
-func getGPUUUIDs(metrics []collector.Metric) []string {
-	gpus := make([]string, len(metrics))
-	for i, dev := range metrics {
-		gpus[i] = dev.GPUUUID
-	}
-
-	return gpus
 }

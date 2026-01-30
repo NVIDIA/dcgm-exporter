@@ -11,7 +11,7 @@ Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 
 ```shell
-docker run -d --gpus all --cap-add SYS_ADMIN --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.0-ubuntu22.04
+docker run -d --gpus all --cap-add SYS_ADMIN --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-distroless
 curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -111,7 +111,7 @@ To enable GPU-to-job mapping on the DCGM-exporter side, users must run the DCGM-
 
 In order to build dcgm-exporter ensure you have the following:
 
-* [Golang >= 1.24 installed](https://golang.org/)
+* [Golang >= 1.24 installed](https://go.dev/)
 * [DCGM installed](https://developer.nvidia.com/dcgm)
 * Have Linux machine with GPU, compatible with DCGM.
 
@@ -170,6 +170,12 @@ You can find the official NVIDIA DCGM-Exporter dashboard here: <https://grafana.
 
 You will also find the `json` file on this repo under `grafana/dcgm-exporter-dashboard.json`
 
+### You can find the DCGM-Exporter OpenObserve dashboard here
+
+You can find the NVIDIA DCGM-Exporter dashboard here: <https://github.com/openobserve/dashboards/tree/main/NVIDIA%20GPU%20Monitoring>
+
+To integrate DCGM-Exporter with OpenObserve, follow the blog [monitoring GPU with OpenObserve](https://openobserve.ai/blog/how-to-monitor-nvidia-gpu/)
+
 Pull requests are accepted!
 
 ### Building the containers
@@ -182,10 +188,10 @@ Builds local images based on the machine architecture and makes them available i
 make local
 ```
 
-Build the ubuntu image and export to 'docker images'
+Build the distroless image and export to 'docker images'
 
 ```shell
-make ubuntu22.04 PLATFORMS=linux/amd64 OUTPUT=type=docker
+make distroless PLATFORMS=linux/amd64 OUTPUT=type=docker
 ```
 
 Build and push the images to some other 'private_registry'

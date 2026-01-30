@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"sync"
 	"time"
@@ -44,7 +45,6 @@ const internalServerError = "internal server error"
 
 func NewMetricsServer(
 	c *appconfig.Config,
-	metrics chan string,
 	deviceWatchListManager devicewatchlistmanager.Manager,
 	registry *registry.Registry,
 ) (*MetricsServer, func(), error) {
@@ -65,22 +65,30 @@ func NewMetricsServer(
 			WebSystemdSocket:   &c.WebSystemdSocket,
 			WebConfigFile:      &c.WebConfigFile,
 		},
-		metricsChan:            metrics,
 		metrics:                "",
-		registry:               registry,
 		config:                 c,
 		transformations:        transformation.GetTransformations(c),
 		deviceWatchListManager: deviceWatchListManager,
 		fileDumper:             fileDumper,
 	}
+
+	serverv1.registry.Store(registry)
+	serverv1.reloadInProgress.Store(false)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte(`<html>
 			<head><title>GPU Exporter</title></head>
 			<body>
 			<h1>GPU Exporter</h1>
 			<p><a href="./metrics">Metrics</a></p>
+			<p><a href="./health">Health</a></p>
+			<h2>Profiling (pprof)</h2>
+			<ul>
+				<li><a href="./debug/pprof/">Index</a></li>
+				<li><a href="./debug/pprof/heap">Heap</a> - Memory allocations</li>
+				<li><a href="./debug/pprof/goroutine">Goroutines</a> - Active goroutines</li>
+				<li><a href="./debug/pprof/allocs">Allocations</a> - All memory allocations</li>
+			</ul>
 			</body>
 			</html>`))
 		if err != nil {
@@ -92,6 +100,22 @@ func NewMetricsServer(
 
 	router.HandleFunc("/health", serverv1.Health)
 	router.HandleFunc("/metrics", serverv1.Metrics)
+
+	// Register pprof endpoints for profiling and debugging
+	// Access via: curl http://localhost:9400/debug/pprof/heap > heap.pprof
+	router.HandleFunc("/debug/pprof/", pprof.Index)
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	router.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	router.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	router.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+	router.Handle("/debug/pprof/block", pprof.Handler("block"))
+	router.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	router.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+
+	slog.Info("Profiling endpoints enabled at /debug/pprof/")
 
 	var podMapper *transformation.PodMapper
 	for _, t := range serverv1.transformations {
@@ -111,9 +135,41 @@ func NewMetricsServer(
 	return serverv1, cleanup, nil
 }
 
-func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}, wg *sync.WaitGroup) {
-	defer wg.Done()
+// ClearRegistry removes the current registry and returns it for cleanup.
+// After calling this, /metrics will return empty responses until SetRegistry is called.
+func (s *MetricsServer) ClearRegistry() *registry.Registry {
+	return s.registry.Swap(nil)
+}
 
+// SetRegistry sets the new registry to serve metrics from.
+// /metrics will now serve metrics from the new registry.
+func (s *MetricsServer) SetRegistry(newRegistry *registry.Registry) {
+	s.registry.Store(newRegistry)
+}
+
+// GetRegistry returns the current registry (atomic read).
+// Returns an empty registry if nil (during hot reload/bind/unbind).
+func (s *MetricsServer) GetRegistry() *registry.Registry {
+	reg := s.registry.Load()
+	if reg == nil {
+		// This is expected during hot reload, bind, or unbind
+		return registry.NewRegistry()
+	}
+	return reg
+}
+
+// SetReloadInProgress marks whether a hot reload is currently happening
+// This can be exposed via /health endpoint
+func (s *MetricsServer) SetReloadInProgress(inProgress bool) {
+	s.reloadInProgress.Store(inProgress)
+}
+
+// IsReloadInProgress returns whether a hot reload is in progress
+func (s *MetricsServer) IsReloadInProgress() bool {
+	return s.reloadInProgress.Load()
+}
+
+func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 	var httpwg sync.WaitGroup
 	httpwg.Add(1)
 	go func() {
@@ -161,7 +217,9 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}, wg *sync
 	}()
 
 	<-stop
-	if err := s.server.Shutdown(ctx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer shutdownCancel()
+	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Failed to shutdown HTTP server.", slog.String(logging.ErrorKey, err.Error()))
 		s.fatal()
 	}
@@ -178,7 +236,10 @@ func (s *MetricsServer) fatal() {
 
 func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	metricGroups, err := s.registry.Gather()
+
+	currentRegistry := s.GetRegistry()
+
+	metricGroups, err := currentRegistry.Gather()
 	if err != nil {
 		slog.Error("Failed to gather metrics from collectors", slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, internalServerError, http.StatusInternalServerError)
@@ -268,16 +329,36 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 
 func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, err := w.Write([]byte("KO"))
+
+	// If reload in progress or registry is nil (during hot reload/bind/unbind),
+	// still return 200 OK to prevent Kubernetes pod termination
+	// Use headers to communicate status to monitoring systems
+	if s.IsReloadInProgress() {
+		w.Header().Set("X-Reload-In-Progress", "true")
+	}
+
+	// Check the raw atomic value to see if registry is nil
+	if s.registry.Load() == nil {
+		w.Header().Set("X-Registry-Available", "false")
+		w.Header().Set("X-Reload-In-Progress", "true")
+		_, _ = w.Write([]byte("OK - reload in progress"))
+		return
+	}
+
+	w.Header().Set("X-Registry-Available", "true")
+	_, err := w.Write([]byte("OK"))
 	if err != nil {
 		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
+		return
 	}
 }
 
 // DumpMetricsToJSON is a helper function for debugging that dumps all metrics to JSON
 func (s *MetricsServer) DumpMetricsToJSON() ([]byte, error) {
-	metricGroups, err := s.registry.Gather()
+	currentRegistry := s.GetRegistry()
+
+	metricGroups, err := currentRegistry.Gather()
 	if err != nil {
 		return nil, err
 	}

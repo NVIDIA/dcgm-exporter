@@ -21,7 +21,7 @@ GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.24.5
+GOLANG_VERSION := 1.24.12
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -62,14 +62,14 @@ ubi%: DOCKERFILE = docker/Dockerfile
 ubi%: BUILD_TARGET = runtime-ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.0.1-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.1.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile
 ubuntu%: BUILD_TARGET = runtime-ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 distroless: DOCKERFILE = docker/Dockerfile
@@ -135,12 +135,31 @@ test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
 test-coverage:
-	sh scripts/test_coverage.sh
-	gocov convert tests.cov  | gocov report
+	@echo "Running unit tests..."
+	gotestsum --format testname -- \
+		$$(go list ./... | grep -v "/tests/e2e/") \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverprofile=unit_coverage.out \
+		--short
+	@echo "Running integration tests..."
+	gotestsum --format testname -- \
+		./internal/pkg/integration_test/... \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverpkg=./internal/pkg/... \
+		-coverprofile=integration_coverage.out \
+		--short
+	@echo "Merging coverage profiles..."
+	gocovmerge unit_coverage.out integration_coverage.out > combined_coverage.out.tmp
+	cat combined_coverage.out.tmp | grep -v "mock_" > tests.cov
+	rm combined_coverage.out.tmp integration_coverage.out unit_coverage.out
+	go tool cover -func=tests.cov
 
 .PHONY: lint
 lint:
-	golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT)  --new-from-rev=HEAD~1
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 GOGC=50 \
+		golangci-lint run ./... --timeout $(GOLANGCILINT_TIMEOUT) --new-from-rev=HEAD~1 --concurrency=2
 
 .PHONY: hadolint lint-dockerfiles
 hadolint lint-dockerfiles: ## Lint Dockerfiles with hadolint
@@ -174,11 +193,11 @@ validate: validate-modules hadolint check-fmt ## Run all validation checks
 
 .PHONY: tools
 tools: ## Install required tools and utilities
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
-	go install github.com/axw/gocov/gocov@latest
-	go install golang.org/x/tools/cmd/goimports@latest
-	go install mvdan.cc/gofumpt@latest
-	go install github.com/wadey/gocovmerge@latest
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.8.0
+	go install golang.org/x/tools/cmd/goimports@v0.41.0
+	go install mvdan.cc/gofumpt@v0.9.2
+	go install github.com/wadey/gocovmerge@v0.0.0-20160331181800-b5bfa59ec0ad
+	go install gotest.tools/gotestsum@v1.13.0
 
 fmt:
 	find . -name '*.go' | xargs gofumpt -l -w

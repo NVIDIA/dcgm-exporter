@@ -17,9 +17,12 @@
 package counters
 
 import (
+	"context"
+	stdos "os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -40,10 +43,9 @@ func TestEmptyConfigMap(t *testing.T) {
 	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
-	records, err := readConfigMap(clientset, &c)
-	if len(records) != 0 || err == nil {
-		t.Fatalf("Should have returned an error and no records")
-	}
+	records, err := readConfigMap(context.Background(), clientset, &c)
+	require.Error(t, err, "Should have returned an error")
+	require.Empty(t, records, "Should have no records")
 }
 
 func TestValidConfigMap(t *testing.T) {
@@ -58,10 +60,9 @@ func TestValidConfigMap(t *testing.T) {
 	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
-	records, err := readConfigMap(clientset, &c)
-	if len(records) != 1 || err != nil {
-		t.Fatalf("Should have succeeded")
-	}
+	records, err := readConfigMap(context.Background(), clientset, &c)
+	require.NoError(t, err, "Should have succeeded")
+	require.Len(t, records, 1, "Should have 1 record")
 }
 
 func TestInvalidConfigMapData(t *testing.T) {
@@ -76,10 +77,9 @@ func TestInvalidConfigMapData(t *testing.T) {
 	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
-	records, err := readConfigMap(clientset, &c)
-	if len(records) != 0 || err == nil {
-		t.Fatalf("Should have returned an error and no records")
-	}
+	records, err := readConfigMap(context.Background(), clientset, &c)
+	require.Error(t, err, "Should have returned an error")
+	require.Empty(t, records, "Should have no records")
 }
 
 func TestInvalidConfigMapName(t *testing.T) {
@@ -93,10 +93,9 @@ func TestInvalidConfigMapName(t *testing.T) {
 	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
-	records, err := readConfigMap(clientset, &c)
-	if len(records) != 0 || err == nil {
-		t.Fatalf("Should have returned an error and no records")
-	}
+	records, err := readConfigMap(context.Background(), clientset, &c)
+	require.Error(t, err, "Should have returned an error")
+	require.Empty(t, records, "Should have no records")
 }
 
 func TestInvalidConfigMapNamespace(t *testing.T) {
@@ -110,10 +109,9 @@ func TestInvalidConfigMapNamespace(t *testing.T) {
 	c := appconfig.Config{
 		ConfigMapData: "default:configmap1",
 	}
-	records, err := readConfigMap(clientset, &c)
-	if len(records) != 0 || err == nil {
-		t.Fatalf("Should have returned an error and no records")
-	}
+	records, err := readConfigMap(context.Background(), clientset, &c)
+	require.Error(t, err, "Should have returned an error")
+	require.Empty(t, records, "Should have no records")
 }
 
 func TestExtractCounters(t *testing.T) {
@@ -142,12 +140,12 @@ func TestExtractCounters(t *testing.T) {
 }
 
 func extractCountersHelper(t *testing.T, input string, valid bool) {
-	tmpFile, err := os.CreateTemp(os.TempDir(), "prefix-")
+	tmpFile, err := stdos.CreateTemp(stdos.TempDir(), "prefix-")
 	if err != nil {
 		t.Fatalf("Cannot create temporary file: %v", err)
 	}
 
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = stdos.Remove(tmpFile.Name()) }()
 
 	text := []byte(input)
 	if _, err = tmpFile.Write(text); err != nil {
@@ -164,7 +162,7 @@ func extractCountersHelper(t *testing.T, input string, valid bool) {
 		ConfigMapData:  undefinedConfigMapData,
 		CollectorsFile: tmpFile.Name(),
 	}
-	cc, err := GetCounterSet(&c)
+	cc, err := GetCounterSet(context.Background(), &c)
 	if valid {
 		assert.NoError(t, err, "Expected no error.")
 		assert.Equal(t, 1, len(cc.DCGMCounters), "Expected 1 record counters.")

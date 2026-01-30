@@ -61,7 +61,6 @@ func TestNewGPUHealthStatusCollector(t *testing.T) {
 			},
 			setDCGMproviderState: func(mockDCGMProvider *mockdcgm.MockDCGM) {
 				mockDCGMProvider.EXPECT().DestroyGroup(gomock.Any()).Return(errors.New("boom!")).Times(2)
-				mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(errors.New("boom!"))
 			},
 			assertResult: func(c Collector, err error) {
 				assert.NotNil(t, c)

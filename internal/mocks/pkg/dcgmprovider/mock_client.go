@@ -494,6 +494,20 @@ func (mr *MockDCGMMockRecorder) NewDefaultGroup(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NewDefaultGroup", reflect.TypeOf((*MockDCGM)(nil).NewDefaultGroup), arg0)
 }
 
+// UnwatchFields mocks base method.
+func (m *MockDCGM) UnwatchFields(arg0 dcgm.FieldHandle, arg1 dcgm.GroupHandle) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnwatchFields", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UnwatchFields indicates an expected call of UnwatchFields.
+func (mr *MockDCGMMockRecorder) UnwatchFields(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnwatchFields", reflect.TypeOf((*MockDCGM)(nil).UnwatchFields), arg0, arg1)
+}
+
 // UpdateAllFields mocks base method.
 func (m *MockDCGM) UpdateAllFields() error {
 	m.ctrl.T.Helper()

@@ -70,7 +70,7 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 		slog.Info("Attempting to connect to remote hostengine at " + config.RemoteHEInfo)
 		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
 		if err != nil {
-			cleanup()
+			// Don't call cleanup on error - initialization failed, nothing to clean up
 			slog.Error(err.Error())
 			os.Exit(1)
 		}
@@ -222,6 +222,10 @@ func (d dcgmProvider) WatchFieldsWithGroupEx(
 	maxKeepSamples int32,
 ) error {
 	return dcgm.WatchFieldsWithGroupEx(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
+}
+
+func (d dcgmProvider) UnwatchFields(fieldsGroup dcgm.FieldHandle, group dcgm.GroupHandle) error {
+	return dcgm.UnwatchFields(fieldsGroup, group)
 }
 
 // Cleanup performs cleanup operations for the DCGM provider, including terminating modules and shutting down DCGM.
