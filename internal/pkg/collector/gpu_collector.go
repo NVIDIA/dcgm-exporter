@@ -373,52 +373,23 @@ func getGPUModel(d dcgm.Device, replaceBlanksInModelName bool) string {
 func toString(value dcgm.FieldValue_v1) string {
 	switch value.FieldType {
 	case dcgm.DCGM_FT_INT64:
-		switch v := value.Int64(); v {
-		case dcgm.DCGM_FT_INT32_BLANK:
+		v := value.Int64()
+		if isInt64Blank(v) {
 			return skipDCGMValue
-		case dcgm.DCGM_FT_INT32_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT32_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT32_NOT_PERMISSIONED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_BLANK:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_INT64_NOT_PERMISSIONED:
-			return skipDCGMValue
-		default:
-			return fmt.Sprintf("%d", value.Int64())
 		}
+		return fmt.Sprintf("%d", v)
 	case dcgm.DCGM_FT_DOUBLE:
-		switch v := value.Float64(); v {
-		case dcgm.DCGM_FT_FP64_BLANK:
+		v := value.Float64()
+		if isFloat64Blank(v) {
 			return skipDCGMValue
-		case dcgm.DCGM_FT_FP64_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_FP64_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_FP64_NOT_PERMISSIONED:
-			return skipDCGMValue
-		default:
-			return fmt.Sprintf("%f", value.Float64())
 		}
+		return fmt.Sprintf("%f", v)
 	case dcgm.DCGM_FT_STRING:
-		switch v := value.String(); v {
-		case dcgm.DCGM_FT_STR_BLANK:
+		v := value.String()
+		if isStringBlank(v) {
 			return skipDCGMValue
-		case dcgm.DCGM_FT_STR_NOT_FOUND:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_STR_NOT_SUPPORTED:
-			return skipDCGMValue
-		case dcgm.DCGM_FT_STR_NOT_PERMISSIONED:
-			return skipDCGMValue
-		default:
-			return v
 		}
+		return v
 	}
 
 	return FailedToConvert

@@ -108,6 +108,14 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 
 	// We assyme that each health check may produce only one incident per system
 	for _, incident := range gpuHealthStatus.Incidents {
+		if _, exists := entityHealthSystemToIncident[incident.EntityInfo]; !exists {
+			logrus.WithFields(logrus.Fields{
+				"entity": incident.EntityInfo,
+				"system": healthSystemWatchToString(incident.System),
+				"health": incident.Health,
+			}).Warn("Received health incident for entity not in monitoring group, skipping")
+			continue
+		}
 		entityHealthSystemToIncident[incident.EntityInfo][incident.System] = incident
 	}
 
