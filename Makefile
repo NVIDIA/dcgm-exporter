@@ -28,6 +28,7 @@ OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
+CONTAINER      ?= all
 
 .PHONY: all binary install check-format local
 all: ubuntu22.04 ubi9 distroless
@@ -53,9 +54,9 @@ push:
 
 local:
 ifeq ($(shell uname -p),aarch64)
-	$(MAKE) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
+	$(MAKE) $(CONTAINER) PLATFORMS=linux/arm64 OUTPUT=type=docker DOCKERCMD='docker build'
 else
-	$(MAKE) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
+	$(MAKE) $(CONTAINER) PLATFORMS=linux/amd64 OUTPUT=type=docker DOCKERCMD='docker build'
 endif
 
 ubi%: DOCKERFILE = docker/Dockerfile

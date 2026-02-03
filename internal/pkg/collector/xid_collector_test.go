@@ -506,6 +506,75 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "XID collector with DCGM_INT64_BLANK values should be filtered out",
+			collector: func() Collector {
+				counterList := counters.CounterList{
+					mockDCGMXIDCounter,
+					mockOtherCounter,
+					mockLabelCounter,
+				}
+				deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, mockDeviceFields,
+					[]dcgm.Short{mockLabelDeviceField}, mockDeviceWatcher, mockCollectorInterval)
+
+				collector, _ := NewXIDCollector(counterList, mockHostname, &mockConfig, *deviceWatchList)
+				return collector
+			},
+			conditions: func(watcher *mockdevicewatcher.MockWatcher, xidErr1, xidErr2 byte) {
+				// Create a byte array representing DCGM_INT64_BLANK (0x7FFFFFFFFFFFFFF0 = 9223372036854775792)
+				blankValue := [4096]byte{}
+				// Set the first 8 bytes to DCGM_INT64_BLANK in little-endian format
+				blankValue[0] = 0xF0
+				blankValue[1] = 0xFF
+				blankValue[2] = 0xFF
+				blankValue[3] = 0xFF
+				blankValue[4] = 0xFF
+				blankValue[5] = 0xFF
+				blankValue[6] = 0xFF
+				blankValue[7] = 0x7F
+
+				mockEntitiesResult := []dcgm.FieldValue_v2{
+					// Valid XID error from GPU 0
+					{EntityID: gpuID1, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{xidErr1}},
+					// DCGM_INT64_BLANK value from GPU 0 - should be filtered out
+					{EntityID: gpuID1, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
+					// Another valid XID error from GPU 1
+					{EntityID: gpuID2, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{xidErr2}},
+					// Another DCGM_INT64_BLANK value from GPU 1 - should be filtered out
+					{EntityID: gpuID2, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
+				}
+
+				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
+					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					mockFieldGroupHandle,
+					mockCleanups, nil)
+
+				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+				mockDCGM.EXPECT().GetValuesSince(mockGroupHandle1, mockFieldGroupHandle,
+					gomock.AssignableToTypeOf(time.Time{})).Return(mockEntitiesResult, time.Time{}, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID1,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID2,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+			},
+			want: func() (MetricsByCounter, byte, byte) {
+				mockXIDErr1 := uint64(42)
+				mockXIDErr2 := uint64(46)
+
+				// We should only get the valid XID errors, not the BLANK values
+				return MetricsByCounter{
+					mockDCGMXIDCounter: []Metric{
+						xidMetricsCreator(mockDCGMXIDCounter, gpuID1, "1", mockHostname,
+							mockFieldName,
+							mockLabelValue, mockXIDErr1),
+						xidMetricsCreator(mockDCGMXIDCounter, gpuID2, "1", mockHostname,
+							mockFieldName,
+							mockLabelValue, mockXIDErr2),
+					},
+				}, byte(mockXIDErr1), byte(mockXIDErr2)
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
