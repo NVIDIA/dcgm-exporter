@@ -156,9 +156,12 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 		// monitor only the nvlinks as per the device options input
 			if gOpt.Flex || s.shouldMonitor(gOpt.MajorRange, s.gpus[i].DeviceInfo.GPU) {
 				var matchingLinks []dcgm.NvLinkStatus
+				var linkCount uint = 1
 				for _, link := range links {
 					if link.ParentType == dcgm.FE_GPU && link.ParentId == s.gpus[i].DeviceInfo.GPU {
+						link.Index = linkCount
 						matchingLinks = append(matchingLinks, link)
+						linkCount++
 					}
 				}
 
