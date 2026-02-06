@@ -19,7 +19,7 @@ ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
 #####
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
-ARG GOLANG_VERSION=1.24.12
+ARG GOLANG_VERSION=1.24.13
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 

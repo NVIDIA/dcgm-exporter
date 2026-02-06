@@ -18,24 +18,24 @@ metadata:
   name: "dcgm-exporter"
   labels:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "4.8.0"
+    app.kubernetes.io/version: "4.8.1"
 spec:
   updateStrategy:
     type: RollingUpdate
   selector:
     matchLabels:
       app.kubernetes.io/name: "dcgm-exporter"
-      app.kubernetes.io/version: "4.8.0"
+      app.kubernetes.io/version: "4.8.1"
   template:
     metadata:
       labels:
         app.kubernetes.io/name: "dcgm-exporter"
-        app.kubernetes.io/version: "4.8.0"
+        app.kubernetes.io/version: "4.8.1"
       name: "dcgm-exporter"
     spec:
       automountServiceAccountToken: false
       containers:
-      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-distroless"
+      - image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-distroless"
         env:
         - name: "DCGM_EXPORTER_LISTEN"
           value: ":9400"
@@ -79,11 +79,11 @@ metadata:
   name: "dcgm-exporter"
   labels:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "4.8.0"
+    app.kubernetes.io/version: "4.8.1"
 spec:
   selector:
     app.kubernetes.io/name: "dcgm-exporter"
-    app.kubernetes.io/version: "4.8.0"
+    app.kubernetes.io/version: "4.8.1"
   ports:
   - name: "metrics"
     port: 9400

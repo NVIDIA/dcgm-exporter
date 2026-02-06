@@ -25,9 +25,9 @@ make test-images
 ### Default Behavior
 
 By default, tests run against locally built images with the current version:
-- `nvidia/dcgm-exporter:4.5.1-4.8.0-distroless`
-- `nvidia/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04`
-- `nvidia/dcgm-exporter:4.5.1-4.8.0-ubi9`
+- `nvidia/dcgm-exporter:4.5.2-4.8.1-distroless`
+- `nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04`
+- `nvidia/dcgm-exporter:4.5.2-4.8.1-ubi9`
 
 (Version is automatically updated by `make update-version` from the root Makefile)
 
@@ -60,7 +60,7 @@ make docker-test-distroless
 REGISTRY=my-registry.io FULL_VERSION=3.0.0-3.1.0 make docker-test
 
 # Test specific version
-FULL_VERSION=4.5.1-5.0.0 make docker-test-ubuntu
+FULL_VERSION=4.5.2-5.0.0 make docker-test-ubuntu
 ```
 
 #### Override Specific Images
@@ -69,11 +69,11 @@ Set environment variables to test specific images:
 
 ```bash
 # Test published image
-IMAGE_UBUNTU=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04 \
+IMAGE_UBUNTU=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04 \
 make docker-test-ubuntu
 
 # Mix local and published images
-IMAGE_UBUNTU=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04 \
+IMAGE_UBUNTU=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04 \
 IMAGE_UBI="" \
 IMAGE_DISTROLESS=my-registry.io/dcgm-exporter:custom-distroless \
 make docker-test
@@ -90,7 +90,7 @@ make docker-test
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REGISTRY` | `nvidia` | Container registry for default images |
-| `FULL_VERSION` | `4.5.1-4.8.0` | Combined DCGM and exporter version (updated by root Makefile) |
+| `FULL_VERSION` | `4.5.2-4.8.1` | Combined DCGM and exporter version (updated by root Makefile) |
 | `IMAGE_UBUNTU` | `${REGISTRY}/dcgm-exporter:${FULL_VERSION}-ubuntu22.04` | Full path to Ubuntu image |
 | `IMAGE_UBI` | `${REGISTRY}/dcgm-exporter:${FULL_VERSION}-ubi9` | Full path to UBI image |
 | `IMAGE_DISTROLESS` | `${REGISTRY}/dcgm-exporter:${FULL_VERSION}-distroless` | Full path to distroless image |
@@ -101,22 +101,22 @@ make docker-test
 
 ```bash
 # Test only one variant from published registry
-IMAGE_UBUNTU=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04 \
+IMAGE_UBUNTU=nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04 \
 IMAGE_UBI="" \
 IMAGE_DISTROLESS="" \
 make docker-test
 
 # Test release candidate
-FULL_VERSION=4.5.1-5.0.0-rc1 make docker-test
+FULL_VERSION=4.5.2-5.0.0-rc1 make docker-test
 
 # Test PR build
 REGISTRY=ci.mycompany.com \
-FULL_VERSION=4.5.1-pr-1234 \
+FULL_VERSION=4.5.2-pr-1234 \
 make docker-test-ubuntu
 
 # Compare two versions
-IMAGE_UBUNTU=nvidia/dcgm-exporter:4.5.1-4.8.0-ubuntu22.04 \
-IMAGE_DISTROLESS=nvidia/dcgm-exporter:4.5.1-5.0.0-distroless \
+IMAGE_UBUNTU=nvidia/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04 \
+IMAGE_DISTROLESS=nvidia/dcgm-exporter:4.5.2-5.0.0-distroless \
 IMAGE_UBI="" \
 make docker-test
 ```
@@ -165,11 +165,11 @@ When updating DCGM or exporter versions, the tests are automatically updated:
 # From the project root
 make update-version \
   OLD_DCGM_VERSION=4.3.0 \
-  NEW_DCGM_VERSION=4.5.1 \
-  OLD_EXPORTER_VERSION=4.5.1 \
-  NEW_EXPORTER_VERSION=4.8.0
+  NEW_DCGM_VERSION=4.5.2 \
+  OLD_EXPORTER_VERSION=4.5.2 \
+  NEW_EXPORTER_VERSION=4.8.1
 
-# This will update FULL_VERSION in tests/docker/Makefile from 4.3.0-4.5.1 to 4.5.1-4.8.0
+# This will update FULL_VERSION in tests/docker/Makefile from 4.3.0-4.5.2 to 4.5.2-4.8.1
 ```
 
 After version update:
@@ -197,7 +197,7 @@ To verify your GPU setup:
 docker run --rm --gpus all nvidia/cuda:13.1.1-base nvidia-smi
 
 # Verify DCGM access
-docker run --rm --gpus all --cap-add SYS_ADMIN nvcr.io/nvidia/k8s/dcgm-exporter:4.5.1-4.8.0-distroless
+docker run --rm --gpus all --cap-add SYS_ADMIN nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-distroless
 ```
 
 ## Limitations

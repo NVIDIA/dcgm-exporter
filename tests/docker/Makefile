@@ -18,7 +18,7 @@ GO_CMD ?= go
 # Note: FULL_VERSION should match root Makefile's DCGM_VERSION-VERSION format
 # This gets updated automatically by 'make update-version' from root
 REGISTRY ?= nvidia
-FULL_VERSION ?= 4.5.1-4.8.0
+FULL_VERSION ?= 4.5.2-4.8.1
 
 # Override specific images (optional)
 # If not set, defaults to: $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-<variant>

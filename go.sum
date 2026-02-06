@@ -20,8 +20,6 @@ github.com/Masterminds/sprig/v3 v3.3.0 h1:mQh0Yrg1XPo6vjYXgtf5OtijNAKJRNcTdOOGZe
 github.com/Masterminds/sprig/v3 v3.3.0/go.mod h1:Zy1iXRYNqNLUolqCpL4uhk6SHUMAOSCzdgBfDb35Lz0=
 github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8afzqM=
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
-github.com/NVIDIA/go-dcgm v0.0.0-20260109231451-70002c42dbcf h1:Rs13/bkgZPv4azSpEmMByOYXIiTHf/+kagc2JIIlX30=
-github.com/NVIDIA/go-dcgm v0.0.0-20260109231451-70002c42dbcf/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
 github.com/NVIDIA/go-dcgm v0.0.0-20260115225648-6cbb0463ce9f h1:N0eRtecIPi9xm1FxFnQCqlxRRBMAZPnRV4m/FwgOx1s=
 github.com/NVIDIA/go-dcgm v0.0.0-20260115225648-6cbb0463ce9f/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
 github.com/NVIDIA/go-nvml v0.12.4-1 h1:WKUvqshhWSNTfm47ETRhv0A0zJyr1ncCuHiXwoTrBEc=
