@@ -73,6 +73,9 @@ const (
 	CLIKubernetesEnablePodUID           = "kubernetes-enable-pod-uid"
 	CLIKubernetesGPUIDType              = "kubernetes-gpu-id-type"
 	CLIKubernetesPodLabelAllowlistRegex = "kubernetes-pod-label-allowlist-regex"
+	CLIKubernetesPodLabelCacheSize      = "kubernetes-pod-label-cache-size"
+	CLIKubernetesUseKubeletAPI          = "kubernetes-use-kubelet-api"
+	CLIKubernetesKubeletURL             = "kubernetes-kubelet-url"
 	CLIUseOldNamespace                  = "use-old-namespace"
 	CLIRemoteHEInfo                     = "remote-hostengine-info"
 	CLIGPUDevices                       = "devices"
@@ -199,6 +202,24 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   cli.NewStringSlice(),
 			Usage:   "Regex patterns for filtering pod labels to include in metrics (comma-separated). Empty means include all labels. This parameter is effective only when '--kubernetes-enable-pod-labels' is true.",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_POD_LABEL_ALLOWLIST_REGEX"},
+		},
+		&cli.IntFlag{
+			Name:    CLIKubernetesPodLabelCacheSize,
+			Value:   150000,
+			Usage:   "Maximum number of label keys to cache for allowlist filtering. Larger values use more memory but reduce regex evaluations.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_POD_LABEL_CACHE_SIZE"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIKubernetesUseKubeletAPI,
+			Value:   false,
+			Usage:   "Use kubelet API instead of apiserver for fetching pod metadata (labels, UID). This reduces load on the apiserver in large clusters.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_USE_KUBELET_API"},
+		},
+		&cli.StringFlag{
+			Name:    CLIKubernetesKubeletURL,
+			Value:   "https://127.0.0.1:10250",
+			Usage:   "Kubelet API URL for fetching pod metadata. Only used when --kubernetes-use-kubelet-api is true.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_KUBELET_URL"},
 		},
 		&cli.StringFlag{
 			Name:    CLIGPUDevices,
@@ -1071,6 +1092,9 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		KubernetesEnablePodUID:           c.Bool(CLIKubernetesEnablePodUID),
 		KubernetesGPUIdType:              appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
 		KubernetesPodLabelAllowlistRegex: c.StringSlice(CLIKubernetesPodLabelAllowlistRegex),
+		KubernetesPodLabelCacheSize:      c.Int(CLIKubernetesPodLabelCacheSize),
+		KubernetesUseKubeletAPI:          c.Bool(CLIKubernetesUseKubeletAPI),
+		KubernetesKubeletURL:             c.String(CLIKubernetesKubeletURL),
 		CollectDCP:                       true,
 		UseOldNamespace:                  c.Bool(CLIUseOldNamespace),
 		UseRemoteHE:                      c.IsSet(CLIRemoteHEInfo),
