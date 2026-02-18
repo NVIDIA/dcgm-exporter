@@ -161,18 +161,46 @@ extraHostVolumes: []
 #- name: host-binaries
 #  hostPath: /opt/bin
 
-extraConfigMapVolumes:
-  - name: exporter-metrics-volume
-    configMap:
-      name: exporter-metrics-config-map
-      items:
-      - key: metrics
-        path: default-counters.csv
+# extraConfigMapVolumes and extraVolumeMounts are intentionally empty by default.
+# The container image ships a built-in /etc/dcgm-exporter/default-counters.csv,
+# so no volume mount is required for a standard deployment.
+#
+# NOTE: On SELinux-enforcing environments (e.g. EKS with Bottlerocket AMI,
+# RHEL CoreOS) the default subPath mount of a ConfigMap entry onto an existing
+# file is blocked by the SELinux policy and causes container startup failures.
+# Keeping these empty avoids the issue out-of-the-box. See issue #613.
+#
+# To override the counters file with a custom ConfigMap, first create the
+# ConfigMap containing your custom metrics CSV:
+#
+#   kubectl create configmap exporter-metrics-config-map \
+#     --from-file=metrics=./custom-counters.csv
+#
+# Then enable the volume and mount:
+#
+# extraConfigMapVolumes:
+#   - name: exporter-metrics-volume
+#     configMap:
+#       name: exporter-metrics-config-map
+#       items:
+#         - key: metrics
+#           path: default-counters.csv
+#
+# For standard (non-SELinux) environments you can use subPath:
+# extraVolumeMounts:
+#   - name: exporter-metrics-volume
+#     mountPath: /etc/dcgm-exporter/default-counters.csv
+#     subPath: default-counters.csv
+#
+# For SELinux-enforcing environments (Bottlerocket, RHCOS) mount the whole
+# directory instead, which avoids the subPath restriction:
+# extraVolumeMounts:
+#   - name: exporter-metrics-volume
+#     mountPath: /etc/dcgm-exporter/
+#
+extraConfigMapVolumes: []
 
-extraVolumeMounts:
-  - name: exporter-metrics-volume
-    mountPath: /etc/dcgm-exporter/default-counters.csv
-    subPath: default-counters.csv
+extraVolumeMounts: []
 
 extraEnv: []
 
