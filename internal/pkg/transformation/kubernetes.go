@@ -376,6 +376,11 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					}
 					newmetrics = append(newmetrics, metric)
 				}
+				// Preserve the original device-level metric for GPUs not currently
+				// used by any pod, so they still appear in /metrics with value 0.
+				if len(podInfos) == 0 {
+					newmetrics = append(newmetrics, metrics[counter][j])
+				}
 			}
 			// Upsert the annotated series into the final map only if we found any
 			// pods using the devices for the metric. Otherwise, leave the original

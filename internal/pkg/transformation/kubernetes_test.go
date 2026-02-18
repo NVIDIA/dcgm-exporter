@@ -1309,3 +1309,249 @@ func TestStripVGPUSuffix(t *testing.T) {
 		})
 	}
 }
+
+func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	testCases := []struct {
+		name              string
+		counter           counters.Counter
+		wantPodMetrics    int
+		wantDeviceMetrics int
+	}{
+		{
+			name: "non-per-process metric",
+			counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 2,
+		},
+		{
+			name: "per-process metric",
+			counter: counters.Counter{
+				FieldID:   203,
+				FieldName: metricGPUUtil,
+				PromType:  "gauge",
+			},
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 3,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			allGPUUUIDs := []string{"gpu-uuid-0", "gpu-uuid-1", "gpu-uuid-2"}
+			inUseGPUUUIDs := []string{"gpu-uuid-0"}
+
+			tmpDir, cleanup := testutils.CreateTmpDir(t)
+			defer cleanup()
+			socketPath := tmpDir + "/kubelet.sock"
+			server := grpc.NewServer()
+			defer server.Stop()
+
+			config := &appconfig.Config{
+				UseRemoteHE:   false,
+				Kubernetes:    true,
+				EnableDCGMLog: true,
+				DCGMLogLevel:  "DEBUG",
+			}
+			dcgmprovider.SmartDCGMInit(t, config)
+			defer dcgmprovider.Client().Cleanup()
+
+			podresourcesapi.RegisterPodResourcesListerServer(server,
+				testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, inUseGPUUUIDs))
+			cleanupServer := testutils.StartMockServer(t, server, socketPath)
+			defer cleanupServer()
+
+			ctrl := gomock.NewController(t)
+			mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+			mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(&nvmlprovider.MIGDeviceInfo{}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetDeviceProcessMemory(gomock.Any()).Return(map[uint32]uint64{}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetDeviceProcessUtilization(gomock.Any()).Return(map[uint32]uint32{}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetAllMIGDevicesProcessMemory(gomock.Any()).Return(map[uint]map[uint32]uint64{}, nil).AnyTimes()
+			nvmlprovider.SetClient(mockNVMLProvider)
+
+			podMapper := NewPodMapper(&appconfig.Config{
+				KubernetesGPUIdType:       appconfig.GPUUID,
+				PodResourcesKubeletSocket: socketPath,
+				KubernetesVirtualGPUs:     true,
+			})
+			require.NotNil(t, podMapper)
+
+			metrics := collector.MetricsByCounter{}
+			for i, gpuUUID := range allGPUUUIDs {
+				metrics[tc.counter] = append(metrics[tc.counter], collector.Metric{
+					GPU:        fmt.Sprint(i),
+					GPUUUID:    gpuUUID,
+					Value:      fmt.Sprint(42 + i),
+					Counter:    tc.counter,
+					Attributes: map[string]string{},
+				})
+			}
+
+			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			mockSystemInfo.EXPECT().GPUCount().Return(uint(len(allGPUUUIDs))).AnyTimes()
+			for i, uuid := range allGPUUUIDs {
+				mockSystemInfo.EXPECT().GPU(uint(i)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{
+						UUID: uuid,
+						GPU:  uint(i),
+					},
+				}).AnyTimes()
+			}
+
+			err := podMapper.Process(metrics, mockSystemInfo)
+			require.NoError(t, err)
+
+			var deviceMetrics, podMetrics []collector.Metric
+			for _, m := range metrics[tc.counter] {
+				if _, hasPod := m.Attributes[podAttribute]; hasPod {
+					podMetrics = append(podMetrics, m)
+				} else {
+					deviceMetrics = append(deviceMetrics, m)
+				}
+			}
+
+			require.Len(t, podMetrics, tc.wantPodMetrics)
+			require.Equal(t, "gpu-pod-0", podMetrics[0].Attributes[podAttribute])
+			require.Equal(t, "default", podMetrics[0].Attributes[namespaceAttribute])
+
+			require.Len(t, deviceMetrics, tc.wantDeviceMetrics)
+			for _, m := range deviceMetrics {
+				require.NotContains(t, m.Attributes, podAttribute)
+			}
+		})
+	}
+}
+
+func TestKubernetesVirtualGPUs_UnusedMIGInstancesPreserveMetrics(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	testCases := []struct {
+		name              string
+		counter           counters.Counter
+		wantPodMetrics    int
+		wantDeviceMetrics int
+	}{
+		{
+			name: "non-per-process metric",
+			counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 2,
+		},
+		{
+			name: "per-process metric",
+			counter: counters.Counter{
+				FieldID:   203,
+				FieldName: metricGPUUtil,
+				PromType:  "gauge",
+			},
+			// in-use instance: 1 device-level + 1 per-process (has pod attr)
+			// unused instances: 2 device-level
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 3,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gpuUUID := "GPU-test-mig-uuid"
+			allInstances := []uint{7, 12, 13}
+			podDeviceID := "nvidia0/gi7/vgpu0"
+
+			tmpDir, cleanup := testutils.CreateTmpDir(t)
+			defer cleanup()
+			socketPath := tmpDir + "/kubelet.sock"
+			server := grpc.NewServer()
+			defer server.Stop()
+
+			config := &appconfig.Config{
+				UseRemoteHE:   false,
+				Kubernetes:    true,
+				EnableDCGMLog: true,
+				DCGMLogLevel:  "DEBUG",
+			}
+			dcgmprovider.SmartDCGMInit(t, config)
+			defer dcgmprovider.Client().Cleanup()
+
+			podresourcesapi.RegisterPodResourcesListerServer(server,
+				testutils.NewMockPodResourcesServer("nvidia.com/mig-1g.5gb", []string{podDeviceID}))
+			cleanupServer := testutils.StartMockServer(t, server, socketPath)
+			defer cleanupServer()
+
+			ctrl := gomock.NewController(t)
+			mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+			mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(&nvmlprovider.MIGDeviceInfo{
+				ParentUUID:        gpuUUID,
+				GPUInstanceID:     3,
+				ComputeInstanceID: 0,
+			}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetAllMIGDevicesProcessMemory(gomock.Any()).Return(map[uint]map[uint32]uint64{}, nil).AnyTimes()
+			nvmlprovider.SetClient(mockNVMLProvider)
+
+			podMapper := NewPodMapper(&appconfig.Config{
+				KubernetesGPUIdType:       appconfig.DeviceName,
+				PodResourcesKubeletSocket: socketPath,
+				KubernetesVirtualGPUs:     true,
+			})
+			require.NotNil(t, podMapper)
+
+			metrics := collector.MetricsByCounter{}
+			for _, instID := range allInstances {
+				metrics[tc.counter] = append(metrics[tc.counter], collector.Metric{
+					GPU:           "0",
+					GPUUUID:       gpuUUID,
+					GPUDevice:     "0",
+					GPUInstanceID: fmt.Sprint(instID),
+					Value:         "100",
+					MigProfile:    "1g.5gb",
+					Counter:       tc.counter,
+					Attributes:    map[string]string{},
+				})
+			}
+
+			var gpuInstances []deviceinfo.GPUInstanceInfo
+			for _, instID := range allInstances {
+				gpuInstances = append(gpuInstances, deviceinfo.GPUInstanceInfo{
+					Info:        dcgm.MigEntityInfo{NvmlInstanceId: instID},
+					ProfileName: "1g.5gb",
+				})
+			}
+
+			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			mockSystemInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+				DeviceInfo:   dcgm.Device{UUID: gpuUUID, GPU: 0},
+				MigEnabled:   true,
+				GPUInstances: gpuInstances,
+			}).AnyTimes()
+
+			err := podMapper.Process(metrics, mockSystemInfo)
+			require.NoError(t, err)
+
+			var deviceMetrics, podMetrics []collector.Metric
+			for _, m := range metrics[tc.counter] {
+				if _, hasPod := m.Attributes[podAttribute]; hasPod {
+					podMetrics = append(podMetrics, m)
+				} else {
+					deviceMetrics = append(deviceMetrics, m)
+				}
+			}
+
+			require.Len(t, podMetrics, tc.wantPodMetrics)
+			require.Equal(t, "gpu-pod-0", podMetrics[0].Attributes[podAttribute])
+
+			require.Len(t, deviceMetrics, tc.wantDeviceMetrics)
+			for _, m := range deviceMetrics {
+				require.NotContains(t, m.Attributes, podAttribute)
+			}
+		})
+	}
+}
