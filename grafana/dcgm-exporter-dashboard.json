@@ -494,7 +494,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_GPU_UTIL{instance=~\"$instance\", gpu=~\"$gpu\"}",
+          "expr": "DCGM_FI_PROF_GR_ENGINE_ACTIVE{instance=~\"$instance\", gpu=~\"$gpu\"}",
           "interval": "",
           "legendFormat": "GPU {{gpu}}",
           "refId": "A"
@@ -520,10 +520,10 @@
       },
       "yaxes": [
         {
-          "format": "percent",
+          "format": "percentunit",
           "label": null,
           "logBase": 1,
-          "max": "100",
+          "max": "1",
           "min": "0",
           "show": true
         },
