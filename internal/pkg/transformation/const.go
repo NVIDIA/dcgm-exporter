@@ -38,5 +38,10 @@ const (
 	draMigProfile    = "dra_mig_profile"
 	draMigDeviceUUID = "dra_mig_device_uuid"
 
+	// DRAGPUDriverName is the DRA driver name used by the NVIDIA GPU DRA driver.
+	// NOTE: dcgm-exporter's DRA handling currently assumes the schema used by
+	// this driver (for example, \"type\", \"uuid\", \"parentUUID\", \"profile\"
+	// attributes). Other GPU DRA drivers with different schemas may not work
+	// correctly with this implementation.
 	DRAGPUDriverName = "gpu.nvidia.com"
 )

@@ -17,8 +17,10 @@
 package transformation
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,9 +31,11 @@ import (
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
@@ -666,9 +670,56 @@ func TestPodDRAInfo(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// Create a store with ResourceSlice objects based on test case
+			store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+			if len(tc.deviceToUUID) > 0 || len(tc.migDevices) > 0 {
+				// Create a ResourceSlice with the device from the test case
+				devices := []resourcev1.Device{}
+				if uuid, exists := tc.deviceToUUID["poolA/gpu-x"]; exists {
+					if migInfo, isMIG := tc.migDevices["poolA/gpu-x"]; isMIG {
+						// MIG device
+						devices = append(devices, resourcev1.Device{
+							Name: "gpu-x",
+							Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+								"type":       {StringValue: stringPtr("mig")},
+								"uuid":       {StringValue: &migInfo.MIGDeviceUUID},
+								"profile":    {StringValue: &migInfo.Profile},
+								"parentUUID": {StringValue: &migInfo.ParentUUID},
+							},
+						})
+					} else {
+						// GPU device
+						devices = append(devices, resourcev1.Device{
+							Name: "gpu-x",
+							Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+								"type": {StringValue: stringPtr("gpu")},
+								"uuid": {StringValue: &uuid},
+							},
+						})
+					}
+				}
+				if len(devices) > 0 {
+					slice := &resourcev1.ResourceSlice{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-slice",
+							Namespace: "default",
+						},
+						Spec: resourcev1.ResourceSliceSpec{
+							Driver: DRAGPUDriverName,
+							Pool: resourcev1.ResourcePool{
+								Name: "poolA",
+							},
+							Devices: devices,
+						},
+					}
+					store.Add(slice)
+				}
+			}
+
+			// Create test informer (same as in dra_test.go)
+			testInformer := &testInformerForDRA{store: store}
 			draMgr := &DRAResourceSliceManager{
-				deviceToUUID: tc.deviceToUUID,
-				migDevices:   tc.migDevices,
+				v1Informer: testInformer,
 			}
 
 			pm := &PodMapper{
@@ -718,6 +769,73 @@ func TestPodDRAInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testInformerForDRA is a simple test implementation of SharedIndexInformer for DRA tests
+type testInformerForDRA struct {
+	store cache.Store
+}
+
+func (t *testInformerForDRA) GetStore() cache.Store {
+	return t.store
+}
+
+func (t *testInformerForDRA) GetIndexer() cache.Indexer {
+	return t.store.(cache.Indexer)
+}
+
+func (t *testInformerForDRA) AddIndexers(indexers cache.Indexers) error {
+	return nil
+}
+
+func (t *testInformerForDRA) GetController() cache.Controller {
+	return nil
+}
+
+func (t *testInformerForDRA) LastSyncResourceVersion() string {
+	return ""
+}
+
+func (t *testInformerForDRA) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+
+func (t *testInformerForDRA) AddEventHandlerWithResyncPeriod(handler cache.ResourceEventHandler, resyncPeriod time.Duration) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+
+func (t *testInformerForDRA) AddEventHandlerWithOptions(handler cache.ResourceEventHandler, options cache.HandlerOptions) (cache.ResourceEventHandlerRegistration, error) {
+	return nil, nil
+}
+
+func (t *testInformerForDRA) RemoveEventHandler(handle cache.ResourceEventHandlerRegistration) error {
+	return nil
+}
+
+func (t *testInformerForDRA) IsStopped() bool {
+	return false
+}
+
+func (t *testInformerForDRA) SetWatchErrorHandler(handler cache.WatchErrorHandler) error {
+	return nil
+}
+
+func (t *testInformerForDRA) SetWatchErrorHandlerWithContext(handler cache.WatchErrorHandlerWithContext) error {
+	return nil
+}
+
+func (t *testInformerForDRA) SetTransform(handler cache.TransformFunc) error {
+	return nil
+}
+
+func (t *testInformerForDRA) HasSynced() bool {
+	return true
+}
+
+func (t *testInformerForDRA) Run(stopCh <-chan struct{}) {
+}
+
+func (t *testInformerForDRA) RunWithContext(ctx context.Context) {
 }
 
 func TestProcessPodMapper_WithUID(t *testing.T) {

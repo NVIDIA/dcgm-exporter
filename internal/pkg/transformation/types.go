@@ -77,8 +77,6 @@ type DRAResourceSliceManager struct {
 	v1beta1Informer cache.SharedIndexInformer
 	cancelContext   context.CancelFunc
 	mu              sync.RWMutex
-	deviceToUUID    map[string]string            // pool/device -> UUID (for full GPUs)
-	migDevices      map[string]*DRAMigDeviceInfo // pool/device -> MIG info (for MIG devices)
 }
 
 // PodMetadata holds pod metadata from API server

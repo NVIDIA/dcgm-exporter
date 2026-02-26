@@ -164,57 +164,9 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		return nil, fmt.Errorf("error getting kube client: %w", err)
 	}
 
-	factory := informers.NewSharedInformerFactory(client, informerResyncPeriod)
-
-	// Register informers for both v1 and v1beta1 to support both API versions
-	v1Informer := factory.Resource().V1().ResourceSlices().Informer()
-	v1beta1Informer := factory.Resource().V1beta1().ResourceSlices().Informer()
-
-	m := &DRAResourceSliceManager{
-		factory:         factory,
-		v1Informer:      v1Informer,
-		v1beta1Informer: v1beta1Informer,
-		deviceToUUID:    make(map[string]string),
-		migDevices:      make(map[string]*DRAMigDeviceInfo),
-	}
-
-	// Add event handlers for v1 API
-	_, err = v1Informer.AddEventHandler(&cache.FilteringResourceEventHandler{
-		FilterFunc: func(obj interface{}) bool {
-			s := obj.(*resourcev1.ResourceSlice)
-			return s.Spec.Driver == DRAGPUDriverName
-		},
-		Handler: cache.ResourceEventHandlerFuncs{
-			AddFunc:    m.onAddOrUpdateV1,
-			UpdateFunc: func(_, o interface{}) { m.onAddOrUpdateV1(o) },
-			DeleteFunc: m.onDeleteV1,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error adding v1 event handler: %w", err)
-	}
-
-	// Add event handlers for v1beta1 API
-	_, err = v1beta1Informer.AddEventHandler(&cache.FilteringResourceEventHandler{
-		FilterFunc: func(obj interface{}) bool {
-			s := obj.(*resourcev1beta1.ResourceSlice)
-			return s.Spec.Driver == DRAGPUDriverName
-		},
-		Handler: cache.ResourceEventHandlerFuncs{
-			AddFunc:    m.onAddOrUpdateV1beta1,
-			UpdateFunc: func(_, o interface{}) { m.onAddOrUpdateV1beta1(o) },
-			DeleteFunc: m.onDeleteV1beta1,
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("error adding v1beta1 event handler: %w", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancelContext = cancel
-	factory.Start(ctx.Done())
-
-	// Discover which API versions are available before waiting for cache sync
+	// Discover which API versions are available so we can choose a single
+	// preferred version. We prefer v1 when available, otherwise fall back
+	// to v1beta1.
 	discoveryClient := client.Discovery()
 
 	v1Available, err := discovery.IsResourceEnabled(discoveryClient, schema.GroupVersionResource{
@@ -223,7 +175,6 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		Resource: "resourceslices",
 	})
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("error checking v1 ResourceSlice API availability: %w", err)
 	}
 
@@ -233,43 +184,56 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		Resource: "resourceslices",
 	})
 	if err != nil {
-		cancel()
 		return nil, fmt.Errorf("error checking v1beta1 ResourceSlice API availability: %w", err)
 	}
 
 	if !v1Available && !v1beta1Available {
-		cancel()
 		return nil, fmt.Errorf("neither v1 nor v1beta1 ResourceSlice API is available")
 	}
 
-	// Wait for cache sync only for available API versions
-	var v1Synced, v1beta1Synced bool
+	// Select a single API version to watch.
+	apiVersion := "v1beta1"
+	useV1 := false
 	if v1Available {
-		v1Synced = cache.WaitForCacheSync(ctx.Done(), v1Informer.HasSynced)
-		if v1Synced {
-			slog.Info("v1 ResourceSlice API informer synced successfully")
-		} else {
-			slog.Warn("v1 ResourceSlice API informer cache sync failed")
-		}
-	} else {
-		slog.Info("v1 ResourceSlice API not available, skipping cache sync")
+		apiVersion = "v1"
+		useV1 = true
 	}
 
-	if v1beta1Available {
-		v1beta1Synced = cache.WaitForCacheSync(ctx.Done(), v1beta1Informer.HasSynced)
-		if v1beta1Synced {
-			slog.Info("v1beta1 ResourceSlice API informer synced successfully")
-		} else {
-			slog.Warn("v1beta1 ResourceSlice API informer cache sync failed")
-		}
+	factory := informers.NewSharedInformerFactory(client, informerResyncPeriod)
+
+	var v1Informer cache.SharedIndexInformer
+	var v1beta1Informer cache.SharedIndexInformer
+
+	if useV1 {
+		v1Informer = factory.Resource().V1().ResourceSlices().Informer()
 	} else {
-		slog.Info("v1beta1 ResourceSlice API not available, skipping cache sync")
+		v1beta1Informer = factory.Resource().V1beta1().ResourceSlices().Informer()
 	}
 
-	if !v1Synced && !v1beta1Synced {
+	m := &DRAResourceSliceManager{
+		factory:         factory,
+		v1Informer:      v1Informer,
+		v1beta1Informer: v1beta1Informer,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelContext = cancel
+	factory.Start(ctx.Done())
+
+	// Wait for cache sync on the selected informer.
+	var synced bool
+	if m.v1Informer != nil {
+		synced = cache.WaitForCacheSync(ctx.Done(), m.v1Informer.HasSynced)
+	} else {
+		synced = cache.WaitForCacheSync(ctx.Done(), m.v1beta1Informer.HasSynced)
+	}
+
+	if !synced {
 		cancel()
-		return nil, fmt.Errorf("ResourceSlice informer cache sync failed for both v1 and v1beta1")
+		return nil, fmt.Errorf("ResourceSlice informer cache sync failed for %s", apiVersion)
 	}
+
+	slog.Info(fmt.Sprintf("%s ResourceSlice API informer synced successfully", apiVersion))
 
 	return m, nil
 }
@@ -281,168 +245,85 @@ func (m *DRAResourceSliceManager) Stop() {
 }
 
 // GetDeviceInfo returns the mapping UUID and MIG device info if applicable
+// by querying the informer cache directly. This avoids maintaining redundant
+// local caches and ensures we always have the latest state from the API server.
 // For MIG devices: returns (parentUUID, *DRAMigDeviceInfo)
 // For full GPUs: returns (deviceUUID, nil)
 func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *DRAMigDeviceInfo) {
-	key := pool + "/" + device
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Check if this is a MIG device
-	if migInfo, exists := m.migDevices[key]; exists {
-		// MIG device - return parent UUID and MIG info
-		slog.Debug(fmt.Sprintf("Found MIG device for %s with parent UUID: %s", key, migInfo.ParentUUID))
-		return migInfo.ParentUUID, migInfo
+	// Query the informer cache for ResourceSlice objects matching the pool and device
+	var informer cache.SharedIndexInformer
+	if m.v1Informer != nil {
+		informer = m.v1Informer
+	} else if m.v1beta1Informer != nil {
+		informer = m.v1beta1Informer
+	} else {
+		slog.Debug(fmt.Sprintf("No informer available for pool %s, device %s", pool, device))
+		return "", nil
 	}
 
-	// Full GPU device - return device UUID with no MIG info
-	if uuid, exists := m.deviceToUUID[key]; exists {
-		slog.Debug(fmt.Sprintf("Found GPU device for %s with UUID: %s", uuid, key))
-		return uuid, nil
-	}
-
-	slog.Info(fmt.Sprintf("No UUID found for %s", key))
-	return "", nil
-}
-
-// onAddOrUpdate handles ResourceSlice add/update events for both v1 and v1beta1 APIs
-func (m *DRAResourceSliceManager) onAddOrUpdate(adapter resourceSliceAdapter, apiVersion string, v1TakesPrecedence bool) {
-	pool := adapter.GetPoolName()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, dev := range adapter.GetDevices() {
-		if !dev.HasAttributes() {
+	items := informer.GetStore().List()
+	for _, item := range items {
+		var adapter resourceSliceAdapter
+		switch obj := item.(type) {
+		case *resourcev1.ResourceSlice:
+			if obj.Spec.Driver != DRAGPUDriverName {
+				continue
+			}
+			adapter = &v1ResourceSliceAdapter{slice: obj}
+		case *resourcev1beta1.ResourceSlice:
+			if obj.Spec.Driver != DRAGPUDriverName {
+				continue
+			}
+			adapter = &v1beta1ResourceSliceAdapter{slice: obj}
+		default:
 			continue
 		}
-		key := pool + "/" + dev.GetName()
 
-		deviceType := dev.GetAttribute("type")
-		switch deviceType {
-		case "gpu":
-			if uuid := dev.GetAttribute("uuid"); uuid != "" {
-				// Only update if not already set (when v1 takes precedence)
-				if v1TakesPrecedence {
-					if _, exists := m.deviceToUUID[key]; !exists {
-						m.deviceToUUID[key] = uuid
-						slog.Debug(fmt.Sprintf("Added gpu device [key:%s] with UUID: %s (%s)", key, uuid, apiVersion))
-					}
-				} else {
-					m.deviceToUUID[key] = uuid
-					slog.Debug(fmt.Sprintf("Added gpu device [key:%s] with UUID: %s (%s)", key, uuid, apiVersion))
-				}
+		// Check if this slice matches the requested pool
+		if adapter.GetPoolName() != pool {
+			continue
+		}
+
+		// Search for the device in this slice
+		for _, dev := range adapter.GetDevices() {
+			if !dev.HasAttributes() {
+				continue
+			}
+			if dev.GetName() != device {
+				continue
 			}
 
-		case "mig":
-			parentUUID := dev.GetAttribute("parentUUID")
-			profile := dev.GetAttribute("profile")
-			migUUID := dev.GetAttribute("uuid")
-
-			// Only create MIG device if we have required parent UUID
-			if parentUUID != "" {
-				// Only update if not already set (when v1 takes precedence)
-				if v1TakesPrecedence {
-					if _, exists := m.migDevices[key]; !exists {
-						m.migDevices[key] = &DRAMigDeviceInfo{
-							MIGDeviceUUID: migUUID,
-							Profile:       profile,
-							ParentUUID:    parentUUID,
-						}
-						slog.Debug(fmt.Sprintf("Added MIG device %s (profile: %s) with parent: %s (%s)", migUUID, profile, parentUUID, apiVersion))
-					}
-				} else {
-					m.migDevices[key] = &DRAMigDeviceInfo{
+			deviceType := dev.GetAttribute("type")
+			switch deviceType {
+			case "mig":
+				parentUUID := dev.GetAttribute("parentUUID")
+				profile := dev.GetAttribute("profile")
+				migUUID := dev.GetAttribute("uuid")
+				if parentUUID != "" {
+					migInfo := &DRAMigDeviceInfo{
 						MIGDeviceUUID: migUUID,
 						Profile:       profile,
 						ParentUUID:    parentUUID,
 					}
-					slog.Debug(fmt.Sprintf("Added MIG device %s (profile: %s) with parent: %s (%s)", migUUID, profile, parentUUID, apiVersion))
+					slog.Debug(fmt.Sprintf("Found MIG device %s/%s with parent UUID: %s", pool, device, parentUUID))
+					return parentUUID, migInfo
 				}
-			} else {
-				slog.Debug(fmt.Sprintf("MIG device %s missing parent UUID", migUUID))
-			}
-
-		default:
-			slog.Warn(fmt.Sprintf("Device [key:%s] has unknown type: %s", key, deviceType))
-		}
-	}
-}
-
-// onAddOrUpdateV1 handles v1 API ResourceSlice events
-func (m *DRAResourceSliceManager) onAddOrUpdateV1(obj interface{}) {
-	slice := obj.(*resourcev1.ResourceSlice)
-	adapter := &v1ResourceSliceAdapter{slice: slice}
-	m.onAddOrUpdate(adapter, "v1", false)
-}
-
-// onAddOrUpdateV1beta1 handles v1beta1 API ResourceSlice events
-func (m *DRAResourceSliceManager) onAddOrUpdateV1beta1(obj interface{}) {
-	slice := obj.(*resourcev1beta1.ResourceSlice)
-	adapter := &v1beta1ResourceSliceAdapter{slice: slice}
-	m.onAddOrUpdate(adapter, "v1beta1", true) // v1 takes precedence
-}
-
-// onDelete handles ResourceSlice delete events for both v1 and v1beta1 APIs
-func (m *DRAResourceSliceManager) onDelete(adapter resourceSliceAdapter, otherInformer cache.SharedIndexInformer, apiVersion, otherApiVersion string) {
-	pool := adapter.GetPoolName()
-	sliceName := adapter.GetName()
-	sliceNamespace := adapter.GetNamespace()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for _, dev := range adapter.GetDevices() {
-		key := pool + "/" + dev.GetName()
-		// Check if the other API version still has this device before deleting
-		// If both APIs are available, the other API might still have the same ResourceSlice
-		if otherInformer != nil {
-			items := otherInformer.GetStore().List()
-			foundInOther := false
-			for _, item := range items {
-				var otherAdapter resourceSliceAdapter
-				switch obj := item.(type) {
-				case *resourcev1.ResourceSlice:
-					otherAdapter = &v1ResourceSliceAdapter{slice: obj}
-				case *resourcev1beta1.ResourceSlice:
-					otherAdapter = &v1beta1ResourceSliceAdapter{slice: obj}
-				default:
-					continue
+			case "gpu":
+				uuid := dev.GetAttribute("uuid")
+				if uuid != "" {
+					slog.Debug(fmt.Sprintf("Found GPU device %s/%s with UUID: %s", pool, device, uuid))
+					return uuid, nil
 				}
-				if otherAdapter.GetName() == sliceName && otherAdapter.GetNamespace() == sliceNamespace {
-					// Same ResourceSlice exists in other API, check if it has this device
-					for _, otherDev := range otherAdapter.GetDevices() {
-						if otherDev.GetName() == dev.GetName() {
-							foundInOther = true
-							break
-						}
-					}
-					if foundInOther {
-						break
-					}
-				}
-			}
-			if foundInOther {
-				slog.Debug(fmt.Sprintf("Not removing device %s (%s delete) - still exists in %s", key, apiVersion, otherApiVersion))
-				continue
+			default:
+				// Log unknown device types to help users understand why a device might not be handled
+				slog.Warn(fmt.Sprintf("Device [%s/%s] has unknown type: %s", pool, device, deviceType))
 			}
 		}
-		slog.Debug(fmt.Sprintf("Removing device for %s (%s)", key, apiVersion))
-		delete(m.deviceToUUID, key)
-		delete(m.migDevices, key)
 	}
-}
 
-// onDeleteV1 handles v1 API ResourceSlice delete events
-func (m *DRAResourceSliceManager) onDeleteV1(obj interface{}) {
-	slice := obj.(*resourcev1.ResourceSlice)
-	adapter := &v1ResourceSliceAdapter{slice: slice}
-	m.onDelete(adapter, m.v1beta1Informer, "v1", "v1beta1")
-}
-
-// onDeleteV1beta1 handles v1beta1 API ResourceSlice delete events
-func (m *DRAResourceSliceManager) onDeleteV1beta1(obj interface{}) {
-	slice := obj.(*resourcev1beta1.ResourceSlice)
-	adapter := &v1beta1ResourceSliceAdapter{slice: slice}
-	m.onDelete(adapter, m.v1Informer, "v1beta1", "v1")
+	slog.Debug(fmt.Sprintf("No UUID found for pool %s, device %s", pool, device))
+	return "", nil
 }
