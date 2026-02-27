@@ -24,10 +24,10 @@ import (
 
 	resourcev1 "k8s.io/api/resource/v1"
 	resourcev1beta1 "k8s.io/api/resource/v1beta1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/cache"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
@@ -169,20 +169,12 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 	// to v1beta1.
 	discoveryClient := client.Discovery()
 
-	v1Available, err := discovery.IsResourceEnabled(discoveryClient, schema.GroupVersionResource{
-		Group:    "resource.k8s.io",
-		Version:  "v1",
-		Resource: "resourceslices",
-	})
+	v1Available, err := discovery.IsResourceEnabled(discoveryClient, resourcev1.SchemeGroupVersion.WithResource("resourceslices"))
 	if err != nil {
 		return nil, fmt.Errorf("error checking v1 ResourceSlice API availability: %w", err)
 	}
 
-	v1beta1Available, err := discovery.IsResourceEnabled(discoveryClient, schema.GroupVersionResource{
-		Group:    "resource.k8s.io",
-		Version:  "v1beta1",
-		Resource: "resourceslices",
-	})
+	v1beta1Available, err := discovery.IsResourceEnabled(discoveryClient, resourcev1beta1.SchemeGroupVersion.WithResource("resourceslices"))
 	if err != nil {
 		return nil, fmt.Errorf("error checking v1beta1 ResourceSlice API availability: %w", err)
 	}
@@ -206,8 +198,34 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 
 	if useV1 {
 		v1Informer = factory.Resource().V1().ResourceSlices().Informer()
+		// Index ResourceSlices by pool name for efficient lookups in GetDeviceInfo.
+		err = v1Informer.AddIndexers(cache.Indexers{
+			"poolName": func(obj interface{}) ([]string, error) {
+				rs, ok := obj.(*resourcev1.ResourceSlice)
+				if !ok {
+					return nil, nil
+				}
+				return []string{rs.Spec.Pool.Name}, nil
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error adding pool indexer to v1 ResourceSlice informer: %w", err)
+		}
 	} else {
 		v1beta1Informer = factory.Resource().V1beta1().ResourceSlices().Informer()
+		// Index ResourceSlices by pool name for efficient lookups in GetDeviceInfo.
+		err = v1beta1Informer.AddIndexers(cache.Indexers{
+			"poolName": func(obj interface{}) ([]string, error) {
+				rs, ok := obj.(*resourcev1beta1.ResourceSlice)
+				if !ok {
+					return nil, nil
+				}
+				return []string{rs.Spec.Pool.Name}, nil
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("error adding pool indexer to v1beta1 ResourceSlice informer: %w", err)
+		}
 	}
 
 	m := &DRAResourceSliceManager{
@@ -253,7 +271,8 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Query the informer cache for ResourceSlice objects matching the pool and device
+	// Query the informer cache for ResourceSlice objects matching the pool and device.
+	// We use an index on pool name to avoid scanning all ResourceSlices.
 	var informer cache.SharedIndexInformer
 	if m.v1Informer != nil {
 		informer = m.v1Informer
@@ -264,11 +283,20 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 		return "", nil
 	}
 
-	items := informer.GetStore().List()
+	items, err := informer.GetIndexer().ByIndex("poolName", pool)
+	if err != nil {
+		slog.Error(fmt.Sprintf("Error listing ResourceSlices by pool index for pool %s: %v", pool, err))
+		return "", nil
+	}
+
 	for _, item := range items {
 		var adapter resourceSliceAdapter
 		switch obj := item.(type) {
 		case *resourcev1.ResourceSlice:
+			// NOTE: dcgm-exporter's DRA handling currently assumes the schema used by
+			// the NVIDIA GPU DRA driver (for example, "type", "uuid", "parentUUID", "profile"
+			// attributes). Other GPU DRA drivers with different schemas may not work
+			// correctly with this implementation.
 			if obj.Spec.Driver != DRAGPUDriverName {
 				continue
 			}
@@ -279,11 +307,6 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 			}
 			adapter = &v1beta1ResourceSliceAdapter{slice: obj}
 		default:
-			continue
-		}
-
-		// Check if this slice matches the requested pool
-		if adapter.GetPoolName() != pool {
 			continue
 		}
 
@@ -325,5 +348,47 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 	}
 
 	slog.Debug(fmt.Sprintf("No UUID found for pool %s, device %s", pool, device))
+	return "", nil
+}
+
+// GetDynamicResourceInfo converts a DynamicResource into a DynamicResourceInfo and
+// resolves the backing GPU or MIG device UUID using the ResourceSlice informer.
+// It returns the mapping key (device UUID or parent UUID for MIG devices) and
+// the populated DynamicResourceInfo. If the DynamicResource is not for the
+// NVIDIA GPU DRA driver or no matching device can be found, it returns "" and nil.
+func (m *DRAResourceSliceManager) GetDynamicResourceInfo(resource *podresourcesapi.DynamicResource) (string, *DynamicResourceInfo) {
+	if resource == nil {
+		return "", nil
+	}
+
+	for _, claimResource := range resource.GetClaimResources() {
+		draDriverName := claimResource.GetDriverName()
+		if draDriverName != DRAGPUDriverName {
+			continue
+		}
+
+		draPoolName := claimResource.GetPoolName()
+		draDeviceName := claimResource.GetDeviceName()
+
+		mappingKey, migInfo := m.GetDeviceInfo(draPoolName, draDeviceName)
+		if mappingKey == "" {
+			slog.Debug(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
+			continue
+		}
+
+		drInfo := &DynamicResourceInfo{
+			ClaimName:      resource.GetClaimName(),
+			ClaimNamespace: resource.GetClaimNamespace(),
+			DriverName:     draDriverName,
+			PoolName:       draPoolName,
+			DeviceName:     draDeviceName,
+		}
+		if migInfo != nil {
+			drInfo.MIGInfo = migInfo
+		}
+
+		return mappingKey, drInfo
+	}
+
 	return "", nil
 }

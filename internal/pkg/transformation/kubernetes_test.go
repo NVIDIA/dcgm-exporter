@@ -670,8 +670,9 @@ func TestPodDRAInfo(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create a store with ResourceSlice objects based on test case
-			store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+			// Create an indexer with ResourceSlice objects based on test case.
+			// We use the same poolName index as the production informer.
+			store := newDRAIndexer()
 			if len(tc.deviceToUUID) > 0 || len(tc.migDevices) > 0 {
 				// Create a ResourceSlice with the device from the test case
 				devices := []resourcev1.Device{}

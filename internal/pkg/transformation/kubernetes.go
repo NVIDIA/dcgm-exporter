@@ -459,58 +459,40 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 				"containerName", cntName)
 			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 && p.ResourceSliceManager != nil {
 				for _, dr := range dynamicResources {
-					for _, claimResource := range dr.GetClaimResources() {
-						draDriverName := claimResource.GetDriverName()
-						if draDriverName != DRAGPUDriverName {
-							continue
-						}
-						draPoolName := claimResource.GetPoolName()
-						draDeviceName := claimResource.GetDeviceName()
-
-						mappingKey, migInfo := p.ResourceSliceManager.GetDeviceInfo(draPoolName, draDeviceName)
-						if mappingKey == "" {
-							slog.Debug(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
-							continue
-						}
-
-						// Create unique key for pod+namespace+container combination
-						podContainerKey := podName + "/" + podNamespace + "/" + cntName
-
-						// Initialize tracker for this device if needed
-						if processedPods[mappingKey] == nil {
-							processedPods[mappingKey] = make(map[string]bool)
-						}
-
-						// Skip if we already processed this pod+container for this device
-						if processedPods[mappingKey][podContainerKey] {
-							continue
-						}
-
-						podInfo := p.createPodInfo(pod, container, labelCache)
-						drInfo := DynamicResourceInfo{
-							ClaimName:      dr.GetClaimName(),
-							ClaimNamespace: dr.GetClaimNamespace(),
-							DriverName:     draDriverName,
-							PoolName:       draPoolName,
-							DeviceName:     draDeviceName,
-						}
-						if migInfo != nil {
-							drInfo.MIGInfo = migInfo
-							slog.Debug("Added MIG pod mapping",
-								"parentUUID", mappingKey,
-								"migDevice", migInfo.MIGDeviceUUID,
-								"migProfile", migInfo.Profile,
-								"pod", podContainerKey)
-						} else {
-							slog.Debug("Added GPU pod mapping",
-								"deviceUUID", mappingKey,
-								"pod", podContainerKey)
-						}
-
-						podInfo.DynamicResources = &drInfo
-						deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
-						processedPods[mappingKey][podContainerKey] = true
+					mappingKey, drInfo := p.ResourceSliceManager.GetDynamicResourceInfo(dr)
+					if mappingKey == "" || drInfo == nil {
+						continue
 					}
+
+					// Create unique key for pod+namespace+container combination
+					podContainerKey := podName + "/" + podNamespace + "/" + cntName
+
+					// Initialize tracker for this device if needed
+					if processedPods[mappingKey] == nil {
+						processedPods[mappingKey] = make(map[string]bool)
+					}
+
+					// Skip if we already processed this pod+container for this device
+					if processedPods[mappingKey][podContainerKey] {
+						continue
+					}
+
+					podInfo := p.createPodInfo(pod, container, labelCache)
+					if drInfo.MIGInfo != nil {
+						slog.Debug("Added MIG pod mapping",
+							"parentUUID", mappingKey,
+							"migDevice", drInfo.MIGInfo.MIGDeviceUUID,
+							"migProfile", drInfo.MIGInfo.Profile,
+							"pod", podContainerKey)
+					} else {
+						slog.Debug("Added GPU pod mapping",
+							"deviceUUID", mappingKey,
+							"pod", podContainerKey)
+					}
+
+					podInfo.DynamicResources = drInfo
+					deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
+					processedPods[mappingKey][podContainerKey] = true
 				}
 			}
 

@@ -41,6 +41,21 @@ func (t *testInformer) GetIndexer() cache.Indexer {
 	return t.store.(cache.Indexer)
 }
 
+// newDRAIndexer creates an Indexer with a poolName index matching the production
+// informer configuration so tests can exercise GetDeviceInfo without relying on
+// informer.AddIndexers.
+func newDRAIndexer() cache.Indexer {
+	return cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
+		"poolName": func(obj interface{}) ([]string, error) {
+			rs, ok := obj.(*resourcev1.ResourceSlice)
+			if !ok {
+				return nil, nil
+			}
+			return []string{rs.Spec.Pool.Name}, nil
+		},
+	})
+}
+
 func (t *testInformer) AddIndexers(indexers cache.Indexers) error {
 	return nil
 }
@@ -97,7 +112,7 @@ func (t *testInformer) RunWithContext(ctx context.Context) {
 
 func TestGetDeviceInfo_GPUDevice(t *testing.T) {
 	// Create a store with a ResourceSlice containing a GPU device
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+	store := newDRAIndexer()
 	slice := &resourcev1.ResourceSlice{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-slice",
@@ -133,7 +148,7 @@ func TestGetDeviceInfo_GPUDevice(t *testing.T) {
 
 func TestGetDeviceInfo_MIGDevice(t *testing.T) {
 	// Create a store with a ResourceSlice containing a MIG device
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+	store := newDRAIndexer()
 	slice := &resourcev1.ResourceSlice{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-slice",
@@ -174,7 +189,7 @@ func TestGetDeviceInfo_MIGDevice(t *testing.T) {
 
 func TestGetDeviceInfo_NotFound(t *testing.T) {
 	// Create an empty store
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+	store := newDRAIndexer()
 
 	m := &DRAResourceSliceManager{
 		v1Informer: &testInformer{store: store},
@@ -187,7 +202,7 @@ func TestGetDeviceInfo_NotFound(t *testing.T) {
 
 func TestGetDeviceInfo_WrongPool(t *testing.T) {
 	// Create a store with a ResourceSlice in a different pool
-	store := cache.NewStore(cache.MetaNamespaceKeyFunc)
+	store := newDRAIndexer()
 	slice := &resourcev1.ResourceSlice{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-slice",
