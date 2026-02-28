@@ -71,5 +71,6 @@ type Config struct {
 	KubernetesVirtualGPUs            bool
 	DumpConfig                       DumpConfig // Configuration for file-based dumps
 	KubernetesEnableDRA              bool
+	KubernetesDRAResourceAPIVersion  string   // DRA ResourceSlice API version: "v1", "v1beta1", or "" for auto-detection
 	DisableStartupValidate           bool
 }

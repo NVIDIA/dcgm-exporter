@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	resourcev1 "k8s.io/api/resource/v1"
+	resourcev1beta1 "k8s.io/api/resource/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/cache"
 )
@@ -47,11 +48,14 @@ func (t *testInformer) GetIndexer() cache.Indexer {
 func newDRAIndexer() cache.Indexer {
 	return cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
 		"poolName": func(obj interface{}) ([]string, error) {
-			rs, ok := obj.(*resourcev1.ResourceSlice)
-			if !ok {
+			switch rs := obj.(type) {
+			case *resourcev1.ResourceSlice:
+				return []string{rs.Spec.Pool.Name}, nil
+			case *resourcev1beta1.ResourceSlice:
+				return []string{rs.Spec.Pool.Name}, nil
+			default:
 				return nil, nil
 			}
-			return []string{rs.Spec.Pool.Name}, nil
 		},
 	})
 }
@@ -237,4 +241,116 @@ func TestGetDeviceInfo_WrongPool(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+// TestVersionSelection_V1ServedButNoSlices_V1Beta1HasSlices tests that when v1 is served
+// but returns 0 GPU slices, and v1beta1 returns GPU slices, we choose v1beta1.
+func TestVersionSelection_V1ServedButNoSlices_V1Beta1HasSlices(t *testing.T) {
+	// Create empty v1 store (v1 served but no GPU slices)
+	v1Store := newDRAIndexer()
+
+	// Create v1beta1 store with GPU slices
+	v1beta1Store := newDRAIndexer()
+	v1beta1Slice := &resourcev1beta1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "v1beta1-slice",
+			Namespace: "default",
+		},
+		Spec: resourcev1beta1.ResourceSliceSpec{
+			Driver: DRAGPUDriverName,
+			Pool: resourcev1beta1.ResourcePool{
+				Name: "gpu-pool",
+			},
+			Devices: []resourcev1beta1.Device{
+				{
+					Name: "gpu0",
+					Basic: &resourcev1beta1.BasicDevice{
+						Attributes: map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute{
+							"type": {StringValue: stringPtr("gpu")},
+							"uuid": {StringValue: stringPtr("GPU-UUID-0")},
+						},
+					},
+				},
+			},
+		},
+	}
+	v1beta1Store.Add(v1beta1Slice)
+
+	m := &DRAResourceSliceManager{
+		v1Informer:      &testInformer{store: v1Store},
+		v1beta1Informer: &testInformer{store: v1beta1Store},
+	}
+
+	// GetDeviceInfo should use v1beta1 since v1 has no slices
+	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
+	require.NotEmpty(t, uuid, "expected UUID to be found from v1beta1")
+	assert.Equal(t, "GPU-UUID-0", uuid)
+	assert.Nil(t, migInfo, "expected no MIG info for GPU device")
+}
+
+// TestVersionSelection_BothServedAndBothHaveObjects_PreferV1 tests that when both
+// v1 and v1beta1 are served and both have objects, we prefer v1.
+func TestVersionSelection_BothServedAndBothHaveObjects_PreferV1(t *testing.T) {
+	// Create v1 store with GPU slices
+	v1Store := newDRAIndexer()
+	v1Slice := &resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "v1-slice",
+			Namespace: "default",
+		},
+		Spec: resourcev1.ResourceSliceSpec{
+			Driver: DRAGPUDriverName,
+			Pool: resourcev1.ResourcePool{
+				Name: "gpu-pool",
+			},
+			Devices: []resourcev1.Device{
+				{
+					Name: "gpu0",
+					Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+						"type": {StringValue: stringPtr("gpu")},
+						"uuid": {StringValue: stringPtr("GPU-UUID-V1")},
+					},
+				},
+			},
+		},
+	}
+	v1Store.Add(v1Slice)
+
+	// Create v1beta1 store with GPU slices
+	v1beta1Store := newDRAIndexer()
+	v1beta1Slice := &resourcev1beta1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "v1beta1-slice",
+			Namespace: "default",
+		},
+		Spec: resourcev1beta1.ResourceSliceSpec{
+			Driver: DRAGPUDriverName,
+			Pool: resourcev1beta1.ResourcePool{
+				Name: "gpu-pool",
+			},
+			Devices: []resourcev1beta1.Device{
+				{
+					Name: "gpu0",
+					Basic: &resourcev1beta1.BasicDevice{
+						Attributes: map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute{
+							"type": {StringValue: stringPtr("gpu")},
+							"uuid": {StringValue: stringPtr("GPU-UUID-V1BETA1")},
+						},
+					},
+				},
+			},
+		},
+	}
+	v1beta1Store.Add(v1beta1Slice)
+
+	m := &DRAResourceSliceManager{
+		v1Informer:      &testInformer{store: v1Store},
+		v1beta1Informer: &testInformer{store: v1beta1Store},
+	}
+
+	// GetDeviceInfo should prefer v1 since both have slices
+	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
+	require.NotEmpty(t, uuid, "expected UUID to be found from v1")
+	assert.Equal(t, "GPU-UUID-V1", uuid, "should prefer v1 when both have slices")
+	assert.Nil(t, migInfo, "expected no MIG info for GPU device")
 }

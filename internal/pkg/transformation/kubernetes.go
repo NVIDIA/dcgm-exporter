@@ -119,13 +119,13 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	podMapper.Client = clientset
 
 	if c.KubernetesEnableDRA {
-		resourceSliceManager, err := NewDRAResourceSliceManager()
+		resourceSliceManager, err := NewDRAResourceSliceManager(c.KubernetesDRAResourceAPIVersion)
 		if err != nil {
 			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
 			return podMapper
 		}
 		podMapper.ResourceSliceManager = resourceSliceManager
-		slog.Info("Started DRAResourceSliceManager")
+		slog.Info("Started DRAResourceSliceManager", "api_version", c.KubernetesDRAResourceAPIVersion)
 	}
 	return podMapper
 }
