@@ -2,10 +2,10 @@ module github.com/NVIDIA/dcgm-exporter
 
 go 1.24.0
 
-toolchain go1.24.5
+toolchain go1.24.13
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20250930145140-0b1e78b1ccea
+	github.com/NVIDIA/go-dcgm v0.0.0-20260115225648-6cbb0463ce9f
 	github.com/NVIDIA/go-nvml v0.12.4-1
 	github.com/avast/retry-go/v4 v4.6.0
 	github.com/bits-and-blooms/bitset v1.22.0
@@ -22,6 +22,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
 	github.com/urfave/cli/v2 v2.27.6
+	go.uber.org/goleak v1.3.0
 	go.uber.org/mock v0.5.0
 	golang.org/x/sync v0.16.0
 	google.golang.org/grpc v1.71.1

@@ -24,6 +24,7 @@ const (
 
 	LinkStatusOK                   = "OK"
 	LinkStatusChipsetNotSupported  = "ChipsetNotSupported"
+	LinkStatusGPUNotSupported      = "GPUNotSupported"
 	LinkStatusTopologyNotSupported = "TopologyNotSupported"
 	LinkStatusDisabledByRegKey     = "DisabledByRegKey"
 	LinkStatusNotSupported         = "NotSupported"

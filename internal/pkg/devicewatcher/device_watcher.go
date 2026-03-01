@@ -34,6 +34,60 @@ import (
 
 type DeviceWatcher struct{}
 
+// WatchResources holds all DCGM resources that need cleanup
+type WatchResources struct {
+	groups     []dcgm.GroupHandle
+	fieldGroup dcgm.FieldHandle
+	hasWatch   bool // tracks if WatchFields was called
+}
+
+// Cleanup releases all DCGM resources in the correct order
+func (r *WatchResources) Cleanup() {
+	// Cleanup order: UnwatchFields -> FieldGroupDestroy -> DestroyGroup
+	// This is the reverse of creation order
+
+	// Check if DCGM client is still available (may be nil during shutdown)
+	client := dcgmprovider.Client()
+	if client == nil {
+		return
+	}
+
+	// 1. Unwatch all fields for all groups
+	if r.hasWatch && r.fieldGroup != (dcgm.FieldHandle{}) {
+		for _, group := range r.groups {
+			if unwatchErr := client.UnwatchFields(r.fieldGroup, group); unwatchErr != nil {
+				// Ignore benign errors that happen when DCGM shuts down before our cleanup
+				errMsg := unwatchErr.Error()
+				if !strings.Contains(errMsg, DCGM_ST_NOT_CONFIGURED) &&
+					!strings.Contains(errMsg, DCGM_ST_FIELD_NOT_WATCHED) {
+					slog.Warn("Failed to unwatch fields", slog.String(ErrorKey, errMsg))
+				}
+			}
+		}
+	}
+
+	// 2. Destroy field group
+	if r.fieldGroup != (dcgm.FieldHandle{}) {
+		if err := client.FieldGroupDestroy(r.fieldGroup); err != nil {
+			if !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
+				slog.Warn("Cannot destroy field group", slog.String(ErrorKey, err.Error()))
+			}
+		}
+	}
+
+	// 3. Destroy all groups
+	for _, group := range r.groups {
+		if destroyErr := client.DestroyGroup(group); destroyErr != nil {
+			if !strings.Contains(destroyErr.Error(), DCGM_ST_NOT_CONFIGURED) {
+				slog.LogAttrs(context.Background(), slog.LevelWarn, "cannot destroy group",
+					slog.Any(GroupIDKey, group),
+					slog.String(ErrorKey, destroyErr.Error()),
+				)
+			}
+		}
+	}
+}
+
 func NewDeviceWatcher() *DeviceWatcher {
 	return &DeviceWatcher{}
 }
@@ -71,53 +125,45 @@ func shouldIncludeField(entityType, fieldLevel dcgm.Field_Entity_Group) bool {
 func (d *DeviceWatcher) WatchDeviceFields(
 	deviceFields []dcgm.Short, deviceInfo deviceinfo.Provider, updateFreqInUsec int64,
 ) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
-	var err error
-	var cleanups []func()
-	var groups []dcgm.GroupHandle
+	resources := &WatchResources{}
 
+	// Create groups based on device type
+	var err error
 	switch deviceInfo.InfoType() {
 	case dcgm.FE_LINK:
-		// This handles NV link case only.
-		groups, cleanups, err = d.createNVLinkGroups(deviceInfo)
+		resources.groups, err = d.createNVLinkGroupsSimple(deviceInfo)
 	case dcgm.FE_CPU_CORE:
-		// This handles CPU Core case only.
-		groups, cleanups, err = d.createCPUCoreGroups(deviceInfo)
+		resources.groups, err = d.createCPUCoreGroupsSimple(deviceInfo)
 	default:
-		// This handles GPUs (including GPU Instances), CPUs and Switches cases.
-		groups, cleanups, err = d.createGroups(deviceInfo)
+		resources.groups, err = d.createGroupsSimple(deviceInfo)
 	}
 	if err != nil {
-		return nil, dcgm.FieldHandle{}, utils.CleanupOnError(cleanups), err
-	} else if len(groups) == 0 {
-		return nil, dcgm.FieldHandle{}, cleanups, nil
+		resources.Cleanup()
+		return nil, dcgm.FieldHandle{}, nil, err
+	} else if len(resources.groups) == 0 {
+		return nil, dcgm.FieldHandle{}, nil, nil
 	}
 
-	fieldGroup, cleanup, fieldGroupErr := newFieldGroup(deviceFields)
-	if fieldGroupErr != nil {
-		return nil, dcgm.FieldHandle{}, utils.CleanupOnError(cleanups), fieldGroupErr
+	// Create field group
+	resources.fieldGroup, err = newFieldGroupSimple(deviceFields)
+	if err != nil {
+		resources.Cleanup()
+		return nil, dcgm.FieldHandle{}, nil, err
 	}
-	cleanups = append(cleanups, cleanup)
 
-	for _, group := range groups {
-		err = watchFieldGroup(group, fieldGroup, updateFreqInUsec)
+	// Watch fields for all groups
+	for _, group := range resources.groups {
+		err = watchFieldGroupSimple(group, resources.fieldGroup, updateFreqInUsec)
 		if err != nil {
-			return nil, dcgm.FieldHandle{}, utils.CleanupOnError(cleanups), err
+			resources.Cleanup()
+			return nil, dcgm.FieldHandle{}, nil, err
 		}
 	}
+	resources.hasWatch = true
 
-	return groups, fieldGroup, cleanups, nil
-}
-
-func (d *DeviceWatcher) createGroups(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, []func(),
-	error,
-) {
-	if group, cleanup, err := d.createGenericGroup(deviceInfo); err != nil {
-		return []dcgm.GroupHandle{}, []func(){cleanup}, err
-	} else if group != nil {
-		return []dcgm.GroupHandle{*group}, []func(){cleanup}, nil
-	}
-
-	return []dcgm.GroupHandle{}, []func(){}, nil
+	// Return single cleanup function
+	cleanup := func() { resources.Cleanup() }
+	return resources.groups, resources.fieldGroup, []func(){cleanup}, nil
 }
 
 func (d *DeviceWatcher) createGenericGroup(deviceInfo deviceinfo.Provider) (*dcgm.GroupHandle, func(),
@@ -136,7 +182,8 @@ func (d *DeviceWatcher) createGenericGroup(deviceInfo deviceinfo.Provider) (*dcg
 	for _, mi := range monitoringInfo {
 		err := dcgmprovider.Client().AddEntityToGroup(groupID, mi.Entity.EntityGroupId, mi.Entity.EntityId)
 		if err != nil {
-			return &groupID, cleanup, err
+			cleanup()
+			return nil, doNothing, err
 		}
 	}
 
@@ -168,7 +215,10 @@ func (d *DeviceWatcher) createCPUCoreGroups(deviceInfo deviceinfo.Provider) ([]d
 
 				groupID, cleanup, err = createGroup()
 				if err != nil {
-					return nil, cleanups, err
+					for _, cleanup := range cleanups {
+						cleanup()
+					}
+					return nil, nil, err
 				}
 
 				cleanups = append(cleanups, cleanup)
@@ -179,7 +229,10 @@ func (d *DeviceWatcher) createCPUCoreGroups(deviceInfo deviceinfo.Provider) ([]d
 
 			err = dcgmprovider.Client().AddEntityToGroup(groupID, dcgm.FE_CPU_CORE, core)
 			if err != nil {
-				return groups, cleanups, err
+				for _, cleanup := range cleanups {
+					cleanup()
+				}
+				return nil, nil, err
 			}
 		}
 	}
@@ -205,7 +258,10 @@ func (d *DeviceWatcher) createNVLinkGroups(deviceInfo deviceinfo.Provider) ([]dc
 
 				groupID, cleanup, err = createGroup()
 				if err != nil {
-					return nil, cleanups, err
+					for _, cleanup := range cleanups {
+						cleanup()
+					}
+					return nil, nil, err
 				}
 
 				cleanups = append(cleanups, cleanup)
@@ -244,7 +300,10 @@ func (d *DeviceWatcher) createNVLinkGroups(deviceInfo deviceinfo.Provider) ([]dc
 
 				groupID, cleanup, err = createGroup()
 				if err != nil {
-					return nil, cleanups, err
+					for _, cleanup := range cleanups {
+						cleanup()
+					}
+					return nil, nil, err
 				}
 
 				cleanups = append(cleanups, cleanup)
@@ -262,6 +321,55 @@ func (d *DeviceWatcher) createNVLinkGroups(deviceInfo deviceinfo.Provider) ([]dc
 
 	return groups, cleanups, nil
 }
+
+// Simplified create functions that don't return cleanup callbacks
+
+func (d *DeviceWatcher) createGroupsSimple(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, error) {
+	group, err := d.createGenericGroupSimple(deviceInfo)
+	if err != nil {
+		return nil, err
+	}
+	if group != nil {
+		return []dcgm.GroupHandle{*group}, nil
+	}
+	return nil, nil
+}
+
+func (d *DeviceWatcher) createNVLinkGroupsSimple(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, error) {
+	groups, _, err := d.createNVLinkGroups(deviceInfo)
+	return groups, err
+}
+
+func (d *DeviceWatcher) createCPUCoreGroupsSimple(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, error) {
+	groups, _, err := d.createCPUCoreGroups(deviceInfo)
+	return groups, err
+}
+
+func (d *DeviceWatcher) createGenericGroupSimple(deviceInfo deviceinfo.Provider) (*dcgm.GroupHandle, error) {
+	group, _, err := d.createGenericGroup(deviceInfo)
+	return group, err
+}
+
+func newFieldGroupSimple(deviceFields []dcgm.Short) (dcgm.FieldHandle, error) {
+	newFieldGroupNumber, err := utils.RandUint64()
+	if err != nil {
+		return dcgm.FieldHandle{}, err
+	}
+
+	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", newFieldGroupNumber)
+	fieldGroup, err := dcgmprovider.Client().FieldGroupCreate(name, deviceFields)
+	if err != nil {
+		return dcgm.FieldHandle{}, err
+	}
+
+	return fieldGroup, nil
+}
+
+func watchFieldGroupSimple(group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64) error {
+	return dcgmprovider.Client().WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
+}
+
+// Legacy functions kept for backward compatibility
 
 func createGroup() (dcgm.GroupHandle, func(), error) {
 	newGroupNumber, err := utils.RandUint64()
@@ -308,15 +416,4 @@ func newFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	}
 
 	return fieldGroup, cleanup, nil
-}
-
-func watchFieldGroup(
-	group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64,
-) error {
-	err := dcgmprovider.Client().WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

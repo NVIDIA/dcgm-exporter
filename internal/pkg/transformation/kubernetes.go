@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"maps"
 	"net"
+	stdos "os"
 	"regexp"
 	"slices"
 	"strings"
@@ -34,8 +35,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
@@ -98,10 +102,7 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	podMapper := &PodMapper{
 		Config:           c,
 		labelFilterCache: newLabelFilterCache(c.KubernetesPodLabelAllowlistRegex, cacheSize),
-	}
-
-	if !c.KubernetesEnablePodLabels && !c.KubernetesEnablePodUID && !c.KubernetesEnableDRA {
-		return podMapper
+		stopChan:         make(chan struct{}),
 	}
 
 	clusterConfig, err := rest.InClusterConfig()
@@ -117,6 +118,25 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	}
 
 	podMapper.Client = clientset
+
+	// Initialize Pod Informer
+	nodeName := stdos.Getenv("NODE_NAME")
+	var factory informers.SharedInformerFactory
+	if nodeName != "" {
+		slog.Info("Initializing Pod Informer", "nodeName", nodeName)
+		tweakListOptions := func(options *metav1.ListOptions) {
+			options.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
+		}
+		factory = informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithTweakListOptions(tweakListOptions))
+	} else {
+		slog.Warn("NODE_NAME environment variable not set, watching all pods in cluster for metadata")
+		factory = informers.NewSharedInformerFactory(clientset, 0)
+	}
+
+	podMapper.podInformerFactory = factory
+	podInformer := factory.Core().V1().Pods()
+	podMapper.podLister = podInformer.Lister()
+	podMapper.podInformerSynced = podInformer.Informer().HasSynced
 
 	if c.KubernetesEnableDRA {
 		resourceSliceManager, err := NewDRAResourceSliceManager(c.KubernetesDRAResourceAPIVersion)
@@ -177,82 +197,71 @@ func (p *PodMapper) Name() string {
 	return "podMapper"
 }
 
-func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+func (p *PodMapper) Run() {
+	if p.podInformerFactory != nil {
+		go p.podInformerFactory.Start(p.stopChan)
+		if !cache.WaitForCacheSync(p.stopChan, p.podInformerSynced) {
+			slog.Error("Failed to sync pod informer cache")
+			return
+		}
+		slog.Info("Pod informer cache synced")
+	}
+}
+
+func (p *PodMapper) Stop() {
+	close(p.stopChan)
+}
+
+func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]PodInfo, map[string]PodInfo, map[string][]PodInfo, error) {
 	socketPath := p.Config.PodResourcesKubeletSocket
-	_, err := os.Stat(socketPath)
-	if os.IsNotExist(err) {
-		slog.Info("No Kubelet socket, ignoring")
-		return nil
+	_, err := stdos.Stat(socketPath)
+	if stdos.IsNotExist(err) {
+		return nil, nil, nil, nil
 	}
 
-	// TODO: This needs to be moved out of the critical path.
 	c, cleanup, err := connectToServer(socketPath)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	defer cleanup()
 
 	pods, err := p.listPods(c)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 
-	// Log detailed GPU allocation information for debugging purposes
-	slog.Debug("Pod resources API response details",
-		"podsWithResources", len(pods.GetPodResources()),
-		"fullResponse", fmt.Sprintf("%+v", pods))
-
-	// Log device plugin status and GPU allocation details
-	totalGPUsAllocated := 0
-	totalContainersWithGPUs := 0
-	podGPUCounts := make(map[string]int) // Track GPU count per pod
-
-	p.iterateGPUDevices(pods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
-		podKey := pod.GetNamespace() + "/" + pod.GetName()
-		podGPUCounts[podKey] += len(device.GetDeviceIds())
-		totalContainersWithGPUs++
-		slog.Debug("Found GPU device allocation",
-			"pod", pod.GetName(),
-			"namespace", pod.GetNamespace(),
-			"container", container.GetName(),
-			"resourceName", device.GetResourceName(),
-			"deviceIds", device.GetDeviceIds())
-	})
-
-	// Log per-pod GPU allocation status
-	for _, pod := range pods.GetPodResources() {
-		podKey := pod.GetNamespace() + "/" + pod.GetName()
-		podGPUs := podGPUCounts[podKey]
-		if podGPUs > 0 {
-			totalGPUsAllocated += podGPUs
-			slog.Debug("Pod has GPU allocations",
-				"pod", pod.GetName(),
-				"namespace", pod.GetNamespace(),
-				"totalGPUs", podGPUs)
-		} else {
-			slog.Debug("Pod has NO GPU allocations",
-				"pod", pod.GetName(),
-				"namespace", pod.GetNamespace(),
-				"totalContainers", len(pod.GetContainers()))
-		}
-	}
-
-	slog.Debug("GPU allocation summary",
-		"totalPods", len(pods.GetPodResources()),
-		"totalGPUsAllocated", totalGPUsAllocated,
-		"totalContainersWithGPUs", totalContainersWithGPUs,
-		"devicePluginWorking", totalGPUsAllocated > 0)
+	var deviceToPods map[string][]PodInfo
+	var deviceToPod map[string]PodInfo
+	var deviceToPodsDRA map[string][]PodInfo
 
 	if p.Config.KubernetesVirtualGPUs {
-		deviceToPods := p.toDeviceToSharingPods(pods, deviceInfo)
+		deviceToPods = p.toDeviceToSharingPods(pods, deviceInfo)
+	} else {
+		deviceToPod = p.toDeviceToPod(pods, deviceInfo)
+	}
 
+	if p.Config.KubernetesEnableDRA {
+		deviceToPodsDRA = p.toDeviceToPodsDRA(pods)
+	}
+
+	return deviceToPods, deviceToPod, deviceToPodsDRA, nil
+}
+
+func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+	deviceToPods, deviceToPod, deviceToPodsDRA, err := p.getMappings(deviceInfo)
+	if err != nil {
+		slog.Warn("Failed to get pod mappings", "error", err)
+		return nil // Don't fail the whole scrape, just skip enrichment
+	}
+
+	if p.Config.KubernetesVirtualGPUs {
+		if deviceToPods == nil {
+			return nil
+		}
 		slog.Debug(fmt.Sprintf("Device to sharing pods mapping: %+v", deviceToPods))
 
-		// For each counter metric, init a slice to collect metrics to associate with shared virtual GPUs.
 		for counter := range metrics {
 			var newmetrics []collector.Metric
-			// For each instrumented device, build list of metrics and create
-			// new metrics for any shared GPUs.
 			for j, val := range metrics[counter] {
 				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
 				if err != nil {
@@ -260,10 +269,6 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				}
 
 				podInfos := deviceToPods[deviceID]
-				// For all containers using the GPU, extract and annotate a metric
-				// with the container info and the shared GPU label, if it exists.
-				// Notably, this will increase the number of unique metrics (i.e. labelsets)
-				// to by the number of containers sharing the GPU.
 				for _, pi := range podInfos {
 					metric, err := utils.DeepCopy(metrics[counter][j])
 					if err != nil {
@@ -278,17 +283,21 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
 						metric.Attributes[oldContainerAttribute] = pi.Container
 					}
-					metric.Attributes[uidAttribute] = pi.UID
+					if p.Config.KubernetesEnablePodUID {
+						metric.Attributes[uidAttribute] = pi.UID
+					}
 					if pi.VGPU != "" {
 						metric.Attributes[vgpuAttribute] = pi.VGPU
 					}
+
+					// Robustness: ensure no overlap between Labels and Attributes
+					for k := range metric.Attributes {
+						delete(metric.Labels, k)
+					}
+
 					newmetrics = append(newmetrics, metric)
 				}
 			}
-			// Upsert the annotated series into the final map only if we found any
-			// pods using the devices for the metric. Otherwise, leave the original
-			// metric unmodified so we still have monitoring when pods aren't using
-			// GPUs.
 			if len(newmetrics) > 0 {
 				metrics[counter] = newmetrics
 			}
@@ -298,98 +307,103 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 
 	slog.Debug("KubernetesVirtualGPUs is disabled, using device to pod mapping")
 
-	deviceToPod := p.toDeviceToPod(pods, deviceInfo)
-
-	slog.Debug(fmt.Sprintf("Device to pod mapping: %+v", deviceToPod))
-
-	// Note: for loop are copies the value, if we want to change the value
-	// and not the copy, we need to use the indexes
-	for counter := range metrics {
-		for j, val := range metrics[counter] {
-			deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
-			if err != nil {
-				return err
-			}
-			podInfo, exists := deviceToPod[deviceID]
-			if exists {
-				if !p.Config.UseOldNamespace {
-					metrics[counter][j].Attributes[podAttribute] = podInfo.Name
-					metrics[counter][j].Attributes[namespaceAttribute] = podInfo.Namespace
-					metrics[counter][j].Attributes[containerAttribute] = podInfo.Container
-				} else {
-					metrics[counter][j].Attributes[oldPodAttribute] = podInfo.Name
-					metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
-					metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
-				}
-
-				metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
-				maps.Copy(metrics[counter][j].Labels, podInfo.Labels)
-			}
-		}
-	}
-
-	if p.Config.KubernetesEnableDRA {
-		deviceToPodsDRA := p.toDeviceToPodsDRA(pods)
-		slog.Debug(fmt.Sprintf("Device to pod mapping for DRA: %+v", deviceToPodsDRA))
+	if deviceToPod != nil {
+		slog.Debug(fmt.Sprintf("Device to pod mapping: %+v", deviceToPod))
 
 		for counter := range metrics {
-			var newmetrics []collector.Metric
-			// For each instrumented device, build list of metrics and create
-			// new metrics for any shared GPUs.
 			for j, val := range metrics[counter] {
 				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
 				if err != nil {
 					return err
 				}
-
-				podInfos := deviceToPodsDRA[deviceID]
-				// For all containers using the GPU, extract and annotate a metric
-				// with the container info and the shared GPU label, if it exists.
-				// Notably, this will increase the number of unique metrics (i.e. labelsets)
-				// to by the number of containers sharing the GPU.
-				if podInfos != nil {
-					for _, pi := range podInfos {
-						metric, err := utils.DeepCopy(metrics[counter][j])
-						if err != nil {
-							return err
-						}
-						if !p.Config.UseOldNamespace {
-							metric.Attributes[podAttribute] = pi.Name
-							metric.Attributes[namespaceAttribute] = pi.Namespace
-							metric.Attributes[containerAttribute] = pi.Container
-						} else {
-							metric.Attributes[oldPodAttribute] = pi.Name
-							metric.Attributes[oldNamespaceAttribute] = pi.Namespace
-							metric.Attributes[oldContainerAttribute] = pi.Container
-						}
-						if dr := pi.DynamicResources; dr != nil {
-							metric.Attributes[draClaimName] = dr.ClaimName
-							metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
-							metric.Attributes[draDriverName] = dr.DriverName
-							metric.Attributes[draPoolName] = dr.PoolName
-							metric.Attributes[draDeviceName] = dr.DeviceName
-
-							// Add MIG-specific labels if this is a MIG device
-							if migInfo := dr.MIGInfo; migInfo != nil {
-								metric.Attributes[draMigProfile] = migInfo.Profile
-								metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
-							}
-						}
-						newmetrics = append(newmetrics, metric)
+				podInfo, exists := deviceToPod[deviceID]
+				if exists {
+					if !p.Config.UseOldNamespace {
+						metrics[counter][j].Attributes[podAttribute] = podInfo.Name
+						metrics[counter][j].Attributes[namespaceAttribute] = podInfo.Namespace
+						metrics[counter][j].Attributes[containerAttribute] = podInfo.Container
+					} else {
+						metrics[counter][j].Attributes[oldPodAttribute] = podInfo.Name
+						metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
+						metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
 					}
-				} else {
-					newmetrics = append(newmetrics, metrics[counter][j])
+
+					if p.Config.KubernetesEnablePodUID {
+						metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
+					}
+					for k, v := range podInfo.Labels {
+						if _, ok := metrics[counter][j].Attributes[k]; ok {
+							continue
+						}
+						metrics[counter][j].Labels[k] = v
+					}
+
+					// Robustness: ensure no overlap between Labels and Attributes
+					for k := range metrics[counter][j].Attributes {
+						delete(metrics[counter][j].Labels, k)
+					}
 				}
 			}
-			// Upsert the annotated series into the final map only if we found any
-			// pods using the devices for the metric. Otherwise, leave the original
-			// metric unmodified so we still have monitoring when pods aren't using
-			// GPUs.
-			if len(newmetrics) > 0 {
-				metrics[counter] = newmetrics
+		}
+	}
+
+	if p.Config.KubernetesEnableDRA {
+		if deviceToPodsDRA != nil {
+			slog.Debug(fmt.Sprintf("Device to pod mapping for DRA: %+v", deviceToPodsDRA))
+
+			for counter := range metrics {
+				var newmetrics []collector.Metric
+				for j, val := range metrics[counter] {
+					deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+					if err != nil {
+						return err
+					}
+
+					podInfos := deviceToPodsDRA[deviceID]
+					if podInfos != nil {
+						for _, pi := range podInfos {
+							metric, err := utils.DeepCopy(metrics[counter][j])
+							if err != nil {
+								return err
+							}
+							if !p.Config.UseOldNamespace {
+								metric.Attributes[podAttribute] = pi.Name
+								metric.Attributes[namespaceAttribute] = pi.Namespace
+								metric.Attributes[containerAttribute] = pi.Container
+							} else {
+								metric.Attributes[oldPodAttribute] = pi.Name
+								metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+								metric.Attributes[oldContainerAttribute] = pi.Container
+							}
+							if dr := pi.DynamicResources; dr != nil {
+								metric.Attributes[draClaimName] = dr.ClaimName
+								metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
+								metric.Attributes[draDriverName] = dr.DriverName
+								metric.Attributes[draPoolName] = dr.PoolName
+								metric.Attributes[draDeviceName] = dr.DeviceName
+
+								if migInfo := dr.MIGInfo; migInfo != nil {
+									metric.Attributes[draMigProfile] = migInfo.Profile
+									metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
+								}
+							}
+
+							// Robustness: ensure no overlap between Labels and Attributes
+							for k := range metric.Attributes {
+								delete(metric.Labels, k)
+							}
+
+							newmetrics = append(newmetrics, metric)
+						}
+					} else {
+						newmetrics = append(newmetrics, metrics[counter][j])
+					}
+				}
+				if len(newmetrics) > 0 {
+					metrics[counter] = newmetrics
+				}
 			}
 		}
-		return nil
 	}
 
 	return nil
@@ -441,7 +455,6 @@ func getSharedGPU(deviceID string) (string, bool) {
 
 func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourcesResponse) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
-	labelCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	slog.Debug("Processing pod dynamic resources", "totalPods", len(devicePods.GetPodResources()))
 	// Track pod+namespace+container combinations per device
@@ -476,19 +489,26 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 					if processedPods[mappingKey][podContainerKey] {
 						continue
 					}
-
-					podInfo := p.createPodInfo(pod, container, labelCache)
-					if drInfo.MIGInfo != nil {
-						slog.Debug("Added MIG pod mapping",
-							"parentUUID", mappingKey,
-							"migDevice", drInfo.MIGInfo.MIGDeviceUUID,
-							"migProfile", drInfo.MIGInfo.Profile,
-							"pod", podContainerKey)
-					} else {
-						slog.Debug("Added GPU pod mapping",
-							"deviceUUID", mappingKey,
-							"pod", podContainerKey)
-					}
+						podInfo := p.createPodInfo(pod, container)
+						drInfo := DynamicResourceInfo{
+							ClaimName:      dr.GetClaimName(),
+							ClaimNamespace: dr.GetClaimNamespace(),
+							DriverName:     draDriverName,
+							PoolName:       draPoolName,
+							DeviceName:     draDeviceName,
+						}
+						if migInfo != nil {
+							drInfo.MIGInfo = migInfo
+							slog.Debug("Added MIG pod mapping",
+								"parentUUID", mappingKey,
+								"migDevice", migInfo.MIGDeviceUUID,
+								"migProfile", migInfo.Profile,
+								"pod", podContainerKey)
+						} else {
+							slog.Debug("Added GPU pod mapping",
+								"deviceUUID", mappingKey,
+								"pod", podContainerKey)
+						}
 
 					podInfo.DynamicResources = drInfo
 					deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
@@ -513,10 +533,9 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 // GPU states.
 func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
 	deviceToPodsMap := make(map[string][]PodInfo)
-	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
 
 	p.iterateGPUDevices(devicePods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
-		podInfo := p.createPodInfo(pod, container, metadataCache)
+		podInfo := p.createPodInfo(pod, container)
 
 		for _, deviceID := range device.GetDeviceIds() {
 			if vgpu, ok := getSharedGPU(deviceID); ok {
@@ -565,7 +584,7 @@ func (p *PodMapper) toDeviceToPod(
 	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
-	metadataCache := make(map[string]PodMetadata) // Cache to avoid duplicate API calls
+	uidToPodInfo := make(map[string]PodInfo)
 
 	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
 
@@ -605,7 +624,13 @@ func (p *PodMapper) toDeviceToPod(
 					"containerName", container.GetName())
 			}
 
-			podInfo := p.createPodInfo(pod, container, metadataCache)
+			podInfo := p.createPodInfo(pod, container)
+
+			// Store PodInfo by UID for process-based mapping correction
+			if podInfo.UID != "" {
+				uidToPodInfo[podInfo.UID] = podInfo
+			}
+
 			slog.Debug("Created pod info",
 				"podInfo", fmt.Sprintf("%+v", podInfo),
 				"podName", pod.GetName(),
@@ -762,7 +787,6 @@ func (p *PodMapper) toDeviceToPod(
 			}
 		}
 	}
-
 	slog.Debug("Completed toDeviceToPod transformation",
 		"totalMappings", len(deviceToPodMap),
 		"deviceToPodMap", fmt.Sprintf("%+v", deviceToPodMap))
@@ -770,49 +794,31 @@ func (p *PodMapper) toDeviceToPod(
 }
 
 // createPodInfo creates a PodInfo struct with metadata if enabled
-func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, metadataCache map[string]PodMetadata) PodInfo {
+func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources) PodInfo {
 	labels := map[string]string{}
 	uid := ""
-	cacheKey := pod.GetNamespace() + "/" + pod.GetName()
 
-	// Check if we have cached metadata
-	cachedMetadata, hasCache := metadataCache[cacheKey]
-
-	// Determine if we need labels
-	needLabels := p.Config.KubernetesEnablePodLabels && (cachedMetadata.Labels == nil)
-
-	// Determine if we need UID
-	needUID := p.Config.KubernetesEnablePodUID && cachedMetadata.UID == ""
-
-	// Only make API call if we need something that's not cached
-	if needLabels || needUID {
-		if podMetadata, err := p.getPodMetadata(pod.GetNamespace(), pod.GetName()); err != nil {
-			slog.Warn("Couldn't get pod metadata",
+	// Use PodLister to get metadata
+	if p.podLister != nil {
+		podObj, err := p.podLister.Pods(pod.GetNamespace()).Get(pod.GetName())
+		if err != nil {
+			slog.Debug("Could not find pod in informer cache",
 				"pod", pod.GetName(),
 				"namespace", pod.GetNamespace(),
 				"error", err)
-			// Cache empty result to avoid repeated failures, but preserve existing cache data
-			if !hasCache {
-				metadataCache[cacheKey] = PodMetadata{}
-			}
 		} else {
-			// Update cache with new data, preserving existing data if we didn't fetch it
-			if needLabels {
-				cachedMetadata.Labels = podMetadata.Labels
-			}
-			if needUID {
-				cachedMetadata.UID = podMetadata.UID
-			}
-			metadataCache[cacheKey] = cachedMetadata
-		}
-	}
+			uid = string(podObj.UID)
 
-	// Extract the data we need based on config flags
-	if p.Config.KubernetesEnablePodLabels {
-		labels = cachedMetadata.Labels
-	}
-	if p.Config.KubernetesEnablePodUID {
-		uid = cachedMetadata.UID
+			if p.Config.KubernetesEnablePodLabels {
+				for k, v := range podObj.Labels {
+					if !p.shouldIncludeLabel(k) {
+						continue
+					}
+					sanitizedKey := utils.SanitizeLabelName(k)
+					labels[sanitizedKey] = v
+				}
+			}
+		}
 	}
 
 	return PodInfo{
@@ -822,43 +828,6 @@ func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *
 		UID:       uid,
 		Labels:    labels,
 	}
-}
-
-// getPodMetadata fetches metadata (labels and UID) from a Kubernetes pod via the API server.
-// It sanitizes label names to ensure they are valid for Prometheus metrics and applies allowlist filtering.
-func (p *PodMapper) getPodMetadata(namespace, podName string) (*PodMetadata, error) {
-	if p.Client == nil {
-		return nil, fmt.Errorf("kubernetes client is not initialized")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	pod, err := p.Client.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	// Sanitize and filter label names
-	sanitizedLabels := make(map[string]string)
-	for k, v := range pod.Labels {
-		// Apply allowlist filtering if configured
-		if !p.shouldIncludeLabel(k) {
-			slog.Debug("Filtering out pod label",
-				"label", k,
-				"pod", podName,
-				"namespace", namespace)
-			continue
-		}
-
-		sanitizedKey := utils.SanitizeLabelName(k)
-		sanitizedLabels[sanitizedKey] = v
-	}
-
-	return &PodMetadata{
-		UID:    string(pod.UID),
-		Labels: sanitizedLabels,
-	}, nil
 }
 
 // shouldIncludeLabel checks if a label should be included based on the allowlist regex patterns.

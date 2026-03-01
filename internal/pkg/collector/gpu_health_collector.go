@@ -31,7 +31,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
@@ -109,6 +108,14 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 
 	// We assyme that each health check may produce only one incident per system
 	for _, incident := range gpuHealthStatus.Incidents {
+		if _, exists := entityHealthSystemToIncident[incident.EntityInfo]; !exists {
+			logrus.WithFields(logrus.Fields{
+				"entity": incident.EntityInfo,
+				"system": healthSystemWatchToString(incident.System),
+				"health": incident.Health,
+			}).Warn("Received health incident for entity not in monitoring group, skipping")
+			continue
+		}
 		entityHealthSystemToIncident[incident.EntityInfo][incident.System] = incident
 	}
 
@@ -181,8 +188,8 @@ func NewGPUHealthStatusCollector(
 		destroyErr := dcgmprovider.Client().DestroyGroup(groupID)
 		if destroyErr != nil {
 			logrus.WithFields(logrus.Fields{
-				logging.GroupIDKey: groupID,
-				logrus.ErrorKey:    destroyErr,
+				"groupID":       groupID,
+				logrus.ErrorKey: destroyErr,
 			}).Warn("cannot destroy group")
 		}
 	})

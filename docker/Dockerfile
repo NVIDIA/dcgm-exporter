@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
 
 #####
 # Common builder stage - compiles dcgm-exporter with CGO for all targets
 #####
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
-ARG GOLANG_VERSION=1.24.5
+ARG GOLANG_VERSION=1.24.13
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
@@ -27,6 +27,7 @@ WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
@@ -44,16 +45,33 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
     url=; \
+    filename=; \
     case "$arch" in \
     'amd64') \
-    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    filename="go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
+    url="https://dl.google.com/go/${filename}"; \
     ;; \
     'arm64') \
-    url="https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    filename="go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
+    url="https://dl.google.com/go/${filename}"; \
     ;; \
     *) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
     esac; \
     wget -O go.tgz "$url" --progress=dot:giga; \
+    \
+    echo "Verifying SHA256 checksum..."; \
+    wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
+    expected_sha256=$(cat go.sha256); \
+    actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
+    if [ "$expected_sha256" != "$actual_sha256" ]; then \
+        echo >&2 "error: SHA256 checksum verification failed"; \
+        echo >&2 "expected: $expected_sha256"; \
+        echo >&2 "actual:   $actual_sha256"; \
+        exit 1; \
+    fi; \
+    echo "SHA256 checksum verified successfully"; \
+    rm go.sha256; \
+    \
     tar -C /usr/local -xzf go.tgz; \
     rm go.tgz
 
@@ -84,14 +102,15 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     TARGETOS=$TARGETOS TARGETARCH=$TARGETARCH /usr/local/bin/build-cross.sh
 
 # Verify binary
-RUN apt-get update && apt-get install -y --no-install-recommends file && \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
+    apt-get install -y --no-install-recommends file && \
     rm -rf /var/lib/apt/lists/* && \
     file /usr/bin/dcgm-exporter
 
 #####
 # Ubuntu 22.04 runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-ubuntu
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04 AS runtime-ubuntu
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -173,7 +192,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # UBI9 runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubi9 AS runtime-ubi
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.1-base-ubi9 AS runtime-ubi
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -252,7 +271,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # Distroless helper stage - builds full Ubuntu container with DCGM libraries
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.0.1-base-ubuntu22.04 AS runtime-distroless-helper
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04 AS runtime-distroless-helper
 
 ARG TARGETARCH
 
@@ -271,10 +290,20 @@ COPY docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint
 RUN chmod +x /usr/local/dcgm/dcgm-exporter-entrypoint.sh
 RUN uname -a
 
+# Prepare libraries in a staging directory with correct architecture-specific structure
+RUN set -e; \
+    ARCH_DIR=$(ls -d /usr/lib/*-linux-gnu | head -n1 | xargs basename); \
+    mkdir -p /opt/distroless-libs/$ARCH_DIR; \
+    cp -P /usr/lib/$ARCH_DIR/libdcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libnvperf_dcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libcap.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libtinfo.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    ls -la /opt/distroless-libs/$ARCH_DIR/
+
 #####
 # Distroless runtime target - minimal container image
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v3.1.13 AS runtime-distroless
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v4.0.1 AS runtime-distroless
 
 ARG VERSION
 ARG TARGETARCH
@@ -292,18 +321,14 @@ COPY --chown=root:root --chmod=644 ./LICENSE ./licenses/LICENSE
 COPY --from=builder --chown=root:root --chmod=755 /usr/bin/dcgm-exporter /usr/bin/
 COPY --chown=root:root --chmod=755 etc /etc/dcgm-exporter
 
-# Copy DCGM libraries from helper stage
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libdcgm* /usr/lib/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libnvperf_dcgm* /usr/lib/
+# Copy libraries with correct architecture-specific directory structure from helper stage
+COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /opt/distroless-libs/ /usr/lib/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/local/dcgm/dcgm-exporter-entrypoint.sh /usr/bin/
 
 # Copy required utilities for runtime
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /bin/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/echo /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/setcap /usr/bin/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libcap.so* /usr/lib/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/lib/*-linux-gnu/libtinfo.so* /usr/lib/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/env /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/bash /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/ldconfig.real /sbin/
@@ -336,13 +361,7 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 #       drop: ["ALL"]
 #     allowPrivilegeEscalation: false
 #
-# For non-root without profiling metrics:
-#   Docker: docker run --user 1000 ...
-#   Kubernetes: runAsNonRoot: true, runAsUser: 1000
-#   (Profiling metrics will not be available, but basic metrics will work)
-#
 # Security measures in place:
-# - Non-root user (UID 1000) available in distroless base for basic metrics
 # - All files have restrictive permissions (644 for data, 755 for executables/directories)
 # - Runtime capability checking with clear warnings
 # - Deployment configs drop all unnecessary capabilities

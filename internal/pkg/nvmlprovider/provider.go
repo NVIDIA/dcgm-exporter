@@ -50,7 +50,12 @@ func reset() {
 }
 
 // Client retrieves the current NVML interface instance.
+// Returns a non-initialized provider if NVML was never initialized.
 func Client() NVML {
+	if nvmlInterface == nil {
+		// Return a non-initialized provider that will safely return errors
+		return nvmlProvider{initialized: false}
+	}
 	return nvmlInterface
 }
 
@@ -84,7 +89,7 @@ func newNVMLProvider() (NVML, error) {
 
 func (n nvmlProvider) preCheck() error {
 	if !n.initialized {
-		return fmt.Errorf("NVML library not initialized")
+		return errors.New("NVML library not initialized")
 	}
 
 	return nil
@@ -93,8 +98,7 @@ func (n nvmlProvider) preCheck() error {
 // GetMIGDeviceInfoByID returns information about MIG DEVICE by ID
 func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) {
 	if err := n.preCheck(); err != nil {
-		slog.Error(fmt.Sprintf("failed to get MIG Device Info; err: %v", err))
-		return nil, err
+		return nil, fmt.Errorf("NVML not initialized (may need to enable Kubernetes mode): %w", err)
 	}
 
 	device, ret := nvml.DeviceGetHandleByUUID(uuid)
@@ -168,7 +172,16 @@ func getMIGDeviceInfoForOldDriver(uuid string) (*MIGDeviceInfo, error) {
 
 // Cleanup performs cleanup operations for the NVML provider
 func (n nvmlProvider) Cleanup() {
-	if err := n.preCheck(); err == nil {
-		reset()
+	if !n.initialized {
+		slog.Info("NVML not initialized, skipping cleanup")
+		return
 	}
+
+	slog.Info("Attempting to shutdown NVML library")
+	ret := nvml.Shutdown()
+	if ret != nvml.SUCCESS {
+		slog.Error(fmt.Sprintf("Failed to shutdown NVML library: %v", nvml.ErrorString(ret)))
+	}
+
+	reset()
 }

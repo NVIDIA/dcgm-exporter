@@ -171,38 +171,49 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 		})
 
 		It("should verify metrics [default]", func(ctx context.Context) {
-			Expect(metricsResponse).ShouldNot(BeEmpty())
+			Eventually(func(g Gomega) {
+				metricsResponse = shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
+				g.Expect(metricsResponse).ShouldNot(BeEmpty())
 
-			var parser expfmt.TextParser
-			metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
-			Expect(err).ShouldNot(HaveOccurred())
-			Expect(len(metricFamilies)).Should(BeNumerically(">", 0))
+				var parser expfmt.TextParser
+				metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
+				g.Expect(err).ShouldNot(HaveOccurred())
+				g.Expect(len(metricFamilies)).Should(BeNumerically(">", 0))
 
-			for _, metricFamily := range metricFamilies {
-				Expect(metricFamily).ShouldNot(BeNil())
-				metrics := metricFamily.GetMetric()
-				Expect(metrics).ShouldNot(BeNil())
+				for _, metricFamily := range metricFamilies {
+					g.Expect(metricFamily).ShouldNot(BeNil())
+					metrics := metricFamily.GetMetric()
+					g.Expect(metrics).ShouldNot(BeNil())
 
-				// Each metric must have namespace, pod and container labels
-				for _, metric := range metrics {
-					var actualLabels []string
-					for _, label := range metric.Label {
-						labelName := ptr.Deref(label.Name, "")
-						if slices.Contains(expectedLabels, labelName) {
-							actualLabels = append(actualLabels, labelName)
-							Expect(label.Value).ShouldNot(BeNil())
-							Expect(ptr.Deref(label.Value, "")).ShouldNot(BeEmpty(),
-								"The %s metric contains a label named %q label with empty value.",
-								ptr.Deref(metricFamily.Name, ""),
-								labelName,
-							)
+					// Check if at least one metric has the expected labels (handling multi-GPU nodes where only some GPUs have pods)
+					foundLabeledMetric := false
+					for _, metric := range metrics {
+						var actualLabels []string
+						for _, label := range metric.Label {
+							labelName := ptr.Deref(label.Name, "")
+							if slices.Contains(expectedLabels, labelName) {
+								actualLabels = append(actualLabels, labelName)
+								g.Expect(label.Value).ShouldNot(BeNil())
+								g.Expect(ptr.Deref(label.Value, "")).ShouldNot(BeEmpty(),
+									"The %s metric contains a label named %q label with empty value.",
+									ptr.Deref(metricFamily.Name, ""),
+									labelName,
+								)
+							}
+						}
+						if len(actualLabels) == len(expectedLabels) {
+							foundLabeledMetric = true
 						}
 					}
-					Expect(len(actualLabels)).Should(Equal(len(expectedLabels)),
-						"Metric %s doesn't contains expected labels: %v, actual labels: %v",
-						ptr.Deref(metricFamily.Name, ""), expectedLabels, metric.Label)
+					if !foundLabeledMetric {
+						fmt.Fprintf(GinkgoWriter, "Metric %s missing labels in all instances. \nFull Metrics:\n%s\n",
+							ptr.Deref(metricFamily.Name, ""), string(metricsResponse))
+					}
+					g.Expect(foundLabeledMetric).Should(BeTrue(),
+						"Metric %s doesn't contains expected labels: %v in any of its instances",
+						ptr.Deref(metricFamily.Name, ""), expectedLabels)
 				}
-			}
+			}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
 		})
 	})
 
@@ -374,12 +385,6 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 		It("should verify metrics contain sanitized pod labels", func(ctx context.Context) {
 			By("Parsing and verifying metrics contain custom pod labels")
 
-			// Parse metrics
-			var parser expfmt.TextParser
-			metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
-			Expect(err).ShouldNot(HaveOccurred(), "Error parsing metrics")
-			Expect(metricFamilies).ShouldNot(BeEmpty(), "No metrics found")
-
 			// Expected sanitized label mappings
 			expectedSanitizedLabels := map[string]string{
 				"valid_key":       "value-valid",  // no change needed
@@ -387,34 +392,51 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 				"key_with_dots":   "value-dots",   // dots become underscores
 			}
 
-			labelsFound := map[string]bool{}
+			// Use Eventually to retry checking labels, as there might be a slight delay
+			// between pod creation and the Informer cache sync in the exporter.
+			Eventually(func(g Gomega) {
+				// Refresh metrics
+				metricsResponse = shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
+				g.Expect(metricsResponse).ShouldNot(BeEmpty(), "Metrics response should not be empty")
 
-			// Search for sanitized labels in metrics
-			for _, metricFamily := range metricFamilies {
-				for _, metric := range metricFamily.GetMetric() {
-					for _, label := range metric.Label {
-						labelName := ptr.Deref(label.Name, "")
-						labelValue := ptr.Deref(label.Value, "")
+				// Parse metrics
+				var parser expfmt.TextParser
+				metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
+				if err != nil {
+					fmt.Fprintf(GinkgoWriter, "Metrics parsing failed:\n%s\n", string(metricsResponse))
+				}
+				g.Expect(err).ShouldNot(HaveOccurred(), "Error parsing metrics")
+				g.Expect(metricFamilies).ShouldNot(BeEmpty(), "No metrics found")
 
-						if expectedValue, exists := expectedSanitizedLabels[labelName]; exists {
-							Expect(labelValue).Should(
-								Equal(expectedValue),
-								"Expected sanitized label %q to have value %q, but got %q",
-								labelName, expectedValue, labelValue,
-							)
-							labelsFound[labelName] = true
+				labelsFound := map[string]bool{}
+
+				// Search for sanitized labels in metrics
+				for _, metricFamily := range metricFamilies {
+					for _, metric := range metricFamily.GetMetric() {
+						for _, label := range metric.Label {
+							labelName := ptr.Deref(label.Name, "")
+							labelValue := ptr.Deref(label.Value, "")
+
+							if expectedValue, exists := expectedSanitizedLabels[labelName]; exists {
+								g.Expect(labelValue).Should(
+									Equal(expectedValue),
+									"Expected sanitized label %q to have value %q, but got %q",
+									labelName, expectedValue, labelValue,
+								)
+								labelsFound[labelName] = true
+							}
 						}
 					}
 				}
-			}
 
-			// Verify all expected labels were found
-			for expectedLabel := range expectedSanitizedLabels {
-				Expect(labelsFound[expectedLabel]).Should(
-					BeTrue(),
-					"Expected to find sanitized label %q in metrics", expectedLabel,
-				)
-			}
+				// Verify all expected labels were found
+				for expectedLabel := range expectedSanitizedLabels {
+					g.Expect(labelsFound[expectedLabel]).Should(
+						BeTrue(),
+						"Expected to find sanitized label %q in metrics", expectedLabel,
+					)
+				}
+			}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
 
 			By("Pod labels verified successfully in metrics")
 		})

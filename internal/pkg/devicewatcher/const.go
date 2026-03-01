@@ -17,7 +17,8 @@
 package devicewatcher
 
 const (
-	DCGM_ST_NOT_CONFIGURED = "Setting not configured"
+	DCGM_ST_NOT_CONFIGURED    = "Setting not configured"
+	DCGM_ST_FIELD_NOT_WATCHED = "Field is not being watched"
 
 	maxKeepAge     = 600.0 // How long to keep data for this field in seconds
 	maxKeepSamples = 0     // Maximum number of samples to keep. 0=no limit

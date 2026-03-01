@@ -54,6 +54,11 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 
 		for _, val := range values {
 			if val.Status == 0 {
+				// Check if the value is a DCGM blank/sentinel value and skip it
+				if isBlankValue(val) {
+					continue
+				}
+
 				if _, exists := mapEntityIDToValues[val.EntityID]; !exists {
 					mapEntityIDToValues[val.EntityID] = map[int64]int{}
 				}

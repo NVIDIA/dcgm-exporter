@@ -32,7 +32,7 @@ import (
 const (
 	// Default configuration for local images
 	defaultRegistry = "nvidia"
-	defaultVersion  = "4.4.2-4.7.0"
+	defaultVersion  = "4.5.1-4.8.0"
 
 	// Test configuration
 	testPort          = 9400

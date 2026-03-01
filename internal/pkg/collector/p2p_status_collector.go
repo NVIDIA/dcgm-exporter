@@ -98,11 +98,15 @@ func p2pStatusToString(status uint64) string {
 	case 1:
 		return LinkStatusChipsetNotSupported
 	case 2:
-		return LinkStatusTopologyNotSupported
+		return LinkStatusGPUNotSupported
 	case 3:
-		return LinkStatusDisabledByRegKey
+		return LinkStatusTopologyNotSupported
 	case 4:
+		return LinkStatusDisabledByRegKey
+	case 5:
 		return LinkStatusNotSupported
+	case 6:
+		return LinkStatusUnknown
 	default:
 		return LinkStatusUnknown
 	}

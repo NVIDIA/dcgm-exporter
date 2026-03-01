@@ -50,6 +50,7 @@ data:
       # Memory usage
       DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
       DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+      DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
 
       # ECC
       # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
@@ -78,6 +79,9 @@ data:
       DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
       DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
 
+      # Static configuration information. These appear as labels on the other metrics
+      DCGM_FI_DRIVER_VERSION,        label, Driver Version
+
       # DCP metrics
       DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
       # DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
@@ -87,6 +91,6 @@ data:
       # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
       # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
       # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
-      DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
-      DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
+      DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
+      DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
 {{- end }}

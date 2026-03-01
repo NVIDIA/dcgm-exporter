@@ -378,15 +378,15 @@ func getDefaultHelmValues() []string {
 	values := []string{
 		fmt.Sprintf("serviceMonitor.enabled=%v", false),
 		// Set resource requests to avoid scheduling delays and OOMKilled
-		"resources.requests.cpu=50m",
-		"resources.requests.memory=256Mi",
-		"resources.limits.cpu=200m",
-		"resources.limits.memory=512Mi",
+		"resources.requests.cpu=1000m",
+		"resources.requests.memory=1024Mi",
+		"resources.limits.cpu=1000m",
+		"resources.limits.memory=1024Mi",
 		// Optimize image pull policy for faster startup
 		"image.pullPolicy=IfNotPresent",
 		// Reduce probe delays for faster test execution
-		"readinessProbe.initialDelaySeconds=10",
-		"livenessProbe.initialDelaySeconds=10",
+		"readinessProbe.initialDelaySeconds=45",
+		"livenessProbe.initialDelaySeconds=45",
 	}
 
 	if testContext.arguments != "" {

@@ -17,6 +17,8 @@
 package appconfig
 
 import (
+	"time"
+
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
@@ -73,4 +75,6 @@ type Config struct {
 	KubernetesEnableDRA              bool
 	KubernetesDRAResourceAPIVersion  string   // DRA ResourceSlice API version: "v1", "v1beta1", or "" for auto-detection
 	DisableStartupValidate           bool
+	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
+	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
 }

@@ -34,6 +34,8 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
@@ -543,6 +545,7 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 	})
 	// Inject the fake clientset
 	podMapper.Client = clientset
+	setupMockInformer(t, podMapper, clientset)
 
 	// Setup metrics
 	metrics := collector.MetricsByCounter{}
@@ -883,6 +886,7 @@ func TestProcessPodMapper_WithUID(t *testing.T) {
 	})
 	// Inject the fake clientset
 	podMapper.Client = clientset
+	setupMockInformer(t, podMapper, clientset)
 
 	// Setup metrics
 	metrics := collector.MetricsByCounter{}
@@ -993,6 +997,7 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 	})
 	// Inject the fake clientset
 	podMapper.Client = clientset
+	setupMockInformer(t, podMapper, clientset)
 
 	// Setup metrics
 	metrics := collector.MetricsByCounter{}
@@ -1062,4 +1067,96 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 				"Expected sanitized key '%s' to map to value '%s'", sanitizedKey, value)
 		}
 	}
+}
+
+func setupMockInformer(t *testing.T, mapper *PodMapper, client kubernetes.Interface) {
+	factory := informers.NewSharedInformerFactory(client, 0)
+	mapper.podInformerFactory = factory
+	mapper.podLister = factory.Core().V1().Pods().Lister()
+	mapper.podInformerSynced = factory.Core().V1().Pods().Informer().HasSynced
+
+	stopChan := make(chan struct{})
+	t.Cleanup(func() { close(stopChan) })
+
+	go factory.Start(stopChan)
+	if !cache.WaitForCacheSync(stopChan, mapper.podInformerSynced) {
+		t.Fatalf("Failed to sync mock informer")
+	}
+}
+
+func TestPodMapper_createPodInfo_WithInformer(t *testing.T) {
+	// 1. Setup Fake Client
+	client := fake.NewSimpleClientset()
+
+	// 2. Create PodMapper with injected dependencies
+	// Use NewPodMapper or manual construction. Manual is safer here to avoid NewPodMapper side effects.
+	config := &appconfig.Config{
+		KubernetesEnablePodLabels: true,
+		KubernetesEnablePodUID:    true,
+	}
+
+	mapper := &PodMapper{
+		Config:           config,
+		Client:           client,
+		labelFilterCache: newLabelFilterCache(nil, 1000),
+	}
+
+	// Setup Informer using the helper
+	setupMockInformer(t, mapper, client)
+
+	// 3. Add a Pod to the Store (simulating K8s state)
+	podName := "test-gpu-pod"
+	namespace := "default"
+	podUID := "test-uid-12345"
+	labels := map[string]string{
+		"app": "gpu-app",
+		"env": "production",
+	}
+
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: namespace,
+			UID:       types.UID(podUID),
+			Labels:    labels,
+		},
+	}
+
+	// Add to fake client (which updates informer via watch)
+	_, err := client.CoreV1().Pods(namespace).Create(context.Background(), pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Wait for informer to observe the addition
+	// In unit tests with fake client, we need to give a moment for the watch event to propagate
+	time.Sleep(100 * time.Millisecond)
+
+	// 4. Create Dummy PodResources (simulating Kubelet socket data)
+	podRes := &podresourcesapi.PodResources{
+		Name:      podName,
+		Namespace: namespace,
+		Containers: []*podresourcesapi.ContainerResources{
+			{
+				Name: "gpu-container",
+				Devices: []*podresourcesapi.ContainerDevices{
+					{
+						ResourceName: "nvidia.com/gpu",
+						DeviceIds:    []string{"GPU-1"},
+					},
+				},
+			},
+		},
+	}
+	containerRes := podRes.Containers[0]
+
+	// 5. Test createPodInfo
+	// createPodInfo is a private method, but we are in the same package (transformation)
+	podInfo := mapper.createPodInfo(podRes, containerRes)
+
+	// 6. Verify Results
+	assert.Equal(t, podName, podInfo.Name)
+	assert.Equal(t, namespace, podInfo.Namespace)
+	assert.Equal(t, "gpu-container", podInfo.Container)
+	assert.Equal(t, podUID, podInfo.UID, "Should retrieve UID from Informer")
+	assert.Equal(t, "gpu-app", podInfo.Labels["app"], "Should retrieve labels from Informer")
+	assert.Equal(t, "production", podInfo.Labels["env"])
 }

@@ -331,6 +331,10 @@ func (m *DRAResourceSliceManager) Stop() {
 	if m.cancelContext != nil {
 		m.cancelContext()
 	}
+	// Ensure factory informers are fully stopped
+	if m.factory != nil {
+		m.factory.Shutdown()
+	}
 }
 
 // countGPUSlices counts the number of ResourceSlice objects with GPU devices

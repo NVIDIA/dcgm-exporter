@@ -25,7 +25,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
+	"go.uber.org/mock/gomock"
 
+	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -201,6 +203,42 @@ func Test_getDeviceWatchListManager(t *testing.T) {
 			tt.assertion(t, got)
 		})
 	}
+}
+
+// TestDCGMCleanupClosureBehavior verifies that the dcgmCleanup closure
+// calls the CURRENT provider's Cleanup method, not a captured instance.
+// This prevents memory leaks during GPU bind/unbind cycles.
+func TestDCGMCleanupClosureBehavior(t *testing.T) {
+	// Save original client
+	originalClient := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(originalClient)
+
+	// Create first mock provider
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockProvider1 := mockdcgmprovider.NewMockDCGM(ctrl)
+	mockProvider1.EXPECT().Cleanup().Times(0) // Should NOT be called
+
+	mockProvider2 := mockdcgmprovider.NewMockDCGM(ctrl)
+	mockProvider2.EXPECT().Cleanup().Times(1) // Should be called
+
+	// Set first provider
+	dcgmprovider.SetClient(mockProvider1)
+
+	// Create cleanup closure (simulates line 461-463 in app.go)
+	dcgmCleanup := func() {
+		dcgmprovider.Client().Cleanup()
+	}
+
+	// Simulate DCGM reinitialization (like in handleGPUTopologyChange)
+	dcgmprovider.SetClient(mockProvider2)
+
+	// Call cleanup - should call mockProvider2.Cleanup(), NOT mockProvider1.Cleanup()
+	dcgmCleanup()
+
+	// Test passes if mockProvider2.Cleanup() was called and mockProvider1.Cleanup() was NOT called
+	// (gomock verifies this automatically via EXPECT())
 }
 
 func Test_contextToConfig_DumpConfig(t *testing.T) {

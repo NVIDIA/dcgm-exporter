@@ -17,11 +17,10 @@
 package integration
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -36,16 +35,33 @@ func TestStartAndReadMetrics(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
-	app := cmd.NewApp()
-	args := os.Args[0:1]
-	args = append(args, "-f=./testdata/default-counters.csv") // Append a file with default counters
+
 	port := getRandomAvailablePort(t)
-	args = append(args, fmt.Sprintf("-a=:%d", port))
-	ctx, cancel := context.WithCancel(context.Background())
-	go func(ctx context.Context) {
-		err := app.Run(args)
-		require.NoError(t, err)
-	}(ctx)
+
+	// Create test signal source for proper cleanup
+	testSigs := cmd.NewTestSignalSource()
+
+	// Create CLI context
+	cliCtx := createTestCLIContext(t, "./testdata/default-counters.csv", fmt.Sprintf(":%d", port))
+
+	// Run exporter with test signal source in goroutine
+	appDone := make(chan error, 1)
+	go func() {
+		err := cmd.StartDCGMExporterWithSignalSource(cliCtx, testSigs)
+		appDone <- err
+	}()
+
+	// Ensure cleanup happens even if test fails
+	defer func() {
+		t.Log("Sending termination signal for cleanup...")
+		testSigs.SendSignal(syscall.SIGTERM)
+		select {
+		case <-appDone:
+			t.Log("App shutdown completed")
+		case <-time.After(10 * time.Second):
+			t.Log("Warning: App did not shutdown within timeout")
+		}
+	}()
 
 	t.Logf("Read metrics from http://localhost:%d/metrics", port)
 
@@ -70,5 +86,4 @@ func TestStartAndReadMetrics(t *testing.T) {
 	mf, err := parser.TextToMetricFamilies(strings.NewReader(metricsResp))
 	require.NoError(t, err)
 	require.Greater(t, len(mf), 0, "expected number of metrics more than 0")
-	cancel()
 }

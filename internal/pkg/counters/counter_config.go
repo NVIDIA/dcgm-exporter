@@ -32,7 +32,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
 
-func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
+func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error) {
 	var (
 		err     error
 		records [][]string
@@ -47,7 +47,7 @@ func GetCounterSet(c *appconfig.Config) (*CounterSet, error) {
 			slog.Error(err.Error())
 			os.Exit(1)
 		}
-		records, err = readConfigMap(client, c)
+		records, err = readConfigMap(ctx, client, c)
 		if err != nil {
 			slog.Error(err.Error())
 			os.Exit(1)
@@ -163,14 +163,14 @@ func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {
 	return false
 }
 
-func readConfigMap(kubeClient kubernetes.Interface, c *appconfig.Config) ([][]string, error) {
+func readConfigMap(ctx context.Context, kubeClient kubernetes.Interface, c *appconfig.Config) ([][]string, error) {
 	parts := strings.Split(c.ConfigMapData, ":")
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("malformed configmap-data '%s'", c.ConfigMapData)
 	}
 
 	var cm *corev1.ConfigMap
-	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(context.TODO(), parts[1], metav1.GetOptions{})
+	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(ctx, parts[1], metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("could not retrieve ConfigMap '%s'; err: %w", c.ConfigMapData, err)
 	}
