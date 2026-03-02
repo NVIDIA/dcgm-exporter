@@ -1,0 +1,79 @@
+# Version control
+.git
+.gitignore
+.gitlab-ci.yml
+
+# Build artifacts
+dist/
+*.tar.gz
+*.zip
+bin/
+cmd/dcgm-exporter/dcgm-exporter
+
+# Test files
+tests/
+tests.cov
+*.test
+
+# Documentation
+README.md
+CONTRIBUTING.md
+RELEASE.md
+security.md
+*.md
+
+# CI/CD and deployment
+.github/
+.gitlab/
+deployment/
+examples/
+grafana/
+
+# Docker files - allow Dockerfile, build script, and entrypoint
+.dockerignore
+!docker/Dockerfile
+!docker/build-cross.sh
+!docker/dcgm-exporter-entrypoint.sh
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local configuration
+.env
+.env.*
+*.local
+
+# Static analysis
+staticcheck.conf
+lint/
+
+# Packaging
+packaging/
+
+# Scripts that aren't needed in build
+scripts/
+# Note: hack/ contains VERSION file needed by Makefile
+
+# Service definitions
+*.yaml
+*.yml
+
+# Note: Makefile is needed for the build process
+
+# Coverage reports
+coverage.out
+coverage.html
+

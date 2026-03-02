@@ -1,0 +1,6 @@
+tls_server_config:
+  cert_file: tlsCertificate.crt
+  key_file: tlsCertificate.key
+basic_auth_users:
+  # password: password
+  alice: $2y$10$CWCEbs7mt8QFrToJR9OcG.tduEKpx9SROhWnaDHQgQX4Q6hqWNASa

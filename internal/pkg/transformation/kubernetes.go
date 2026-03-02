@@ -1,0 +1,894 @@
+/*
+ * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package transformation
+
+import (
+	"container/list"
+	"context"
+	"fmt"
+	"log/slog"
+	"maps"
+	"net"
+	stdos "os"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
+	"google.golang.org/grpc/resolver"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
+
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
+)
+
+var (
+	connectionTimeout = 10 * time.Second
+
+	// Allow for MIG devices with or without GPU sharing to match in GKE.
+	gkeMigDeviceIDRegex            = regexp.MustCompile(`^nvidia([0-9]+)/gi([0-9]+)(/vgpu[0-9]+)?$`)
+	gkeVirtualGPUDeviceIDSeparator = "/vgpu"
+)
+
+// DeviceProcessingFunc is a callback function type for processing devices
+type DeviceProcessingFunc func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices)
+
+// iterateGPUDevices encapsulates the common pattern of iterating through pods, containers, and devices
+// while filtering for NVIDIA GPU resources. It calls the provided callback for each valid device.
+func (p *PodMapper) iterateGPUDevices(devicePods *podresourcesapi.ListPodResourcesResponse, processDevice DeviceProcessingFunc) {
+	for _, pod := range devicePods.GetPodResources() {
+		for _, container := range pod.GetContainers() {
+			for _, device := range container.GetDevices() {
+				resourceName := device.GetResourceName()
+
+				// Apply NVIDIA resource filtering
+				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
+					// MIG resources appear differently than GPU resources
+					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
+						slog.Debug("Skipping non-NVIDIA resource",
+							"resourceName", resourceName,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"deviceIds", device.GetDeviceIds())
+						continue
+					}
+				}
+
+				// Call the processing function for valid devices
+				processDevice(pod, container, device)
+			}
+		}
+	}
+}
+
+func NewPodMapper(c *appconfig.Config) *PodMapper {
+	slog.Info("Kubernetes metrics collection enabled!")
+
+	// Default cache size if not configured
+	cacheSize := c.KubernetesPodLabelCacheSize
+	if cacheSize <= 0 {
+		cacheSize = 150000 // Default: ~18MB for 150k entries (suitable for large cloud clusters)
+	}
+
+	podMapper := &PodMapper{
+		Config:           c,
+		labelFilterCache: newLabelFilterCache(c.KubernetesPodLabelAllowlistRegex, cacheSize),
+		stopChan:         make(chan struct{}),
+	}
+
+	clusterConfig, err := rest.InClusterConfig()
+	if err != nil {
+		slog.Warn("Failed to get in-cluster config, pod labels will not be available", "error", err)
+		return podMapper
+	}
+
+	clientset, err := kubernetes.NewForConfig(clusterConfig)
+	if err != nil {
+		slog.Warn("Failed to get clientset, pod labels will not be available", "error", err)
+		return podMapper
+	}
+
+	podMapper.Client = clientset
+
+	// Initialize Pod Informer
+	nodeName := stdos.Getenv("NODE_NAME")
+	var factory informers.SharedInformerFactory
+	if nodeName != "" {
+		slog.Info("Initializing Pod Informer", "nodeName", nodeName)
+		tweakListOptions := func(options *metav1.ListOptions) {
+			options.FieldSelector = fields.OneTermEqualSelector("spec.nodeName", nodeName).String()
+		}
+		factory = informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithTweakListOptions(tweakListOptions))
+	} else {
+		slog.Warn("NODE_NAME environment variable not set, watching all pods in cluster for metadata")
+		factory = informers.NewSharedInformerFactory(clientset, 0)
+	}
+
+	podMapper.podInformerFactory = factory
+	podInformer := factory.Core().V1().Pods()
+	podMapper.podLister = podInformer.Lister()
+	podMapper.podInformerSynced = podInformer.Informer().HasSynced
+
+	if c.KubernetesEnableDRA {
+		resourceSliceManager, err := NewDRAResourceSliceManager()
+		if err != nil {
+			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
+			return podMapper
+		}
+		podMapper.ResourceSliceManager = resourceSliceManager
+		slog.Info("Started DRAResourceSliceManager")
+	}
+	return podMapper
+}
+
+// newLabelFilterCache creates a new LRU cache with pre-compiled regex patterns
+func newLabelFilterCache(patterns []string, maxSize int) *LabelFilterCache {
+	cache := &LabelFilterCache{
+		enabled: len(patterns) > 0,
+		maxSize: maxSize,
+	}
+
+	if !cache.enabled {
+		return cache
+	}
+
+	// Initialize LRU cache structures
+	cache.cache = make(map[string]*list.Element)
+	cache.lruList = list.New()
+
+	// Pre-compile all regex patterns at initialization time
+	cache.compiledPatterns = make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			slog.Warn("Failed to compile pod label allowlist regex pattern, skipping",
+				"pattern", pattern,
+				"error", err)
+			continue
+		}
+		cache.compiledPatterns = append(cache.compiledPatterns, compiled)
+		slog.Info("Compiled pod label allowlist pattern", "pattern", pattern)
+	}
+
+	// If all patterns failed to compile, disable filtering
+	if len(cache.compiledPatterns) == 0 {
+		cache.enabled = false
+		slog.Warn("No valid regex patterns for pod label filtering, all labels will be included")
+	} else {
+		slog.Info("Pod label filtering enabled",
+			"patterns", len(cache.compiledPatterns),
+			"originalPatterns", len(patterns),
+			"cacheSize", maxSize)
+	}
+
+	return cache
+}
+
+func (p *PodMapper) Name() string {
+	return "podMapper"
+}
+
+func (p *PodMapper) Run() {
+	if p.podInformerFactory != nil {
+		go p.podInformerFactory.Start(p.stopChan)
+		if !cache.WaitForCacheSync(p.stopChan, p.podInformerSynced) {
+			slog.Error("Failed to sync pod informer cache")
+			return
+		}
+		slog.Info("Pod informer cache synced")
+	}
+}
+
+func (p *PodMapper) Stop() {
+	close(p.stopChan)
+}
+
+func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]PodInfo, map[string]PodInfo, map[string][]PodInfo, error) {
+	socketPath := p.Config.PodResourcesKubeletSocket
+	_, err := stdos.Stat(socketPath)
+	if stdos.IsNotExist(err) {
+		return nil, nil, nil, nil
+	}
+
+	c, cleanup, err := connectToServer(socketPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer cleanup()
+
+	pods, err := p.listPods(c)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	var deviceToPods map[string][]PodInfo
+	var deviceToPod map[string]PodInfo
+	var deviceToPodsDRA map[string][]PodInfo
+
+	if p.Config.KubernetesVirtualGPUs {
+		deviceToPods = p.toDeviceToSharingPods(pods, deviceInfo)
+	} else {
+		deviceToPod = p.toDeviceToPod(pods, deviceInfo)
+	}
+
+	if p.Config.KubernetesEnableDRA {
+		deviceToPodsDRA = p.toDeviceToPodsDRA(pods)
+	}
+
+	return deviceToPods, deviceToPod, deviceToPodsDRA, nil
+}
+
+func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+	deviceToPods, deviceToPod, deviceToPodsDRA, err := p.getMappings(deviceInfo)
+	if err != nil {
+		slog.Warn("Failed to get pod mappings", "error", err)
+		return nil // Don't fail the whole scrape, just skip enrichment
+	}
+
+	if p.Config.KubernetesVirtualGPUs {
+		if deviceToPods == nil {
+			return nil
+		}
+		slog.Debug(fmt.Sprintf("Device to sharing pods mapping: %+v", deviceToPods))
+
+		for counter := range metrics {
+			var newmetrics []collector.Metric
+			for j, val := range metrics[counter] {
+				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+				if err != nil {
+					return err
+				}
+
+				podInfos := deviceToPods[deviceID]
+				for _, pi := range podInfos {
+					metric, err := utils.DeepCopy(metrics[counter][j])
+					if err != nil {
+						return err
+					}
+					if !p.Config.UseOldNamespace {
+						metric.Attributes[podAttribute] = pi.Name
+						metric.Attributes[namespaceAttribute] = pi.Namespace
+						metric.Attributes[containerAttribute] = pi.Container
+					} else {
+						metric.Attributes[oldPodAttribute] = pi.Name
+						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+						metric.Attributes[oldContainerAttribute] = pi.Container
+					}
+					if p.Config.KubernetesEnablePodUID {
+						metric.Attributes[uidAttribute] = pi.UID
+					}
+					if pi.VGPU != "" {
+						metric.Attributes[vgpuAttribute] = pi.VGPU
+					}
+
+					// Robustness: ensure no overlap between Labels and Attributes
+					for k := range metric.Attributes {
+						delete(metric.Labels, k)
+					}
+
+					newmetrics = append(newmetrics, metric)
+				}
+			}
+			if len(newmetrics) > 0 {
+				metrics[counter] = newmetrics
+			}
+		}
+		return nil
+	}
+
+	slog.Debug("KubernetesVirtualGPUs is disabled, using device to pod mapping")
+
+	if deviceToPod != nil {
+		slog.Debug(fmt.Sprintf("Device to pod mapping: %+v", deviceToPod))
+
+		for counter := range metrics {
+			for j, val := range metrics[counter] {
+				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+				if err != nil {
+					return err
+				}
+				podInfo, exists := deviceToPod[deviceID]
+				if exists {
+					if !p.Config.UseOldNamespace {
+						metrics[counter][j].Attributes[podAttribute] = podInfo.Name
+						metrics[counter][j].Attributes[namespaceAttribute] = podInfo.Namespace
+						metrics[counter][j].Attributes[containerAttribute] = podInfo.Container
+					} else {
+						metrics[counter][j].Attributes[oldPodAttribute] = podInfo.Name
+						metrics[counter][j].Attributes[oldNamespaceAttribute] = podInfo.Namespace
+						metrics[counter][j].Attributes[oldContainerAttribute] = podInfo.Container
+					}
+
+					if p.Config.KubernetesEnablePodUID {
+						metrics[counter][j].Attributes[uidAttribute] = podInfo.UID
+					}
+					for k, v := range podInfo.Labels {
+						if _, ok := metrics[counter][j].Attributes[k]; ok {
+							continue
+						}
+						metrics[counter][j].Labels[k] = v
+					}
+
+					// Robustness: ensure no overlap between Labels and Attributes
+					for k := range metrics[counter][j].Attributes {
+						delete(metrics[counter][j].Labels, k)
+					}
+				}
+			}
+		}
+	}
+
+	if p.Config.KubernetesEnableDRA {
+		if deviceToPodsDRA != nil {
+			slog.Debug(fmt.Sprintf("Device to pod mapping for DRA: %+v", deviceToPodsDRA))
+
+			for counter := range metrics {
+				var newmetrics []collector.Metric
+				for j, val := range metrics[counter] {
+					deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+					if err != nil {
+						return err
+					}
+
+					podInfos := deviceToPodsDRA[deviceID]
+					if podInfos != nil {
+						for _, pi := range podInfos {
+							metric, err := utils.DeepCopy(metrics[counter][j])
+							if err != nil {
+								return err
+							}
+							if !p.Config.UseOldNamespace {
+								metric.Attributes[podAttribute] = pi.Name
+								metric.Attributes[namespaceAttribute] = pi.Namespace
+								metric.Attributes[containerAttribute] = pi.Container
+							} else {
+								metric.Attributes[oldPodAttribute] = pi.Name
+								metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+								metric.Attributes[oldContainerAttribute] = pi.Container
+							}
+							if dr := pi.DynamicResources; dr != nil {
+								metric.Attributes[draClaimName] = dr.ClaimName
+								metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
+								metric.Attributes[draDriverName] = dr.DriverName
+								metric.Attributes[draPoolName] = dr.PoolName
+								metric.Attributes[draDeviceName] = dr.DeviceName
+
+								if migInfo := dr.MIGInfo; migInfo != nil {
+									metric.Attributes[draMigProfile] = migInfo.Profile
+									metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
+								}
+							}
+
+							// Robustness: ensure no overlap between Labels and Attributes
+							for k := range metric.Attributes {
+								delete(metric.Labels, k)
+							}
+
+							newmetrics = append(newmetrics, metric)
+						}
+					} else {
+						newmetrics = append(newmetrics, metrics[counter][j])
+					}
+				}
+				if len(newmetrics) > 0 {
+					metrics[counter] = newmetrics
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func connectToServer(socket string) (*grpc.ClientConn, func(), error) {
+	resolver.SetDefaultScheme("passthrough")
+	conn, err := grpc.NewClient(
+		socket,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			d := net.Dialer{}
+			return d.DialContext(ctx, "unix", addr)
+		}),
+	)
+	if err != nil {
+		return nil, doNothing, fmt.Errorf("failure connecting to '%s'; err: %w", socket, err)
+	}
+
+	return conn, func() { conn.Close() }, nil
+}
+
+func (p *PodMapper) listPods(conn *grpc.ClientConn) (*podresourcesapi.ListPodResourcesResponse, error) {
+	client := podresourcesapi.NewPodResourcesListerClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	defer cancel()
+
+	resp, err := client.List(ctx, &podresourcesapi.ListPodResourcesRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("failure getting pod resources; err: %w", err)
+	}
+
+	return resp, nil
+}
+
+// getSharedGPU parses the provided device ID and extracts the shared
+// GPU identifier along with a boolean indicating if an identifier was
+// found.
+func getSharedGPU(deviceID string) (string, bool) {
+	// Check if we're using the GKE device plugin or NVIDIA device plugin.
+	if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+		return strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[1], true
+	} else if strings.Contains(deviceID, "::") {
+		return strings.Split(deviceID, "::")[1], true
+	}
+	return "", false
+}
+
+func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourcesResponse) map[string][]PodInfo {
+	deviceToPodsMap := make(map[string][]PodInfo)
+
+	slog.Debug("Processing pod dynamic resources", "totalPods", len(devicePods.GetPodResources()))
+	// Track pod+namespace+container combinations per device
+	// UUID -> "podName/namespace/containerName" -> bool
+	processedPods := make(map[string]map[string]bool)
+
+	for _, pod := range devicePods.GetPodResources() {
+		podName := pod.GetName()
+		podNamespace := pod.GetNamespace()
+		for _, container := range pod.GetContainers() {
+			cntName := container.GetName()
+			slog.Debug("Processing container",
+				"podName", podName,
+				"namespace", podNamespace,
+				"containerName", cntName)
+			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 && p.ResourceSliceManager != nil {
+				for _, dr := range dynamicResources {
+					for _, claimResource := range dr.GetClaimResources() {
+						draDriverName := claimResource.GetDriverName()
+						if draDriverName != DRAGPUDriverName {
+							continue
+						}
+						draPoolName := claimResource.GetPoolName()
+						draDeviceName := claimResource.GetDeviceName()
+
+						mappingKey, migInfo := p.ResourceSliceManager.GetDeviceInfo(draPoolName, draDeviceName)
+						if mappingKey == "" {
+							slog.Debug(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
+							continue
+						}
+
+						// Create unique key for pod+namespace+container combination
+						podContainerKey := podName + "/" + podNamespace + "/" + cntName
+
+						// Initialize tracker for this device if needed
+						if processedPods[mappingKey] == nil {
+							processedPods[mappingKey] = make(map[string]bool)
+						}
+
+						// Skip if we already processed this pod+container for this device
+						if processedPods[mappingKey][podContainerKey] {
+							continue
+						}
+
+						podInfo := p.createPodInfo(pod, container)
+						drInfo := DynamicResourceInfo{
+							ClaimName:      dr.GetClaimName(),
+							ClaimNamespace: dr.GetClaimNamespace(),
+							DriverName:     draDriverName,
+							PoolName:       draPoolName,
+							DeviceName:     draDeviceName,
+						}
+						if migInfo != nil {
+							drInfo.MIGInfo = migInfo
+							slog.Debug("Added MIG pod mapping",
+								"parentUUID", mappingKey,
+								"migDevice", migInfo.MIGDeviceUUID,
+								"migProfile", migInfo.Profile,
+								"pod", podContainerKey)
+						} else {
+							slog.Debug("Added GPU pod mapping",
+								"deviceUUID", mappingKey,
+								"pod", podContainerKey)
+						}
+
+						podInfo.DynamicResources = &drInfo
+						deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
+						processedPods[mappingKey][podContainerKey] = true
+					}
+				}
+			}
+
+		}
+	}
+	slog.Debug("Completed toDeviceToPodsDRA transformation",
+		"totalMappings", len(deviceToPodsMap),
+		"deviceToPodsMap", fmt.Sprintf("%+v", deviceToPodsMap))
+	return deviceToPodsMap
+}
+
+// toDeviceToSharingPods uses the same general logic as toDeviceToPod but
+// allows for multiple containers to be associated with a metric when sharing
+// strategies are used in Kubernetes.
+// TODO(pintohuch): the logic is manually duplicated from toDeviceToPod for
+// better isolation and easier review. Ultimately, this logic should be
+// merged into a single function that can handle both shared and non-shared
+// GPU states.
+func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider) map[string][]PodInfo {
+	deviceToPodsMap := make(map[string][]PodInfo)
+
+	p.iterateGPUDevices(devicePods, func(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
+		podInfo := p.createPodInfo(pod, container)
+
+		for _, deviceID := range device.GetDeviceIds() {
+			if vgpu, ok := getSharedGPU(deviceID); ok {
+				podInfo.VGPU = vgpu
+			}
+			if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
+				migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+				if err == nil {
+					// Check for potential integer overflow before conversion
+					if migDevice.GPUInstanceID >= 0 {
+						giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
+							uint(migDevice.GPUInstanceID))
+						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+					}
+				}
+				gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+				deviceToPodsMap[gpuUUID] = append(deviceToPodsMap[gpuUUID], podInfo)
+			} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
+				var gpuIndex string
+				var gpuInstanceID string
+				for groupIdx, group := range gkeMigDeviceIDMatches {
+					switch groupIdx {
+					case 1:
+						gpuIndex = group
+					case 2:
+						gpuInstanceID = group
+					}
+				}
+				giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
+				deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+			} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+				deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]] = append(deviceToPodsMap[strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]], podInfo)
+			} else if strings.Contains(deviceID, "::") {
+				gpuInstanceID := strings.Split(deviceID, "::")[0]
+				deviceToPodsMap[gpuInstanceID] = append(deviceToPodsMap[gpuInstanceID], podInfo)
+			}
+			// Default mapping between deviceID and pod information
+			deviceToPodsMap[deviceID] = append(deviceToPodsMap[deviceID], podInfo)
+		}
+	})
+
+	return deviceToPodsMap
+}
+
+func (p *PodMapper) toDeviceToPod(
+	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
+) map[string]PodInfo {
+	deviceToPodMap := make(map[string]PodInfo)
+	uidToPodInfo := make(map[string]PodInfo)
+
+	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
+
+	// Log all resource names found across all pods for debugging
+	allResourceNames := make(map[string]bool)
+	for _, pod := range devicePods.GetPodResources() {
+		for _, container := range pod.GetContainers() {
+			for _, device := range container.GetDevices() {
+				allResourceNames[device.GetResourceName()] = true
+			}
+		}
+	}
+	if len(allResourceNames) > 0 {
+		slog.Debug("Found resource names in pod resources", "resourceNames", maps.Keys(allResourceNames))
+	} else {
+		slog.Debug("No resource names found in any pod resources")
+	}
+
+	for _, pod := range devicePods.GetPodResources() {
+		slog.Debug("Processing pod",
+			"podName", pod.GetName(),
+			"namespace", pod.GetNamespace(),
+			"totalContainers", len(pod.GetContainers()))
+
+		for _, container := range pod.GetContainers() {
+			slog.Debug("Processing container",
+				"podName", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"containerName", container.GetName(),
+				"totalDevices", len(container.GetDevices()))
+
+			// Add debugging for containers with no devices
+			if len(container.GetDevices()) == 0 {
+				slog.Debug("Container has no devices allocated",
+					"podName", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"containerName", container.GetName())
+			}
+
+			podInfo := p.createPodInfo(pod, container)
+
+			// Store PodInfo by UID for process-based mapping correction
+			if podInfo.UID != "" {
+				uidToPodInfo[podInfo.UID] = podInfo
+			}
+
+			slog.Debug("Created pod info",
+				"podInfo", fmt.Sprintf("%+v", podInfo),
+				"podName", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"containerName", container.GetName())
+
+			for _, device := range container.GetDevices() {
+				resourceName := device.GetResourceName()
+				slog.Debug("Processing device",
+					"podName", pod.GetName(),
+					"namespace", pod.GetNamespace(),
+					"containerName", container.GetName(),
+					"resourceName", resourceName,
+					"deviceIds", device.GetDeviceIds())
+
+				if resourceName != appconfig.NvidiaResourceName && !slices.Contains(p.Config.NvidiaResourceNames, resourceName) {
+					// Mig resources appear differently than GPU resources
+					if !strings.HasPrefix(resourceName, appconfig.NvidiaMigResourcePrefix) {
+						slog.Debug("Skipping non-NVIDIA resource",
+							"resourceName", resourceName,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						continue
+					}
+				}
+
+				for _, deviceID := range device.GetDeviceIds() {
+					slog.Debug("Processing device ID", "deviceID", deviceID,
+						"podName", pod.GetName(),
+						"namespace", pod.GetNamespace(),
+						"containerName", container.GetName(),
+						"resourceName", resourceName,
+						"deviceIds", device.GetDeviceIds(),
+					)
+
+					if strings.HasPrefix(deviceID, appconfig.MIG_UUID_PREFIX) {
+						slog.Debug("Processing MIG device", "deviceID", deviceID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						migDevice, err := nvmlprovider.Client().GetMIGDeviceInfoByID(deviceID)
+						if err == nil {
+							// Check for potential integer overflow before conversion
+							if migDevice.GPUInstanceID >= 0 {
+								giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
+									uint(migDevice.GPUInstanceID))
+								slog.Debug("Mapped MIG device to GPU instance",
+									"deviceID", deviceID,
+									"giIdentifier", giIdentifier,
+									"podName", pod.GetName(),
+									"namespace", pod.GetNamespace(),
+									"containerName", container.GetName(),
+									"resourceName", resourceName,
+									"deviceIds", device.GetDeviceIds(),
+								)
+								deviceToPodMap[giIdentifier] = podInfo
+							}
+						} else {
+							slog.Debug("Failed to get MIG device info",
+								"deviceID", deviceID,
+								"error", err,
+								"podName", pod.GetName(),
+								"namespace", pod.GetNamespace(),
+								"containerName", container.GetName(),
+								"resourceName", resourceName,
+								"deviceIds", device.GetDeviceIds(),
+							)
+						}
+						gpuUUID := deviceID[len(appconfig.MIG_UUID_PREFIX):]
+						slog.Debug("Mapped MIG device to GPU UUID",
+							"deviceID", deviceID,
+							"gpuUUID", gpuUUID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						deviceToPodMap[gpuUUID] = podInfo
+					} else if gkeMigDeviceIDMatches := gkeMigDeviceIDRegex.FindStringSubmatch(deviceID); gkeMigDeviceIDMatches != nil {
+						slog.Debug("Processing GKE MIG device",
+							"deviceID", deviceID,
+							"matches", gkeMigDeviceIDMatches,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						var gpuIndex string
+						var gpuInstanceID string
+						for groupIdx, group := range gkeMigDeviceIDMatches {
+							switch groupIdx {
+							case 1:
+								gpuIndex = group
+							case 2:
+								gpuInstanceID = group
+							}
+						}
+						giIdentifier := fmt.Sprintf("%s-%s", gpuIndex, gpuInstanceID)
+						slog.Debug("Mapped GKE MIG device",
+							"deviceID", deviceID,
+							"giIdentifier", giIdentifier,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						deviceToPodMap[giIdentifier] = podInfo
+					} else if strings.Contains(deviceID, gkeVirtualGPUDeviceIDSeparator) {
+						gpuID := strings.Split(deviceID, gkeVirtualGPUDeviceIDSeparator)[0]
+						slog.Debug("Mapped GKE virtual GPU device",
+							"deviceID", deviceID,
+							"gpuID", gpuID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						deviceToPodMap[gpuID] = podInfo
+					} else if strings.Contains(deviceID, "::") {
+						gpuInstanceID := strings.Split(deviceID, "::")[0]
+						slog.Debug("Mapped GPU instance device",
+							"deviceID", deviceID,
+							"gpuInstanceID", gpuInstanceID,
+							"podName", pod.GetName(),
+							"namespace", pod.GetNamespace(),
+							"containerName", container.GetName(),
+							"resourceName", resourceName,
+							"deviceIds", device.GetDeviceIds(),
+						)
+						deviceToPodMap[gpuInstanceID] = podInfo
+					}
+					// Default mapping between deviceID and pod information
+					slog.Debug("Default device mapping",
+						"deviceID", deviceID,
+						"podName", pod.GetName(),
+						"namespace", pod.GetNamespace(),
+						"containerName", container.GetName(),
+						"resourceName", resourceName,
+						"deviceIds", device.GetDeviceIds(),
+					)
+					deviceToPodMap[deviceID] = podInfo
+				}
+			}
+		}
+	}
+	slog.Debug("Completed toDeviceToPod transformation",
+		"totalMappings", len(deviceToPodMap),
+		"deviceToPodMap", fmt.Sprintf("%+v", deviceToPodMap))
+	return deviceToPodMap
+}
+
+// createPodInfo creates a PodInfo struct with metadata if enabled
+func (p *PodMapper) createPodInfo(pod *podresourcesapi.PodResources, container *podresourcesapi.ContainerResources) PodInfo {
+	labels := map[string]string{}
+	uid := ""
+
+	// Use PodLister to get metadata
+	if p.podLister != nil {
+		podObj, err := p.podLister.Pods(pod.GetNamespace()).Get(pod.GetName())
+		if err != nil {
+			slog.Debug("Could not find pod in informer cache",
+				"pod", pod.GetName(),
+				"namespace", pod.GetNamespace(),
+				"error", err)
+		} else {
+			uid = string(podObj.UID)
+
+			if p.Config.KubernetesEnablePodLabels {
+				for k, v := range podObj.Labels {
+					if !p.shouldIncludeLabel(k) {
+						continue
+					}
+					sanitizedKey := utils.SanitizeLabelName(k)
+					labels[sanitizedKey] = v
+				}
+			}
+		}
+	}
+
+	return PodInfo{
+		Name:      pod.GetName(),
+		Namespace: pod.GetNamespace(),
+		Container: container.GetName(),
+		UID:       uid,
+		Labels:    labels,
+	}
+}
+
+// shouldIncludeLabel checks if a label should be included based on the allowlist regex patterns.
+// Uses an LRU cache to avoid expensive regex matching while bounding memory:
+// 1. Check cache for previously evaluated label keys
+// 2. If not cached, evaluate against pre-compiled regex patterns and cache the result
+func (p *PodMapper) shouldIncludeLabel(labelKey string) bool {
+	cache := p.labelFilterCache
+
+	if !cache.enabled {
+		return true
+	}
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+
+	// Check if labelKey is in cache
+	if elem, exists := cache.cache[labelKey]; exists {
+		// Cache hit: move to most recently used and return cached value
+		cache.lruList.MoveToFront(elem)
+		entry := elem.Value.(*labelCacheEntry)
+		return entry.value
+	}
+
+	allowed := false
+	for _, compiledPattern := range cache.compiledPatterns {
+		if compiledPattern.MatchString(labelKey) {
+			allowed = true
+			break
+		}
+	}
+
+	entry := &labelCacheEntry{
+		key:   labelKey,
+		value: allowed,
+	}
+
+	// If cache is at capacity, evict least recently used entry
+	if cache.lruList.Len() >= cache.maxSize {
+		oldest := cache.lruList.Back()
+		if oldest != nil {
+			cache.lruList.Remove(oldest)
+			oldEntry := oldest.Value.(*labelCacheEntry)
+			delete(cache.cache, oldEntry.key)
+		}
+	}
+
+	// Add new entry to front (most recently used)
+	elem := cache.lruList.PushFront(entry)
+	cache.cache[labelKey] = elem
+
+	return allowed
+}

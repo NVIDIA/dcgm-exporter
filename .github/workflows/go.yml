@@ -1,0 +1,50 @@
+name: Go
+
+on:
+  push:
+    branches: [ main, 'feat/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.24
+        cache: true
+
+    - name: Install build dependencies
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc
+
+    - name: Build
+      run: make binary
+
+    - name: Lint
+      run: make check-format
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.24
+        cache: true
+
+    - name: Install build dependencies
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc
+
+    - name: Run per-pod collector unit tests
+      # Run only our new collector tests — they use hand-coded fakes and require
+      # no DCGM or NVML libraries. Packages requiring libdcgm.so.4 or libnvidia-ml
+      # (integration_test, nvmlprovider, server) are excluded and covered by
+      # GPU-enabled integration test environments.
+      run: go test -v -count=1 ./internal/pkg/collector/... -run TestProcessPodCollector

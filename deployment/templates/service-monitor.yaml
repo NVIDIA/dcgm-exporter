@@ -1,0 +1,43 @@
+{{- if .Values.serviceMonitor.enabled }}
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: {{ .Values.serviceMonitor.apiVersion }}
+kind: ServiceMonitor
+metadata:
+  name: {{ include "dcgm-exporter.fullname" . }}
+  namespace: {{ include "dcgm-exporter.namespace" . }}
+  labels:
+    {{- include "dcgm-exporter.labels" . | nindent 4 }}
+    {{- if .Values.serviceMonitor.additionalLabels }}
+    {{- toYaml .Values.serviceMonitor.additionalLabels | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+    - "{{ include "dcgm-exporter.namespace" . }}"
+  endpoints:
+  - port: "metrics"
+    path: "/metrics"
+    interval: "{{ .Values.serviceMonitor.interval }}"
+    scrapeTimeout: "{{ .Values.serviceMonitor.scrapeTimeout }}"
+    honorLabels: {{ .Values.serviceMonitor.honorLabels }}
+    relabelings:
+      {{ toYaml .Values.serviceMonitor.relabelings | nindent 6 }}
+    metricRelabelings:
+      {{ toYaml .Values.serviceMonitor.metricRelabelings | nindent 6 }}
+{{- end -}}
