@@ -54,6 +54,7 @@ type processPodInfo struct {
 // nvmlDeviceHandle is a minimal interface over nvml.Device to allow mocking in tests.
 type nvmlDevice interface {
 	GetUUID() (string, nvml.Return)
+	GetName() (string, nvml.Return)
 	GetProcessUtilization(lastSeenTimestamp uint64) ([]nvml.ProcessUtilizationSample, nvml.Return)
 }
 
@@ -167,6 +168,14 @@ func (c *processPodCollector) GetMetrics() (MetricsByCounter, error) {
 	smUtilSum := make(map[podGPUKey]uint32)
 	smUtilCount := make(map[podGPUKey]uint32)
 
+	// Per-device metadata used when building the final Metric structs.
+	type gpuDeviceMeta struct {
+		gpuIndex  string
+		gpuDevice string
+		modelName string
+	}
+	deviceMeta := make(map[string]gpuDeviceMeta) // uuid → metadata
+
 	deviceCount, ret := c.nvml.DeviceGetCount()
 	if ret != nvml.SUCCESS {
 		return nil, fmt.Errorf("nvml DeviceGetCount failed: %s", nvml.ErrorString(ret))
@@ -187,6 +196,20 @@ func (c *processPodCollector) GetMetrics() (MetricsByCounter, error) {
 				slog.Int("index", i),
 				slog.String("error", nvml.ErrorString(ret)))
 			continue
+		}
+
+		modelName, ret := device.GetName()
+		if ret != nvml.SUCCESS {
+			slog.Debug("nvml GetName failed",
+				slog.String("uuid", uuid),
+				slog.String("error", nvml.ErrorString(ret)))
+			modelName = ""
+		}
+
+		deviceMeta[uuid] = gpuDeviceMeta{
+			gpuIndex:  fmt.Sprintf("%d", i),
+			gpuDevice: fmt.Sprintf("nvidia%d", i),
+			modelName: modelName,
 		}
 
 		// lastSeenTimestamp=0 requests all samples since the driver started.
@@ -225,6 +248,8 @@ func (c *processPodCollector) GetMetrics() (MetricsByCounter, error) {
 			avgUtil = sumUtil / count
 		}
 
+		meta := deviceMeta[key.uuid]
+
 		labels := map[string]string{
 			podLabel:       key.pod,
 			namespaceLabel: key.namespace,
@@ -232,12 +257,16 @@ func (c *processPodCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 
 		m := Metric{
-			Counter:    c.counter,
-			Value:      fmt.Sprintf("%d", avgUtil),
-			GPUUUID:    key.uuid,
-			Hostname:   c.hostname,
-			Labels:     labels,
-			Attributes: map[string]string{},
+			Counter:      c.counter,
+			Value:        fmt.Sprintf("%d", avgUtil),
+			GPU:          meta.gpuIndex,
+			UUID:         "UUID",
+			GPUUUID:      key.uuid,
+			GPUDevice:    meta.gpuDevice,
+			GPUModelName: meta.modelName,
+			Hostname:     c.hostname,
+			Labels:       labels,
+			Attributes:   map[string]string{},
 		}
 		metrics[c.counter] = append(metrics[c.counter], m)
 	}

@@ -52,13 +52,18 @@ func (f *fakePodResourcesClient) List(
 
 // fakeNVMLDevice implements nvmlDevice for tests.
 type fakeNVMLDevice struct {
-	uuid    string
-	samples []nvml.ProcessUtilizationSample
-	ret     nvml.Return
+	uuid      string
+	modelName string
+	samples   []nvml.ProcessUtilizationSample
+	ret       nvml.Return
 }
 
 func (f *fakeNVMLDevice) GetUUID() (string, nvml.Return) {
 	return f.uuid, nvml.SUCCESS
+}
+
+func (f *fakeNVMLDevice) GetName() (string, nvml.Return) {
+	return f.modelName, nvml.SUCCESS
 }
 
 func (f *fakeNVMLDevice) GetProcessUtilization(_ uint64) ([]nvml.ProcessUtilizationSample, nvml.Return) {
@@ -158,7 +163,8 @@ func TestProcessPodCollector_EmitsMetricForSinglePod(t *testing.T) {
 	nvmlLib := &fakeNVMLLib{
 		devices: []nvmlDevice{
 			&fakeNVMLDevice{
-				uuid: gpuUUID,
+				uuid:      gpuUUID,
+				modelName: "NVIDIA A100",
 				samples: []nvml.ProcessUtilizationSample{
 					{Pid: 1234, SmUtil: smUtil},
 				},
@@ -178,7 +184,11 @@ func TestProcessPodCollector_EmitsMetricForSinglePod(t *testing.T) {
 
 	m := metricList[0]
 	assert.Equal(t, fmt.Sprintf("%d", smUtil), m.Value)
+	assert.Equal(t, "0", m.GPU)
+	assert.Equal(t, "UUID", m.UUID)
 	assert.Equal(t, gpuUUID, m.GPUUUID)
+	assert.Equal(t, "nvidia0", m.GPUDevice)
+	assert.Equal(t, "NVIDIA A100", m.GPUModelName)
 	assert.Equal(t, "test-host", m.Hostname)
 	assert.Equal(t, podName, m.Labels[podLabel])
 	assert.Equal(t, podNamespace, m.Labels[namespaceLabel])
