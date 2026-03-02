@@ -52,24 +52,18 @@ type processPodInfo struct {
 }
 
 // nvmlDeviceHandle is a minimal interface over nvml.Device to allow mocking in tests.
-//
-//go:generate go run -v go.uber.org/mock/mockgen -destination=../../mocks/pkg/collector/mock_nvml_device.go -package=collector -copyright_file=../../../hack/header.txt . nvmlDevice
 type nvmlDevice interface {
 	GetUUID() (string, nvml.Return)
 	GetProcessUtilization(lastSeenTimestamp uint64) ([]nvml.ProcessUtilizationSample, nvml.Return)
 }
 
 // nvmlLib is a minimal interface over the nvml package-level functions to allow mocking.
-//
-//go:generate go run -v go.uber.org/mock/mockgen -destination=../../mocks/pkg/collector/mock_nvml_lib.go -package=collector -copyright_file=../../../hack/header.txt . nvmlLib
 type nvmlLib interface {
 	DeviceGetCount() (int, nvml.Return)
 	DeviceGetHandleByIndex(index int) (nvmlDevice, nvml.Return)
 }
 
 // podResourcesClient is a minimal interface over the kubelet pod-resources gRPC client to allow mocking.
-//
-//go:generate go run -v go.uber.org/mock/mockgen -destination=../../mocks/pkg/collector/mock_pod_resources_client.go -package=collector -copyright_file=../../../hack/header.txt . podResourcesClient
 type podResourcesClient interface {
 	List(ctx context.Context, req *podresourcesv1.ListPodResourcesRequest, opts ...grpc.CallOption) (*podresourcesv1.ListPodResourcesResponse, error)
 }

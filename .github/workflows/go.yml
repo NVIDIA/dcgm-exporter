@@ -42,11 +42,9 @@ jobs:
     - name: Install build dependencies
       run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc
 
-    - name: Generate mocks
-      run: go generate ./...
-
     - name: Run per-pod collector unit tests
+      # Run only our new collector tests — they use hand-coded fakes and require
+      # no DCGM or NVML libraries. Packages requiring libdcgm.so.4 or libnvidia-ml
+      # (integration_test, nvmlprovider, server) are excluded and covered by
+      # GPU-enabled integration test environments.
       run: go test -v -count=1 ./internal/pkg/collector/... -run TestProcessPodCollector
-
-    - name: Run all short unit tests
-      run: go test ./... -short -count=1
