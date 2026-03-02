@@ -25,6 +25,7 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	podresourcesv1 "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -44,6 +45,7 @@ type fakePodResourcesClient struct {
 func (f *fakePodResourcesClient) List(
 	_ context.Context,
 	_ *podresourcesv1.ListPodResourcesRequest,
+	_ ...grpc.CallOption,
 ) (*podresourcesv1.ListPodResourcesResponse, error) {
 	return f.resp, f.err
 }

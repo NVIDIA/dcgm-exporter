@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
+	stdos "os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -71,7 +71,7 @@ type nvmlLib interface {
 //
 //go:generate go run -v go.uber.org/mock/mockgen -destination=../../mocks/pkg/collector/mock_pod_resources_client.go -package=collector -copyright_file=../../../hack/header.txt . podResourcesClient
 type podResourcesClient interface {
-	List(ctx context.Context, req *podresourcesv1.ListPodResourcesRequest) (*podresourcesv1.ListPodResourcesResponse, error)
+	List(ctx context.Context, req *podresourcesv1.ListPodResourcesRequest, opts ...grpc.CallOption) (*podresourcesv1.ListPodResourcesResponse, error)
 }
 
 // realNVMLLib wraps the real nvml package-level functions.
@@ -316,7 +316,7 @@ func (c *processPodCollector) podInfoFromCgroup(
 ) (processPodInfo, bool) {
 	cgroupPath := filepath.Join("/proc", fmt.Sprintf("%d", pid), "cgroup")
 
-	data, err := os.ReadFile(cgroupPath) //nolint:gosec // path is constructed from controlled input
+	data, err := stdos.ReadFile(cgroupPath) //nolint:gosec // path is constructed from controlled input
 	if err != nil {
 		// Process may have exited; this is not an error worth logging at warn level.
 		slog.Debug("could not read cgroup file",

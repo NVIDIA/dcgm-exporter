@@ -19,7 +19,6 @@ package collector
 import (
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
