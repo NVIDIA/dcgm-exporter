@@ -98,9 +98,17 @@ func NewProcessPodCollector(
 	hostname string,
 	config *appconfig.Config,
 ) (Collector, error) {
-	counter, err := findCounterByName(counterList, counters.DCGMExpSMUtilPerPod)
-	if err != nil {
-		return nil, fmt.Errorf("counter %s not found in counter list: %w", counters.DCGMExpSMUtilPerPod, err)
+	// This is a synthetic metric driven by NVML, not a DCGM field, so it does
+	// not need to appear in the metrics CSV. Use a built-in default; allow the
+	// user to override via the CSV for custom help text or PromType.
+	counter := counters.Counter{
+		FieldID:  0,
+		FieldName: counters.DCGMExpSMUtilPerPod,
+		PromType: "gauge",
+		Help:     "SM utilization attributed to a Kubernetes pod (CUDA time-slicing only)",
+	}
+	if csvCounter, csvErr := findCounterByName(counterList, counters.DCGMExpSMUtilPerPod); csvErr == nil {
+		counter = csvCounter
 	}
 
 	conn, cleanup, err := connectToPodResourcesSocket(config.PodResourcesKubeletSocket)
