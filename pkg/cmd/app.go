@@ -102,6 +102,7 @@ const (
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
+	CLIEnablePerPodGPUUtil              = "enable-per-pod-gpu-util"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -348,6 +349,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Interval for polling GPU bind/unbind events (DCGM recommends 1s)",
 			EnvVars: []string{"DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL"},
 			Value:   "1s",
+		},
+		&cli.BoolFlag{
+			Name:    CLIEnablePerPodGPUUtil,
+			Value:   false,
+			Usage:   "Enable per-pod GPU SM utilization metrics (dcgm_fi_dev_sm_util_per_pod) using NVML process utilization and kubelet pod-resources API. Intended for time-slicing workloads.",
+			EnvVars: []string{"DCGM_EXPORTER_ENABLE_PER_POD_GPU_UTIL"},
 		},
 	}
 
@@ -1103,6 +1110,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		DisableStartupValidate:    c.Bool(CLIDisableStartupValidate),
 		EnableGPUBindUnbindWatch:  c.Bool(CLIEnableGPUBindUnbindWatch),
 		GPUBindUnbindPollInterval: parseDuration(c.String(CLIGPUBindUnbindPollInterval), 1*time.Second),
+		EnablePerPodGPUUtil:       c.Bool(CLIEnablePerPodGPUUtil),
 	}, nil
 }
 

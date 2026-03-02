@@ -19,6 +19,7 @@ package collector
 import (
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -131,6 +132,24 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 
 		if err != nil {
 			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpP2PStatus, err))
+			os.Exit(1)
+		}
+
+		entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
+			entity:    dcgm.FE_GPU,
+			collector: newCollector,
+		})
+	}
+
+	if cf.config.EnablePerPodGPUUtil {
+		newCollector, err := NewProcessPodCollector(
+			cf.counterSet.ExporterCounters,
+			cf.hostname,
+			cf.config,
+		)
+		if err != nil {
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v",
+				counters.DCGMExpSMUtilPerPod, err))
 			os.Exit(1)
 		}
 

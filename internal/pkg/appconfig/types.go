@@ -76,4 +76,5 @@ type Config struct {
 	DisableStartupValidate           bool
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
+	EnablePerPodGPUUtil              bool          // Enable per-pod GPU SM utilization via NVML + pod-resources
 }
