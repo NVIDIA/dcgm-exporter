@@ -188,8 +188,9 @@ func hasNvidiaDRASlice(ctx context.Context, client kubernetes.Interface, useV1 b
 }
 
 // selectAPIVersion determines which API version to use by checking which one has
-// NVIDIA DRA ResourceSlices. If preferredVersion is provided (non-empty), it will be
-// validated and used if it has NVIDIA DRA slices, otherwise falls back to auto-detection.
+// NVIDIA DRA ResourceSlices. Auto-detects by checking v1 first, then v1beta1.
+// If preferredVersion is provided (non-empty), it will be validated and used if it has
+// NVIDIA DRA slices, otherwise falls back to auto-detection.
 // Returns "v1", "v1beta1", or an error if neither is available.
 func selectAPIVersion(ctx context.Context, client kubernetes.Interface, preferredVersion string) (string, error) {
 	// If a preferred version is explicitly configured, validate it has NVIDIA DRA slices
@@ -240,9 +241,9 @@ func selectAPIVersion(ctx context.Context, client kubernetes.Interface, preferre
 }
 
 // NewDRAResourceSliceManager creates a new DRA ResourceSlice manager.
-// If preferredAPIVersion is provided (non-empty), it will be used if it has NVIDIA DRA slices,
-// otherwise falls back to auto-detection. This allows users to configure the API version
-// to match the nvidia-dra-driver-gpu Helm chart's resourceApiVersion setting.
+// The API version is auto-detected by checking which version has NVIDIA DRA ResourceSlices.
+// If preferredAPIVersion is provided (non-empty), it will be validated and used if it has
+// NVIDIA DRA slices, otherwise falls back to auto-detection.
 func NewDRAResourceSliceManager(preferredAPIVersion string) (*DRAResourceSliceManager, error) {
 	client, err := kubeclient.GetKubeClient()
 	if err != nil {

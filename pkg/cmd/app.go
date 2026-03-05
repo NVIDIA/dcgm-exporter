@@ -99,7 +99,6 @@ const (
 	CLIDumpRetention                    = "dump-retention"
 	CLIDumpCompression                  = "dump-compression"
 	CLIKubernetesEnableDRA              = "kubernetes-enable-dra"
-	CLIKubernetesDRAResourceAPIVersion  = "kubernetes-dra-resource-api-version"
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
@@ -331,12 +330,6 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource Allocation (DRA) API.",
 			EnvVars: []string{"KUBERNETES_ENABLE_DRA"},
-		},
-		&cli.StringFlag{
-			Name:    CLIKubernetesDRAResourceAPIVersion,
-			Value:   "",
-			Usage:   "DRA ResourceSlice API version to use: 'v1', 'v1beta1', or empty for auto-detection. Should match the resourceApiVersion configured in nvidia-dra-driver-gpu Helm chart.",
-			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_DRA_RESOURCE_API_VERSION"},
 		},
 		&cli.BoolFlag{
 			Name:    CLIDisableStartupValidate,
@@ -1107,7 +1100,6 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 			Compression: c.Bool(CLIDumpCompression),
 		},
 		KubernetesEnableDRA:       c.Bool(CLIKubernetesEnableDRA),
-		KubernetesDRAResourceAPIVersion: c.String(CLIKubernetesDRAResourceAPIVersion),
 		DisableStartupValidate:    c.Bool(CLIDisableStartupValidate),
 		EnableGPUBindUnbindWatch:  c.Bool(CLIEnableGPUBindUnbindWatch),
 		GPUBindUnbindPollInterval: parseDuration(c.String(CLIGPUBindUnbindPollInterval), 1*time.Second),

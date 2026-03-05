@@ -139,13 +139,13 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	podMapper.podInformerSynced = podInformer.Informer().HasSynced
 
 	if c.KubernetesEnableDRA {
-		resourceSliceManager, err := NewDRAResourceSliceManager(c.KubernetesDRAResourceAPIVersion)
+		resourceSliceManager, err := NewDRAResourceSliceManager("")
 		if err != nil {
 			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
 			return podMapper
 		}
 		podMapper.ResourceSliceManager = resourceSliceManager
-		slog.Info("Started DRAResourceSliceManager", "api_version", c.KubernetesDRAResourceAPIVersion)
+		slog.Info("Started DRAResourceSliceManager with auto-detected API version")
 	}
 	return podMapper
 }
@@ -489,26 +489,18 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 					if processedPods[mappingKey][podContainerKey] {
 						continue
 					}
-						podInfo := p.createPodInfo(pod, container)
-						drInfo := DynamicResourceInfo{
-							ClaimName:      dr.GetClaimName(),
-							ClaimNamespace: dr.GetClaimNamespace(),
-							DriverName:     draDriverName,
-							PoolName:       draPoolName,
-							DeviceName:     draDeviceName,
-						}
-						if migInfo != nil {
-							drInfo.MIGInfo = migInfo
-							slog.Debug("Added MIG pod mapping",
-								"parentUUID", mappingKey,
-								"migDevice", migInfo.MIGDeviceUUID,
-								"migProfile", migInfo.Profile,
-								"pod", podContainerKey)
-						} else {
-							slog.Debug("Added GPU pod mapping",
-								"deviceUUID", mappingKey,
-								"pod", podContainerKey)
-						}
+					podInfo := p.createPodInfo(pod, container)
+					if drInfo.MIGInfo != nil {
+						slog.Debug("Added MIG pod mapping",
+							"parentUUID", mappingKey,
+							"migDevice", drInfo.MIGInfo.MIGDeviceUUID,
+							"migProfile", drInfo.MIGInfo.Profile,
+							"pod", podContainerKey)
+					} else {
+						slog.Debug("Added GPU pod mapping",
+							"deviceUUID", mappingKey,
+							"pod", podContainerKey)
+					}
 
 					podInfo.DynamicResources = drInfo
 					deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
