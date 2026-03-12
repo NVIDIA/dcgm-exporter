@@ -269,33 +269,37 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 				}
 
 				podInfos := deviceToPods[deviceID]
-				for _, pi := range podInfos {
-					metric, err := utils.DeepCopy(metrics[counter][j])
-					if err != nil {
-						return err
-					}
-					if !p.Config.UseOldNamespace {
-						metric.Attributes[podAttribute] = pi.Name
-						metric.Attributes[namespaceAttribute] = pi.Namespace
-						metric.Attributes[containerAttribute] = pi.Container
-					} else {
-						metric.Attributes[oldPodAttribute] = pi.Name
-						metric.Attributes[oldNamespaceAttribute] = pi.Namespace
-						metric.Attributes[oldContainerAttribute] = pi.Container
-					}
-					if p.Config.KubernetesEnablePodUID {
-						metric.Attributes[uidAttribute] = pi.UID
-					}
-					if pi.VGPU != "" {
-						metric.Attributes[vgpuAttribute] = pi.VGPU
-					}
+				if podInfos != nil {
+					for _, pi := range podInfos {
+						metric, err := utils.DeepCopy(metrics[counter][j])
+						if err != nil {
+							return err
+						}
+						if !p.Config.UseOldNamespace {
+							metric.Attributes[podAttribute] = pi.Name
+							metric.Attributes[namespaceAttribute] = pi.Namespace
+							metric.Attributes[containerAttribute] = pi.Container
+						} else {
+							metric.Attributes[oldPodAttribute] = pi.Name
+							metric.Attributes[oldNamespaceAttribute] = pi.Namespace
+							metric.Attributes[oldContainerAttribute] = pi.Container
+						}
+						if p.Config.KubernetesEnablePodUID {
+							metric.Attributes[uidAttribute] = pi.UID
+						}
+						if pi.VGPU != "" {
+							metric.Attributes[vgpuAttribute] = pi.VGPU
+						}
 
-					// Robustness: ensure no overlap between Labels and Attributes
-					for k := range metric.Attributes {
-						delete(metric.Labels, k)
-					}
+						// Robustness: ensure no overlap between Labels and Attributes
+						for k := range metric.Attributes {
+							delete(metric.Labels, k)
+						}
 
-					newmetrics = append(newmetrics, metric)
+						newmetrics = append(newmetrics, metric)
+					}
+				} else {
+					newmetrics = append(newmetrics, metrics[counter][j])
 				}
 			}
 			if len(newmetrics) > 0 {

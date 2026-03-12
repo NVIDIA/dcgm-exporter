@@ -1044,3 +1044,75 @@ func TestPodMapper_createPodInfo_WithInformer(t *testing.T) {
 	assert.Equal(t, "gpu-app", podInfo.Labels["app"], "Should retrieve labels from Informer")
 	assert.Equal(t, "production", podInfo.Labels["env"])
 }
+
+func TestProcessPodMapper_VirtualGPUs_PartialAllocation(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	// Setup mock gRPC server
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	// Two GPUs on the node
+	gpus := []string{"GPU-0", "GPU-1"}
+	// Only GPU-0 is allocated to a pod
+	allocatedGPUs := []string{"GPU-0"}
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, allocatedGPUs))
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	// Create PodMapper with Virtual GPUs enabled
+	podMapper := NewPodMapper(&appconfig.Config{
+		KubernetesVirtualGPUs:     true,
+		KubernetesGPUIdType:       appconfig.GPUUID,
+		PodResourcesKubeletSocket: socketPath,
+	})
+
+	// Setup metrics for both GPUs
+	metrics := collector.MetricsByCounter{}
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	for i, gpuUUID := range gpus {
+		metrics[counter] = append(metrics[counter], collector.Metric{
+			GPU:        fmt.Sprint(i),
+			GPUUUID:    gpuUUID,
+			Attributes: map[string]string{},
+			Counter:    counter,
+		})
+	}
+
+	// Setup mock device info
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockSystemInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+
+	// Process metrics
+	err := podMapper.Process(metrics, mockSystemInfo)
+	require.NoError(t, err)
+
+	// Verify that both GPUs are still present
+	assert.Len(t, metrics[counter], 2, "Expected 2 metrics, one for each GPU")
+
+	// Verify that GPU-0 has pod attributes and GPU-1 does not
+	foundGPU0 := false
+	foundGPU1 := false
+	for _, metric := range metrics[counter] {
+		switch metric.GPUUUID {
+		case "GPU-0":
+			foundGPU0 = true
+			assert.Contains(t, metric.Attributes, podAttribute, "GPU-0 should have pod attribute")
+		case "GPU-1":
+			foundGPU1 = true
+			assert.NotContains(t, metric.Attributes, podAttribute, "GPU-1 should NOT have pod attribute")
+		}
+	}
+	assert.True(t, foundGPU0, "Should have found GPU-0")
+	assert.True(t, foundGPU1, "Should have found GPU-1")
+}
