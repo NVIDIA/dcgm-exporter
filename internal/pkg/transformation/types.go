@@ -24,6 +24,7 @@ import (
 
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -43,6 +44,10 @@ type PodMapper struct {
 	Client               kubernetes.Interface
 	ResourceSliceManager *DRAResourceSliceManager
 	labelFilterCache     *LabelFilterCache
+	podInformerFactory   informers.SharedInformerFactory
+	podLister            corev1listers.PodLister
+	podInformerSynced    cache.InformerSynced
+	stopChan             chan struct{}
 }
 
 // LabelFilterCache provides efficient caching for label filtering decisions

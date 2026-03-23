@@ -17,7 +17,9 @@
 package transformation
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
+	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
@@ -380,16 +383,7 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pod := &v1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-pod",
-					Namespace: "default",
-					UID:       types.UID("test-uid-123"),
-					Labels:    tt.podLabels,
-				},
-			}
-
-			fakeClient := fake.NewSimpleClientset(pod)
+			fakeClient := fake.NewSimpleClientset()
 
 			config := &appconfig.Config{
 				KubernetesEnablePodLabels:        true,
@@ -402,12 +396,37 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 				labelFilterCache: newLabelFilterCache(config.KubernetesPodLabelAllowlistRegex, 1000),
 			}
 
-			metadata, err := podMapper.getPodMetadata("default", "test-pod")
-			require.NoError(t, err, "getPodMetadata should not return error")
-			require.NotNil(t, metadata, "metadata should not be nil")
+			setupMockInformer(t, podMapper, fakeClient)
 
-			assert.Equal(t, "test-uid-123", metadata.UID, "UID should match")
-			assert.Equal(t, tt.expectedLabels, metadata.Labels)
+			pod := &v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-pod",
+					Namespace: "default",
+					UID:       types.UID("test-uid-123"),
+					Labels:    tt.podLabels,
+				},
+			}
+
+			_, err := fakeClient.CoreV1().Pods("default").Create(context.Background(), pod, metav1.CreateOptions{})
+			require.NoError(t, err)
+
+			// Wait for informer sync
+			time.Sleep(100 * time.Millisecond)
+
+			// Create dummy PodResources input
+			podRes := &podresourcesapi.PodResources{
+				Name:      "test-pod",
+				Namespace: "default",
+				Containers: []*podresourcesapi.ContainerResources{
+					{Name: "test-container"},
+				},
+			}
+			containerRes := podRes.Containers[0]
+
+			podInfo := podMapper.createPodInfo(podRes, containerRes)
+
+			assert.Equal(t, "test-uid-123", podInfo.UID, "UID should match")
+			assert.Equal(t, tt.expectedLabels, podInfo.Labels)
 		})
 	}
 }
