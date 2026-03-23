@@ -85,19 +85,18 @@ func (m *perProcessMetrics) getAllPIDs() []uint32 {
 	return slices.Collect(maps.Keys(pidSet))
 }
 
-func (m *perProcessMetrics) getValueForMetric(fieldName string, pid uint32) (string, bool) {
+func (m *perProcessMetrics) getValueForMetric(fieldName string, pid uint32) (uint64, bool) {
 	switch fieldName {
 	case metricGPUUtil:
 		if util, ok := m.pidToSMUtil[pid]; ok {
-			return fmt.Sprintf("%d", util), true
+			return uint64(util), true
 		}
 	case metricFBUsed:
 		if mem, ok := m.pidToMemory[pid]; ok {
-			memMiB := mem / (1024 * 1024)
-			return fmt.Sprintf("%d", memMiB), true
+			return mem / (1024 * 1024), true
 		}
 	}
-	return "", false
+	return 0, false
 }
 
 type perProcessDataMap struct {

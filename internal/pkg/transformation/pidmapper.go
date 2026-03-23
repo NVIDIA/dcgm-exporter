@@ -18,8 +18,10 @@ package transformation
 
 import (
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/containerd/cgroups/v3"
 )
@@ -27,7 +29,8 @@ import (
 var podUIDRegex = regexp.MustCompile(`pod([a-f0-9_-]+)`)
 
 type pidToPodMapper struct {
-	pidToUID map[uint32]string
+	pidToUID       map[uint32]string
+	cgroupWarnOnce sync.Once
 }
 
 func newPIDToPodMapper() *pidToPodMapper {
@@ -87,6 +90,10 @@ func (m *pidToPodMapper) buildPIDToPodMap(pids []uint32, pods []PodInfo) map[uin
 	for _, pid := range pids {
 		uid, err := m.getPodUIDForPID(pid)
 		if err != nil {
+			slog.Debug("Failed to map PID to pod", "pid", pid, "error", err)
+			m.cgroupWarnOnce.Do(func() {
+				slog.Warn("Failed to map PID to pod, per-process metrics may be incomplete", "pid", pid, "error", err)
+			})
 			continue
 		}
 		if uid == "" {

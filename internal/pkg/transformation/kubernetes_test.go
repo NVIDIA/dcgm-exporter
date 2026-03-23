@@ -1000,6 +1000,36 @@ func TestBuildPodValueMap(t *testing.T) {
 			fieldName: metricGPUUtil,
 			expected:  map[string]string{"uid1": "50"},
 		},
+		{
+			name:     "multiple PIDs same pod - accumulates GPU util",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}, 1002: {UID: "uid1"}},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 30, 1002: 45},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{"uid1": "75"},
+		},
+		{
+			name:     "multiple PIDs same pod - accumulates FB used",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}, 1002: {UID: "uid1"}},
+			data: &perProcessMetrics{
+				pidToMemory: map[uint32]uint64{1001: 500 * 1024 * 1024, 1002: 300 * 1024 * 1024},
+			},
+			fieldName: metricFBUsed,
+			expected:  map[string]string{"uid1": "800"},
+		},
+		{
+			name: "mixed pods - some with multiple PIDs, some with single PID",
+			pidToPod: map[uint32]*PodInfo{
+				1001: {UID: "uid1"}, 1002: {UID: "uid1"},
+				2001: {UID: "uid2"},
+			},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 20, 1002: 30, 2001: 50},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{"uid1": "50", "uid2": "50"},
+		},
 	}
 
 	for _, tc := range tests {

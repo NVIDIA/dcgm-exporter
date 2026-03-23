@@ -147,49 +147,49 @@ func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 		name      string
 		fieldName string
 		pid       uint32
-		expected  string
+		expected  uint64
 		hasValue  bool
 	}{
 		{
 			name:      "GPU util",
 			fieldName: metricGPUUtil,
 			pid:       1001,
-			expected:  "50",
+			expected:  50,
 			hasValue:  true,
 		},
 		{
 			name:      "GPU util zero",
 			fieldName: metricGPUUtil,
 			pid:       1002,
-			expected:  "0",
+			expected:  0,
 			hasValue:  true,
 		},
 		{
 			name:      "FB used",
 			fieldName: metricFBUsed,
 			pid:       1001,
-			expected:  "1024",
+			expected:  1024,
 			hasValue:  true,
 		},
 		{
 			name:      "FB used zero",
 			fieldName: metricFBUsed,
 			pid:       1002,
-			expected:  "0",
+			expected:  0,
 			hasValue:  true,
 		},
 		{
 			name:      "unknown metric",
 			fieldName: "DCGM_FI_DEV_POWER_USAGE",
 			pid:       1001,
-			expected:  "",
+			expected:  0,
 			hasValue:  false,
 		},
 		{
 			name:      "unknown PID",
 			fieldName: metricGPUUtil,
 			pid:       9999,
-			expected:  "",
+			expected:  0,
 			hasValue:  false,
 		},
 	}
@@ -217,7 +217,7 @@ func TestPerProcessMetrics_EmptyMaps(t *testing.T) {
 
 	value, hasValue := metrics.getValueForMetric(metricGPUUtil, 1001)
 	assert.False(t, hasValue)
-	assert.Equal(t, "", value)
+	assert.Equal(t, uint64(0), value)
 }
 
 func TestPerProcessCollector_Collect(t *testing.T) {

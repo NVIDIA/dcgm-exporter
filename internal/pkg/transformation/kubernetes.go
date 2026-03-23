@@ -236,10 +236,14 @@ func buildPodValueMap(pidToPod map[uint32]*PodInfo, data *perProcessMetrics, fie
 	if data == nil {
 		return podValues
 	}
+	podAccum := make(map[string]uint64)
 	for pid, podInfo := range pidToPod {
 		if value, ok := data.getValueForMetric(fieldName, pid); ok {
-			podValues[podInfo.UID] = value
+			podAccum[podInfo.UID] += value
 		}
+	}
+	for uid, total := range podAccum {
+		podValues[uid] = fmt.Sprintf("%d", total)
 	}
 	return podValues
 }
