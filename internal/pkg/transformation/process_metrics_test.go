@@ -17,6 +17,7 @@
 package transformation
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -415,6 +416,84 @@ func TestPerProcessCollector_Collect(t *testing.T) {
 				assert.Len(t, result.deviceToPods, 2)
 				assert.Contains(t, result.deviceToPods, gpu0UUID)
 				assert.Contains(t, result.deviceToPods, gpu1UUID)
+			},
+		},
+		{
+			name: "GetDeviceProcessMemory error - still collects utilization",
+			setupMocks: func(ctrl *gomock.Controller) (nvmlprovider.NVML, deviceinfo.Provider) {
+				mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
+				mockNVML.EXPECT().GetDeviceProcessMemory(gpu0UUID).Return(nil, fmt.Errorf("nvml error"))
+				mockNVML.EXPECT().GetDeviceProcessUtilization(gpu0UUID).Return(map[uint32]uint32{1001: 50}, nil)
+
+				mockDevInfo := mockdeviceinfo.NewMockProvider(ctrl)
+				mockDevInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+				mockDevInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{UUID: gpu0UUID, GPU: 0},
+				}).AnyTimes()
+				return mockNVML, mockDevInfo
+			},
+			gpuDeviceMap: map[string]string{gpu0UUID: "nvidia0"},
+			deviceToPods: map[string][]PodInfo{
+				"nvidia0": {{Name: "test-pod", Namespace: "default", UID: podUID0, Container: "app"}},
+			},
+			pidToPod: map[uint32]*PodInfo{1001: pod0},
+			validate: func(t *testing.T, result *perProcessDataMap) {
+				assert.Contains(t, result.metrics, gpu0UUID)
+				assert.Nil(t, result.metrics[gpu0UUID].pidToMemory)
+				assert.Equal(t, uint32(50), result.metrics[gpu0UUID].pidToSMUtil[1001])
+			},
+		},
+		{
+			name: "GetDeviceProcessUtilization error - still collects memory",
+			setupMocks: func(ctrl *gomock.Controller) (nvmlprovider.NVML, deviceinfo.Provider) {
+				mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
+				mockNVML.EXPECT().GetDeviceProcessMemory(gpu0UUID).Return(map[uint32]uint64{1001: 1024}, nil)
+				mockNVML.EXPECT().GetDeviceProcessUtilization(gpu0UUID).Return(nil, fmt.Errorf("nvml error"))
+
+				mockDevInfo := mockdeviceinfo.NewMockProvider(ctrl)
+				mockDevInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+				mockDevInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{UUID: gpu0UUID, GPU: 0},
+				}).AnyTimes()
+				return mockNVML, mockDevInfo
+			},
+			gpuDeviceMap: map[string]string{gpu0UUID: "nvidia0"},
+			deviceToPods: map[string][]PodInfo{
+				"nvidia0": {{Name: "test-pod", Namespace: "default", UID: podUID0, Container: "app"}},
+			},
+			pidToPod: map[uint32]*PodInfo{1001: pod0},
+			validate: func(t *testing.T, result *perProcessDataMap) {
+				assert.Contains(t, result.metrics, gpu0UUID)
+				assert.Equal(t, uint64(1024), result.metrics[gpu0UUID].pidToMemory[1001])
+				assert.Nil(t, result.metrics[gpu0UUID].pidToSMUtil)
+			},
+		},
+		{
+			name: "GetAllMIGDevicesProcessMemory error - returns empty data for that GPU",
+			setupMocks: func(ctrl *gomock.Controller) (nvmlprovider.NVML, deviceinfo.Provider) {
+				mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
+				mockNVML.EXPECT().GetAllMIGDevicesProcessMemory(gpu0UUID).Return(nil, fmt.Errorf("nvml error"))
+
+				mockDevInfo := mockdeviceinfo.NewMockProvider(ctrl)
+				mockDevInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+				mockDevInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{UUID: gpu0UUID, GPU: 0},
+					MigEnabled: true,
+					GPUInstances: []deviceinfo.GPUInstanceInfo{
+						{Info: dcgm.MigEntityInfo{NvmlInstanceId: 1}, EntityId: 100},
+					},
+				}).AnyTimes()
+				return mockNVML, mockDevInfo
+			},
+			gpuDeviceMap: map[string]string{gpu0UUID: "nvidia0"},
+			deviceToPods: map[string][]PodInfo{
+				"0-1": {{Name: "mig-pod", Namespace: "default", UID: podUID0, Container: "app"}},
+			},
+			pidToPod: map[uint32]*PodInfo{},
+			validate: func(t *testing.T, result *perProcessDataMap) {
+				assert.Empty(t, result.metrics)
+				assert.Empty(t, result.pidToPod)
+				assert.Empty(t, result.deviceToPods)
 			},
 		},
 	}
