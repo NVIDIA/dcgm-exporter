@@ -245,7 +245,7 @@
         {
           "expr": "DCGM_FI_DEV_POWER_USAGE{instance=~\"$instance\", gpu=~\"$gpu\"}",
           "interval": "",
-          "legendFormat": "GPU {{gpu}}",
+          "legendFormat": "GPU {{gpu}} on {{hostname}}",
           "refId": "A"
         }
       ],
@@ -405,7 +405,7 @@
           "format": "time_series",
           "interval": "",
           "intervalFactor": 1,
-          "legendFormat": "GPU {{gpu}}",
+          "legendFormat": "GPU {{gpu}} on {{hostname}}",
           "refId": "A"
         }
       ],
@@ -496,7 +496,7 @@
         {
           "expr": "DCGM_FI_DEV_GPU_UTIL{instance=~\"$instance\", gpu=~\"$gpu\"}",
           "interval": "",
-          "legendFormat": "GPU {{gpu}}",
+          "legendFormat": "GPU {{gpu}} on {{hostname}}",
           "refId": "A"
         }
       ],
@@ -586,7 +586,7 @@
         {
           "expr": "DCGM_FI_DEV_FB_USED{instance=~\"$instance\", gpu=~\"$gpu\"}",
           "interval": "",
-          "legendFormat": "GPU {{gpu}}",
+          "legendFormat": "GPU {{gpu}} on {{hostname}}",
           "refId": "A"
         }
       ],
