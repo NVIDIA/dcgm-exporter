@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"runtime"
@@ -102,6 +103,7 @@ const (
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
+	CLIVSOCKPort                        = "vsock-port"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -348,6 +350,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Interval for polling GPU bind/unbind events (DCGM recommends 1s)",
 			EnvVars: []string{"DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL"},
 			Value:   "1s",
+		},
+		&cli.UintFlag{
+			Name:    CLIVSOCKPort,
+			Value:   0,
+			Usage:   "VSOCK port to listen on for host-guest communication (0 = disabled). Used to expose metrics to a hypervisor via virtio-vsock.",
+			EnvVars: []string{"DCGM_EXPORTER_VSOCK_PORT"},
 		},
 	}
 
@@ -1075,6 +1083,11 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		return nil, fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, dcgmLogLevel)
 	}
 
+	if c.Uint(CLIVSOCKPort) > math.MaxUint32 {
+		return nil, fmt.Errorf("vsock port must be in range 1-65535")
+	}
+	vsockPort := uint32(c.Uint(CLIVSOCKPort)) // #nosec G115
+
 	return &appconfig.Config{
 		CollectorsFile:                   c.String(CLIFieldsFile),
 		Address:                          c.String(CLIAddress),
@@ -1116,6 +1129,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		DisableStartupValidate:    c.Bool(CLIDisableStartupValidate),
 		EnableGPUBindUnbindWatch:  c.Bool(CLIEnableGPUBindUnbindWatch),
 		GPUBindUnbindPollInterval: parseDuration(c.String(CLIGPUBindUnbindPollInterval), 1*time.Second),
+		VSOCKPort:                 vsockPort,
 	}, nil
 }
 

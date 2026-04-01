@@ -76,4 +76,5 @@ type Config struct {
 	DisableStartupValidate           bool
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
+	VSOCKPort                        uint32        // VSOCK port to listen on (0 = disabled)
 }

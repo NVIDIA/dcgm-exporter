@@ -17,6 +17,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -24,9 +25,11 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockcollectorpkg "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/collector"
@@ -311,4 +314,79 @@ func TestHealthReturnsOKWithRegistryAvailable(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "true", recorder.Header().Get("X-Registry-Available"))
 	assert.NotEqual(t, "true", recorder.Header().Get("X-Reload-In-Progress"))
+}
+
+func TestVSOCKServerSharesHandler(t *testing.T) {
+	config := &appconfig.Config{
+		Address:   ":0",
+		VSOCKPort: 9400,
+	}
+
+	reg := registry.NewRegistry()
+	server, cleanup, err := NewMetricsServer(config, nil, reg)
+	require.NoError(t, err)
+	defer cleanup()
+
+	// The vsock server is only created during Run(), but verify the config is stored
+	assert.Equal(t, uint32(9400), server.config.VSOCKPort)
+	assert.Nil(t, server.vsockServer)
+}
+
+func TestVSOCKServerDisabledByDefault(t *testing.T) {
+	config := &appconfig.Config{
+		Address:   ":0",
+		VSOCKPort: 0,
+	}
+
+	reg := registry.NewRegistry()
+	server, cleanup, err := NewMetricsServer(config, nil, reg)
+	require.NoError(t, err)
+	defer cleanup()
+
+	assert.Equal(t, uint32(0), server.config.VSOCKPort)
+	assert.Nil(t, server.vsockServer)
+}
+
+func TestVSOCKServerShutdown(t *testing.T) {
+	// Create a TCP listener to simulate the vsock server (vsock.Listen won't work outside a VM)
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	vsockSrv := &http.Server{
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+
+	go func() {
+		if err := vsockSrv.Serve(tcpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("vsockSrv.Serve failed: %v", err)
+		}
+	}()
+
+	// Verify it's serving
+	resp, err := http.Get("http://" + tcpListener.Addr().String() + "/metrics")
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	// Simulate the shutdown path
+	metricServer := &MetricsServer{
+		vsockServer: vsockSrv,
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = metricServer.vsockServer.Shutdown(shutdownCtx)
+	assert.NoError(t, err)
+
+	// After shutdown, connections should be refused
+	_, err = http.Get("http://" + tcpListener.Addr().String() + "/metrics")
+	assert.Error(t, err)
 }

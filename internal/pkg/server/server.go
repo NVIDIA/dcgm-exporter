@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/mdlayher/vsock"
 	"github.com/prometheus/exporter-toolkit/web"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -201,6 +202,31 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 		}
 	}()
 
+	if s.config.VSOCKPort > 0 {
+		httpwg.Add(1)
+		go func() {
+			defer httpwg.Done()
+			l, err := vsock.Listen(s.config.VSOCKPort, nil)
+			if err != nil {
+				slog.Error("Failed to listen on vsock.",
+					slog.Uint64("port", uint64(s.config.VSOCKPort)),
+					slog.String(logging.ErrorKey, err.Error()))
+				return
+			}
+			defer l.Close()
+			slog.Info("Listening on vsock.", slog.Uint64("port", uint64(s.config.VSOCKPort)))
+
+			s.vsockServer = &http.Server{
+				Handler:      s.server.Handler,
+				ReadTimeout:  10 * time.Second,
+				WriteTimeout: 10 * time.Second,
+			}
+			if err := s.vsockServer.Serve(l); err != nil && err != http.ErrServerClosed {
+				slog.Error("VSOCK server error.", slog.String(logging.ErrorKey, err.Error()))
+			}
+		}()
+	}
+
 	httpwg.Add(1)
 	go func() {
 		defer httpwg.Done()
@@ -227,6 +253,11 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 	<-stop
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer shutdownCancel()
+	if s.vsockServer != nil {
+		if err := s.vsockServer.Shutdown(shutdownCtx); err != nil {
+			slog.Error("Failed to shutdown VSOCK server.", slog.String(logging.ErrorKey, err.Error()))
+		}
+	}
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Failed to shutdown HTTP server.", slog.String(logging.ErrorKey, err.Error()))
 		s.fatal()

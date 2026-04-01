@@ -34,6 +34,7 @@ type MetricsServer struct {
 	sync.RWMutex
 
 	server                 *http.Server
+	vsockServer            *http.Server
 	webConfig              *web.FlagConfig
 	metrics                string
 	registry               atomic.Pointer[registry.Registry]

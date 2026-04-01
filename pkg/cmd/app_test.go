@@ -367,3 +367,79 @@ func Test_contextToConfig_DumpConfig(t *testing.T) {
 		})
 	}
 }
+
+func Test_contextToConfig_VSOCKPort(t *testing.T) {
+	tests := []struct {
+		name         string
+		flags        map[string]string
+		expectedPort uint32
+	}{
+		{
+			name: "Default vsock port is 0 (disabled)",
+			flags: map[string]string{
+				CLIGPUDevices: "f",
+			},
+			expectedPort: 0,
+		},
+		{
+			name: "Custom vsock port",
+			flags: map[string]string{
+				CLIGPUDevices: "f",
+				CLIVSOCKPort:  "9400",
+			},
+			expectedPort: 9400,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := cli.NewApp()
+			app.Flags = []cli.Flag{
+				&cli.StringFlag{Name: CLIGPUDevices},
+				&cli.StringFlag{Name: CLISwitchDevices},
+				&cli.StringFlag{Name: CLICPUDevices},
+				&cli.StringFlag{Name: CLIDCGMLogLevel},
+				&cli.UintFlag{Name: CLIVSOCKPort},
+			}
+
+			set := flag.NewFlagSet("test", 0)
+
+			if _, ok := tt.flags[CLIGPUDevices]; !ok {
+				set.String(CLIGPUDevices, "f", "")
+			}
+			if _, ok := tt.flags[CLISwitchDevices]; !ok {
+				set.String(CLISwitchDevices, "f", "")
+			}
+			if _, ok := tt.flags[CLICPUDevices]; !ok {
+				set.String(CLICPUDevices, "f", "")
+			}
+			if _, ok := tt.flags[CLIDCGMLogLevel]; !ok {
+				set.String(CLIDCGMLogLevel, "NONE", "")
+			}
+			if _, ok := tt.flags[CLIVSOCKPort]; !ok {
+				set.Uint(CLIVSOCKPort, 0, "")
+			}
+
+			for name, value := range tt.flags {
+				for _, f := range app.Flags {
+					if f.Names()[0] == name {
+						switch f.(type) {
+						case *cli.StringFlag:
+							set.String(name, value, "")
+						case *cli.UintFlag:
+							if intVal, err := strconv.Atoi(value); err == nil && intVal >= 0 {
+								set.Uint(name, uint(intVal), "")
+							}
+						}
+						break
+					}
+				}
+			}
+
+			context := cli.NewContext(app, set, nil)
+			config, err := contextToConfig(context)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedPort, config.VSOCKPort)
+		})
+	}
+}
