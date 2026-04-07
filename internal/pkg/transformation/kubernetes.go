@@ -139,13 +139,17 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 	podMapper.podInformerSynced = podInformer.Informer().HasSynced
 
 	if c.KubernetesEnableDRA {
-		resourceSliceManager, err := NewDRAResourceSliceManager("")
+		resourceSliceManager, err := NewDRAResourceSliceManager()
 		if err != nil {
 			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
 			return podMapper
 		}
-		podMapper.ResourceSliceManager = resourceSliceManager
-		slog.Info("Started DRAResourceSliceManager with auto-detected API version")
+		if resourceSliceManager != nil {
+			podMapper.ResourceSliceManager = resourceSliceManager
+			slog.Info("Started DRAResourceSliceManager with auto-detected API version")
+		} else {
+			slog.Info("DRA is enabled but no NVIDIA DRA ResourceSlices were found; skipping DRAResourceSliceManager")
+		}
 	}
 	return podMapper
 }
