@@ -242,6 +242,78 @@ func TestHPCProcess(t *testing.T) {
 	}
 }
 
+func TestGetGPUFiles(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    []string
+		expected []string
+	}{
+		{
+			name:     "plain GPU IDs",
+			files:    []string{"0", "1", "42"},
+			expected: []string{"0", "1", "42"},
+		},
+		{
+			name:     "MIG GPU.instance IDs",
+			files:    []string{"0.0", "2.1", "3.10"},
+			expected: []string{"0.0", "2.1", "3.10"},
+		},
+		{
+			name:     "mixed valid files",
+			files:    []string{"0", "1", "2.0", "3.1"},
+			expected: []string{"0", "1", "2.0", "3.1"},
+		},
+		{
+			name:     "rejects non-numeric names",
+			files:    []string{"foo", "bar.txt", ".gitkeep"},
+			expected: nil,
+		},
+		{
+			name:     "rejects float-like strings",
+			files:    []string{"1e5", "NaN", "Inf", "+3", "-2", ".5"},
+			expected: nil,
+		},
+		{
+			name:     "rejects too many dots",
+			files:    []string{"1.2.3", "0.1.2"},
+			expected: nil,
+		},
+		{
+			name:     "mixed valid and invalid",
+			files:    []string{"0", "NaN", "2.0", "foo", "1e5", "3"},
+			expected: []string{"0", "2.0", "3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mOS := mockos.NewMockOS(ctrl)
+
+			var dirEntries []fs.DirEntry
+			for _, name := range tt.files {
+				mFileInfo := mockos.NewMockFileInfo(ctrl)
+				mFileInfo.EXPECT().IsDir().Return(false).AnyTimes()
+
+				mDirEntry := mockos.NewMockDirEntry(ctrl)
+				mDirEntry.EXPECT().Info().Return(mFileInfo, nil).AnyTimes()
+				mDirEntry.EXPECT().Name().Return(name).AnyTimes()
+
+				dirEntries = append(dirEntries, mDirEntry)
+			}
+
+			mOS.EXPECT().ReadDir(gomock.Eq("/test/dir")).Return(dirEntries, nil)
+
+			os = mOS
+			defer func() { os = osinterface.RealOS{} }()
+
+			result, err := getGPUFiles("/test/dir")
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestHPCName(t *testing.T) {
 	assert.Equal(t, "hpcMapper", newHPCMapper(&appconfig.Config{}).Name())
 }
