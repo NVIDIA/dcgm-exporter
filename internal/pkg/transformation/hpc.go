@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	sysOS "os"
 	"path"
-	"strconv"
+	"regexp"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
@@ -160,6 +160,10 @@ func readFile(path string) ([]string, error) {
 	return jobs, nil
 }
 
+// validGPUFile matches Slurm job mapping filenames: plain GPU IDs (e.g. "0", "1")
+// or MIG instance IDs in <GPU_ID>.<GPU_INSTANCE_ID> format (e.g. "2.0", "3.10").
+var validGPUFile = regexp.MustCompile(`^\d+(\.\d+)?$`)
+
 func getGPUFiles(dirPath string) ([]string, error) {
 	files, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -182,8 +186,7 @@ func getGPUFiles(dirPath string) ([]string, error) {
 			continue // Skip directories
 		}
 
-		_, err = strconv.ParseFloat(file.Name(), 64)
-		if err != nil {
+		if !validGPUFile.MatchString(file.Name()) {
 			slog.Debug(fmt.Sprintf("HPC mapper: file %q name doesn't match with <GPU_ID> or <GPU_ID>.<GPU_INSTANCE_ID> convention", file.Name()))
 			continue
 		}
