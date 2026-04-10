@@ -41,6 +41,7 @@ type MetricsServer struct {
 	transformations        []transformation.Transform
 	deviceWatchListManager devicewatchlistmanager.Manager
 	fileDumper             *debug.FileDumper
+	exitFn                 func(int)
 
 	reloadInProgress atomic.Bool
 }

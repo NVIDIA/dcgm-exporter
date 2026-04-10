@@ -72,6 +72,7 @@ func NewMetricsServer(
 		fileDumper:             fileDumper,
 	}
 
+	serverv1.exitFn = os.Exit
 	serverv1.registry.Store(registry)
 	serverv1.reloadInProgress.Store(false)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +179,7 @@ func (s *MetricsServer) IsReloadInProgress() bool {
 }
 
 func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
+	errCh := make(chan error, 1)
 	var httpwg sync.WaitGroup
 	httpwg.Add(1)
 	go func() {
@@ -196,8 +198,7 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 		}
 
 		if err := web.ListenAndServe(s.server, s.webConfig, slog.Default()); err != nil && err != http.ErrServerClosed {
-			slog.Error("Failed to Listen and Server HTTP server.", slog.String(logging.ErrorKey, err.Error()))
-			os.Exit(1)
+			errCh <- err
 		}
 	}()
 
@@ -224,7 +225,13 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 		}
 	}()
 
-	<-stop
+	select {
+	case <-stop:
+	case err := <-errCh:
+		slog.Error("Failed to start HTTP server", slog.String(logging.ErrorKey, err.Error()))
+		s.fatal()
+		return
+	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer shutdownCancel()
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
@@ -239,6 +246,10 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 }
 
 func (s *MetricsServer) fatal() {
+	if s.exitFn != nil {
+		s.exitFn(1)
+		return
+	}
 	os.Exit(1)
 }
 

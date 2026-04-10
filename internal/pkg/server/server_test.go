@@ -17,6 +17,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -24,8 +25,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 
@@ -311,4 +314,40 @@ func TestHealthReturnsOKWithRegistryAvailable(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "true", recorder.Header().Get("X-Registry-Available"))
 	assert.NotEqual(t, "true", recorder.Header().Get("X-Reload-In-Progress"))
+}
+
+func TestRunExitsWhenListenFails(t *testing.T) {
+	// Bind a port so ListenAndServe fails with "address already in use"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to bind port: %v", err)
+	}
+	defer ln.Close()
+	addr := ln.Addr().String()
+
+	falseVal := false
+	emptyStr := ""
+	ms := &MetricsServer{
+		server: &http.Server{Addr: addr, Handler: http.NewServeMux()},
+		webConfig: &web.FlagConfig{
+			WebListenAddresses: &[]string{addr},
+			WebSystemdSocket:   &falseVal,
+			WebConfigFile:      &emptyStr,
+		},
+		config: &appconfig.Config{},
+	}
+
+	exitCh := make(chan int, 1)
+	ms.exitFn = func(code int) { exitCh <- code }
+
+	stop := make(chan interface{})
+	go ms.Run(context.Background(), stop)
+
+	select {
+	case code := <-exitCh:
+		assert.Equal(t, 1, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for exit")
+	}
+	close(stop)
 }
