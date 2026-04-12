@@ -243,9 +243,9 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// TestVersionSelection_V1ServedButNoSlices_V1Beta1HasSlices tests that when v1 is served
-// but returns 0 GPU slices, and v1beta1 returns GPU slices, we choose v1beta1.
-func TestVersionSelection_V1ServedButNoSlices_V1Beta1HasSlices(t *testing.T) {
+// TestVersionSelection_V1Preferred_NoSlices_ReturnEmpty tests that when v1 is preferred,
+// we do not fall back to v1beta1.
+func TestVersionSelection_V1Preferred_NoSlices_ReturnEmpty(t *testing.T) {
 	// Create empty v1 store (v1 served but no GPU slices)
 	v1Store := newDRAIndexer()
 
@@ -277,14 +277,14 @@ func TestVersionSelection_V1ServedButNoSlices_V1Beta1HasSlices(t *testing.T) {
 	v1beta1Store.Add(v1beta1Slice)
 
 	m := &DRAResourceSliceManager{
-		v1Informer:      &testInformer{store: v1Store},
-		v1beta1Informer: &testInformer{store: v1beta1Store},
+		v1Informer:          &testInformer{store: v1Store},
+		v1beta1Informer:     &testInformer{store: v1beta1Store},
+		preferredAPIVersion: "v1",
 	}
 
-	// GetDeviceInfo should use v1beta1 since v1 has no slices
+	// GetDeviceInfo should not fall back to v1beta1 when v1 is preferred
 	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
-	require.NotEmpty(t, uuid, "expected UUID to be found from v1beta1")
-	assert.Equal(t, "GPU-UUID-0", uuid)
+	assert.Empty(t, uuid, "expected no UUID when preferred version has no slices")
 	assert.Nil(t, migInfo, "expected no MIG info for GPU device")
 }
 
@@ -344,8 +344,9 @@ func TestVersionSelection_BothServedAndBothHaveObjects_PreferV1(t *testing.T) {
 	v1beta1Store.Add(v1beta1Slice)
 
 	m := &DRAResourceSliceManager{
-		v1Informer:      &testInformer{store: v1Store},
-		v1beta1Informer: &testInformer{store: v1beta1Store},
+		v1Informer:          &testInformer{store: v1Store},
+		v1beta1Informer:     &testInformer{store: v1beta1Store},
+		preferredAPIVersion: "v1",
 	}
 
 	// GetDeviceInfo should prefer v1 since both have slices
