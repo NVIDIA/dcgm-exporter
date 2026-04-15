@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	resourcev1 "k8s.io/api/resource/v1"
@@ -130,34 +129,6 @@ func (a *v1beta1DeviceAdapter) GetAttribute(key string) string {
 	return ""
 }
 
-// hasNvidiaDRASlice checks if there are any ResourceSlices with NVIDIA DRA driver
-// by listing ResourceSlices for the given API version.
-func hasNvidiaDRASlice(ctx context.Context, client kubernetes.Interface, useV1 bool) (bool, error) {
-	if useV1 {
-		resourceSlicesList, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return false, err
-		}
-		for _, s := range resourceSlicesList.Items {
-			if s.Spec.Driver == DRAGPUDriverName {
-				return true, nil
-			}
-		}
-		return false, nil
-	} else {
-		resourceSlicesList, err := client.ResourceV1beta1().ResourceSlices().List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return false, err
-		}
-		for _, s := range resourceSlicesList.Items {
-			if s.Spec.Driver == DRAGPUDriverName {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-}
-
 func supportsResourceSliceGV(client kubernetes.Interface, groupVersion string) bool {
 	resources, err := client.Discovery().ServerResourcesForGroupVersion(groupVersion)
 	if err != nil {
@@ -167,8 +138,8 @@ func supportsResourceSliceGV(client kubernetes.Interface, groupVersion string) b
 	}
 
 	for _, r := range resources.APIResources {
-		// Be lenient: match both "resourceslices" and any subresource variants.
-		if strings.HasPrefix(r.Name, "resourceslices") {
+		// Match the primary resource only (not subresources like "resourceslices/status").
+		if r.Name == "resourceslices" {
 			return true
 		}
 	}
@@ -264,12 +235,32 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 
 	// Only keep the manager if the selected API has NVIDIA DRA slices.
 	useV1 := selected == "v1"
-	hasSlices, listErr := hasNvidiaDRASlice(ctx, client, useV1)
-	if listErr != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to list ResourceSlices for %s: %v", selected, listErr)
+	var gpuSliceCount int
+	if useV1 {
+		resourceSlicesList, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to list ResourceSlices for %s: %v", selected, err)
+		}
+		items := make([]interface{}, 0, len(resourceSlicesList.Items))
+		for i := range resourceSlicesList.Items {
+			items = append(items, &resourceSlicesList.Items[i])
+		}
+		gpuSliceCount = countGPUSlices(items)
+	} else {
+		resourceSlicesList, err := client.ResourceV1beta1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to list ResourceSlices for %s: %v", selected, err)
+		}
+		items := make([]interface{}, 0, len(resourceSlicesList.Items))
+		for i := range resourceSlicesList.Items {
+			items = append(items, &resourceSlicesList.Items[i])
+		}
+		gpuSliceCount = countGPUSlices(items)
 	}
-	if !hasSlices {
+
+	if gpuSliceCount == 0 {
 		slog.Warn("No NVIDIA DRA ResourceSlices found; DRA labels will not be available", "apiVersion", selected)
 		m.Stop()
 		return nil, nil
