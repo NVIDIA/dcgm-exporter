@@ -154,33 +154,67 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		return nil, fmt.Errorf("error getting kube client: %w", err)
 	}
 
-	// Decide which API version is served. Prefer v1 when available, otherwise v1beta1.
-	// We start a single informer for the selected version to avoid waiting on an API
-	// that isn't served by the cluster.
+	// Decide which API version to use.
+	// Prefer v1 only when it actually has NVIDIA DRA ResourceSlices; otherwise fall back
+	// to v1beta1 when that version has NVIDIA DRA ResourceSlices.
 	const (
 		resourceGVV1      = "resource.k8s.io/v1"
 		resourceGVV1beta1 = "resource.k8s.io/v1beta1"
 	)
 
+	v1Served := supportsResourceSliceGV(client, resourceGVV1)
+	v1beta1Served := supportsResourceSliceGV(client, resourceGVV1beta1)
+	if !v1Served && !v1beta1Served {
+		slog.Warn("Neither resource.k8s.io/v1 nor v1beta1 ResourceSlice API is served; DRA labels will not be available")
+		return nil, nil
+	}
+
+	// Determine which served API version actually has NVIDIA DRA ResourceSlices.
+	ctx := context.Background()
+	v1HasNvidiaSlices := false
+	if v1Served {
+		resourceSlicesList, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list ResourceSlices for v1: %v", err)
+		}
+		items := make([]interface{}, 0, len(resourceSlicesList.Items))
+		for i := range resourceSlicesList.Items {
+			items = append(items, &resourceSlicesList.Items[i])
+		}
+		v1HasNvidiaSlices = countGPUSlices(items) > 0
+	}
+
+	v1beta1HasNvidiaSlices := false
+	if v1beta1Served {
+		resourceSlicesList, err := client.ResourceV1beta1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list ResourceSlices for v1beta1: %v", err)
+		}
+		items := make([]interface{}, 0, len(resourceSlicesList.Items))
+		for i := range resourceSlicesList.Items {
+			items = append(items, &resourceSlicesList.Items[i])
+		}
+		v1beta1HasNvidiaSlices = countGPUSlices(items) > 0
+	}
+
 	var selected string
 	switch {
-	case supportsResourceSliceGV(client, resourceGVV1):
+	case v1HasNvidiaSlices:
 		selected = "v1"
-	case supportsResourceSliceGV(client, resourceGVV1beta1):
+	case v1beta1HasNvidiaSlices:
 		selected = "v1beta1"
 	default:
-		slog.Warn("Neither resource.k8s.io/v1 nor v1beta1 ResourceSlice API is served; DRA labels will not be available")
+		slog.Warn("No NVIDIA DRA ResourceSlices found; DRA labels will not be available")
 		return nil, nil
 	}
 
 	factory := informers.NewSharedInformerFactory(client, informerResyncPeriod)
 
-	var v1Informer cache.SharedIndexInformer
-	var v1beta1Informer cache.SharedIndexInformer
+	var informer cache.SharedIndexInformer
 	switch selected {
 	case "v1":
-		v1Informer = factory.Resource().V1().ResourceSlices().Informer()
-		err = v1Informer.AddIndexers(cache.Indexers{
+		informer = factory.Resource().V1().ResourceSlices().Informer()
+		err = informer.AddIndexers(cache.Indexers{
 			"poolName": func(obj interface{}) ([]string, error) {
 				rs, ok := obj.(*resourcev1.ResourceSlice)
 				if !ok {
@@ -193,8 +227,8 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 			return nil, fmt.Errorf("error adding pool indexer to v1 ResourceSlice informer: %w", err)
 		}
 	case "v1beta1":
-		v1beta1Informer = factory.Resource().V1beta1().ResourceSlices().Informer()
-		err = v1beta1Informer.AddIndexers(cache.Indexers{
+		informer = factory.Resource().V1beta1().ResourceSlices().Informer()
+		err = informer.AddIndexers(cache.Indexers{
 			"poolName": func(obj interface{}) ([]string, error) {
 				rs, ok := obj.(*resourcev1beta1.ResourceSlice)
 				if !ok {
@@ -212,9 +246,12 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 
 	m := &DRAResourceSliceManager{
 		factory:             factory,
-		v1Informer:          v1Informer,
-		v1beta1Informer:     v1beta1Informer,
 		preferredAPIVersion: selected,
+	}
+	if selected == "v1" {
+		m.v1Informer = informer
+	} else {
+		m.v1beta1Informer = informer
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -222,48 +259,10 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 	factory.Start(ctx.Done())
 
 	// Wait for cache sync on the selected informer.
-	var synced bool
-	if m.v1Informer != nil {
-		synced = cache.WaitForCacheSync(ctx.Done(), m.v1Informer.HasSynced)
-	} else {
-		synced = cache.WaitForCacheSync(ctx.Done(), m.v1beta1Informer.HasSynced)
-	}
+	synced := cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
 	if !synced {
 		cancel()
 		return nil, fmt.Errorf("ResourceSlice informer cache sync failed")
-	}
-
-	// Only keep the manager if the selected API has NVIDIA DRA slices.
-	useV1 := selected == "v1"
-	var gpuSliceCount int
-	if useV1 {
-		resourceSlicesList, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to list ResourceSlices for %s: %v", selected, err)
-		}
-		items := make([]interface{}, 0, len(resourceSlicesList.Items))
-		for i := range resourceSlicesList.Items {
-			items = append(items, &resourceSlicesList.Items[i])
-		}
-		gpuSliceCount = countGPUSlices(items)
-	} else {
-		resourceSlicesList, err := client.ResourceV1beta1().ResourceSlices().List(ctx, metav1.ListOptions{})
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("failed to list ResourceSlices for %s: %v", selected, err)
-		}
-		items := make([]interface{}, 0, len(resourceSlicesList.Items))
-		for i := range resourceSlicesList.Items {
-			items = append(items, &resourceSlicesList.Items[i])
-		}
-		gpuSliceCount = countGPUSlices(items)
-	}
-
-	if gpuSliceCount == 0 {
-		slog.Warn("No NVIDIA DRA ResourceSlices found; DRA labels will not be available", "apiVersion", selected)
-		m.Stop()
-		return nil, nil
 	}
 
 	slog.Info("ResourceSlice API informer synced successfully", "apiVersion", selected)
@@ -310,7 +309,7 @@ func (m *DRAResourceSliceManager) getV1DeviceInfo(pool, device string) (string, 
 		return "", nil
 	}
 
-	return m.getDeviceInfoFromItems(pool, device, items)
+	return m.getDeviceInfoFromResourceSliceItems(pool, device, items)
 }
 
 func (m *DRAResourceSliceManager) getV1beta1DeviceInfo(pool, device string) (string, *DRAMigDeviceInfo) {
@@ -324,10 +323,13 @@ func (m *DRAResourceSliceManager) getV1beta1DeviceInfo(pool, device string) (str
 		return "", nil
 	}
 
-	return m.getDeviceInfoFromItems(pool, device, items)
+	return m.getDeviceInfoFromResourceSliceItems(pool, device, items)
 }
 
-func (m *DRAResourceSliceManager) getDeviceInfoFromItems(pool, device string, items []interface{}) (string, *DRAMigDeviceInfo) {
+// getDeviceInfoFromResourceSliceItems resolves device UUIDs/MIG info from a set of
+// ResourceSlice objects. It does not select an API version — callers already do
+// that by choosing which informer indexer to query.
+func (m *DRAResourceSliceManager) getDeviceInfoFromResourceSliceItems(pool, device string, items []interface{}) (string, *DRAMigDeviceInfo) {
 	// Search for the device in the selected slices
 	for _, item := range items {
 		var adapter resourceSliceAdapter
@@ -406,12 +408,8 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 	case "v1beta1":
 		return m.getV1beta1DeviceInfo(pool, device)
 	default:
-		// Be defensive if the manager is constructed manually in tests.
-		uuid, mig := m.getV1DeviceInfo(pool, device)
-		if uuid != "" {
-			return uuid, mig
-		}
-		return m.getV1beta1DeviceInfo(pool, device)
+		slog.Error("Unsupported preferred ResourceSlice API version", "apiVersion", m.preferredAPIVersion)
+		return "", nil
 	}
 }
 

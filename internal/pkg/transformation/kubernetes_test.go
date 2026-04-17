@@ -724,7 +724,8 @@ func TestPodDRAInfo(t *testing.T) {
 			// Create test informer backed by the indexer.
 			testInformer := &testInformerForDRA{store: store}
 			draMgr := &DRAResourceSliceManager{
-				v1Informer: testInformer,
+				v1Informer:          testInformer,
+				preferredAPIVersion: "v1",
 			}
 
 			pm := &PodMapper{

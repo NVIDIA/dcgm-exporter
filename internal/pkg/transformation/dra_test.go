@@ -141,7 +141,8 @@ func TestGetDeviceInfo_GPUDevice(t *testing.T) {
 	store.Add(slice)
 
 	m := &DRAResourceSliceManager{
-		v1Informer: &testInformer{store: store},
+		v1Informer:          &testInformer{store: store},
+		preferredAPIVersion: "v1",
 	}
 
 	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
@@ -179,7 +180,8 @@ func TestGetDeviceInfo_MIGDevice(t *testing.T) {
 	store.Add(slice)
 
 	m := &DRAResourceSliceManager{
-		v1Informer: &testInformer{store: store},
+		v1Informer:          &testInformer{store: store},
+		preferredAPIVersion: "v1",
 	}
 
 	parentUUID, migInfo := m.GetDeviceInfo("gpu-pool", "mig0")
@@ -196,7 +198,8 @@ func TestGetDeviceInfo_NotFound(t *testing.T) {
 	store := newDRAIndexer()
 
 	m := &DRAResourceSliceManager{
-		v1Informer: &testInformer{store: store},
+		v1Informer:          &testInformer{store: store},
+		preferredAPIVersion: "v1",
 	}
 
 	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
@@ -231,7 +234,8 @@ func TestGetDeviceInfo_WrongPool(t *testing.T) {
 	store.Add(slice)
 
 	m := &DRAResourceSliceManager{
-		v1Informer: &testInformer{store: store},
+		v1Informer:          &testInformer{store: store},
+		preferredAPIVersion: "v1",
 	}
 
 	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
@@ -354,4 +358,66 @@ func TestVersionSelection_BothServedAndBothHaveObjects_PreferV1(t *testing.T) {
 	require.NotEmpty(t, uuid, "expected UUID to be found from v1")
 	assert.Equal(t, "GPU-UUID-V1", uuid, "should prefer v1 when both have slices")
 	assert.Nil(t, migInfo, "expected no MIG info for GPU device")
+}
+
+func TestGetDeviceInfo_InvalidPreferredVersion_ReturnsEmpty(t *testing.T) {
+	v1Store := newDRAIndexer()
+	v1Slice := &resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "v1-slice",
+			Namespace: "default",
+		},
+		Spec: resourcev1.ResourceSliceSpec{
+			Driver: DRAGPUDriverName,
+			Pool: resourcev1.ResourcePool{
+				Name: "gpu-pool",
+			},
+			Devices: []resourcev1.Device{
+				{
+					Name: "gpu0",
+					Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+						"type": {StringValue: stringPtr("gpu")},
+						"uuid": {StringValue: stringPtr("GPU-UUID-V1")},
+					},
+				},
+			},
+		},
+	}
+	v1Store.Add(v1Slice)
+
+	v1beta1Store := newDRAIndexer()
+	v1beta1Slice := &resourcev1beta1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "v1beta1-slice",
+			Namespace: "default",
+		},
+		Spec: resourcev1beta1.ResourceSliceSpec{
+			Driver: DRAGPUDriverName,
+			Pool: resourcev1beta1.ResourcePool{
+				Name: "gpu-pool",
+			},
+			Devices: []resourcev1beta1.Device{
+				{
+					Name: "gpu0",
+					Basic: &resourcev1beta1.BasicDevice{
+						Attributes: map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute{
+							"type": {StringValue: stringPtr("gpu")},
+							"uuid": {StringValue: stringPtr("GPU-UUID-V1BETA1")},
+						},
+					},
+				},
+			},
+		},
+	}
+	v1beta1Store.Add(v1beta1Slice)
+
+	m := &DRAResourceSliceManager{
+		v1Informer:          &testInformer{store: v1Store},
+		v1beta1Informer:     &testInformer{store: v1beta1Store},
+		preferredAPIVersion: "invalid",
+	}
+
+	uuid, migInfo := m.GetDeviceInfo("gpu-pool", "gpu0")
+	assert.Empty(t, uuid, "expected no UUID when preferred version is invalid")
+	assert.Nil(t, migInfo, "expected no MIG info when preferred version is invalid")
 }
