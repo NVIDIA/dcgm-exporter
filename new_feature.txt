@@ -1,0 +1,54 @@
+## 概述
+
+在多人共享的裸金属 GPU 服务器上，通常难以了解每个用户实际占用了多少 GPU 资源。本项目基于 Nvidia 官方的 dcgm-exporter，
+针对DCGM_FI_DEV_GPU_UTIL实现了 GPU 利用率统计功能。
+
+## GPU 利用率统计规则
+
+### 用户标签来源（仅适用于 DCGM_FI_DEV_GPU_UTIL）
+
+| 标签 | 来源 | 说明 |
+|------|------|------|
+| `USER` | `/proc/<PID>/status` → UID → 用户名 | 自动获取，无需手动设置 |
+| `STUDIO` | 服务器级配置（静态标签） | 由管理员在配置文件统一设置 |
+| `PROJECT` | `/proc/<PID>/environ` | 从进程环境变量动态读取 |
+
+### 加权分配算法
+
+当多个用户共享同一张 GPU 时，按**进程数加权**分配 GPU 利用率：
+
+```
+用户利用率 = (该用户的进程数 / GPU 上的总进程数) × GPU 实际利用率
+```
+
+---
+
+## 示例
+
+### 示例 1：单用户独占（GPU_UTIL 指标）
+
+```bash
+PROJECT=llm-training python train.py
+```
+
+```
+DCGM_FI_DEV_GPU_UTIL{gpu="0",...,USER="alice",PROJECT="llm-training"} 85
+DCGM_FI_DEV_GPU_TEMP{gpu="0",UUID="GPU-abc",modelName="A100",Hostname="node1"} 72
+DCGM_FI_DEV_POWER_USAGE{gpu="0",UUID="GPU-abc",modelName="A100",Hostname="node1"} 320.0
+```
+
+### 示例 2：两用户共享，进程数不等
+
+alice 运行 3 个进程，bob 运行 1 个，GPU 利用率 80%：
+
+```
+DCGM_FI_DEV_GPU_UTIL{...,USER="alice",PROJECT="proj-a"} 60   # 3/4 × 80%
+DCGM_FI_DEV_GPU_UTIL{...,USER="bob",PROJECT="proj-b"}   20   # 1/4 × 80%
+```
+
+### 示例 3：GPU 空闲
+
+```
+DCGM_FI_DEV_GPU_UTIL{...,USER="none",PROJECT="none"} 0
+DCGM_FI_DEV_GPU_TEMP{gpu="0",...} 42
+```
