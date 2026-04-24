@@ -387,3 +387,113 @@ server:
 		})
 	}
 }
+
+// Test_contextToConfig_MissingConfigFileIsFatal covers feature 001-multi-user-gpu-util
+// FR-011 / Clarification Q4: when --config points at a non-existent path,
+// contextToConfig must fail with the exact "config.yaml not found at <path>"
+// message so the operator sees an unambiguous hint.
+func Test_contextToConfig_MissingConfigFileIsFatal(t *testing.T) {
+	app := cli.NewApp()
+	app.Flags = []cli.Flag{
+		&cli.StringFlag{Name: CLIGPUDevices},
+		&cli.StringFlag{Name: CLISwitchDevices},
+		&cli.StringFlag{Name: CLICPUDevices},
+		&cli.StringFlag{Name: CLIDCGMLogLevel},
+		&cli.StringFlag{Name: CLIConfig},
+	}
+	set := flag.NewFlagSet("test", 0)
+	set.String(CLIGPUDevices, "f", "")
+	set.String(CLISwitchDevices, "f", "")
+	set.String(CLICPUDevices, "f", "")
+	set.String(CLIDCGMLogLevel, "NONE", "")
+	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	set.String(CLIConfig, missing, "")
+
+	ctx := cli.NewContext(app, set, nil)
+	_, err := contextToConfig(ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "config.yaml not found at "+missing)
+}
+
+// Test_contextToConfig_CLIOverridesYAMLAddress covers feature 001-multi-user-gpu-util
+// FR-011 + Clarification Q5: when both --address (CLI) and server.port
+// (YAML) are set, the CLI flag wins.
+func Test_contextToConfig_CLIOverridesYAMLAddress(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(tmpCfg, []byte(`
+labels:
+  static:
+    - name: STUDIO
+      value: ai-lab
+  env:
+    - name: PROJECT
+server:
+  port: ":19400"
+`), 0o600))
+
+	app := cli.NewApp()
+	app.Flags = []cli.Flag{
+		&cli.StringFlag{Name: CLIGPUDevices},
+		&cli.StringFlag{Name: CLISwitchDevices},
+		&cli.StringFlag{Name: CLICPUDevices},
+		&cli.StringFlag{Name: CLIDCGMLogLevel},
+		&cli.StringFlag{Name: CLIConfig},
+		&cli.StringFlag{Name: CLIAddress},
+	}
+	set := flag.NewFlagSet("test", 0)
+	set.String(CLIGPUDevices, "f", "")
+	set.String(CLISwitchDevices, "f", "")
+	set.String(CLICPUDevices, "f", "")
+	set.String(CLIDCGMLogLevel, "NONE", "")
+	set.String(CLIConfig, tmpCfg, "")
+	set.String(CLIAddress, "", "")
+	// Simulate the operator explicitly passing -a :19500 on the command line.
+	require.NoError(t, set.Set(CLIAddress, ":19500"))
+
+	ctx := cli.NewContext(app, set, nil)
+	cfg, err := contextToConfig(ctx)
+	require.NoError(t, err)
+	// CLI flag must win.
+	require.Equal(t, ":19500", cfg.Server.Port)
+	require.Equal(t, ":19500", cfg.Address)
+}
+
+// Test_contextToConfig_YAMLAddressUsedWhenCLIUnset: inverse of the previous —
+// when --address is NOT explicitly set, the YAML value propagates.
+func Test_contextToConfig_YAMLAddressUsedWhenCLIUnset(t *testing.T) {
+	tmpCfg := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(tmpCfg, []byte(`
+labels:
+  static:
+    - name: STUDIO
+      value: ai-lab
+  env:
+    - name: PROJECT
+server:
+  port: ":19401"
+`), 0o600))
+
+	app := cli.NewApp()
+	app.Flags = []cli.Flag{
+		&cli.StringFlag{Name: CLIGPUDevices},
+		&cli.StringFlag{Name: CLISwitchDevices},
+		&cli.StringFlag{Name: CLICPUDevices},
+		&cli.StringFlag{Name: CLIDCGMLogLevel},
+		&cli.StringFlag{Name: CLIConfig},
+		&cli.StringFlag{Name: CLIAddress},
+	}
+	set := flag.NewFlagSet("test", 0)
+	set.String(CLIGPUDevices, "f", "")
+	set.String(CLISwitchDevices, "f", "")
+	set.String(CLICPUDevices, "f", "")
+	set.String(CLIDCGMLogLevel, "NONE", "")
+	set.String(CLIConfig, tmpCfg, "")
+	// Default value only; IsSet(CLIAddress) must be false.
+	set.String(CLIAddress, "", "")
+
+	ctx := cli.NewContext(app, set, nil)
+	cfg, err := contextToConfig(ctx)
+	require.NoError(t, err)
+	require.Equal(t, ":19401", cfg.Server.Port)
+	require.Equal(t, ":19401", cfg.Address)
+}

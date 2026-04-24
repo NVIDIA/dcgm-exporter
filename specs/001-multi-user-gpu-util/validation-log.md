@@ -1,7 +1,7 @@
 # Validation Log: DCGM_FI_DEV_GPU_UTIL Multi-User Attribution
 
 **Feature**: `001-multi-user-gpu-util`
-**Phase**: US1 MVP + US2 weighted split (Setup + Foundational + User Stories 1 and 2)
+**Phase**: US1 MVP + US2 weighted split + US3 systemd deployment
 **Date**: 2026-04-24
 **Platform**: NVIDIA Tesla T4, driver 570.158.01, CUDA 12.8, DCGM 4.5.3, Ubuntu 24.04
 
@@ -75,6 +75,51 @@ DCGM_FI_DEV_GPU_TEMP{gpu="0",UUID="GPU-f68e64a6-...",...,DCGM_FI_DRIVER_VERSION=
 No `USER`, `STUDIO`, or `PROJECT` labels added; byte-identical to upstream
 dcgm-exporter output.
 
+### systemd deployment end-to-end (US3 Acceptance Scenarios #1–#4)
+
+Installed via `sudo GO=$(which go) make install`:
+
+```
+installed /etc/dcgm-exporter/config.yaml
+install -m 644 -D ./packaging/config-files/systemd/nvidia-dcgm-exporter.service \
+    /etc/systemd/system/dcgm-exporter.service
+```
+
+Enabled and started:
+
+```
+$ sudo systemctl enable --now dcgm-exporter
+$ systemctl is-active dcgm-exporter
+active
+```
+
+**AS#1 — service reaches `active (running)` and serves metrics**: verified;
+`curl http://localhost:9400/metrics` returns 200 with our labels attached.
+
+**AS#2 — config edit takes effect on restart**: `sed -i 's/ai-lab/ai-lab-phase2/'`
+on `/etc/dcgm-exporter/config.yaml` + `systemctl restart` immediately flips
+the `STUDIO` label value in subsequent scrapes; restore + restart flips it
+back. Confirmed.
+
+**AS#3 — crash auto-heal**: `sudo kill -9 <Main PID>` is followed within 5s
+by a fresh PID and `systemctl is-active` returning `active` again. Confirmed
+(Restart=on-failure + RestartSec=3s).
+
+**AS#4 — invalid / missing config refuses to start**: moving
+`/etc/dcgm-exporter/config.yaml` away and running `systemctl start
+dcgm-exporter` produces in `/var/log/dcgm-exporter.log`:
+
+```
+level=ERROR msg="config.yaml not found at /etc/dcgm-exporter/config.yaml"
+```
+
+Service enters `activating (auto-restart) (Result: exit-code)` and eventually
+hits `StartLimitBurst=5` within `StartLimitIntervalSec=30s`. Confirmed.
+
+**Clean uninstall (`sudo make uninstall`)** removes the binary and unit but
+leaves `/etc/dcgm-exporter/` intact so operator-edited config survives an
+in-place upgrade. Confirmed.
+
 ## Unit Test Summary
 
 | Package | Tests | Result |
@@ -93,6 +138,13 @@ New US2 tests worth highlighting:
 - `TestBareMetalUserMapper_US2_EnvCardinalityCap` — 200 distinct PROJECT
   values → 128 survive + `other` bucket.
 - `TestSplitUtil` / `TestCapEnvCardinality_*` — algorithmic unit coverage.
+
+New US3 tests worth highlighting:
+- `Test_contextToConfig_MissingConfigFileIsFatal` — exact `config.yaml not found at <path>` error.
+- `Test_contextToConfig_CLIOverridesYAMLAddress` — CLI `-a` explicitly
+  passed overrides `server.port` from YAML.
+- `Test_contextToConfig_YAMLAddressUsedWhenCLIUnset` — YAML `server.port`
+  used when CLI did not set `-a`.
 
 ## Deviations / Notes
 
@@ -113,7 +165,6 @@ New US2 tests worth highlighting:
 
 ## Not Yet Validated (Deferred to Later Phases)
 
-- US3: systemd unit + package install (tasks T031–T035).
-- Polish: self-health metrics, cross-version benchmark, documentation runbook
-  (tasks T036–T043).
+- Polish: self-health metrics, cross-version benchmark, non-UTIL regression
+  test, RELEASE.md, lint (tasks T036–T043).
 

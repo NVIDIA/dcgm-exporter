@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,21 +13,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# This unit file runs dcgm-exporter with the feature-001 "multi-user GPU
+# utilization" enhancement on a bare-metal Linux host.
+#
+# Install paths (set by `make install`):
+#   Binary   : /usr/bin/dcgm-exporter
+#   Counters : /etc/dcgm-exporter/default-counters.csv
+#   Config   : /etc/dcgm-exporter/config.yaml    (labels + server sections)
+#
+# See specs/001-multi-user-gpu-util/contracts/dcgm-exporter.service for the
+# authoritative contract this file implements.
+#
 [Unit]
-Description=NVIDIA DCGM-exporter service
-Wants=nvidia-dcgm.service
-After=nvidia-dcgm.service
+Description=NVIDIA DCGM-exporter with multi-user GPU utilization attribution
+Documentation=https://github.com/NVIDIA/dcgm-exporter
+After=nvidia-dcgm.service network-online.target
+Requires=nvidia-dcgm.service
+Wants=network-online.target
 
 [Service]
+Type=simple
 User=root
-PrivateTmp=false
-
 StandardOutput=append:/var/log/dcgm-exporter.log
 StandardError=append:/var/log/dcgm-exporter.log
+ExecStart=/usr/bin/dcgm-exporter --config /etc/dcgm-exporter/config.yaml -f /etc/dcgm-exporter/default-counters.csv
 
-ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/default-counters.csv
+# Crash auto-heal (SC-005): on-failure with a 3s back-off and a burst cap so
+# a broken config does not spin CPU forever.
+Restart=on-failure
+RestartSec=3s
+StartLimitBurst=5
+StartLimitIntervalSec=30s
 
-Restart=on-abort
+# Resource hygiene.
+LimitNOFILE=65536
+TasksMax=4096
+
+# Conservative hardening that still allows /proc/<PID>/environ access and
+# DCGM / sysfs interactions. Do NOT set ProtectProc=invisible (we must read
+# /proc/<PID>/environ of other users). Do NOT set DynamicUser=yes (would
+# strip cross-user /proc visibility).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

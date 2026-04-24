@@ -30,7 +30,7 @@ DOCKERCMD      := docker --debug buildx build
 MODULE         := github.com/NVIDIA/dcgm-exporter
 CONTAINER      ?= all
 
-.PHONY: all binary install check-format local
+.PHONY: all binary install uninstall check-format local
 all: ubuntu22.04 ubi9 distroless
 
 binary:
@@ -42,6 +42,26 @@ test-main: generate
 install: binary
 	install -m 755 cmd/dcgm-exporter/dcgm-exporter /usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv /etc/dcgm-exporter/default-counters.csv
+	# Feature 001-multi-user-gpu-util: place config.yaml only if no operator-managed
+	# version already exists at the destination, so re-running `make install` never
+	# wipes local edits.
+	@if [ ! -f /etc/dcgm-exporter/config.yaml ]; then \
+		install -m 644 -D ./config.yaml /etc/dcgm-exporter/config.yaml; \
+		echo "installed /etc/dcgm-exporter/config.yaml"; \
+	else \
+		echo "keeping existing /etc/dcgm-exporter/config.yaml (not overwriting)"; \
+	fi
+	install -m 644 -D ./packaging/config-files/systemd/nvidia-dcgm-exporter.service \
+		/etc/systemd/system/dcgm-exporter.service
+
+uninstall:
+	# Feature 001-multi-user-gpu-util: remove the binary and the systemd unit,
+	# but intentionally preserve /etc/dcgm-exporter/config.yaml and counters
+	# CSV so operator edits are not lost on upgrade.
+	-rm -f /usr/bin/dcgm-exporter
+	-rm -f /etc/systemd/system/dcgm-exporter.service
+	@echo "Preserving /etc/dcgm-exporter/ (config.yaml, default-counters.csv)"
+	@echo "Run 'systemctl daemon-reload' to pick up the removed unit."
 
 check-format:
 	test $$(gofmt -l pkg | tee /dev/stderr | wc -l) -eq 0
