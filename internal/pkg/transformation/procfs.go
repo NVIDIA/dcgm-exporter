@@ -14,13 +14,16 @@
  * limitations under the License.
  */
 
-// Package transformation: procfs.go provides a minimal /proc reader
-// abstraction (ProcFS) used by the bare-metal user mapper. The default
-// implementation realProcFS reads from a configurable root (default "/proc")
-// so tests can drive it against a fake filesystem laid out in t.TempDir().
+// Package transformation hosts the post-collection transformer pipeline of
+// dcgm-exporter, including pod-label and HPC-job mappers (upstream) plus the
+// feature-001 bare-metal multi-user GPU utilization mapper.
+//
+// procfs.go provides a minimal /proc reader abstraction (ProcFS) used by the
+// bare-metal user mapper. The default implementation realProcFS reads from a
+// configurable root (default "/proc") so tests can drive it against a fake
+// filesystem laid out in t.TempDir().
 //
 // Feature 001-multi-user-gpu-util, task T014.
-
 package transformation
 
 import (

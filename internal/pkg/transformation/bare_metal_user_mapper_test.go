@@ -251,7 +251,7 @@ func TestBareMetalUserMapper_NonUtilCounter_Untouched(t *testing.T) {
 	origTemp := tempMetric("GPU-abc", "72")
 	origTemp.Labels = map[string]string{"upstream": "kept"}
 	metrics := collector.MetricsByCounter{
-		counters.Counter{FieldName: GpuUtilFieldName}:     {utilMetric("GPU-abc", "50")},
+		counters.Counter{FieldName: GpuUtilFieldName}:       {utilMetric("GPU-abc", "50")},
 		counters.Counter{FieldName: "DCGM_FI_DEV_GPU_TEMP"}: {origTemp},
 	}
 	require.NoError(t, m.Process(metrics, nil))
@@ -260,6 +260,49 @@ func TestBareMetalUserMapper_NonUtilCounter_Untouched(t *testing.T) {
 	require.Len(t, tempOut, 1)
 	// Non-UTIL counter must be byte-identical to input.
 	require.Equal(t, origTemp, tempOut[0])
+}
+
+// T039: comprehensive non-UTIL regression — every non-UTIL counter in the
+// input map must come out byte-identical (same Metric struct value) regardless
+// of whether the mapper ran. Covers SC-007.
+func TestBareMetalUserMapper_T039_OnlyTouchesGpuUtil(t *testing.T) {
+	stubLookupUsername(t, map[uint32]string{1000: "alice"})
+	procRoot := newProcRoot(t, map[uint32]fakeProc{
+		8001: {uid: 1000, environ: "PROJECT=proj-a"},
+	})
+	cfg := baseConfigWithResolved(t, "ai-lab")
+	nvml := &fakeNVML{pidsByGPU: map[string][]uint32{"GPU-regression": {8001}}}
+	m := NewBareMetalUserMapper(cfg, nvml, NewProcFSAt(procRoot))
+
+	// A broad set of non-UTIL counters. Each gets a distinct Labels map
+	// (including one upstream label) to make identity-vs-mutation obvious.
+	nonUtilInputs := map[string]collector.Metric{
+		"DCGM_FI_DEV_GPU_TEMP":    {Counter: counters.Counter{FieldName: "DCGM_FI_DEV_GPU_TEMP"}, Value: "41", GPU: "0", GPUUUID: "GPU-regression", Labels: map[string]string{"upstream": "temp-tag"}},
+		"DCGM_FI_DEV_POWER_USAGE": {Counter: counters.Counter{FieldName: "DCGM_FI_DEV_POWER_USAGE"}, Value: "220.5", GPU: "0", GPUUUID: "GPU-regression", Labels: map[string]string{"upstream": "power-tag"}},
+		"DCGM_FI_DEV_FB_USED":     {Counter: counters.Counter{FieldName: "DCGM_FI_DEV_FB_USED"}, Value: "1024", GPU: "0", GPUUUID: "GPU-regression", Labels: map[string]string{"upstream": "fb-tag"}},
+		"DCGM_FI_DEV_SM_CLOCK":    {Counter: counters.Counter{FieldName: "DCGM_FI_DEV_SM_CLOCK"}, Value: "1590", GPU: "0", GPUUUID: "GPU-regression", Labels: map[string]string{"upstream": "clk-tag"}},
+	}
+
+	metrics := collector.MetricsByCounter{
+		counters.Counter{FieldName: GpuUtilFieldName}: {utilMetric("GPU-regression", "80")},
+	}
+	for _, mx := range nonUtilInputs {
+		metrics[counters.Counter{FieldName: mx.Counter.FieldName}] = []collector.Metric{mx}
+	}
+
+	require.NoError(t, m.Process(metrics, nil))
+
+	// UTIL should be decorated.
+	utilOut := metrics[counters.Counter{FieldName: GpuUtilFieldName}]
+	require.Len(t, utilOut, 1)
+	require.Equal(t, "alice", utilOut[0].Labels["USER"])
+
+	// Every non-UTIL counter must be byte-identical.
+	for name, orig := range nonUtilInputs {
+		got := metrics[counters.Counter{FieldName: name}]
+		require.Len(t, got, 1, "counter %s", name)
+		require.Equal(t, orig, got[0], "counter %s must be byte-identical after Process", name)
+	}
 }
 
 func TestBareMetalUserMapper_StaticLabelEnvFallback(t *testing.T) {

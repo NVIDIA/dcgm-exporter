@@ -70,6 +70,43 @@ const debugInvariants = true
 // (see specs/001-multi-user-gpu-util/contracts/metrics.contract.md §标签稳定性).
 var InvariantBreaches atomic.Uint64
 
+// MapperStats captures the current per-cycle self-health counters of the
+// bare-metal user mapper. Exposed via `Stats()` for integration by future
+// Prometheus self-monitoring code (task T037). We keep this as a small
+// exportable struct rather than forcing a particular registry type here —
+// the upstream dcgm-exporter uses a bespoke text renderer rather than the
+// prometheus/client_golang registry, so hooking a histogram into /metrics
+// requires a dedicated wiring pass outside this file.
+type MapperStats struct {
+	CyclesTotal            uint64
+	GPUsObserved           uint64 // across all cycles (cumulative)
+	PIDsObserved           uint64 // across all cycles (cumulative)
+	PIDReadFailuresTotal   uint64
+	InvariantBreachesTotal uint64
+	LastCycleDuration      time.Duration
+}
+
+var (
+	cyclesTotal          atomic.Uint64
+	gpusObservedTotal    atomic.Uint64
+	pidsObservedTotal    atomic.Uint64
+	pidReadFailuresTotal atomic.Uint64
+	lastCycleDurationNs  atomic.Int64
+)
+
+// Stats returns a snapshot of mapper self-health counters. Safe to call
+// concurrently; values are atomic loads.
+func Stats() MapperStats {
+	return MapperStats{
+		CyclesTotal:            cyclesTotal.Load(),
+		GPUsObserved:           gpusObservedTotal.Load(),
+		PIDsObserved:           pidsObservedTotal.Load(),
+		PIDReadFailuresTotal:   pidReadFailuresTotal.Load(),
+		InvariantBreachesTotal: InvariantBreaches.Load(),
+		LastCycleDuration:      time.Duration(lastCycleDurationNs.Load()),
+	}
+}
+
 // --------------------------------------------------------------------------
 // T016: UID -> username resolver with a TTL cache.
 // --------------------------------------------------------------------------
@@ -241,6 +278,26 @@ func (m *bareMetalUserMapper) Process(metrics collector.MetricsByCounter, _ devi
 		return nil
 	}
 
+	// T036: per-cycle diagnostics.
+	cycleStart := time.Now()
+	var cycleGPUs, cyclePIDs, cycleGroups uint64
+	uniqueUsers := map[string]struct{}{}
+	cappedEnvLabels := 0
+	defer func() {
+		dur := time.Since(cycleStart)
+		cyclesTotal.Add(1)
+		gpusObservedTotal.Add(cycleGPUs)
+		pidsObservedTotal.Add(cyclePIDs)
+		lastCycleDurationNs.Store(int64(dur))
+		slog.Debug("bareMetalUserMapper cycle",
+			slog.Uint64("gpus", cycleGPUs),
+			slog.Uint64("total_pids", cyclePIDs),
+			slog.Int("unique_users", len(uniqueUsers)),
+			slog.Uint64("unique_groups", cycleGroups),
+			slog.Int64("elapsed_ms", dur.Milliseconds()),
+			slog.Int("capped_env_labels", cappedEnvLabels))
+	}()
+
 	// Cache NVML process lists per GPU UUID across the counters loop.
 	pidsByGPU := map[string][]uint32{}
 	getPIDs := func(gpuUUID string) []uint32 {
@@ -249,6 +306,8 @@ func (m *bareMetalUserMapper) Process(metrics collector.MetricsByCounter, _ devi
 		}
 		pids := m.listGPUProcesses(gpuUUID)
 		pidsByGPU[gpuUUID] = pids
+		cycleGPUs++
+		cyclePIDs += uint64(len(pids))
 		return pids
 	}
 
@@ -266,6 +325,10 @@ func (m *bareMetalUserMapper) Process(metrics collector.MetricsByCounter, _ devi
 				continue
 			}
 			groups := m.buildAndCapGroups(pids)
+			cycleGroups += uint64(len(groups))
+			for _, g := range groups {
+				uniqueUsers[g.Key.Username] = struct{}{}
+			}
 
 			// Parse the original util value; if it's malformed we fall back to 0
 			// and still emit one record per group so timeseries continuity is preserved.
@@ -369,6 +432,7 @@ func (m *bareMetalUserMapper) buildGroups(pids []uint32) []gpuProcessGroup {
 	for _, pid := range pids {
 		uid, err := m.procFS.ReadStatus(pid)
 		if err != nil {
+			pidReadFailuresTotal.Add(1)
 			slog.Debug("bareMetalUserMapper: read status failed, skipping pid",
 				slog.Uint64("pid", uint64(pid)), slog.String("error", err.Error()))
 			continue

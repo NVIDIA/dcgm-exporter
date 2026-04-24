@@ -17,6 +17,9 @@
  * caller can emit the exact log line mandated by FR-011.
  */
 
+// Package appconfig holds the typed runtime configuration for dcgm-exporter,
+// including the feature-001 (multi-user GPU utilization) `config.yaml`
+// loader, validator, and defaulter.
 package appconfig
 
 import (

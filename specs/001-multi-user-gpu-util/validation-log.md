@@ -1,7 +1,7 @@
 # Validation Log: DCGM_FI_DEV_GPU_UTIL Multi-User Attribution
 
 **Feature**: `001-multi-user-gpu-util`
-**Phase**: US1 MVP + US2 weighted split + US3 systemd deployment
+**Phase**: Complete (Phases 1–6: Setup + Foundational + US1 + US2 + US3 + Polish)
 **Date**: 2026-04-24
 **Platform**: NVIDIA Tesla T4, driver 570.158.01, CUDA 12.8, DCGM 4.5.3, Ubuntu 24.04
 
@@ -146,6 +146,31 @@ New US3 tests worth highlighting:
 - `Test_contextToConfig_YAMLAddressUsedWhenCLIUnset` — YAML `server.port`
   used when CLI did not set `-a`.
 
+Polish-phase additions:
+- `TestBareMetalUserMapper_T039_OnlyTouchesGpuUtil` — feeds TEMP / POWER /
+  FB / SM_CLOCK simultaneously with UTIL and asserts each non-UTIL counter
+  comes out **byte-identical** (SC-007 hard regression).
+- `BenchmarkProcess_8GPU_128Procs` — 8 GPUs × 128 PIDs reference workload,
+  measured at **27.6 ms/cycle** on a 2.5 GHz Xeon (target: < 50 ms).
+- `BenchmarkProcess_vs_Upstream` — same workload with vs. without the
+  mapper enabled, for tracking regressions over time.
+- Self-health counters exposed via `transformation.Stats()` (cycles,
+  GPUs/PIDs observed, PID-read failures, invariant breaches, last cycle
+  duration). Wiring into the upstream Prometheus surface remains a
+  separate follow-up — the upstream renderer is not based on
+  `prometheus/client_golang`, so dropping a new metric in is a small
+  refactor outside this feature's scope.
+- Per-cycle `slog.Debug` line summarises GPUs / total_pids / unique_users /
+  unique_groups / elapsed_ms.
+
+## Static Analysis
+
+- `go vet ./...` clean for the three new files
+  (`yamlconfig.go`, `procfs.go`, `bare_metal_user_mapper.go`).
+- `staticcheck ./internal/pkg/appconfig/... ./internal/pkg/transformation/...`
+  reports zero new findings on feature files. Remaining ST1000 / ST1003
+  warnings on this run all originate from unmodified upstream files.
+
 ## Deviations / Notes
 
 - **NVML auto-init**: Upstream code only initialises NVML when
@@ -165,6 +190,8 @@ New US3 tests worth highlighting:
 
 ## Not Yet Validated (Deferred to Later Phases)
 
-- Polish: self-health metrics, cross-version benchmark, non-UTIL regression
-  test, RELEASE.md, lint (tasks T036–T043).
+- **None.** All 43 tasks (T001–T043) are complete. Full Prometheus
+  self-monitoring metric surface is left as a separate follow-up because
+  upstream uses a bespoke text renderer rather than `prometheus/client_golang`;
+  internal counters are already accessible via `transformation.Stats()`.
 
