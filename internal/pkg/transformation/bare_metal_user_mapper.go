@@ -18,24 +18,29 @@
 // DCGM_FI_DEV_GPU_UTIL multi-user attribution transformer for feature
 // 001-multi-user-gpu-util.
 //
-// Feature scope (all guarded by the transformer being non-nil in the pipeline;
-// the pipeline is wired only when a config.yaml loaded successfully):
-//
+// Task coverage:
 //   - T016: UID -> username resolver with TTL cache
 //   - T017: env value sanitizer
 //   - T018: mapper struct + constructor
 //   - T019: Process() single-process branch (US1)
 //   - T020: Process() idle-GPU branch (US1)
-//   - US2 split logic is added in tasks T024-T028 below.
+//   - T024: group key + weighted group type
+//   - T025: per-cycle env cardinality cap helper (capEnvCardinality)
+//   - T026: weighted split algorithm with closure compensation (splitUtil)
+//   - T027: Process() multi-process branch = split + DeepCopy (US2)
+//   - T028: "sum equals total" invariant guard
 
 package transformation
 
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"os/user"
+	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -50,6 +55,20 @@ import (
 // transformer rewrites. Copied as a constant to avoid depending on the
 // counters package layout for such a tiny lookup.
 const GpuUtilFieldName = "DCGM_FI_DEV_GPU_UTIL"
+
+// debugInvariants toggles the US2 "sum equals total" invariant check. Left
+// on for the first release: the cost is tiny and silent drift is far worse
+// than a visible error log + self-monitoring counter increment.
+const debugInvariants = true
+
+// InvariantBreaches is incremented every time the weighted split failed to
+// sum exactly to the original UTIL value. Exposed as a package-level atomic
+// so the Prometheus self-monitoring counter registered in T037
+// (`dcgm_exporter_bare_metal_mapper_invariant_breaches_total`) can read it.
+//
+// We intentionally avoid publishing `USER="invariant_error"` business labels
+// (see specs/001-multi-user-gpu-util/contracts/metrics.contract.md §标签稳定性).
+var InvariantBreaches atomic.Uint64
 
 // --------------------------------------------------------------------------
 // T016: UID -> username resolver with a TTL cache.
@@ -107,8 +126,7 @@ func sanitizeEnvValue(raw string) string {
 		return appconfig.FallbackNone
 	}
 	// Replace disallowed runes.
-	var b []byte
-	b = make([]byte, 0, len(raw))
+	b := make([]byte, 0, len(raw))
 	for _, r := range raw {
 		if isAllowedLabelChar(r) {
 			b = utf8.AppendRune(b, r)
@@ -151,10 +169,6 @@ func isAllowedLabelChar(r rune) bool {
 // bareMetalUserMapper is a Transform that decorates DCGM_FI_DEV_GPU_UTIL
 // samples with a USER label + all static/env labels declared in config.yaml.
 // All other counters are passed through untouched.
-//
-// The constructor is exported (NewBareMetalUserMapper) so pkg/cmd can wire it
-// up, but the struct itself stays unexported since consumers interact only
-// through the Transform interface.
 type bareMetalUserMapper struct {
 	cfg       *appconfig.Config
 	nvml      nvmlprovider.NVML
@@ -190,28 +204,44 @@ func (m *bareMetalUserMapper) getNVML() nvmlprovider.NVML {
 }
 
 // --------------------------------------------------------------------------
-// T019 + T020: Process() single-process + idle-GPU branches (US1).
-//
-// US2 (T024-T028) extends this with weighted splitting; for now we handle
-// only two shapes per GPU:
-//
-//    0 processes -> emit one placeholder (USER=none, env labels=none)
-//    N processes -> we group by (username, env-values tuple) but do not yet
-//                   split: the first group wins and we attribute the entire
-//                   util value to it. That is correct for the P1 MVP
-//                   (single-process GPUs) and deterministic for multi-process
-//                   GPUs pending T027.
-//
-// T027 replaces the "first group wins" behaviour with weighted splitting.
+// T024: group key + weighted group type (shared by US1 and US2).
+// --------------------------------------------------------------------------
+
+// groupKey uniquely identifies an (USER, env-values) combination on a GPU.
+// EnvVals is parallel-indexed with cfg.Labels.Env.
+type groupKey struct {
+	Username string
+	EnvVals  []string
+}
+
+// canonical renders a stable string for map keying and sort order.
+// 0x1f is ASCII Unit Separator, guaranteed not to appear in sanitized values.
+func (k groupKey) canonical() string {
+	b := make([]byte, 0, len(k.Username)+len(k.EnvVals)*8)
+	b = append(b, k.Username...)
+	for _, v := range k.EnvVals {
+		b = append(b, 0x1f)
+		b = append(b, v...)
+	}
+	return string(b)
+}
+
+type gpuProcessGroup struct {
+	Key        groupKey
+	ProcessCnt uint
+	Weight     float64 // = ProcessCnt / total processes on the GPU
+}
+
+// --------------------------------------------------------------------------
+// Process() — the only public entry point.
 // --------------------------------------------------------------------------
 
 func (m *bareMetalUserMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
 	if m == nil || m.cfg == nil {
-		return nil // defensive: uninitialised mapper is a no-op
+		return nil
 	}
 
 	// Cache NVML process lists per GPU UUID across the counters loop.
-	// All counters share the same GPUs; querying NVML once per GPU is enough.
 	pidsByGPU := map[string][]uint32{}
 	getPIDs := func(gpuUUID string) []uint32 {
 		if pids, ok := pidsByGPU[gpuUUID]; ok {
@@ -235,10 +265,48 @@ func (m *bareMetalUserMapper) Process(metrics collector.MetricsByCounter, _ devi
 				newList = append(newList, m.decorateIdle(metric))
 				continue
 			}
-			groups := m.buildGroups(pids)
-			// US1 interim: attribute the full util to the first group. US2
-			// (T027) replaces this with weighted splitting.
-			newList = append(newList, m.decorateSingleGroup(metric, groups[0]))
+			groups := m.buildAndCapGroups(pids)
+
+			// Parse the original util value; if it's malformed we fall back to 0
+			// and still emit one record per group so timeseries continuity is preserved.
+			totalUtil, perr := strconv.Atoi(metric.Value)
+			if perr != nil {
+				slog.Warn("bareMetalUserMapper: non-integer DCGM_FI_DEV_GPU_UTIL value",
+					slog.String("gpu_uuid", metric.GPUUUID),
+					slog.String("value", metric.Value))
+				totalUtil = 0
+			}
+			splits := splitUtil(totalUtil, groups)
+
+			// T028: invariant guard. Rounding is closed by splitUtil already,
+			// so sum must equal total exactly; log + bump the self-health
+			// counter on any breach.
+			if debugInvariants {
+				sum := 0
+				for _, v := range splits {
+					sum += v
+				}
+				if sum != totalUtil {
+					InvariantBreaches.Add(1)
+					slog.Error("bareMetalUserMapper: invariant breach (sum != util_total)",
+						slog.String("gpu_uuid", metric.GPUUUID),
+						slog.Int("util_total", totalUtil),
+						slog.Int("split_sum", sum),
+						slog.Int("group_count", len(groups)))
+				}
+			}
+
+			for i, g := range groups {
+				cp, err := utils.DeepCopy(metric)
+				if err != nil {
+					slog.Warn("bareMetalUserMapper: DeepCopy failed, emitting in-place copy",
+						slog.String("error", err.Error()))
+					cp = metric
+				}
+				m.applyLabels(&cp, g.Key)
+				cp.Value = strconv.Itoa(splits[i])
+				newList = append(newList, cp)
+			}
 		}
 		metrics[counter] = newList
 	}
@@ -267,25 +335,36 @@ func (m *bareMetalUserMapper) listGPUProcesses(gpuUUID string) []uint32 {
 	return pids
 }
 
-// groupKey uniquely identifies an (USER, env-values) combination on a GPU.
-// EnvVals is parallel-indexed with cfg.Labels.Env.
-type groupKey struct {
-	Username string
-	EnvVals  []string
+// buildAndCapGroups walks every PID, resolves (USER, env-values), groups by
+// the canonical key, applies per-cycle env-cardinality capping (T025), and
+// returns the resulting groups in stable (canonical) order with Weight set.
+func (m *bareMetalUserMapper) buildAndCapGroups(pids []uint32) []gpuProcessGroup {
+	groups := m.buildGroups(pids)
+	groups = capEnvCardinality(groups, len(m.cfg.Labels.Env), appconfig.MaxEnvCardinalityPerCycle)
+
+	// Set Weight + ensure deterministic order for split compensation (T026).
+	var total uint
+	for _, g := range groups {
+		total += g.ProcessCnt
+	}
+	for i := range groups {
+		if total == 0 {
+			groups[i].Weight = 0
+		} else {
+			groups[i].Weight = float64(groups[i].ProcessCnt) / float64(total)
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].Key.canonical() < groups[j].Key.canonical()
+	})
+	return groups
 }
 
-type gpuProcessGroup struct {
-	Key        groupKey
-	ProcessCnt uint
-	Weight     float64 // filled by US2/T027 when splitting.
-}
-
-// buildGroups walks every PID, resolves (USER, env-values) and aggregates
-// into stable-sorted groups. For US1 we only need the deterministic "first"
-// group (groups[0]) which the caller uses. US2 rewrites the caller.
+// buildGroups aggregates PIDs into (USER, env-values) groups. PID read
+// failures are skipped (FR-016); successful PIDs are accumulated.
 func (m *bareMetalUserMapper) buildGroups(pids []uint32) []gpuProcessGroup {
-	grouped := map[string]*gpuProcessGroup{} // keyed by groupKey.String()
-	order := []string{}                      // insertion order for stability
+	grouped := map[string]*gpuProcessGroup{}
+	order := []string{}
 
 	for _, pid := range pids {
 		uid, err := m.procFS.ReadStatus(pid)
@@ -299,7 +378,6 @@ func (m *bareMetalUserMapper) buildGroups(pids []uint32) []gpuProcessGroup {
 		for j, el := range m.cfg.Labels.Env {
 			raw, err := m.procFS.ReadEnviron(pid, el.EnvVar)
 			if err != nil {
-				// Read failure is not fatal for this PID; fall back to none.
 				envVals[j] = appconfig.FallbackNone
 				continue
 			}
@@ -322,16 +400,116 @@ func (m *bareMetalUserMapper) buildGroups(pids []uint32) []gpuProcessGroup {
 	return result
 }
 
-// canonical renders a stable string for map keying and sort order.
-func (k groupKey) canonical() string {
-	// 0x1f is ASCII Unit Separator, guaranteed not to appear in sanitized values.
-	b := make([]byte, 0, len(k.Username)+len(k.EnvVals)*8)
-	b = append(b, k.Username...)
-	for _, v := range k.EnvVals {
-		b = append(b, 0x1f)
-		b = append(b, v...)
+// --------------------------------------------------------------------------
+// T025: per-cycle env cardinality cap (Clarification Q5).
+//
+// For each env label index i: collect the set of distinct values across all
+// groups. If the set size > max, keep the lexicographically smallest `max`
+// values and rewrite the i-th component of every remaining group's key to
+// appconfig.FallbackOther. After rewriting, groups whose canonical keys
+// collapse into the same string are merged (ProcessCnt summed). Insertion
+// order of the survivors is preserved.
+// --------------------------------------------------------------------------
+
+func capEnvCardinality(groups []gpuProcessGroup, envLabelCount, max int) []gpuProcessGroup {
+	if envLabelCount == 0 || max <= 0 || len(groups) <= 1 {
+		return groups
 	}
-	return string(b)
+	// Compute, for each env label, the sorted unique value set.
+	perLabel := make([]map[string]struct{}, envLabelCount)
+	for i := 0; i < envLabelCount; i++ {
+		perLabel[i] = map[string]struct{}{}
+	}
+	for _, g := range groups {
+		for i := 0; i < envLabelCount && i < len(g.Key.EnvVals); i++ {
+			perLabel[i][g.Key.EnvVals[i]] = struct{}{}
+		}
+	}
+	// For each over-capacity label, compute the keep-set.
+	keepSets := make([]map[string]struct{}, envLabelCount)
+	needCap := false
+	for i := 0; i < envLabelCount; i++ {
+		if len(perLabel[i]) <= max {
+			continue
+		}
+		needCap = true
+		vals := make([]string, 0, len(perLabel[i]))
+		for v := range perLabel[i] {
+			vals = append(vals, v)
+		}
+		sort.Strings(vals)
+		keep := make(map[string]struct{}, max)
+		for _, v := range vals[:max] {
+			keep[v] = struct{}{}
+		}
+		keepSets[i] = keep
+	}
+	if !needCap {
+		return groups
+	}
+	// Rewrite and merge.
+	merged := map[string]*gpuProcessGroup{}
+	order := []string{}
+	for _, g := range groups {
+		newVals := make([]string, len(g.Key.EnvVals))
+		copy(newVals, g.Key.EnvVals)
+		for i := 0; i < envLabelCount && i < len(newVals); i++ {
+			if ks := keepSets[i]; ks != nil {
+				if _, ok := ks[newVals[i]]; !ok {
+					newVals[i] = appconfig.FallbackOther
+				}
+			}
+		}
+		newKey := groupKey{Username: g.Key.Username, EnvVals: newVals}
+		skey := newKey.canonical()
+		if existing, ok := merged[skey]; ok {
+			existing.ProcessCnt += g.ProcessCnt
+			continue
+		}
+		merged[skey] = &gpuProcessGroup{Key: newKey, ProcessCnt: g.ProcessCnt}
+		order = append(order, skey)
+	}
+	out := make([]gpuProcessGroup, 0, len(order))
+	for _, k := range order {
+		out = append(out, *merged[k])
+	}
+	return out
+}
+
+// --------------------------------------------------------------------------
+// T026: weighted split with closure compensation.
+//
+// For N groups pre-sorted deterministically by canonical key:
+//   - splits[0..N-2] = round(Weight_i * total)
+//   - splits[N-1]    = total - sum(splits[0..N-2])   (closure compensation)
+//
+// The last group's value always absorbs any rounding residue, so
+// sum(splits) == total exactly for any input (regardless of weight
+// distribution). When N == 1, the only group receives total unchanged.
+// When total == 0, every split is 0.
+// --------------------------------------------------------------------------
+
+func splitUtil(total int, groups []gpuProcessGroup) []int {
+	n := len(groups)
+	if n == 0 {
+		return nil
+	}
+	splits := make([]int, n)
+	if total == 0 {
+		return splits // all zeros
+	}
+	if n == 1 {
+		splits[0] = total
+		return splits
+	}
+	acc := 0
+	for i := 0; i < n-1; i++ {
+		v := int(math.Round(groups[i].Weight * float64(total)))
+		splits[i] = v
+		acc += v
+	}
+	splits[n-1] = total - acc
+	return splits
 }
 
 // --------------------------------------------------------------------------
@@ -343,7 +521,6 @@ func (k groupKey) canonical() string {
 func (m *bareMetalUserMapper) decorateIdle(in collector.Metric) collector.Metric {
 	cp, err := utils.DeepCopy(in)
 	if err != nil {
-		// Fallback: mutate in place rather than fail the whole cycle.
 		cp = in
 	}
 	if cp.Labels == nil {
@@ -360,23 +537,21 @@ func (m *bareMetalUserMapper) decorateIdle(in collector.Metric) collector.Metric
 	return cp
 }
 
-// decorateSingleGroup attributes an entire metric value to one group (the
-// US1 interim behaviour). US2 / T027 replaces callers of this with the
-// weighted splitter.
-func (m *bareMetalUserMapper) decorateSingleGroup(in collector.Metric, g gpuProcessGroup) collector.Metric {
-	cp, err := utils.DeepCopy(in)
-	if err != nil {
-		cp = in
+// applyLabels injects USER + static + env labels onto an in-hand Metric copy.
+// Callers own `m` and must have DeepCopy'd from the source earlier.
+func (m *bareMetalUserMapper) applyLabels(out *collector.Metric, key groupKey) {
+	if out.Labels == nil {
+		out.Labels = map[string]string{}
 	}
-	if cp.Labels == nil {
-		cp.Labels = map[string]string{}
-	}
-	cp.Labels["USER"] = g.Key.Username
+	out.Labels["USER"] = key.Username
 	for _, s := range m.cfg.Labels.Static {
-		cp.Labels[s.Name] = s.ResolvedValue
+		out.Labels[s.Name] = s.ResolvedValue
 	}
 	for j, e := range m.cfg.Labels.Env {
-		cp.Labels[e.Name] = g.Key.EnvVals[j]
+		if j < len(key.EnvVals) {
+			out.Labels[e.Name] = key.EnvVals[j]
+		} else {
+			out.Labels[e.Name] = appconfig.FallbackNone
+		}
 	}
-	return cp
 }

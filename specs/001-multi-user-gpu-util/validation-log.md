@@ -1,7 +1,7 @@
 # Validation Log: DCGM_FI_DEV_GPU_UTIL Multi-User Attribution
 
 **Feature**: `001-multi-user-gpu-util`
-**Phase**: US1 MVP (Setup + Foundational + User Story 1)
+**Phase**: US1 MVP + US2 weighted split (Setup + Foundational + User Stories 1 and 2)
 **Date**: 2026-04-24
 **Platform**: NVIDIA Tesla T4, driver 570.158.01, CUDA 12.8, DCGM 4.5.3, Ubuntu 24.04
 
@@ -38,9 +38,35 @@ DCGM_FI_DEV_GPU_UTIL{gpu="0",UUID="GPU-f68e64a6-...",...,
 - `STUDIO=ai-lab` — startup-resolved from `config.yaml` static section.
 - Non-zero GPU utilization observed (`8`).
 
+### Multi-user weighted split (US2 Acceptance Scenario #1)
+
+Four concurrent CUDA workloads: 3 × root(PROJECT=proj-a), 1 × ubuntu(PROJECT=proj-b):
+
+```
+$ nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
+pid, process_name, used_gpu_memory [MiB]
+161923, /tmp/hold, 102 MiB     # root  / proj-a
+161924, /tmp/hold, 102 MiB     # root  / proj-a
+161925, /tmp/hold, 102 MiB     # root  / proj-a
+161932, /tmp/hold, 102 MiB     # ubuntu/ proj-b
+
+$ curl -s http://localhost:9400/metrics | grep '^DCGM_FI_DEV_GPU_UTIL'
+DCGM_FI_DEV_GPU_UTIL{...,PROJECT="proj-a",STUDIO="ai-lab",USER="root"}   23
+DCGM_FI_DEV_GPU_UTIL{...,PROJECT="proj-b",STUDIO="ai-lab",USER="ubuntu"}  8
+```
+
+- Two output rows, one per `(USER, PROJECT)` group.
+- Sum = 23 + 8 = 31, the GPU's true utilization (verified via dcgmi).
+- Distribution ratio 23:8 ≈ 74%:26%, matching the 3:1 process split
+  (expected 75%:25%; single-integer rounding residue absorbed by the
+  closure compensation on the last group in canonical sort order).
+- `USER=root` for UID 0; `USER=ubuntu` for UID 1000.
+- SC-002 invariant: `sum(splits) == util_total` — satisfied exactly (tighter
+  than the ≤1 tolerance required by spec).
+
 ### Non-UTIL counters untouched (SC-007, FR-001)
 
-During the same workload:
+During every workload (single- and multi-user):
 
 ```
 DCGM_FI_DEV_GPU_TEMP{gpu="0",UUID="GPU-f68e64a6-...",...,DCGM_FI_DRIVER_VERSION="570.158.01"} 41
@@ -54,8 +80,19 @@ dcgm-exporter output.
 | Package | Tests | Result |
 |---------|-------|--------|
 | `internal/pkg/appconfig` | 15 | ✅ pass |
-| `internal/pkg/transformation` | 50 (14 new) | ✅ pass |
-| `pkg/cmd` | existing | ✅ pass |
+| `internal/pkg/transformation` | 50+ (30 new for this feature) | ✅ pass |
+| `pkg/cmd` | existing + adapted | ✅ pass |
+
+New US2 tests worth highlighting:
+- `TestBareMetalUserMapper_US2_WeightedSplit_AliceBob` — 3:1 ratio → {60, 20}.
+- `TestBareMetalUserMapper_US2_ThreeEqualGroupsClosure` — {33, 33, 34}.
+- `TestBareMetalUserMapper_US2_FuzzInvariantSumEqualsTotal` — 100 random
+  iterations: `sum(splits) == total` exactly.
+- `TestBareMetalUserMapper_US2_MultiEnvAggregateKey` — aggregation across
+  PROJECT + EXPERIMENT labels.
+- `TestBareMetalUserMapper_US2_EnvCardinalityCap` — 200 distinct PROJECT
+  values → 128 survive + `other` bucket.
+- `TestSplitUtil` / `TestCapEnvCardinality_*` — algorithmic unit coverage.
 
 ## Deviations / Notes
 
@@ -70,10 +107,13 @@ dcgm-exporter output.
 - The installed DCGM version must be 4.x (`libdcgm.so.4`). DCGM 3.x is not
   compatible with the upstream `github.com/NVIDIA/go-dcgm` version pinned in
   `go.mod`.
+- Invariant breaches (sum ≠ total) are NOT published as business metrics; a
+  package-level atomic counter (`transformation.InvariantBreaches`) will be
+  exposed via the exporter self-health series in T037.
 
 ## Not Yet Validated (Deferred to Later Phases)
 
-- US2: Multi-user weighted split (tasks T024–T029).
 - US3: systemd unit + package install (tasks T031–T035).
 - Polish: self-health metrics, cross-version benchmark, documentation runbook
   (tasks T036–T043).
+
