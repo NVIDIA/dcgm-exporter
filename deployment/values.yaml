@@ -55,6 +55,13 @@ hostPID: false
 
 # Defines the runtime class that will be used by the pod
 runtimeClassName: ""
+
+# Defines the priority class that will be used by the pod
+priorityClassName: "system-node-critical"
+
+# Enable or disable host network
+hostNetwork: false
+
 # Defines serviceAccount names for components.
 serviceAccount:
   # Specifies whether a service account should be created

@@ -821,6 +821,19 @@ func handleGPUTopologyChange(ctx context.Context, server *server.MetricsServer, 
 		slog.Uint64("reload_id", reloadID))
 	dcgmprovider.Initialize(config)
 
+	// Step 3b: Reinitialize NVML
+	if config.Kubernetes && config.KubernetesVirtualGPUs {
+		slog.InfoContext(ctx, "Cleaning up NVML resources", slog.Uint64("reload_id", reloadID))
+		nvmlprovider.Client().Cleanup()
+
+		slog.InfoContext(ctx, "Reinitializing NVML", slog.Uint64("reload_id", reloadID))
+		if err := nvmlprovider.Initialize(); err != nil {
+			slog.ErrorContext(ctx, "Failed to reinitialize NVML",
+				slog.Uint64("reload_id", reloadID),
+				slog.String("error", err.Error()))
+		}
+	}
+
 	// Step 4: Query DCP metrics (safe now - GPU is stable after topology change)
 	queryDCPMetrics(config, reloadID)
 

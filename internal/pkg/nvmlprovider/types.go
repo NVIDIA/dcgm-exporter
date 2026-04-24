@@ -20,5 +20,14 @@ package nvmlprovider
 
 type NVML interface {
 	GetMIGDeviceInfoByID(string) (*MIGDeviceInfo, error)
+	// GetDeviceProcessMemory returns memory usage for processes running on the GPU.
+	// Returns a map from PID to memory used in bytes.
+	GetDeviceProcessMemory(gpuUUID string) (map[uint32]uint64, error)
+	// GetDeviceProcessUtilization returns SM utilization for processes running on the GPU.
+	// Returns a map from PID to SM utilization percentage.
+	GetDeviceProcessUtilization(gpuUUID string) (map[uint32]uint32, error)
+	// GetAllMIGDevicesProcessMemory returns per-process memory usage for all MIG instances on a GPU.
+	// Returns map[gpuInstanceID (MIG instance)]map[PID]memoryBytes.
+	GetAllMIGDevicesProcessMemory(parentGPUUUID string) (map[uint]map[uint32]uint64, error)
 	Cleanup()
 }

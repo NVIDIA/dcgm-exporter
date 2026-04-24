@@ -39,4 +39,7 @@ const (
 	draMigDeviceUUID = "dra_mig_device_uuid"
 
 	DRAGPUDriverName = "gpu.nvidia.com"
+
+	metricGPUUtil = "DCGM_FI_DEV_GPU_UTIL"
+	metricFBUsed  = "DCGM_FI_DEV_FB_USED"
 )

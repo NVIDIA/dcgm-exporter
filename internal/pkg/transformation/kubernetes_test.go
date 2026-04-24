@@ -352,6 +352,9 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
 				mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil).AnyTimes()
+				mockNVMLProvider.EXPECT().GetDeviceProcessMemory(gomock.Any()).Return(map[uint32]uint64{}, nil).AnyTimes()
+				mockNVMLProvider.EXPECT().GetDeviceProcessUtilization(gomock.Any()).Return(map[uint32]uint32{}, nil).AnyTimes()
+				mockNVMLProvider.EXPECT().GetAllMIGDevicesProcessMemory(gomock.Any()).Return(map[uint]map[uint32]uint64{}, nil).AnyTimes()
 				nvmlprovider.SetClient(mockNVMLProvider)
 
 				podMapper := NewPodMapper(&appconfig.Config{
@@ -1043,4 +1046,642 @@ func TestPodMapper_createPodInfo_WithInformer(t *testing.T) {
 	assert.Equal(t, podUID, podInfo.UID, "Should retrieve UID from Informer")
 	assert.Equal(t, "gpu-app", podInfo.Labels["app"], "Should retrieve labels from Informer")
 	assert.Equal(t, "production", podInfo.Labels["env"])
+}
+
+func TestBuildPodValueMap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		pidToPod  map[uint32]*PodInfo
+		data      *perProcessMetrics
+		fieldName string
+		expected  map[string]string
+	}{
+		{
+			name:      "nil data returns empty map",
+			pidToPod:  map[uint32]*PodInfo{1001: {UID: "uid1"}},
+			data:      nil,
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{},
+		},
+		{
+			name:     "empty pidToPod returns empty map",
+			pidToPod: map[uint32]*PodInfo{},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 50},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{},
+		},
+		{
+			name:     "maps PID values to pod UIDs for GPU util",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}, 1002: {UID: "uid2"}},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 50, 1002: 75},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{"uid1": "50", "uid2": "75"},
+		},
+		{
+			name:     "maps PID values to pod UIDs for FB used",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}},
+			data: &perProcessMetrics{
+				pidToMemory: map[uint32]uint64{1001: 1024 * 1024 * 1024},
+			},
+			fieldName: metricFBUsed,
+			expected:  map[string]string{"uid1": "1024"},
+		},
+		{
+			name:     "skips PIDs without metric data",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}, 2002: {UID: "uid2"}},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 50},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{"uid1": "50"},
+		},
+		{
+			name:     "multiple PIDs same pod - accumulates GPU util",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}, 1002: {UID: "uid1"}},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 30, 1002: 45},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{"uid1": "75"},
+		},
+		{
+			name:     "multiple PIDs same pod - accumulates FB used",
+			pidToPod: map[uint32]*PodInfo{1001: {UID: "uid1"}, 1002: {UID: "uid1"}},
+			data: &perProcessMetrics{
+				pidToMemory: map[uint32]uint64{1001: 500 * 1024 * 1024, 1002: 300 * 1024 * 1024},
+			},
+			fieldName: metricFBUsed,
+			expected:  map[string]string{"uid1": "800"},
+		},
+		{
+			name: "mixed pods - some with multiple PIDs, some with single PID",
+			pidToPod: map[uint32]*PodInfo{
+				1001: {UID: "uid1"}, 1002: {UID: "uid1"},
+				2001: {UID: "uid2"},
+			},
+			data: &perProcessMetrics{
+				pidToSMUtil: map[uint32]uint32{1001: 20, 1002: 30, 2001: 50},
+			},
+			fieldName: metricGPUUtil,
+			expected:  map[string]string{"uid1": "50", "uid2": "50"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := buildPodValueMap(tc.pidToPod, tc.data, tc.fieldName)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestBuildIdlePodValues(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		existingValues map[string]string
+		devicePods     []PodInfo
+		expected       map[string]string
+	}{
+		{
+			name:           "adds zero values for idle pods",
+			existingValues: map[string]string{"uid1": "50"},
+			devicePods:     []PodInfo{{UID: "uid1"}, {UID: "uid2"}, {UID: "uid3"}},
+			expected:       map[string]string{"uid2": "0", "uid3": "0"},
+		},
+		{
+			name:           "skips pods with existing values",
+			existingValues: map[string]string{"uid1": "50", "uid2": "75"},
+			devicePods:     []PodInfo{{UID: "uid1"}, {UID: "uid2"}},
+			expected:       map[string]string{},
+		},
+		{
+			name:           "all pods idle",
+			existingValues: map[string]string{},
+			devicePods:     []PodInfo{{UID: "uid1"}, {UID: "uid2"}},
+			expected:       map[string]string{"uid1": "0", "uid2": "0"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := buildIdlePodValues(tc.existingValues, tc.devicePods)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
+	t.Parallel()
+	gpuUUID := "GPU-00000000-0000-0000-0000-000000000000"
+	podUID := "a9c80282-3f6b-4d5b-84d5-a137a6668011"
+
+	tests := []struct {
+		name           string
+		useOldNS       bool
+		dataMap        *perProcessDataMap
+		counter        counters.Counter
+		originalMetric collector.Metric
+		validate       func(t *testing.T, result []collector.Metric, err error)
+	}{
+		{
+			name:     "no deviceToPods returns nil",
+			useOldNS: false,
+			dataMap: &perProcessDataMap{
+				metrics:      map[string]*perProcessMetrics{gpuUUID: {pidToSMUtil: map[uint32]uint32{1001: 50}}},
+				pidToPod:     map[uint32]*PodInfo{1001: {UID: podUID}},
+				deviceToPods: map[string][]PodInfo{},
+			},
+			counter: counters.Counter{FieldName: metricGPUUtil},
+			originalMetric: collector.Metric{
+				GPUUUID:    gpuUUID,
+				Attributes: map[string]string{},
+			},
+			validate: func(t *testing.T, result []collector.Metric, err error) {
+				assert.NoError(t, err)
+				assert.Nil(t, result)
+			},
+		},
+		{
+			name:     "creates metrics with new namespace attributes",
+			useOldNS: false,
+			dataMap: &perProcessDataMap{
+				metrics: map[string]*perProcessMetrics{
+					gpuUUID: {
+						pidToSMUtil: map[uint32]uint32{1001: 50},
+						pidToMemory: map[uint32]uint64{1001: 1024 * 1024 * 1024},
+					},
+				},
+				pidToPod: map[uint32]*PodInfo{
+					1001: {Name: "test-pod", Namespace: "default", UID: podUID, Container: "app"},
+				},
+				deviceToPods: map[string][]PodInfo{
+					gpuUUID: {{Name: "test-pod", Namespace: "default", UID: podUID, Container: "app"}},
+				},
+			},
+			counter: counters.Counter{FieldName: metricGPUUtil},
+			originalMetric: collector.Metric{
+				GPUUUID:    gpuUUID,
+				Value:      "0",
+				Attributes: map[string]string{},
+			},
+			validate: func(t *testing.T, result []collector.Metric, err error) {
+				assert.NoError(t, err)
+				require.Len(t, result, 1)
+				assert.Equal(t, "50", result[0].Value)
+				assert.Equal(t, "test-pod", result[0].Attributes[podAttribute])
+				assert.Equal(t, "default", result[0].Attributes[namespaceAttribute])
+				assert.Equal(t, "app", result[0].Attributes[containerAttribute])
+				assert.Equal(t, podUID, result[0].Attributes[uidAttribute])
+			},
+		},
+		{
+			name:     "creates metrics with old namespace attributes",
+			useOldNS: true,
+			dataMap: &perProcessDataMap{
+				metrics: map[string]*perProcessMetrics{
+					gpuUUID: {
+						pidToSMUtil: map[uint32]uint32{1001: 75},
+					},
+				},
+				pidToPod: map[uint32]*PodInfo{
+					1001: {Name: "old-pod", Namespace: "kube-system", UID: podUID, Container: "container"},
+				},
+				deviceToPods: map[string][]PodInfo{
+					gpuUUID: {{Name: "old-pod", Namespace: "kube-system", UID: podUID, Container: "container"}},
+				},
+			},
+			counter: counters.Counter{FieldName: metricGPUUtil},
+			originalMetric: collector.Metric{
+				GPUUUID:    gpuUUID,
+				Attributes: map[string]string{},
+			},
+			validate: func(t *testing.T, result []collector.Metric, err error) {
+				assert.NoError(t, err)
+				require.Len(t, result, 1)
+				assert.Equal(t, "75", result[0].Value)
+				assert.Equal(t, "old-pod", result[0].Attributes[oldPodAttribute])
+				assert.Equal(t, "kube-system", result[0].Attributes[oldNamespaceAttribute])
+				assert.Equal(t, "container", result[0].Attributes[oldContainerAttribute])
+			},
+		},
+		{
+			name:     "includes VGPU attribute when present",
+			useOldNS: false,
+			dataMap: &perProcessDataMap{
+				metrics: map[string]*perProcessMetrics{
+					gpuUUID: {
+						pidToSMUtil: map[uint32]uint32{1001: 25},
+					},
+				},
+				pidToPod: map[uint32]*PodInfo{
+					1001: {Name: "vgpu-pod", Namespace: "default", UID: podUID, VGPU: "vgpu-0"},
+				},
+				deviceToPods: map[string][]PodInfo{
+					gpuUUID: {{Name: "vgpu-pod", Namespace: "default", UID: podUID, VGPU: "vgpu-0"}},
+				},
+			},
+			counter: counters.Counter{FieldName: metricGPUUtil},
+			originalMetric: collector.Metric{
+				GPUUUID:    gpuUUID,
+				Attributes: map[string]string{},
+			},
+			validate: func(t *testing.T, result []collector.Metric, err error) {
+				assert.NoError(t, err)
+				require.Len(t, result, 1)
+				assert.Equal(t, "vgpu-0", result[0].Attributes[vgpuAttribute])
+			},
+		},
+		{
+			name:     "backfills idle pods with zero for GPU util",
+			useOldNS: false,
+			dataMap: &perProcessDataMap{
+				metrics: map[string]*perProcessMetrics{
+					gpuUUID: {
+						pidToSMUtil: map[uint32]uint32{1001: 50},
+					},
+				},
+				pidToPod: map[uint32]*PodInfo{
+					1001: {Name: "active-pod", Namespace: "ns1", UID: "uid1"},
+				},
+				deviceToPods: map[string][]PodInfo{
+					gpuUUID: {
+						{Name: "active-pod", Namespace: "ns1", UID: "uid1"},
+						{Name: "idle-pod", Namespace: "ns2", UID: "uid2"},
+					},
+				},
+			},
+			counter: counters.Counter{FieldName: metricGPUUtil},
+			originalMetric: collector.Metric{
+				GPUUUID:    gpuUUID,
+				Attributes: map[string]string{},
+			},
+			validate: func(t *testing.T, result []collector.Metric, err error) {
+				assert.NoError(t, err)
+				require.Len(t, result, 2)
+				values := map[string]string{}
+				for _, m := range result {
+					values[m.Attributes[podAttribute]] = m.Value
+				}
+				assert.Equal(t, "50", values["active-pod"])
+				assert.Equal(t, "0", values["idle-pod"])
+			},
+		},
+		{
+			name:     "backfills idle pods with zero for FB used",
+			useOldNS: false,
+			dataMap: &perProcessDataMap{
+				metrics: map[string]*perProcessMetrics{
+					gpuUUID: {
+						pidToMemory: map[uint32]uint64{1001: 1024 * 1024 * 1024},
+					},
+				},
+				pidToPod: map[uint32]*PodInfo{
+					1001: {Name: "active-pod", Namespace: "ns1", UID: "uid1"},
+				},
+				deviceToPods: map[string][]PodInfo{
+					gpuUUID: {
+						{Name: "active-pod", Namespace: "ns1", UID: "uid1"},
+						{Name: "idle-pod", Namespace: "ns2", UID: "uid2"},
+					},
+				},
+			},
+			counter: counters.Counter{FieldName: metricFBUsed},
+			originalMetric: collector.Metric{
+				GPUUUID:    gpuUUID,
+				Attributes: map[string]string{},
+			},
+			validate: func(t *testing.T, result []collector.Metric, err error) {
+				assert.NoError(t, err)
+				require.Len(t, result, 2)
+				values := map[string]string{}
+				for _, m := range result {
+					values[m.Attributes[podAttribute]] = m.Value
+				}
+				assert.Equal(t, "1024", values["active-pod"])
+				assert.Equal(t, "0", values["idle-pod"])
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			podMapper := &PodMapper{
+				Config: &appconfig.Config{
+					UseOldNamespace: tc.useOldNS,
+				},
+			}
+
+			result, err := podMapper.createPerProcessMetrics(
+				tc.originalMetric,
+				tc.counter,
+				tc.originalMetric,
+				tc.dataMap,
+			)
+
+			tc.validate(t, result, err)
+		})
+	}
+}
+
+func TestStripVGPUSuffix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		deviceID string
+		expected string
+	}{
+		{
+			name:     "MIG device ID with vgpu suffix",
+			deviceID: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55::7",
+			expected: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55",
+		},
+		{
+			name:     "Plain MIG UUID without suffix",
+			deviceID: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55",
+			expected: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55",
+		},
+		{
+			name:     "Regular GPU UUID",
+			deviceID: "GPU-65759866-6a45-99ff-bc37-c534ea0ae191",
+			expected: "GPU-65759866-6a45-99ff-bc37-c534ea0ae191",
+		},
+		{
+			name:     "Non-MIG device ID with vgpu suffix",
+			deviceID: "b8ea3855-276c-c9cb-b366-c6fa655957c5::2",
+			expected: "b8ea3855-276c-c9cb-b366-c6fa655957c5",
+		},
+		{
+			name:     "Empty string",
+			deviceID: "",
+			expected: "",
+		},
+		{
+			name:     "Device ID with empty suffix",
+			deviceID: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55::",
+			expected: "MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := stripVGPUSuffix(tc.deviceID)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	testCases := []struct {
+		name              string
+		counter           counters.Counter
+		wantPodMetrics    int
+		wantDeviceMetrics int
+	}{
+		{
+			name: "non-per-process metric",
+			counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 2,
+		},
+		{
+			name: "per-process metric",
+			counter: counters.Counter{
+				FieldID:   203,
+				FieldName: metricGPUUtil,
+				PromType:  "gauge",
+			},
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 3,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			allGPUUUIDs := []string{"gpu-uuid-0", "gpu-uuid-1", "gpu-uuid-2"}
+			inUseGPUUUIDs := []string{"gpu-uuid-0"}
+
+			tmpDir, cleanup := testutils.CreateTmpDir(t)
+			defer cleanup()
+			socketPath := tmpDir + "/kubelet.sock"
+			server := grpc.NewServer()
+			defer server.Stop()
+
+			config := &appconfig.Config{
+				UseRemoteHE:   false,
+				Kubernetes:    true,
+				EnableDCGMLog: true,
+				DCGMLogLevel:  "DEBUG",
+			}
+			dcgmprovider.SmartDCGMInit(t, config)
+			defer dcgmprovider.Client().Cleanup()
+
+			podresourcesapi.RegisterPodResourcesListerServer(server,
+				testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, inUseGPUUUIDs))
+			cleanupServer := testutils.StartMockServer(t, server, socketPath)
+			defer cleanupServer()
+
+			ctrl := gomock.NewController(t)
+			mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+			mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(&nvmlprovider.MIGDeviceInfo{}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetDeviceProcessMemory(gomock.Any()).Return(map[uint32]uint64{}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetDeviceProcessUtilization(gomock.Any()).Return(map[uint32]uint32{}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetAllMIGDevicesProcessMemory(gomock.Any()).Return(map[uint]map[uint32]uint64{}, nil).AnyTimes()
+			nvmlprovider.SetClient(mockNVMLProvider)
+
+			podMapper := NewPodMapper(&appconfig.Config{
+				KubernetesGPUIdType:       appconfig.GPUUID,
+				PodResourcesKubeletSocket: socketPath,
+				KubernetesVirtualGPUs:     true,
+			})
+			require.NotNil(t, podMapper)
+
+			metrics := collector.MetricsByCounter{}
+			for i, gpuUUID := range allGPUUUIDs {
+				metrics[tc.counter] = append(metrics[tc.counter], collector.Metric{
+					GPU:        fmt.Sprint(i),
+					GPUUUID:    gpuUUID,
+					Value:      fmt.Sprint(42 + i),
+					Counter:    tc.counter,
+					Attributes: map[string]string{},
+				})
+			}
+
+			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			mockSystemInfo.EXPECT().GPUCount().Return(uint(len(allGPUUUIDs))).AnyTimes()
+			for i, uuid := range allGPUUUIDs {
+				mockSystemInfo.EXPECT().GPU(uint(i)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{
+						UUID: uuid,
+						GPU:  uint(i),
+					},
+				}).AnyTimes()
+			}
+
+			err := podMapper.Process(metrics, mockSystemInfo)
+			require.NoError(t, err)
+
+			var deviceMetrics, podMetrics []collector.Metric
+			for _, m := range metrics[tc.counter] {
+				if _, hasPod := m.Attributes[podAttribute]; hasPod {
+					podMetrics = append(podMetrics, m)
+				} else {
+					deviceMetrics = append(deviceMetrics, m)
+				}
+			}
+
+			require.Len(t, podMetrics, tc.wantPodMetrics)
+			require.Equal(t, "gpu-pod-0", podMetrics[0].Attributes[podAttribute])
+			require.Equal(t, "default", podMetrics[0].Attributes[namespaceAttribute])
+
+			require.Len(t, deviceMetrics, tc.wantDeviceMetrics)
+			for _, m := range deviceMetrics {
+				require.NotContains(t, m.Attributes, podAttribute)
+			}
+		})
+	}
+}
+
+func TestKubernetesVirtualGPUs_UnusedMIGInstancesPreserveMetrics(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	testCases := []struct {
+		name              string
+		counter           counters.Counter
+		wantPodMetrics    int
+		wantDeviceMetrics int
+	}{
+		{
+			name: "non-per-process metric",
+			counter: counters.Counter{
+				FieldID:   155,
+				FieldName: "DCGM_FI_DEV_POWER_USAGE",
+				PromType:  "gauge",
+			},
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 2,
+		},
+		{
+			name: "per-process metric",
+			counter: counters.Counter{
+				FieldID:   203,
+				FieldName: metricGPUUtil,
+				PromType:  "gauge",
+			},
+			// in-use instance: 1 device-level + 1 per-process (has pod attr)
+			// unused instances: 2 device-level
+			wantPodMetrics:    1,
+			wantDeviceMetrics: 3,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gpuUUID := "GPU-test-mig-uuid"
+			allInstances := []uint{7, 12, 13}
+			podDeviceID := "nvidia0/gi7/vgpu0"
+
+			tmpDir, cleanup := testutils.CreateTmpDir(t)
+			defer cleanup()
+			socketPath := tmpDir + "/kubelet.sock"
+			server := grpc.NewServer()
+			defer server.Stop()
+
+			config := &appconfig.Config{
+				UseRemoteHE:   false,
+				Kubernetes:    true,
+				EnableDCGMLog: true,
+				DCGMLogLevel:  "DEBUG",
+			}
+			dcgmprovider.SmartDCGMInit(t, config)
+			defer dcgmprovider.Client().Cleanup()
+
+			podresourcesapi.RegisterPodResourcesListerServer(server,
+				testutils.NewMockPodResourcesServer("nvidia.com/mig-1g.5gb", []string{podDeviceID}))
+			cleanupServer := testutils.StartMockServer(t, server, socketPath)
+			defer cleanupServer()
+
+			ctrl := gomock.NewController(t)
+			mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+			mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(&nvmlprovider.MIGDeviceInfo{
+				ParentUUID:        gpuUUID,
+				GPUInstanceID:     3,
+				ComputeInstanceID: 0,
+			}, nil).AnyTimes()
+			mockNVMLProvider.EXPECT().GetAllMIGDevicesProcessMemory(gomock.Any()).Return(map[uint]map[uint32]uint64{}, nil).AnyTimes()
+			nvmlprovider.SetClient(mockNVMLProvider)
+
+			podMapper := NewPodMapper(&appconfig.Config{
+				KubernetesGPUIdType:       appconfig.DeviceName,
+				PodResourcesKubeletSocket: socketPath,
+				KubernetesVirtualGPUs:     true,
+			})
+			require.NotNil(t, podMapper)
+
+			metrics := collector.MetricsByCounter{}
+			for _, instID := range allInstances {
+				metrics[tc.counter] = append(metrics[tc.counter], collector.Metric{
+					GPU:           "0",
+					GPUUUID:       gpuUUID,
+					GPUDevice:     "0",
+					GPUInstanceID: fmt.Sprint(instID),
+					Value:         "100",
+					MigProfile:    "1g.5gb",
+					Counter:       tc.counter,
+					Attributes:    map[string]string{},
+				})
+			}
+
+			var gpuInstances []deviceinfo.GPUInstanceInfo
+			for _, instID := range allInstances {
+				gpuInstances = append(gpuInstances, deviceinfo.GPUInstanceInfo{
+					Info:        dcgm.MigEntityInfo{NvmlInstanceId: instID},
+					ProfileName: "1g.5gb",
+				})
+			}
+
+			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			mockSystemInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+				DeviceInfo:   dcgm.Device{UUID: gpuUUID, GPU: 0},
+				MigEnabled:   true,
+				GPUInstances: gpuInstances,
+			}).AnyTimes()
+
+			err := podMapper.Process(metrics, mockSystemInfo)
+			require.NoError(t, err)
+
+			var deviceMetrics, podMetrics []collector.Metric
+			for _, m := range metrics[tc.counter] {
+				if _, hasPod := m.Attributes[podAttribute]; hasPod {
+					podMetrics = append(podMetrics, m)
+				} else {
+					deviceMetrics = append(deviceMetrics, m)
+				}
+			}
+
+			require.Len(t, podMetrics, tc.wantPodMetrics)
+			require.Equal(t, "gpu-pod-0", podMetrics[0].Attributes[podAttribute])
+
+			require.Len(t, deviceMetrics, tc.wantDeviceMetrics)
+			for _, m := range deviceMetrics {
+				require.NotContains(t, m.Attributes, podAttribute)
+			}
+		})
+	}
 }
