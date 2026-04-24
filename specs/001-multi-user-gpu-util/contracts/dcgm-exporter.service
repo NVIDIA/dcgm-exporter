@@ -1,0 +1,35 @@
+# Contract: systemd unit (reference)
+# Install path: /etc/systemd/system/dcgm-exporter.service
+# Binary path : /usr/bin/dcgm-exporter
+# Config path : /etc/dcgm-exporter/config.yaml
+
+[Unit]
+Description=NVIDIA DCGM-exporter with multi-user GPU utilization attribution
+Documentation=https://github.com/NVIDIA/dcgm-exporter
+After=nvidia-dcgm.service network-online.target
+Requires=nvidia-dcgm.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/dcgm-exporter --config /etc/dcgm-exporter/config.yaml
+Restart=on-failure
+RestartSec=3s
+StartLimitBurst=5
+StartLimitIntervalSec=30s
+
+# Resource hygiene
+LimitNOFILE=65536
+TasksMax=4096
+
+# Reasonable hardening that still allows /proc reads
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+# Note: do NOT set ProtectKernelTunables=yes (DCGM may need /sys/kernel);
+# do NOT set ProtectProc=invisible (we must read /proc/<PID>/environ of others).
+
+[Install]
+WantedBy=multi-user.target

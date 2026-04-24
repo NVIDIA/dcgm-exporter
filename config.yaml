@@ -1,0 +1,39 @@
+# ============================================================================
+# 自定义 Label 配置
+# ============================================================================
+# labels 节定义附加在 DCGM_FI_DEV_GPU_UTIL 指标上的用户维度标签。
+# 注意：其他 DCGM 指标（温度/功耗等）不受此配置影响。
+#
+# 两类标签：
+# 1. static: exporter 启动时确定，所有 GPU 进程共享同一值
+#    - name: Label 名称（必须符合 Prometheus 命名规范: [a-zA-Z_][a-zA-Z0-9_]*）
+#    - value: 固定值（留空时从系统环境变量读取，再空则为 "unknown"）
+#
+# 2. env: 从每个 GPU 进程的环境变量中动态读取
+#    - name: Label 名称
+#    - env_var: 对应的进程环境变量名（默认与 name 相同）
+#
+# 保留说明：
+#   - 不配置 labels 节时，使用默认 Label: STUDIO(静态) + PROJECT(动态)
+#   - USER 标签由系统自动检测（PID→UID→用户名），不可自定义
+#   - gpu、UUID、modelName、Hostname 是系统内置标签，不可覆盖
+# ============================================================================
+labels:
+  static:
+    - name: STUDIO
+      value: "ai-lab"           # 直接指定服务器/工作室名称
+    # - name: CLUSTER
+    #   value: "cluster-01"     # 集群标识，也可留空从 CLUSTER 环境变量读取
+
+  env:
+    - name: PROJECT             # 从进程环境变量 PROJECT 读取
+    # - name: TASK_ID
+    # - name: EXPERIMENT
+    #   env_var: EXPERIMENT_NAME  # Label 名为 EXPERIMENT，但读取 EXPERIMENT_NAME 环境变量
+
+# HTTP 服务器配置
+server:
+  port: ":9400"           # 监听端点（字符串：":port" 或 "host:port"）
+  timeout: 10s            # 整体采集超时
+  read_timeout: 5s        # HTTP 读取超时
+  write_timeout: 10s      # HTTP 写入超时 
