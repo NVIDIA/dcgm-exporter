@@ -33,5 +33,14 @@ func GetTransformations(c *appconfig.Config) []Transform {
 		transformations = append(transformations, hpcMapper)
 	}
 
+	// Feature 001-multi-user-gpu-util: register the bare-metal user mapper at
+	// the end of the chain whenever the YAML-driven Labels section is
+	// populated (i.e. a config.yaml loaded successfully). See Clarification
+	// Q4: "successful config load == feature enabled" — there is no separate
+	// on/off switch.
+	if len(c.Labels.Static) > 0 || len(c.Labels.Env) > 0 {
+		transformations = append(transformations, NewBareMetalUserMapper(c, nil, nil))
+	}
+
 	return transformations
 }

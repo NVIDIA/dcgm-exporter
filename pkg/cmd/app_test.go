@@ -18,6 +18,8 @@ package cmd
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -242,6 +244,21 @@ func TestDCGMCleanupClosureBehavior(t *testing.T) {
 }
 
 func Test_contextToConfig_DumpConfig(t *testing.T) {
+	// Feature 001-multi-user-gpu-util: contextToConfig now requires a
+	// loadable config.yaml. Write a minimal one to a temp file once for all
+	// subtests; DumpConfig assertions are unaffected by it.
+	tmpCfg := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(tmpCfg, []byte(`
+labels:
+  static:
+    - name: STUDIO
+      value: test-lab
+  env:
+    - name: PROJECT
+server:
+  port: ":9400"
+`), 0o600))
+
 	tests := []struct {
 		name           string
 		flags          map[string]string
@@ -304,6 +321,7 @@ func Test_contextToConfig_DumpConfig(t *testing.T) {
 				&cli.StringFlag{Name: CLIDumpDirectory},
 				&cli.IntFlag{Name: CLIDumpRetention},
 				&cli.BoolFlag{Name: CLIDumpCompression},
+				&cli.StringFlag{Name: CLIConfig},
 			}
 
 			// Set up the context with test values
@@ -335,6 +353,8 @@ func Test_contextToConfig_DumpConfig(t *testing.T) {
 			if _, ok := tt.flags[CLIDumpCompression]; !ok {
 				set.Bool(CLIDumpCompression, true, "")
 			}
+			// Provide a loadable config.yaml for Feature 001-multi-user-gpu-util.
+			set.String(CLIConfig, tmpCfg, "")
 
 			for name, value := range tt.flags {
 				// Find the matching flag in app.Flags

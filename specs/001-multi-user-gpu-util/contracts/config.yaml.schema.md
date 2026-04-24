@@ -33,9 +33,9 @@
 | 键 | 类型 | 默认 | 校验 | 作用 |
 |----|------|------|------|------|
 | `server.port` | string | `":9400"` | 可解析为 `[host]:port`；端口 ∈ [1,65535] | `/metrics` HTTP 端点的监听地址 |
-| `server.timeout` | Go duration | `"10s"` | `> 0` | 单次 DCGM 采集链路（含 transformer）的整体超时；超时即本轮作废并记错误日志 |
-| `server.read_timeout` | Go duration | `"5s"` | `> 0` | `http.Server.ReadTimeout`：接受 Prom 抓取请求时读取请求的最大耗时 |
-| `server.write_timeout` | Go duration | `"10s"` | `> 0` | `http.Server.WriteTimeout`：向 Prom 抓取端写响应的最大耗时 |
+| `server.timeout` | Go duration | `"10s"` | `≥ 0`；省略或显式 `0s` 均取默认值 `10s`；负值启动失败 | 单次 DCGM 采集链路（含 transformer）的整体超时；超时即本轮作废并记错误日志 |
+| `server.read_timeout` | Go duration | `"5s"` | `≥ 0`；省略或显式 `0s` 均取默认值 `5s`；负值启动失败 | `http.Server.ReadTimeout`：接受 Prom 抓取请求时读取请求的最大耗时 |
+| `server.write_timeout` | Go duration | `"10s"` | `≥ 0`；省略或显式 `0s` 均取默认值 `10s`；负值启动失败 | `http.Server.WriteTimeout`：向 Prom 抓取端写响应的最大耗时 |
 
 ### 空 `labels` 的默认行为（FR-012）
 

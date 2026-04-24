@@ -102,6 +102,8 @@ const (
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
+	// Feature 001-multi-user-gpu-util: path to config.yaml (labels + server sections).
+	CLIConfig = "config"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -349,6 +351,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL"},
 			Value:   "1s",
 		},
+		// Feature 001-multi-user-gpu-util: path to config.yaml containing the
+		// `labels:` and `server:` sections. See
+		// specs/001-multi-user-gpu-util/contracts/config.yaml.schema.md.
+		// If this flag is omitted, dcgm-exporter falls back to the default
+		// path appconfig.DefaultConfigPath. A missing file at that path is a
+		// hard error (FR-011 / Clarification Q4).
+		&cli.StringFlag{
+			Name:    CLIConfig,
+			Value:   "",
+			Usage:   "Path to config.yaml (labels + server sections). Default: " + appconfig.DefaultConfigPath + " when omitted. Missing file is fatal.",
+			EnvVars: []string{"DCGM_EXPORTER_CONFIG"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -470,17 +484,21 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 		defer dcgmCleanup()
 	}
 
-	// Initialize NVML Provider Instance only if Kubernetes mode is enabled
-	// NVML is only needed for MIG device UUID parsing in Kubernetes environments
-	if config.Kubernetes {
+	// Initialize NVML Provider Instance when either:
+	//   (a) Kubernetes mode is enabled (historical use case: MIG device UUID parsing), or
+	//   (b) feature 001-multi-user-gpu-util is active (i.e. config.yaml has been
+	//       loaded and declared labels). The bare-metal user mapper depends on
+	//       NVML's GetDeviceProcessMemory to enumerate compute PIDs per GPU.
+	needNVML := config.Kubernetes || len(config.Labels.Static) > 0 || len(config.Labels.Env) > 0
+	if needNVML {
 		err = nvmlprovider.Initialize()
 		if err != nil && !config.DisableStartupValidate {
 			return err
 		}
 		defer nvmlprovider.Client().Cleanup()
-		slog.Info("NVML provider successfully initialized for Kubernetes MIG support")
+		slog.Info("NVML provider successfully initialized")
 	} else {
-		slog.Info("NVML provider skipped (not running in Kubernetes mode)")
+		slog.Info("NVML provider skipped (no Kubernetes / bare-metal user mapper requirement)")
 	}
 
 	slog.Info("DCGM successfully initialized!")
@@ -1075,7 +1093,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		return nil, fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, dcgmLogLevel)
 	}
 
-	return &appconfig.Config{
+	cfg := &appconfig.Config{
 		CollectorsFile:                   c.String(CLIFieldsFile),
 		Address:                          c.String(CLIAddress),
 		CollectInterval:                  c.Int(CLICollectInterval),
@@ -1116,7 +1134,43 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		DisableStartupValidate:    c.Bool(CLIDisableStartupValidate),
 		EnableGPUBindUnbindWatch:  c.Bool(CLIEnableGPUBindUnbindWatch),
 		GPUBindUnbindPollInterval: parseDuration(c.String(CLIGPUBindUnbindPollInterval), 1*time.Second),
-	}, nil
+	}
+
+	// Feature 001-multi-user-gpu-util: load `config.yaml` and merge.
+	//
+	// Resolution order (Clarification Q4 / FR-011):
+	//   (1) --config flag explicit path
+	//   (2) appconfig.DefaultConfigPath when --config is omitted
+	// Missing file at the resolved path is a hard failure; we do NOT
+	// silently fall back to built-in defaults.
+	//
+	// CLI > YAML > built-in default (Clarification Q5). Specifically:
+	//   --address overrides cfg.Server.Port when cli.Context.IsSet(CLIAddress).
+	configPath := c.String(CLIConfig)
+	if configPath == "" {
+		configPath = appconfig.DefaultConfigPath
+	}
+	yamlCfg, err := appconfig.LoadYAMLConfig(configPath)
+	if err != nil {
+		if errors.Is(err, appconfig.ErrConfigNotFound) {
+			// FR-011 requires the exact message format "config.yaml not found at <path>".
+			return nil, fmt.Errorf("config.yaml not found at %s", configPath)
+		}
+		return nil, err
+	}
+	cfg.Labels = yamlCfg.Labels
+	cfg.Server = yamlCfg.Server
+
+	// CLI override: --address, if explicitly provided, wins over YAML server.port.
+	if c.IsSet(CLIAddress) && cfg.Address != "" {
+		cfg.Server.Port = cfg.Address
+	} else {
+		// Propagate YAML server.port into the legacy Address field used by the
+		// existing HTTP server wiring, so downstream code keeps working.
+		cfg.Address = cfg.Server.Port
+	}
+
+	return cfg, nil
 }
 
 // parseDuration parses a duration string and returns the parsed duration.

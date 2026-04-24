@@ -76,4 +76,50 @@ type Config struct {
 	DisableStartupValidate           bool
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
+
+	// Labels holds the feature-001 (multi-user GPU utilization) label schema
+	// loaded from config.yaml (`labels:` section). When the feature is enabled
+	// (i.e. a config.yaml is successfully loaded), these labels are attached
+	// exclusively to DCGM_FI_DEV_GPU_UTIL samples.
+	Labels LabelsConfig
+	// Server holds the HTTP listener + timeout settings loaded from the
+	// config.yaml `server:` section.
+	Server ServerConfig
+}
+
+// LabelsConfig corresponds to the `labels:` section of config.yaml.
+// Loaded from YAML at startup; never mutated at runtime.
+type LabelsConfig struct {
+	Static []StaticLabel `yaml:"static"`
+	Env    []EnvLabel    `yaml:"env"`
+}
+
+// StaticLabel corresponds to one entry in `labels.static[]`. The Value is
+// resolved at startup via the chain: explicit Value -> same-named env var ->
+// "unknown". Resolved value is cached in ResolvedValue by ApplyDefaults().
+type StaticLabel struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+	// ResolvedValue is the startup-resolved string that is actually injected
+	// into DCGM_FI_DEV_GPU_UTIL samples. It is populated by ApplyDefaults()
+	// and is not itself serialized to YAML.
+	ResolvedValue string `yaml:"-"`
+}
+
+// EnvLabel corresponds to one entry in `labels.env[]`. EnvVar defaults to Name
+// when unset; the value is read per-process from /proc/<pid>/environ at every
+// collection cycle.
+type EnvLabel struct {
+	Name   string `yaml:"name"`
+	EnvVar string `yaml:"env_var"`
+}
+
+// ServerConfig corresponds to the `server:` section of config.yaml.
+// Authoritative semantics: see
+// specs/001-multi-user-gpu-util/contracts/config.yaml.schema.md §server.
+type ServerConfig struct {
+	Port         string        `yaml:"port"`          // /metrics listen address, e.g. ":9400"
+	Timeout      time.Duration `yaml:"timeout"`       // whole-cycle collection timeout
+	ReadTimeout  time.Duration `yaml:"read_timeout"`  // http.Server.ReadTimeout
+	WriteTimeout time.Duration `yaml:"write_timeout"` // http.Server.WriteTimeout
 }
