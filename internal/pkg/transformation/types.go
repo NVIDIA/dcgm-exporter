@@ -77,12 +77,15 @@ type PodInfo struct {
 }
 
 type DRAResourceSliceManager struct {
-	factory       informers.SharedInformerFactory
-	informer      cache.SharedIndexInformer
-	cancelContext context.CancelFunc
-	mu            sync.RWMutex
-	deviceToUUID  map[string]string            // pool/device -> UUID (for full GPUs)
-	migDevices    map[string]*DRAMigDeviceInfo // pool/device -> MIG info (for MIG devices)
+	factory         informers.SharedInformerFactory
+	v1Informer      cache.SharedIndexInformer
+	v1beta1Informer cache.SharedIndexInformer
+	// preferredAPIVersion is selected during initialization:
+	// - "v1" if v1 has NVIDIA DRA ResourceSlices
+	// - "v1beta1" if v1 does not, but v1beta1 does
+	preferredAPIVersion string
+	cancelContext       context.CancelFunc
+	mu                  sync.RWMutex
 }
 
 // PodMetadata holds pod metadata from API server

@@ -31,6 +31,8 @@ import (
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	v1 "k8s.io/api/core/v1"
+	resourcev1 "k8s.io/api/resource/v1"
+	resourcev1beta1 "k8s.io/api/resource/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -675,9 +677,58 @@ func TestPodDRAInfo(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			// Create an indexer with ResourceSlice objects based on test case.
+			// We use the same poolName index as the production informer.
+			store := newDRAIndexer()
+			if len(tc.deviceToUUID) > 0 || len(tc.migDevices) > 0 {
+				// Create a ResourceSlice with the device from the test case
+				devices := []resourcev1.Device{}
+				if uuid, exists := tc.deviceToUUID["poolA/gpu-x"]; exists {
+					if migInfo, isMIG := tc.migDevices["poolA/gpu-x"]; isMIG {
+						// MIG device
+						devices = append(devices, resourcev1.Device{
+							Name: "gpu-x",
+							Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+								"type":       {StringValue: stringPtr("mig")},
+								"uuid":       {StringValue: &migInfo.MIGDeviceUUID},
+								"profile":    {StringValue: &migInfo.Profile},
+								"parentUUID": {StringValue: &migInfo.ParentUUID},
+							},
+						})
+					} else {
+						// GPU device
+						devices = append(devices, resourcev1.Device{
+							Name: "gpu-x",
+							Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+								"type": {StringValue: stringPtr("gpu")},
+								"uuid": {StringValue: &uuid},
+							},
+						})
+					}
+				}
+				if len(devices) > 0 {
+					slice := &resourcev1.ResourceSlice{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-slice",
+							Namespace: "default",
+						},
+						Spec: resourcev1.ResourceSliceSpec{
+							Driver: DRAGPUDriverName,
+							Pool: resourcev1.ResourcePool{
+								Name: "poolA",
+							},
+							Devices: devices,
+						},
+					}
+					store.Add(slice)
+				}
+			}
+
+			// Create test informer backed by the indexer.
+			testInformer := &testInformerForDRA{store: store}
 			draMgr := &DRAResourceSliceManager{
-				deviceToUUID: tc.deviceToUUID,
-				migDevices:   tc.migDevices,
+				v1Informer:          testInformer,
+				preferredAPIVersion: "v1",
 			}
 
 			pm := &PodMapper{
@@ -727,6 +778,246 @@ func TestPodDRAInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPodDRAInfo_V1beta1Preferred(t *testing.T) {
+	dra := &podresourcesapi.DynamicResource{
+		ClaimName:      "claim1",
+		ClaimNamespace: "ns1",
+		ClaimResources: []*podresourcesapi.ClaimResource{{
+			DriverName: DRAGPUDriverName,
+			PoolName:   "poolA",
+			DeviceName: "gpu-x",
+		}},
+	}
+
+	tests := []struct {
+		name         string
+		deviceToUUID map[string]string
+		migDevices   map[string]*DRAMigDeviceInfo
+		wantUUIDs    []string
+		isMIG        bool
+	}{
+		{
+			name:         "uuid-exists",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
+			wantUUIDs:    []string{"GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+			isMIG:        false,
+		},
+		{
+			name:         "uuid-updated",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-UUID-Updated"},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
+			wantUUIDs:    []string{"GPU-UUID-Updated"},
+			isMIG:        false,
+		},
+		{
+			name:         "no-uuid",
+			deviceToUUID: map[string]string{},
+			migDevices:   map[string]*DRAMigDeviceInfo{},
+			wantUUIDs:    nil,
+			isMIG:        false,
+		},
+		{
+			name:         "mig-device",
+			deviceToUUID: map[string]string{"poolA/gpu-x": "MIG-12345"},
+			migDevices: map[string]*DRAMigDeviceInfo{
+				"poolA/gpu-x": {
+					MIGDeviceUUID: "MIG-12345",
+					Profile:       "1g.12gb",
+					ParentUUID:    "GPU-parent-uuid",
+				},
+			},
+			wantUUIDs: []string{"GPU-parent-uuid"}, // Should map to parent UUID
+			isMIG:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create an indexer with v1beta1 ResourceSlice objects based on test case.
+			// We use the same poolName index as the production informer.
+			store := newDRAIndexer()
+			if len(tc.deviceToUUID) > 0 || len(tc.migDevices) > 0 {
+				devices := []resourcev1beta1.Device{}
+				if uuid, exists := tc.deviceToUUID["poolA/gpu-x"]; exists {
+					if migInfo, isMIG := tc.migDevices["poolA/gpu-x"]; isMIG {
+						// MIG device
+						devices = append(devices, resourcev1beta1.Device{
+							Name: "gpu-x",
+							Basic: &resourcev1beta1.BasicDevice{
+								Attributes: map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute{
+									"type":       {StringValue: stringPtr("mig")},
+									"uuid":       {StringValue: &migInfo.MIGDeviceUUID},
+									"profile":    {StringValue: &migInfo.Profile},
+									"parentUUID": {StringValue: &migInfo.ParentUUID},
+								},
+							},
+						})
+					} else {
+						// GPU device
+						devices = append(devices, resourcev1beta1.Device{
+							Name: "gpu-x",
+							Basic: &resourcev1beta1.BasicDevice{
+								Attributes: map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute{
+									"type": {StringValue: stringPtr("gpu")},
+									"uuid": {StringValue: &uuid},
+								},
+							},
+						})
+					}
+				}
+
+				if len(devices) > 0 {
+					slice := &resourcev1beta1.ResourceSlice{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "test-slice",
+							Namespace: "default",
+						},
+						Spec: resourcev1beta1.ResourceSliceSpec{
+							Driver: DRAGPUDriverName,
+							Pool: resourcev1beta1.ResourcePool{
+								Name: "poolA",
+							},
+							Devices: devices,
+						},
+					}
+					store.Add(slice)
+				}
+			}
+
+			// Create test informer backed by the indexer.
+			testInformer := &testInformerForDRA{store: store}
+			draMgr := &DRAResourceSliceManager{
+				v1beta1Informer:     testInformer,
+				preferredAPIVersion: "v1beta1",
+			}
+			pm := &PodMapper{
+				Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
+				ResourceSliceManager: draMgr,
+			}
+
+			resp := &podresourcesapi.ListPodResourcesResponse{
+				PodResources: []*podresourcesapi.PodResources{{
+					Name:      "pod1",
+					Namespace: "default",
+					Containers: []*podresourcesapi.ContainerResources{{
+						Name:             "ctr1",
+						DynamicResources: []*podresourcesapi.DynamicResource{dra},
+					}},
+				}},
+			}
+
+			got := pm.toDeviceToPodsDRA(resp)
+
+			assert.Len(t, got, len(tc.wantUUIDs), "map size")
+			for _, want := range tc.wantUUIDs {
+				assert.Contains(t, got, want, "expected key %q", want)
+			}
+
+			if len(tc.wantUUIDs) == 1 {
+				pi := got[tc.wantUUIDs[0]]
+				require.Len(t, pi, 1, "should have one pod info")
+
+				dr := *pi[0].DynamicResources
+				require.NotNil(t, dr, "dynamic resources should not be nil")
+
+				assert.Equal(t, "claim1", dr.ClaimName)
+				assert.Equal(t, "ns1", dr.ClaimNamespace)
+				assert.Equal(t, DRAGPUDriverName, dr.DriverName)
+				assert.Equal(t, "poolA", dr.PoolName)
+				assert.Equal(t, "gpu-x", dr.DeviceName)
+
+				if tc.isMIG {
+					require.NotNil(t, dr.MIGInfo, "MIG info should not be nil for MIG device")
+					assert.Equal(t, "MIG-12345", dr.MIGInfo.MIGDeviceUUID)
+					assert.Equal(t, "1g.12gb", dr.MIGInfo.Profile)
+					assert.Equal(t, "GPU-parent-uuid", dr.MIGInfo.ParentUUID)
+				} else {
+					assert.Nil(t, dr.MIGInfo, "MIG info should be nil for full GPU device")
+				}
+			}
+		})
+	}
+}
+
+func TestPodDRAInfo_MultipleClaimResources(t *testing.T) {
+	dra := &podresourcesapi.DynamicResource{
+		ClaimName:      "claim1",
+		ClaimNamespace: "ns1",
+		ClaimResources: []*podresourcesapi.ClaimResource{
+			{
+				DriverName: DRAGPUDriverName,
+				PoolName:   "poolA",
+				DeviceName: "gpu-x",
+			},
+			{
+				DriverName: DRAGPUDriverName,
+				PoolName:   "poolA",
+				DeviceName: "gpu-y",
+			},
+		},
+	}
+
+	store := newDRAIndexer()
+	store.Add(&resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-slice",
+			Namespace: "default",
+		},
+		Spec: resourcev1.ResourceSliceSpec{
+			Driver: DRAGPUDriverName,
+			Pool: resourcev1.ResourcePool{
+				Name: "poolA",
+			},
+			Devices: []resourcev1.Device{
+				{
+					Name: "gpu-x",
+					Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+						"type": {StringValue: stringPtr("gpu")},
+						"uuid": {StringValue: stringPtr("GPU-UUID-X")},
+					},
+				},
+				{
+					Name: "gpu-y",
+					Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
+						"type": {StringValue: stringPtr("gpu")},
+						"uuid": {StringValue: stringPtr("GPU-UUID-Y")},
+					},
+				},
+			},
+		},
+	})
+
+	testInformer := &testInformerForDRA{store: store}
+	draMgr := &DRAResourceSliceManager{
+		v1Informer:          testInformer,
+		preferredAPIVersion: "v1",
+	}
+
+	pm := &PodMapper{
+		Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
+		ResourceSliceManager: draMgr,
+	}
+
+	resp := &podresourcesapi.ListPodResourcesResponse{
+		PodResources: []*podresourcesapi.PodResources{{
+			Name:      "pod1",
+			Namespace: "default",
+			Containers: []*podresourcesapi.ContainerResources{{
+				Name:             "ctr1",
+				DynamicResources: []*podresourcesapi.DynamicResource{dra},
+			}},
+		}},
+	}
+
+	got := pm.toDeviceToPodsDRA(resp)
+
+	assert.Contains(t, got, "GPU-UUID-X")
+	assert.Contains(t, got, "GPU-UUID-Y")
+	assert.Len(t, got["GPU-UUID-X"], 1)
+	assert.Len(t, got["GPU-UUID-Y"], 1)
 }
 
 func TestProcessPodMapper_WithUID(t *testing.T) {

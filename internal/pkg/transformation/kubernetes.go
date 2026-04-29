@@ -145,8 +145,12 @@ func NewPodMapper(c *appconfig.Config) *PodMapper {
 			slog.Warn("Failed to get DRAResourceSliceManager, DRA pod labels will not be available", "error", err)
 			return podMapper
 		}
+		if resourceSliceManager == nil {
+			slog.Info("DRAResourceSliceManager not started (no NVIDIA DRA ResourceSlices found)")
+			return podMapper
+		}
 		podMapper.ResourceSliceManager = resourceSliceManager
-		slog.Info("Started DRAResourceSliceManager")
+		slog.Info("Started DRAResourceSliceManager with auto-detected API version")
 	}
 	return podMapper
 }
@@ -589,17 +593,10 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 				"containerName", cntName)
 			if dynamicResources := container.GetDynamicResources(); len(dynamicResources) > 0 && p.ResourceSliceManager != nil {
 				for _, dr := range dynamicResources {
-					for _, claimResource := range dr.GetClaimResources() {
-						draDriverName := claimResource.GetDriverName()
-						if draDriverName != DRAGPUDriverName {
-							continue
-						}
-						draPoolName := claimResource.GetPoolName()
-						draDeviceName := claimResource.GetDeviceName()
-
-						mappingKey, migInfo := p.ResourceSliceManager.GetDeviceInfo(draPoolName, draDeviceName)
-						if mappingKey == "" {
-							slog.Debug(fmt.Sprintf("No UUID for %s/%s", draPoolName, draDeviceName))
+					for _, mapping := range p.ResourceSliceManager.GetDynamicResourceMappings(dr) {
+						mappingKey := mapping.MappingKey
+						drInfo := mapping.Info
+						if mappingKey == "" || drInfo == nil {
 							continue
 						}
 
@@ -615,21 +612,12 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 						if processedPods[mappingKey][podContainerKey] {
 							continue
 						}
-
 						podInfo := p.createPodInfo(pod, container)
-						drInfo := DynamicResourceInfo{
-							ClaimName:      dr.GetClaimName(),
-							ClaimNamespace: dr.GetClaimNamespace(),
-							DriverName:     draDriverName,
-							PoolName:       draPoolName,
-							DeviceName:     draDeviceName,
-						}
-						if migInfo != nil {
-							drInfo.MIGInfo = migInfo
+						if drInfo.MIGInfo != nil {
 							slog.Debug("Added MIG pod mapping",
 								"parentUUID", mappingKey,
-								"migDevice", migInfo.MIGDeviceUUID,
-								"migProfile", migInfo.Profile,
+								"migDevice", drInfo.MIGInfo.MIGDeviceUUID,
+								"migProfile", drInfo.MIGInfo.Profile,
 								"pod", podContainerKey)
 						} else {
 							slog.Debug("Added GPU pod mapping",
@@ -637,7 +625,7 @@ func (p *PodMapper) toDeviceToPodsDRA(devicePods *podresourcesapi.ListPodResourc
 								"pod", podContainerKey)
 						}
 
-						podInfo.DynamicResources = &drInfo
+						podInfo.DynamicResources = drInfo
 						deviceToPodsMap[mappingKey] = append(deviceToPodsMap[mappingKey], podInfo)
 						processedPods[mappingKey][podContainerKey] = true
 					}
