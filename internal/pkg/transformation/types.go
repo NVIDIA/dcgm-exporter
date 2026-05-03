@@ -18,7 +18,6 @@ package transformation
 
 import (
 	"container/list"
-	"context"
 	"regexp"
 	"sync"
 
@@ -77,12 +76,10 @@ type PodInfo struct {
 }
 
 type DRAResourceSliceManager struct {
-	factory       informers.SharedInformerFactory
-	informer      cache.SharedIndexInformer
-	cancelContext context.CancelFunc
-	mu            sync.RWMutex
-	deviceToUUID  map[string]string            // pool/device -> UUID (for full GPUs)
-	migDevices    map[string]*DRAMigDeviceInfo // pool/device -> MIG info (for MIG devices)
+	factory  informers.SharedInformerFactory
+	informer cache.SharedIndexInformer
+	// sliceAPIVersion is "v1" or "v1beta1", matching the started ResourceSlice informer.
+	sliceAPIVersion string
 }
 
 // PodMetadata holds pod metadata from API server
