@@ -727,8 +727,8 @@ func TestPodDRAInfo(t *testing.T) {
 			// Create test informer backed by the indexer.
 			testInformer := &testInformerForDRA{store: store}
 			draMgr := &DRAResourceSliceManager{
-				v1Informer:          testInformer,
-				preferredAPIVersion: "v1",
+				informer:        testInformer,
+				sliceAPIVersion: "v1",
 			}
 
 			pm := &PodMapper{
@@ -890,8 +890,8 @@ func TestPodDRAInfo_V1beta1Preferred(t *testing.T) {
 			// Create test informer backed by the indexer.
 			testInformer := &testInformerForDRA{store: store}
 			draMgr := &DRAResourceSliceManager{
-				v1beta1Informer:     testInformer,
-				preferredAPIVersion: "v1beta1",
+				informer:        testInformer,
+				sliceAPIVersion: "v1beta1",
 			}
 			pm := &PodMapper{
 				Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
@@ -992,8 +992,8 @@ func TestPodDRAInfo_MultipleClaimResources(t *testing.T) {
 
 	testInformer := &testInformerForDRA{store: store}
 	draMgr := &DRAResourceSliceManager{
-		v1Informer:          testInformer,
-		preferredAPIVersion: "v1",
+		informer:        testInformer,
+		sliceAPIVersion: "v1",
 	}
 
 	pm := &PodMapper{

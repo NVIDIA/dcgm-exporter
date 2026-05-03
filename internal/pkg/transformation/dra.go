@@ -25,6 +25,7 @@ import (
 	resourcev1 "k8s.io/api/resource/v1"
 	resourcev1beta1 "k8s.io/api/resource/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -146,6 +147,38 @@ func supportsResourceSliceGV(client kubernetes.Interface, groupVersion string) b
 	return false
 }
 
+// hasNvidiaDRASlices reports whether the cluster currently exposes any
+// NVIDIA GPU DRA ResourceSlices on the given API version.
+func hasNvidiaDRASlices(ctx context.Context, client kubernetes.Interface, apiVersion string) (bool, error) {
+	switch apiVersion {
+	case "v1":
+		list, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return false, fmt.Errorf("listing v1 ResourceSlices: %w", err)
+		}
+		for i := range list.Items {
+			s := &list.Items[i]
+			if s.Spec.Driver == DRAGPUDriverName && len(s.Spec.Devices) > 0 {
+				return true, nil
+			}
+		}
+	case "v1beta1":
+		list, err := client.ResourceV1beta1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return false, fmt.Errorf("listing v1beta1 ResourceSlices: %w", err)
+		}
+		for i := range list.Items {
+			s := &list.Items[i]
+			if s.Spec.Driver == DRAGPUDriverName && len(s.Spec.Devices) > 0 {
+				return true, nil
+			}
+		}
+	default:
+		return false, fmt.Errorf("unsupported ResourceSlice API version: %q", apiVersion)
+	}
+	return false, nil
+}
+
 // NewDRAResourceSliceManager creates a new DRA ResourceSlice manager.
 // The API version is auto-detected by checking which version has NVIDIA DRA ResourceSlices.
 func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
@@ -172,28 +205,20 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 	ctx := context.Background()
 	v1HasNvidiaSlices := false
 	if v1Served {
-		resourceSlicesList, err := client.ResourceV1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		has, err := hasNvidiaDRASlices(ctx, client, "v1")
 		if err != nil {
-			return nil, fmt.Errorf("failed to list ResourceSlices for v1: %v", err)
+			return nil, err
 		}
-		items := make([]interface{}, 0, len(resourceSlicesList.Items))
-		for i := range resourceSlicesList.Items {
-			items = append(items, &resourceSlicesList.Items[i])
-		}
-		v1HasNvidiaSlices = countGPUSlices(items) > 0
+		v1HasNvidiaSlices = has
 	}
 
 	v1beta1HasNvidiaSlices := false
 	if v1beta1Served {
-		resourceSlicesList, err := client.ResourceV1beta1().ResourceSlices().List(ctx, metav1.ListOptions{})
+		has, err := hasNvidiaDRASlices(ctx, client, "v1beta1")
 		if err != nil {
-			return nil, fmt.Errorf("failed to list ResourceSlices for v1beta1: %v", err)
+			return nil, err
 		}
-		items := make([]interface{}, 0, len(resourceSlicesList.Items))
-		for i := range resourceSlicesList.Items {
-			items = append(items, &resourceSlicesList.Items[i])
-		}
-		v1beta1HasNvidiaSlices = countGPUSlices(items) > 0
+		v1beta1HasNvidiaSlices = has
 	}
 
 	var selected string
@@ -244,151 +269,124 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 	}
 
 	m := &DRAResourceSliceManager{
-		factory:             factory,
-		preferredAPIVersion: selected,
-	}
-	if selected == "v1" {
-		m.v1Informer = informer
-	} else {
-		m.v1beta1Informer = informer
+		factory:         factory,
+		informer:        informer,
+		sliceAPIVersion: selected,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancelContext = cancel
-	factory.Start(ctx.Done())
+	factory.Start(wait.NeverStop)
 
 	// Wait for cache sync on the selected informer.
-	synced := cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
+	synced := cache.WaitForCacheSync(wait.NeverStop, informer.HasSynced)
 	if !synced {
-		cancel()
+		factory.Shutdown()
 		return nil, fmt.Errorf("ResourceSlice informer cache sync failed")
 	}
-	
+
 	slog.Info("ResourceSlice API informer synced successfully", "apiVersion", selected)
 	return m, nil
 }
 
 func (m *DRAResourceSliceManager) Stop() {
-	if m.cancelContext != nil {
-		m.cancelContext()
-	}
-	// Ensure factory informers are fully stopped
 	if m.factory != nil {
 		m.factory.Shutdown()
 	}
 }
 
-// countGPUSlices counts the number of ResourceSlice objects with GPU devices
-// (matching the DRAGPUDriverName) in the given items.
-func countGPUSlices(items []interface{}) int {
-	count := 0
-	for _, item := range items {
-		switch obj := item.(type) {
-		case *resourcev1.ResourceSlice:
-			if obj.Spec.Driver == DRAGPUDriverName && len(obj.Spec.Devices) > 0 {
-				count++
-			}
-		case *resourcev1beta1.ResourceSlice:
-			if obj.Spec.Driver == DRAGPUDriverName && len(obj.Spec.Devices) > 0 {
-				count++
-			}
-		}
-	}
-	return count
-}
-
 func (m *DRAResourceSliceManager) getV1DeviceInfo(pool, device string) (string, *DRAMigDeviceInfo) {
-	if m.v1Informer == nil {
+	if m.informer == nil {
 		return "", nil
 	}
 
-	items, err := m.v1Informer.GetIndexer().ByIndex("poolName", pool)
+	items, err := m.informer.GetIndexer().ByIndex("poolName", pool)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Error listing v1 ResourceSlices by pool index for pool %s: %v", pool, err))
 		return "", nil
 	}
 
-	return m.getDeviceInfoFromResourceSliceItems(pool, device, items)
+	for _, item := range items {
+		rs, ok := item.(*resourcev1.ResourceSlice)
+		if !ok {
+			continue
+		}
+		if rs.Spec.Driver != DRAGPUDriverName {
+			continue
+		}
+		adapter := &v1ResourceSliceAdapter{slice: rs}
+		if mappingKey, migInfo := lookupDRADeviceInAdapter(pool, device, adapter); mappingKey != "" {
+			return mappingKey, migInfo
+		}
+	}
+
+	slog.Debug(fmt.Sprintf("No UUID found for pool %s, device %s", pool, device))
+	return "", nil
 }
 
 func (m *DRAResourceSliceManager) getV1beta1DeviceInfo(pool, device string) (string, *DRAMigDeviceInfo) {
-	if m.v1beta1Informer == nil {
+	if m.informer == nil {
 		return "", nil
 	}
 
-	items, err := m.v1beta1Informer.GetIndexer().ByIndex("poolName", pool)
+	items, err := m.informer.GetIndexer().ByIndex("poolName", pool)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Error listing v1beta1 ResourceSlices by pool index for pool %s: %v", pool, err))
 		return "", nil
 	}
 
-	return m.getDeviceInfoFromResourceSliceItems(pool, device, items)
-}
-
-// getDeviceInfoFromResourceSliceItems resolves device UUIDs/MIG info from a set of
-// ResourceSlice objects. It does not select an API version — callers already do
-// that by choosing which informer indexer to query.
-func (m *DRAResourceSliceManager) getDeviceInfoFromResourceSliceItems(pool, device string, items []interface{}) (string, *DRAMigDeviceInfo) {
-	// Search for the device in the selected slices
 	for _, item := range items {
-		var adapter resourceSliceAdapter
-		switch obj := item.(type) {
-		case *resourcev1.ResourceSlice:
-			// NOTE: dcgm-exporter's DRA handling currently assumes the schema used by
-			// the NVIDIA GPU DRA driver (for example, "type", "uuid", "parentUUID", "profile"
-			// attributes). Other GPU DRA drivers with different schemas may not work
-			// correctly with this implementation.
-			if obj.Spec.Driver != DRAGPUDriverName {
-				continue
-			}
-			adapter = &v1ResourceSliceAdapter{slice: obj}
-		case *resourcev1beta1.ResourceSlice:
-			if obj.Spec.Driver != DRAGPUDriverName {
-				continue
-			}
-			adapter = &v1beta1ResourceSliceAdapter{slice: obj}
-		default:
+		rs, ok := item.(*resourcev1beta1.ResourceSlice)
+		if !ok {
 			continue
 		}
-
-		// Search for the device in this slice
-		for _, dev := range adapter.GetDevices() {
-			if !dev.HasAttributes() {
-				continue
-			}
-			if dev.GetName() != device {
-				continue
-			}
-
-			deviceType := dev.GetAttribute("type")
-			switch deviceType {
-			case "mig":
-				parentUUID := dev.GetAttribute("parentUUID")
-				profile := dev.GetAttribute("profile")
-				migUUID := dev.GetAttribute("uuid")
-				if parentUUID != "" {
-					migInfo := &DRAMigDeviceInfo{
-						MIGDeviceUUID: migUUID,
-						Profile:       profile,
-						ParentUUID:    parentUUID,
-					}
-					slog.Debug(fmt.Sprintf("Found MIG device %s/%s with parent UUID: %s", pool, device, parentUUID))
-					return parentUUID, migInfo
-				}
-			case "gpu":
-				uuid := dev.GetAttribute("uuid")
-				if uuid != "" {
-					slog.Debug(fmt.Sprintf("Found GPU device %s/%s with UUID: %s", pool, device, uuid))
-					return uuid, nil
-				}
-			default:
-				// Log unknown device types to help users understand why a device might not be handled
-				slog.Warn(fmt.Sprintf("Device [%s/%s] has unknown type: %s", pool, device, deviceType))
-			}
+		if rs.Spec.Driver != DRAGPUDriverName {
+			continue
+		}
+		adapter := &v1beta1ResourceSliceAdapter{slice: rs}
+		if mappingKey, migInfo := lookupDRADeviceInAdapter(pool, device, adapter); mappingKey != "" {
+			return mappingKey, migInfo
 		}
 	}
 
 	slog.Debug(fmt.Sprintf("No UUID found for pool %s, device %s", pool, device))
+	return "", nil
+}
+
+// lookupDRADeviceInAdapter applies NVIDIA GPU DRA driver device attributes ("type",
+// "uuid", "parentUUID", "profile"). Other drivers with different schemas may not work.
+func lookupDRADeviceInAdapter(pool, device string, adapter resourceSliceAdapter) (string, *DRAMigDeviceInfo) {
+	for _, dev := range adapter.GetDevices() {
+		if !dev.HasAttributes() {
+			continue
+		}
+		if dev.GetName() != device {
+			continue
+		}
+
+		deviceType := dev.GetAttribute("type")
+		switch deviceType {
+		case "mig":
+			parentUUID := dev.GetAttribute("parentUUID")
+			profile := dev.GetAttribute("profile")
+			migUUID := dev.GetAttribute("uuid")
+			if parentUUID != "" {
+				migInfo := &DRAMigDeviceInfo{
+					MIGDeviceUUID: migUUID,
+					Profile:       profile,
+					ParentUUID:    parentUUID,
+				}
+				slog.Debug(fmt.Sprintf("Found MIG device %s/%s with parent UUID: %s", pool, device, parentUUID))
+				return parentUUID, migInfo
+			}
+		case "gpu":
+			uuid := dev.GetAttribute("uuid")
+			if uuid != "" {
+				slog.Debug(fmt.Sprintf("Found GPU device %s/%s with UUID: %s", pool, device, uuid))
+				return uuid, nil
+			}
+		default:
+			slog.Warn(fmt.Sprintf("Device [%s/%s] has unknown type: %s", pool, device, deviceType))
+		}
+	}
 	return "", nil
 }
 
@@ -398,16 +396,19 @@ func (m *DRAResourceSliceManager) getDeviceInfoFromResourceSliceItems(pool, devi
 // For MIG devices: returns (parentUUID, *DRAMigDeviceInfo)
 // For full GPUs: returns (deviceUUID, nil)
 func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *DRAMigDeviceInfo) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	if m.informer == nil {
+		return "", nil
+	}
 
-	switch m.preferredAPIVersion {
+	switch m.sliceAPIVersion {
 	case "v1":
 		return m.getV1DeviceInfo(pool, device)
 	case "v1beta1":
 		return m.getV1beta1DeviceInfo(pool, device)
 	default:
-		slog.Error("Unsupported preferred ResourceSlice API version", "apiVersion", m.preferredAPIVersion)
+		if m.sliceAPIVersion != "" {
+			slog.Error("Unsupported ResourceSlice API version", "apiVersion", m.sliceAPIVersion)
+		}
 		return "", nil
 	}
 }
@@ -462,20 +463,4 @@ func (m *DRAResourceSliceManager) GetDynamicResourceMappings(resource *podresour
 	}
 
 	return mappings
-}
-
-// GetDynamicResourceInfo converts a DynamicResource into a DynamicResourceInfo and
-// resolves the backing GPU or MIG device UUID using the ResourceSlice informer.
-// It returns the mapping key (device UUID or parent UUID for MIG devices) and
-// the populated DynamicResourceInfo. If the DynamicResource is not for the
-// NVIDIA GPU DRA driver or no matching device can be found, it returns "" and nil.
-//
-// Deprecated behavior: this returns only the first mapping. Prefer
-// GetDynamicResourceMappings when a DynamicResource may contain multiple devices.
-func (m *DRAResourceSliceManager) GetDynamicResourceInfo(resource *podresourcesapi.DynamicResource) (string, *DynamicResourceInfo) {
-	mappings := m.GetDynamicResourceMappings(resource)
-	if len(mappings) == 0 {
-		return "", nil
-	}
-	return mappings[0].MappingKey, mappings[0].Info
 }

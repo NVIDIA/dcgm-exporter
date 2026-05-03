@@ -18,7 +18,6 @@ package transformation
 
 import (
 	"container/list"
-	"context"
 	"regexp"
 	"sync"
 
@@ -77,15 +76,10 @@ type PodInfo struct {
 }
 
 type DRAResourceSliceManager struct {
-	factory         informers.SharedInformerFactory
-	v1Informer      cache.SharedIndexInformer
-	v1beta1Informer cache.SharedIndexInformer
-	// preferredAPIVersion is selected during initialization:
-	// - "v1" if v1 has NVIDIA DRA ResourceSlices
-	// - "v1beta1" if v1 does not, but v1beta1 does
-	preferredAPIVersion string
-	cancelContext       context.CancelFunc
-	mu                  sync.RWMutex
+	factory  informers.SharedInformerFactory
+	informer cache.SharedIndexInformer
+	// sliceAPIVersion is "v1" or "v1beta1", matching the started ResourceSlice informer.
+	sliceAPIVersion string
 }
 
 // PodMetadata holds pod metadata from API server
