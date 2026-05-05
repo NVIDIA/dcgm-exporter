@@ -28,6 +28,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	io_prometheus_client "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -738,7 +739,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, b)
 
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	mf, err := parser.TextToMetricFamilies(&b)
 	require.NoError(t, err)
 	require.NotEmpty(t, mf)

@@ -71,7 +71,12 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
 		if err != nil {
 			// Don't call cleanup on error - initialization failed, nothing to clean up
-			slog.Error(err.Error())
+			slog.Error("Failed to connect to remote hostengine",
+				slog.String("address", config.RemoteHEInfo),
+				slog.String("error", err.Error()),
+				slog.String("hint", "Verify nv-hostengine is running and listening on the expected address. "+
+					"For IPv6, use bracket notation: [<IPv6_ADDR>]:<PORT> (e.g., \"[::1]:5555\")"),
+			)
 			os.Exit(1)
 		}
 		client.shutdown = cleanup
@@ -143,7 +148,7 @@ func (d dcgmProvider) Fv2_String(fv dcgm.FieldValue_v2) string {
 	return dcgm.Fv2_String(fv)
 }
 
-func (d dcgmProvider) FieldGetByID(fieldID dcgm.Short) dcgm.FieldMeta {
+func (d dcgmProvider) FieldGetByID(fieldID dcgm.Short) (dcgm.FieldMeta, error) {
 	return dcgm.FieldGetByID(fieldID)
 }
 

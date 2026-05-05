@@ -94,12 +94,29 @@ func NewDeviceWatcher() *DeviceWatcher {
 
 func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
 	var deviceFields []dcgm.Short
+	var failedCount int
 	for _, counter := range counters {
-		fieldMeta := dcgmprovider.Client().FieldGetByID(counter.FieldID)
+		fieldMeta, err := dcgmprovider.Client().FieldGetByID(counter.FieldID)
+		if err != nil {
+			failedCount++
+			slog.Debug("FieldGetByID failed; skipping field",
+				slog.Any("field_id", counter.FieldID),
+				slog.String(ErrorKey, err.Error()),
+			)
+			continue
+		}
 
 		if shouldIncludeField(entityType, fieldMeta.EntityLevel) {
 			deviceFields = append(deviceFields, counter.FieldID)
 		}
+	}
+
+	if failedCount > 0 {
+		slog.Warn("Some fields were skipped because FieldGetByID failed",
+			slog.Int("failed_count", failedCount),
+			slog.Int("total_count", len(counters)),
+			slog.Any("entity_type", entityType),
+		)
 	}
 
 	return deviceFields

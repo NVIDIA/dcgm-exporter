@@ -6,8 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
 // SmartDCGMInit tries to initialize DCGM with embedded mode first, then falls back to remote if it fails

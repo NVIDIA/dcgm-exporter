@@ -128,7 +128,6 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 
 	if IsDCGMExpP2PStatusEnabled(cf.counterSet.ExporterCounters) {
 		newCollector, err := cf.enableExpCollector(counters.DCGMExpP2PStatus)
-
 		if err != nil {
 			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpP2PStatus, err))
 			os.Exit(1)

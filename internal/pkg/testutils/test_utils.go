@@ -195,6 +195,7 @@ func CreateTmpDir(t *testing.T) (string, func()) {
 }
 
 type MockPodResourcesServer struct {
+	v1.UnimplementedPodResourcesListerServer
 	resourceName string
 	gpus         []string
 }

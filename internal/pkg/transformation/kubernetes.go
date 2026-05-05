@@ -676,7 +676,7 @@ func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodRes
 					// Check for potential integer overflow before conversion
 					if migDevice.GPUInstanceID >= 0 {
 						giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
-							uint(migDevice.GPUInstanceID))
+							uint(migDevice.GPUInstanceID)) //nolint:gosec // G115: bounds checked above
 						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
 					}
 				}
@@ -713,7 +713,6 @@ func (p *PodMapper) toDeviceToPod(
 	devicePods *podresourcesapi.ListPodResourcesResponse, deviceInfo deviceinfo.Provider,
 ) map[string]PodInfo {
 	deviceToPodMap := make(map[string]PodInfo)
-	uidToPodInfo := make(map[string]PodInfo)
 
 	slog.Debug("Processing pod resources", "totalPods", len(devicePods.GetPodResources()))
 
@@ -754,11 +753,6 @@ func (p *PodMapper) toDeviceToPod(
 			}
 
 			podInfo := p.createPodInfo(pod, container)
-
-			// Store PodInfo by UID for process-based mapping correction
-			if podInfo.UID != "" {
-				uidToPodInfo[podInfo.UID] = podInfo
-			}
 
 			slog.Debug("Created pod info",
 				"podInfo", fmt.Sprintf("%+v", podInfo),
@@ -813,7 +807,7 @@ func (p *PodMapper) toDeviceToPod(
 							// Check for potential integer overflow before conversion
 							if migDevice.GPUInstanceID >= 0 {
 								giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
-									uint(migDevice.GPUInstanceID))
+									uint(migDevice.GPUInstanceID)) //nolint:gosec // G115: bounds checked above
 								slog.Debug("Mapped MIG device to GPU instance",
 									"deviceID", deviceID,
 									"giIdentifier", giIdentifier,

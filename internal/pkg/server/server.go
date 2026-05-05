@@ -76,19 +76,23 @@ func NewMetricsServer(
 	serverv1.reloadInProgress.Store(false)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, err := w.Write([]byte(`<html>
-			<head><title>GPU Exporter</title></head>
-			<body>
-			<h1>GPU Exporter</h1>
-			<p><a href="./metrics">Metrics</a></p>
-			<p><a href="./health">Health</a></p>
+		pprofHTML := ""
+		if c.EnablePprof {
+			pprofHTML = `
 			<h2>Profiling (pprof)</h2>
 			<ul>
 				<li><a href="./debug/pprof/">Index</a></li>
 				<li><a href="./debug/pprof/heap">Heap</a> - Memory allocations</li>
 				<li><a href="./debug/pprof/goroutine">Goroutines</a> - Active goroutines</li>
 				<li><a href="./debug/pprof/allocs">Allocations</a> - All memory allocations</li>
-			</ul>
+			</ul>`
+		}
+		_, err := w.Write([]byte(`<html>
+			<head><title>GPU Exporter</title></head>
+			<body>
+			<h1>GPU Exporter</h1>
+			<p><a href="./metrics">Metrics</a></p>
+			<p><a href="./health">Health</a></p>` + pprofHTML + `
 			</body>
 			</html>`))
 		if err != nil {
@@ -101,21 +105,21 @@ func NewMetricsServer(
 	router.HandleFunc("/health", serverv1.Health)
 	router.HandleFunc("/metrics", serverv1.Metrics)
 
-	// Register pprof endpoints for profiling and debugging
-	// Access via: curl http://localhost:9400/debug/pprof/heap > heap.pprof
-	router.HandleFunc("/debug/pprof/", pprof.Index)
-	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	router.Handle("/debug/pprof/heap", pprof.Handler("heap"))
-	router.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
-	router.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
-	router.Handle("/debug/pprof/block", pprof.Handler("block"))
-	router.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
-	router.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+	if c.EnablePprof {
+		router.HandleFunc("/debug/pprof/", pprof.Index)
+		router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		router.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		router.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+		router.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+		router.Handle("/debug/pprof/threadcreate", pprof.Handler("threadcreate"))
+		router.Handle("/debug/pprof/block", pprof.Handler("block"))
+		router.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+		router.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
 
-	slog.Info("Profiling endpoints enabled at /debug/pprof/")
+		slog.Info("Profiling endpoints enabled at /debug/pprof/")
+	}
 
 	var podMapper *transformation.PodMapper
 	for _, t := range serverv1.transformations {

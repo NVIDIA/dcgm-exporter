@@ -35,7 +35,7 @@ type DCGM interface {
 	EntitiesGetLatestValues([]dcgm.GroupEntityPair, []dcgm.Short, uint) ([]dcgm.FieldValue_v2, error)
 	EntityGetLatestValues(dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	Fv2_String(fv dcgm.FieldValue_v2) string
-	FieldGetByID(dcgm.Short) dcgm.FieldMeta
+	FieldGetByID(dcgm.Short) (dcgm.FieldMeta, error)
 	FieldGroupCreate(string, []dcgm.Short) (dcgm.FieldHandle, error)
 	FieldGroupDestroy(dcgm.FieldHandle) error
 	GetAllDeviceCount() (uint, error)

@@ -102,6 +102,7 @@ const (
 	CLIDisableStartupValidate           = "disable-startup-validate"
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
+	CLIEnablePprof                      = "enable-pprof"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -130,7 +131,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLIAddress,
 			Aliases: []string{"a"},
 			Value:   ":9400",
-			Usage:   "Address",
+			Usage:   "Listen address as <HOST>:<PORT>. For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::]:9400\")",
 			EnvVars: []string{"DCGM_EXPORTER_LISTEN"},
 		},
 		&cli.IntFlag{
@@ -172,7 +173,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLIRemoteHEInfo,
 			Aliases: []string{"r"},
 			Value:   "localhost:5555",
-			Usage:   "Connect to remote hostengine at <HOST>:<PORT>",
+			Usage:   "Connect to remote hostengine at <HOST>:<PORT>. For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::1]:5555\")",
 			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
 		},
 		&cli.BoolFlag{
@@ -349,6 +350,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL"},
 			Value:   "1s",
 		},
+		&cli.BoolFlag{
+			Name:    CLIEnablePprof,
+			Value:   false,
+			Usage:   "Enable /debug/pprof/ HTTP endpoints for profiling and debugging",
+			EnvVars: []string{"DCGM_EXPORTER_ENABLE_PPROF"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -365,9 +372,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		return nil
 	}
 
-	c.Action = func(c *cli.Context) error {
-		return action(c)
-	}
+	c.Action = action
 
 	return c
 }
@@ -1001,12 +1006,13 @@ func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 	}
 
 	letter := letterAndRange[0]
-	if letter == FlexKey {
+	switch letter {
+	case FlexKey:
 		dOpt.Flex = true
 		if count > 1 {
 			return dOpt, fmt.Errorf("no range can be specified with the flex option 'f'")
 		}
-	} else if letter == MajorKey || letter == MinorKey {
+	case MajorKey, MinorKey:
 		var indices []int
 		if count == 1 {
 			// No range means all present devices of the type
@@ -1016,15 +1022,14 @@ func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 			for _, numberOrRange := range numbers {
 				rangeTokens := strings.Split(numberOrRange, "-")
 				rangeTokenCount := len(rangeTokens)
-				if rangeTokenCount > 2 {
-					return dOpt, fmt.Errorf("range can only be '<number>-<number>', but found '%s'", numberOrRange)
-				} else if rangeTokenCount == 1 {
+				switch rangeTokenCount {
+				case 1:
 					number, err := strconv.Atoi(rangeTokens[0])
 					if err != nil {
 						return dOpt, err
 					}
 					indices = append(indices, number)
-				} else {
+				case 2:
 					start, err := strconv.Atoi(rangeTokens[0])
 					if err != nil {
 						return dOpt, err
@@ -1038,6 +1043,8 @@ func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 					for i := start; i <= end; i++ {
 						indices = append(indices, i)
 					}
+				default:
+					return dOpt, fmt.Errorf("range can only be '<number>-<number>', but found '%s'", numberOrRange)
 				}
 			}
 		}
@@ -1047,7 +1054,7 @@ func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 		} else {
 			dOpt.MinorRange = indices
 		}
-	} else {
+	default:
 		return dOpt, fmt.Errorf("the only valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
 	}
 
@@ -1116,6 +1123,7 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 		DisableStartupValidate:    c.Bool(CLIDisableStartupValidate),
 		EnableGPUBindUnbindWatch:  c.Bool(CLIEnableGPUBindUnbindWatch),
 		GPUBindUnbindPollInterval: parseDuration(c.String(CLIGPUBindUnbindPollInterval), 1*time.Second),
+		EnablePprof:               c.Bool(CLIEnablePprof),
 	}, nil
 }
 

@@ -1,5 +1,5 @@
-FROM nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
-ARG GOLANG_VERSION=1.24.13
+FROM nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
+ARG GOLANG_VERSION=1.26.2
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
@@ -83,11 +83,20 @@ RUN set -eux; \
 	\
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz
-ENV GOTOOLCHAIN=local
+# GOTOOLCHAIN=auto lets Go honour `toolchain` directives in go.mod, auto-
+# fetching the matching version if the baked-in compiler is older. Costs
+# one toolchain download per fresh build cache, then nothing.
+ENV GOTOOLCHAIN=auto
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH=$PATH:/usr/local/go/bin
+
+ARG UV_VERSION=0.11.7
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+	&& mv /root/.local/bin/uv /usr/local/bin/uv \
+	&& mv /root/.local/bin/uvx /usr/local/bin/uvx \
+	&& uv --version
 
 # Required for DCGM metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32

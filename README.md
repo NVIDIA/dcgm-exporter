@@ -11,7 +11,7 @@ Official documentation for DCGM-Exporter can be found on [docs.nvidia.com](https
 To gather metrics on a GPU node, simply start the `dcgm-exporter` container:
 
 ```shell
-docker run -d --gpus all --cap-add SYS_ADMIN --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-distroless
+docker run -d --gpus all --cap-add SYS_ADMIN --rm -p 9400:9400 nvcr.io/nvidia/k8s/dcgm-exporter:4.5.3-4.8.2-distroless
 curl localhost:9400/metrics
 # HELP DCGM_FI_DEV_SM_CLOCK SM clock frequency (in MHz).
 # TYPE DCGM_FI_DEV_SM_CLOCK gauge
@@ -92,6 +92,35 @@ dcgm-exporter --web-config-file=web-config.yaml
 
 A sample `web-config.yaml` file can be fetched from [exporter-toolkit repository](https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-config.yml). The reference of the `web-config.yaml` file can be consulted in the [docs](https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md).
 
+### IPv6 Support
+
+DCGM-Exporter supports IPv6 addresses for both the remote hostengine connection (`-r`) and the metrics listen address (`-a`). IPv6 addresses must use bracket notation when combined with a port.
+
+#### Remote Hostengine (CLI)
+
+```shell
+dcgm-exporter -r "[::1]:5555"
+```
+
+#### Remote Hostengine (Environment Variable)
+
+```shell
+export DCGM_REMOTE_HOSTENGINE_INFO="[::1]:5555"
+dcgm-exporter
+```
+
+#### Metrics Listen Address
+
+```shell
+dcgm-exporter -a "[::]:9400"
+```
+
+**Note:** The brackets in `[::1]:5555` are required by the DCGM connection protocol. When using the CLI, the shell requires quoting (double or single quotes) around the address to prevent bracket interpretation.
+
+#### Prerequisites
+
+The remote `nv-hostengine` must be configured to listen on IPv6. Refer to the [DCGM documentation](https://docs.nvidia.com/datacenter/dcgm/latest/) for configuring `nv-hostengine` bind address options.
+
 ### How to include HPC jobs in metric labels
 
 The DCGM-exporter can include High-Performance Computing (HPC) job information into its metric labels. To achieve this, HPC environment administrators must configure their HPC environment to generate files that map GPUs to HPC jobs.
@@ -163,6 +192,10 @@ Notes:
 
 * Always make sure your entries have 2 commas (',')
 * The complete list of counters that can be collected can be found on the DCGM API reference manual: <https://docs.nvidia.com/datacenter/dcgm/latest/dcgm-api/dcgm-api-field-ids.html>
+
+### Profiling Metrics
+
+Please note that for Ampere and earlier generation GPUs, profiling metrics depend on the datacenter-gpu-manager-4-proprietary package. This package is included in the container.
 
 ### What about a Grafana Dashboard?
 

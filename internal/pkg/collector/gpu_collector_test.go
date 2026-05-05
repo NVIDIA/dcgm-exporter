@@ -103,13 +103,13 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 
 	mi := devicemonitoring.Info{
 		DeviceInfo: dcgm.Device{
-		UUID: "fake0",
-		Identifiers: dcgm.DeviceIdentifiers{
-			Model: "NVIDIA T400 4GB",
-		},
-		PCI: dcgm.PCIInfo{
-			BusID: "00000000:0000:0000.0",
-		},
+			UUID: "fake0",
+			Identifiers: dcgm.DeviceIdentifiers{
+				Model: "NVIDIA T400 4GB",
+			},
+			PCI: dcgm.PCIInfo{
+				BusID: "00000000:0000:0000.0",
+			},
 		},
 	}
 

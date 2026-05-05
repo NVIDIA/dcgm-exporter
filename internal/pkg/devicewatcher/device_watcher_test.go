@@ -1833,7 +1833,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1848,7 +1848,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1866,7 +1866,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1884,7 +1884,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1902,7 +1902,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1921,7 +1921,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1939,7 +1939,7 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			},
 			mockDCGMFunc: func(fieldIDs []dcgm.Short) {
 				for _, fieldID := range fieldIDs {
-					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID])
+					mockDCGM.EXPECT().FieldGetByID(fieldID).Return(testutils.SampleFieldIDToFieldMeta[fieldID], nil)
 				}
 			},
 			want: func() []dcgm.Short {
@@ -1973,4 +1973,40 @@ func TestDeviceWatcher_GetDeviceFields(t *testing.T) {
 			assert.Equal(t, want, got, "Device fields mismatch")
 		})
 	}
+}
+
+// TestDeviceWatcher_GetDeviceFields_FieldGetByIDError asserts that when
+// FieldGetByID returns an error for a field, that field is silently skipped
+// and the rest of the counter list is still processed. This exercises the
+// error path introduced when go-dcgm's FieldGetByID gained an error return.
+func TestDeviceWatcher_GetDeviceFields_FieldGetByIDError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGM)
+
+	// Two counters: the first fails FieldGetByID; the second succeeds and
+	// should still be returned by GetDeviceFields.
+	failingCounter := testutils.SampleGPUTempCounter
+	goodCounter := testutils.SampleGPUPowerUsageCounter
+
+	mockDCGM.EXPECT().
+		FieldGetByID(failingCounter.FieldID).
+		Return(dcgm.FieldMeta{}, fmt.Errorf("field lookup failed"))
+	mockDCGM.EXPECT().
+		FieldGetByID(goodCounter.FieldID).
+		Return(testutils.SampleFieldIDToFieldMeta[goodCounter.FieldID], nil)
+
+	d := &DeviceWatcher{}
+	got := d.GetDeviceFields(
+		[]counters.Counter{failingCounter, goodCounter},
+		dcgm.FE_GPU,
+	)
+
+	assert.Equal(t, []dcgm.Short{goodCounter.FieldID}, got,
+		"failing field should be skipped; remaining field should be returned")
 }

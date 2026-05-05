@@ -140,6 +140,54 @@ func TestGetHostname(t *testing.T) {
 			},
 			want: "localhost",
 		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote address is IPv6 loopback with port",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "[::1]:5555",
+			},
+			want: "::1",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote address is full IPv6 with port",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "[2001:db8::1]:5555",
+			},
+			want: "2001:db8::1",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote address is IPv6 wildcard with port",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "[::]:5555",
+			},
+			want: "::",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote address is IPv6 without port",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "[::1]",
+			},
+			want: "[::1]",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote address is bare IPv6 without brackets or port",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "::1",
+			},
+			want: "::1",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote address is empty",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "",
+			},
+			want: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

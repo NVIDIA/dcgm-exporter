@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 
@@ -122,7 +123,7 @@ var VerifyDefaultHelmConfiguration = func(
 		It("should verify metrics", func(ctx context.Context) {
 			Expect(metricsResponse).ShouldNot(BeEmpty())
 
-			var parser expfmt.TextParser
+			parser := expfmt.NewTextParser(model.UTF8Validation)
 			metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
 			Expect(err).ShouldNot(HaveOccurred())
 			Expect(len(metricFamilies)).Should(BeNumerically(">", 0))
