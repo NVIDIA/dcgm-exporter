@@ -31,6 +31,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/utils/ptr"
@@ -175,7 +176,7 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 				metricsResponse = shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
 				g.Expect(metricsResponse).ShouldNot(BeEmpty())
 
-				var parser expfmt.TextParser
+				parser := expfmt.NewTextParser(model.UTF8Validation)
 				metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
 				g.Expect(err).ShouldNot(HaveOccurred())
 				g.Expect(len(metricFamilies)).Should(BeNumerically(">", 0))
@@ -400,7 +401,7 @@ var _ = Describe("dcgm-exporter-e2e-suite", func() {
 				g.Expect(metricsResponse).ShouldNot(BeEmpty(), "Metrics response should not be empty")
 
 				// Parse metrics
-				var parser expfmt.TextParser
+				parser := expfmt.NewTextParser(model.UTF8Validation)
 				metricFamilies, err := parser.TextToMetricFamilies(bytes.NewReader(metricsResponse))
 				if err != nil {
 					fmt.Fprintf(GinkgoWriter, "Metrics parsing failed:\n%s\n", string(metricsResponse))

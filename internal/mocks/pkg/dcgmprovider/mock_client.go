@@ -170,11 +170,12 @@ func (mr *MockDCGMMockRecorder) EntityGetLatestValues(arg0, arg1, arg2 any) *gom
 }
 
 // FieldGetByID mocks base method.
-func (m *MockDCGM) FieldGetByID(arg0 dcgm.Short) dcgm.FieldMeta {
+func (m *MockDCGM) FieldGetByID(arg0 dcgm.Short) (dcgm.FieldMeta, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "FieldGetByID", arg0)
 	ret0, _ := ret[0].(dcgm.FieldMeta)
-	return ret0
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // FieldGetByID indicates an expected call of FieldGetByID.

@@ -16,12 +16,15 @@ include hack/VERSION
 
 REGISTRY             ?= nvidia
 GO                   ?= go
+GOBIN_DIR            := $(or $(shell $(GO) env GOBIN),$(shell $(GO) env GOPATH)/bin)
 MKDIR                ?= mkdir
 GOLANGCILINT_TIMEOUT ?= 10m
 IMAGE_TAG            ?= ""
 
+export PATH := $(GOBIN_DIR):$(PATH)
+
 DCGM_VERSION   := $(NEW_DCGM_VERSION)
-GOLANG_VERSION := 1.24.13
+GOLANG_VERSION := 1.26.2
 VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
@@ -63,14 +66,14 @@ ubi%: DOCKERFILE = docker/Dockerfile
 ubi%: BUILD_TARGET = runtime-ubi
 ubi%: --docker-build-%
 	@
-ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.1.1-base-ubi9
+ubi9: BASE_IMAGE = nvcr.io/nvidia/cuda:13.2.1-base-ubi9
 ubi9: IMAGE_TAG = ubi9
 
 ubuntu%: DOCKERFILE = docker/Dockerfile
 ubuntu%: BUILD_TARGET = runtime-ubuntu
 ubuntu%: --docker-build-%
 	@
-ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
+ubuntu22.04: BASE_IMAGE = nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
 ubuntu22.04: IMAGE_TAG = ubuntu22.04
 
 distroless: DOCKERFILE = docker/Dockerfile
@@ -80,6 +83,7 @@ distroless: --docker-build-distroless
 
 --docker-build-%:
 	@echo "Building for $@ with target $(BUILD_TARGET)"
+	mkdir -p .go/compiler .go/pkg/mod
 	docker buildx inspect
 	DOCKER_BUILDKIT=1 \
 	$(DOCKERCMD) --pull \
@@ -92,6 +96,9 @@ distroless: --docker-build-distroless
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(VERSION)" \
+		$(if $(GOPROXY),--build-arg "GOPROXY=$(GOPROXY)") \
+		$(if $(GONOSUMDB),--build-arg "GONOSUMDB=$(GONOSUMDB)") \
+		$(if $(GOSUMDB),--build-arg "GOSUMDB=$(GOSUMDB)") \
 		--tag $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)$(if $(IMAGE_TAG),-$(IMAGE_TAG)) \
 		--file $(DOCKERFILE) .
 
@@ -104,18 +111,27 @@ package-arm64:
 package-amd64:
 	$(MAKE) package-build PLATFORMS=linux/amd64
 
+ifeq ($(GOPROXY_ENABLED),true)
+package-build: BUILD_TYPE = distroless
+package-build: IMAGE_TAG = distroless
+DIST_PREFIX = stig-
+else
+package-build: BUILD_TYPE = ubuntu22.04
 package-build: IMAGE_TAG = ubuntu22.04
+DIST_PREFIX =
+endif
+
 package-build:
-	ARCH=`echo $(PLATFORMS) | cut -d'/' -f2)`; \
+	ARCH=`echo $(PLATFORMS) | cut -d'/' -f2`; \
 	if [ "$$ARCH" = "amd64" ]; then \
 		ARCH="x86-64"; \
 	fi; \
 	if [ "$$ARCH" = "arm64" ]; then \
 		ARCH="sbsa"; \
 	fi; \
-	export DIST_NAME="dcgm_exporter-linux-$$ARCH-$(VERSION)"; \
+	export DIST_NAME="dcgm_exporter-$(DIST_PREFIX)linux-$$ARCH-$(VERSION)"; \
 	export COMPONENT_NAME="dcgm_exporter"; \
-	$(MAKE) ubuntu22.04 OUTPUT=type=docker PLATFORMS=$(PLATFORMS) && \
+	$(MAKE) $(BUILD_TYPE) OUTPUT=type=docker PLATFORMS=$(PLATFORMS) && \
 	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME && \
 	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/usr/bin && \
 	$(MKDIR) -p /tmp/$$DIST_NAME/$$COMPONENT_NAME/etc/dcgm-exporter && \
@@ -135,26 +151,58 @@ package-build:
 test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
+.PHONY: test-coverage
 test-coverage:
+	@echo "Preparing coverage data directories..."
+	@rm -rf .coverdata
+	@mkdir -p .coverdata/unit .coverdata/integration .coverdata/merged
 	@echo "Running unit tests..."
 	gotestsum --format testname -- \
-		$$(go list ./... | grep -v "/tests/e2e/") \
+		$$($(GO) list ./... | grep -v "/tests/e2e/") \
 		-count=1 -timeout 5m \
-		-covermode=count \
-		-coverprofile=unit_coverage.out \
-		--short
+		-cover -covermode=count \
+		--short \
+		-args -test.gocoverdir=$(CURDIR)/.coverdata/unit
 	@echo "Running integration tests..."
 	gotestsum --format testname -- \
 		./internal/pkg/integration_test/... \
 		-count=1 -timeout 5m \
-		-covermode=count \
+		-cover -covermode=count \
 		-coverpkg=./internal/pkg/... \
-		-coverprofile=integration_coverage.out \
+		--short \
+		-args -test.gocoverdir=$(CURDIR)/.coverdata/integration
+	@echo "Merging coverage data..."
+	$(GO) tool covdata merge \
+		-i=$(CURDIR)/.coverdata/unit,$(CURDIR)/.coverdata/integration \
+		-o=$(CURDIR)/.coverdata/merged
+	@echo "Coverage summary (pre-filter):"
+	$(GO) tool covdata percent -i=$(CURDIR)/.coverdata/merged
+	$(GO) tool covdata textfmt \
+		-i=$(CURDIR)/.coverdata/merged \
+		-o=combined_coverage.out.tmp
+	grep -v "mock_" combined_coverage.out.tmp > tests.cov
+	rm -rf combined_coverage.out.tmp .coverdata
+	$(GO) tool cover -func=tests.cov
+
+# Unit tests only with coverage (for CI without GPU/DCGM)
+# Skips integration tests that require DCGM library
+# Skips nvmlprovider tests that require NVML library (GPU)
+# Emits a single coverage profile directly (no merge step)
+# Generates test_results.json for SonarQube integration
+.PHONY: unit-test-coverage
+unit-test-coverage:
+	@echo "Running unit tests only (skipping integration tests and nvmlprovider)..."
+	gotestsum --format testname --jsonfile test_results.json -- \
+		$$(go list ./... | grep -v -E "(tests/e2e|integration_test|nvmlprovider)") \
+		-count=1 -timeout 5m \
+		-covermode=count \
+		-coverprofile=tests.cov \
 		--short
-	@echo "Merging coverage profiles..."
-	gocovmerge unit_coverage.out integration_coverage.out > combined_coverage.out.tmp
-	cat combined_coverage.out.tmp | grep -v "mock_" > tests.cov
-	rm combined_coverage.out.tmp integration_coverage.out unit_coverage.out
+	@echo "Filtering out mock files from coverage..."
+	@if [ -f tests.cov ]; then \
+		grep -v "mock_" tests.cov > tests.cov.tmp && mv tests.cov.tmp tests.cov || true; \
+	fi
+	@echo "Unit test coverage completed"
 	go tool cover -func=tests.cov
 
 .PHONY: lint
@@ -194,14 +242,13 @@ validate: validate-modules hadolint check-fmt ## Run all validation checks
 
 .PHONY: tools
 tools: ## Install required tools and utilities
-	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(shell go env GOPATH)/bin v2.8.0
-	go install golang.org/x/tools/cmd/goimports@v0.41.0
-	go install mvdan.cc/gofumpt@v0.9.2
-	go install github.com/wadey/gocovmerge@v0.0.0-20160331181800-b5bfa59ec0ad
-	go install gotest.tools/gotestsum@v1.13.0
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(GOBIN_DIR) v2.11.4
+	$(GO) install golang.org/x/tools/cmd/goimports@v0.44.0
+	$(GO) install mvdan.cc/gofumpt@v0.9.2
+	$(GO) install gotest.tools/gotestsum@v1.13.0
 
 fmt:
-	find . -name '*.go' | xargs gofumpt -l -w
+	find . -path './.go' -prune -o -name '*.go' -print | xargs gofumpt -l -w
 
 goimports:
 	go list -f {{.Dir}} $(MODULE)/... \
@@ -209,7 +256,7 @@ goimports:
 
 check-fmt:
 	@echo "Checking code formatting.  Any listed files don't match goimports:"
-	! (find . -iname "*.go" \
+	! (find . -path './.go' -prune -o -path './internal/mocks' -prune -o -path './third_party' -prune -o -path './examples' -prune -o -iname "*.go" -print \
 		| xargs goimports -l -local $(MODULE) | grep .)
 
 .PHONY: e2e-test

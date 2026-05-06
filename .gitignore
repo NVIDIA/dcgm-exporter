@@ -1,6 +1,8 @@
 *.swp
 *.swo
 dcgm-exporter
+.go/
+.cursor/
 !etc/
 !deployment/
 .env
@@ -9,6 +11,7 @@ dcgm-exporter
 vendor/
 tests.cov
 test_results.json
+.coverdata/
 .scannerwork
 dist/
 .run

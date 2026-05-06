@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04
+ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
 
 #####
 # Common builder stage - compiles dcgm-exporter with CGO for all targets
 #####
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
-ARG GOLANG_VERSION=1.24.13
+ARG GOLANG_VERSION=1.26.2
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
@@ -41,47 +41,61 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     && apt-get autoremove -y \
     && ln -sf /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
 
-# Install Go
+# Copy cached Go compiler and modules for STIG hermetic builds.
+# In regular mode these directories exist but are empty (created by Makefile/CI).
+COPY .go/compiler/ .go/compiler/
+COPY .go/pkg/mod/ /go/pkg/mod/
+
+# Install Go - uses cached compiler for STIG hermetic builds, otherwise downloads
+# with SHA256 verification for standard builds.
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
-    url=; \
-    filename=; \
-    case "$arch" in \
-    'amd64') \
-    filename="go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
-    url="https://dl.google.com/go/${filename}"; \
-    ;; \
-    'arm64') \
-    filename="go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
-    url="https://dl.google.com/go/${filename}"; \
-    ;; \
-    *) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
-    esac; \
-    wget -O go.tgz "$url" --progress=dot:giga; \
-    \
-    echo "Verifying SHA256 checksum..."; \
-    wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
-    expected_sha256=$(cat go.sha256); \
-    actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
-    if [ "$expected_sha256" != "$actual_sha256" ]; then \
-        echo >&2 "error: SHA256 checksum verification failed"; \
-        echo >&2 "expected: $expected_sha256"; \
-        echo >&2 "actual:   $actual_sha256"; \
-        exit 1; \
-    fi; \
-    echo "SHA256 checksum verified successfully"; \
-    rm go.sha256; \
-    \
-    tar -C /usr/local -xzf go.tgz; \
-    rm go.tgz
+    if [ -f ".go/compiler/go${GOLANG_VERSION}.linux-${arch}.tar.gz" ]; then \
+        echo "Using pre-cached Go compiler (hermetic build)"; \
+        tar -C /usr/local -xzf ".go/compiler/go${GOLANG_VERSION}.linux-${arch}.tar.gz"; \
+    else \
+        echo "Downloading Go compiler from dl.google.com"; \
+        filename="go${GOLANG_VERSION}.linux-${arch}.tar.gz"; \
+        url="https://dl.google.com/go/${filename}"; \
+        wget -O go.tgz "$url" --progress=dot:giga; \
+        echo "Verifying SHA256 checksum..."; \
+        wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
+        expected_sha256=$(cat go.sha256); \
+        actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
+        if [ "$expected_sha256" != "$actual_sha256" ]; then \
+            echo >&2 "error: SHA256 checksum verification failed"; \
+            echo >&2 "expected: $expected_sha256"; \
+            echo >&2 "actual:   $actual_sha256"; \
+            exit 1; \
+        fi; \
+        echo "SHA256 checksum verified successfully"; \
+        rm go.sha256; \
+        tar -C /usr/local -xzf go.tgz; \
+        rm go.tgz; \
+    fi
 
 ENV GOTOOLCHAIN=local GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 700 "$GOPATH"
 
-# Download dependencies
+# GOPROXY support for STIG hermetic builds - these ARGs are only set when
+# GOPROXY_ENABLED=true in CI; in regular mode they remain empty.
+ARG GOPROXY
+ARG GONOSUMDB
+ARG GOSUMDB
+ENV GOPROXY=${GOPROXY}
+ENV GONOSUMDB=${GONOSUMDB}
+ENV GOSUMDB=${GOSUMDB}
+
+# Download dependencies - skipped when pre-cached modules exist (hermetic build)
 COPY go.mod go.sum ./
-RUN go mod download
+RUN set -eux; \
+    if [ -d "/go/pkg/mod" ] && [ "$(ls -A /go/pkg/mod 2>/dev/null)" ]; then \
+        echo "Using pre-cached Go modules (hermetic build)"; \
+    else \
+        echo "Downloading Go modules..."; \
+        go mod download; \
+    fi
 
 # Copy source code
 COPY cmd/ cmd/
@@ -110,7 +124,7 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
 #####
 # Ubuntu 22.04 runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04 AS runtime-ubuntu
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04 AS runtime-ubuntu
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -192,7 +206,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # UBI9 runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.1-base-ubi9 AS runtime-ubi
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubi9 AS runtime-ubi
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -271,7 +285,7 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # Distroless helper stage - builds full Ubuntu container with DCGM libraries
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.1.1-base-ubuntu22.04 AS runtime-distroless-helper
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04 AS runtime-distroless-helper
 
 ARG TARGETARCH
 
@@ -303,7 +317,7 @@ RUN set -e; \
 #####
 # Distroless runtime target - minimal container image
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v4.0.1 AS runtime-distroless
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v4.0.4 AS runtime-distroless
 
 ARG VERSION
 ARG TARGETARCH
@@ -328,6 +342,7 @@ COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/local/d
 # Copy required utilities for runtime
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /bin/
+COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/lshw /bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/setcap /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/env /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/bash /usr/bin/

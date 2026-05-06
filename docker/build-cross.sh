@@ -28,6 +28,14 @@ fi
 
 echo "Building dcgm-exporter for $TARGETOS/$TARGETARCH using CC=$CC"
 
+# For hermetic builds, switch to offline mode when cached modules are available
+if [ -d "/go/pkg/mod" ] && [ "$(ls -A /go/pkg/mod)" ] && [ -n "${GOPROXY:-}" ]; then
+    echo "Hermetic build: Using cached modules in offline mode"
+    export GOPROXY=direct
+    export GOSUMDB=off
+    export GONOSUMDB='*'
+fi
+
 # Execute build with all necessary environment variables
 GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=1 CC=$CC make install
 

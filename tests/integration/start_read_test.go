@@ -26,6 +26,7 @@ import (
 
 	"github.com/avast/retry-go/v4"
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
@@ -82,7 +83,7 @@ func TestStartAndReadMetrics(t *testing.T) {
 	)
 
 	require.NotEmpty(t, metricsResp)
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	mf, err := parser.TextToMetricFamilies(strings.NewReader(metricsResp))
 	require.NoError(t, err)
 	require.Greater(t, len(mf), 0, "expected number of metrics more than 0")

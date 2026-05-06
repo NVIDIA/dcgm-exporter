@@ -26,10 +26,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/e2e/internal/framework"
 )
 
 // VerifyHelmConfigurationWhenHttpBasicAuthEnabled tests helm chart when Http basic authentication is enabled

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/expfmt"
+	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
@@ -123,7 +124,7 @@ func TestMultipleSIGHUPReloads(t *testing.T) {
 
 	// Now we can programmatically trigger reloads!
 	const numReloads = 5
-	var parser expfmt.TextParser
+	parser := expfmt.NewTextParser(model.UTF8Validation)
 	for i := 0; i < numReloads; i++ {
 		t.Logf("Reload iteration %d/%d", i+1, numReloads)
 

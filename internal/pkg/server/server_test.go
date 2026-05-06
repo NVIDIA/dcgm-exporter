@@ -27,6 +27,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockcollectorpkg "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/collector"
@@ -272,14 +273,13 @@ func TestHealthReturnsOK(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
 
-func TestHealthDoesNotPanicWhenWriteError(t *testing.T) {
+func TestHealthReturnsOKWhenWriteReturnsError(t *testing.T) {
 	metricServer := &MetricsServer{}
 	// Set a registry so the code path reaches the write call
 	metricServer.registry.Store(registry.NewRegistry())
 	recorder := &mockResponseWriter{}
-	assert.NotPanics(t, func() {
-		metricServer.Health(recorder, nil)
-	})
+	metricServer.Health(recorder, nil)
+	assert.Equal(t, http.StatusInternalServerError, recorder.Code)
 }
 
 func TestHealthReturnsOKWhenRegistryIsNil(t *testing.T) {
@@ -311,4 +311,42 @@ func TestHealthReturnsOKWithRegistryAvailable(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.Equal(t, "true", recorder.Header().Get("X-Registry-Available"))
 	assert.NotEqual(t, "true", recorder.Header().Get("X-Reload-In-Progress"))
+}
+
+func TestPprofEndpointsDisabledByDefault(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	cfg := &appconfig.Config{Address: ":0"}
+	srv, cleanup, err := NewMetricsServer(cfg, mockManager, registry.NewRegistry())
+	require.NoError(t, err)
+	defer cleanup()
+
+	router := srv.server.Handler
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.NotContains(t, rec.Body.String(), "pprof")
+}
+
+func TestPprofEndpointsEnabledWhenFlagSet(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	cfg := &appconfig.Config{Address: ":0", EnablePprof: true}
+	srv, cleanup, err := NewMetricsServer(cfg, mockManager, registry.NewRegistry())
+	require.NoError(t, err)
+	defer cleanup()
+
+	router := srv.server.Handler
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.Contains(t, rec.Body.String(), "pprof")
 }

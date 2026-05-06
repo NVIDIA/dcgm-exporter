@@ -51,6 +51,11 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
+//nolint:gosec // G115: test helper for non-negative int-to-uint conversion
+func toUint(v int) uint {
+	return uint(v)
+}
+
 func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	testutils.RequireLinux(t)
 	logrus.SetLevel(logrus.DebugLevel)
@@ -396,8 +401,8 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 				}
 
 				mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
-				mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
-				mockSystemInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
+				mockSystemInfo.EXPECT().GPUCount().Return(toUint(1)).AnyTimes()
+				mockSystemInfo.EXPECT().GPU(toUint(0)).Return(mockGPU).AnyTimes()
 
 				err := podMapper.Process(metrics, mockSystemInfo)
 				require.NoError(t, err)
@@ -583,9 +588,9 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 	}
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
-	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	mockDeviceInfo.EXPECT().GPUCount().Return(toUint(len(gpus))).AnyTimes()
 	for i := range gpus {
-		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+		mockDeviceInfo.EXPECT().GPU(toUint(i)).Return(mockGPU).AnyTimes()
 	}
 
 	// Process metrics
@@ -809,9 +814,9 @@ func TestProcessPodMapper_WithUID(t *testing.T) {
 	}
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
-	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	mockDeviceInfo.EXPECT().GPUCount().Return(toUint(len(gpus))).AnyTimes()
 	for i := range gpus {
-		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+		mockDeviceInfo.EXPECT().GPU(toUint(i)).Return(mockGPU).AnyTimes()
 	}
 
 	// Process metrics
@@ -920,9 +925,9 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 	}
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
-	mockDeviceInfo.EXPECT().GPUCount().Return(uint(len(gpus))).AnyTimes()
+	mockDeviceInfo.EXPECT().GPUCount().Return(toUint(len(gpus))).AnyTimes()
 	for i := range gpus {
-		mockDeviceInfo.EXPECT().GPU(uint(i)).Return(mockGPU).AnyTimes()
+		mockDeviceInfo.EXPECT().GPU(toUint(i)).Return(mockGPU).AnyTimes()
 	}
 
 	// Process metrics
@@ -1523,12 +1528,12 @@ func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
 			}
 
 			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
-			mockSystemInfo.EXPECT().GPUCount().Return(uint(len(allGPUUUIDs))).AnyTimes()
+			mockSystemInfo.EXPECT().GPUCount().Return(toUint(len(allGPUUUIDs))).AnyTimes()
 			for i, uuid := range allGPUUUIDs {
-				mockSystemInfo.EXPECT().GPU(uint(i)).Return(deviceinfo.GPUInfo{
+				mockSystemInfo.EXPECT().GPU(toUint(i)).Return(deviceinfo.GPUInfo{
 					DeviceInfo: dcgm.Device{
 						UUID: uuid,
-						GPU:  uint(i),
+						GPU:  toUint(i),
 					},
 				}).AnyTimes()
 			}
@@ -1656,8 +1661,8 @@ func TestKubernetesVirtualGPUs_UnusedMIGInstancesPreserveMetrics(t *testing.T) {
 			}
 
 			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
-			mockSystemInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
-			mockSystemInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+			mockSystemInfo.EXPECT().GPUCount().Return(toUint(1)).AnyTimes()
+			mockSystemInfo.EXPECT().GPU(toUint(0)).Return(deviceinfo.GPUInfo{
 				DeviceInfo:   dcgm.Device{UUID: gpuUUID, GPU: 0},
 				MigEnabled:   true,
 				GPUInstances: gpuInstances,

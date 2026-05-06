@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 4.5.2-4.8.1-distroless
+  tag: 4.5.3-4.8.2-distroless
 
 # Change the following reference to "/etc/dcgm-exporter/default-counters.csv"
 # to stop profiling metrics from DCGM
@@ -305,7 +305,6 @@ kubernetesDRA:
   # Memory usage
   # DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
   # DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
-  # DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
   
   # ECC
   # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
@@ -345,9 +344,6 @@ kubernetesDRA:
   # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
   # DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
   # DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
-
-  # Static configuration information
-  # DCGM_FI_DRIVER_VERSION,        label, Driver Version
 
 livenessProbe:
   initialDelaySeconds: 45

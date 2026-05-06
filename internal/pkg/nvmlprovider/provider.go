@@ -262,6 +262,11 @@ func (n nvmlProvider) GetAllMIGDevicesProcessMemory(parentGPUUUID string) (map[u
 			continue
 		}
 
+		if giID < 0 {
+			slog.Debug("Skipping MIG device with negative GPU instance ID", "gpuInstanceID", giID)
+			continue
+		}
+
 		pidToMemory := make(map[uint32]uint64, len(processes))
 		for _, p := range processes {
 			pidToMemory[p.Pid] = p.UsedGpuMemory

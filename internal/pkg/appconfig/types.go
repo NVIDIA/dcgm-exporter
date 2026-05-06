@@ -76,4 +76,5 @@ type Config struct {
 	DisableStartupValidate           bool
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
+	EnablePprof                      bool          // Enable /debug/pprof/ HTTP endpoints
 }
