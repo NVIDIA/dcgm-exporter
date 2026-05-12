@@ -770,7 +770,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		assert.NotEmpty(t, *mv.Label[2].Value)
 		assert.Equal(t, "device", *mv.Label[3].Name)
 		assert.Equal(t, "modelName", *mv.Label[4].Name)
-		assert.Equal(t, "Hostname", *mv.Label[5].Name)
+		assert.Equal(t, "hostname", *mv.Label[5].Name)
 		assert.Equal(t, "window_size_in_ms", *mv.Label[6].Name)
 		assert.Equal(t, "xid", *mv.Label[7].Name)
 		assert.NotEmpty(t, *mv.Label[7].Value)

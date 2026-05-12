@@ -73,7 +73,7 @@ func Test_render(t *testing.T) {
 			metrics: metrics,
 			want: `# HELP TEST_METRIC 
 # TYPE TEST_METRIC gauge
-TEST_METRIC{gpu="0",test-uuid="GPU-test-uuid-0000-0000-0000-000000000000",pci_bus_id="",device="testdevice",modelName="Test GPU Model",Hostname="testhost"} 42
+TEST_METRIC{gpu="0",test-uuid="GPU-test-uuid-0000-0000-0000-000000000000",pci_bus_id="",device="testdevice",modelName="Test GPU Model",hostname="testhost"} 42
 `,
 		},
 		{
@@ -82,7 +82,7 @@ TEST_METRIC{gpu="0",test-uuid="GPU-test-uuid-0000-0000-0000-000000000000",pci_bu
 			metrics: metrics,
 			want: `# HELP TEST_METRIC 
 # TYPE TEST_METRIC gauge
-TEST_METRIC{nvswitch="0",Hostname="testhost"} 42
+TEST_METRIC{nvswitch="0",hostname="testhost"} 42
 `,
 		},
 		{
@@ -100,7 +100,7 @@ TEST_METRIC{nvlink="0",nvswitch="0",gpu="0",gpu_uuid="GPU-test-uuid-0000-0000-00
 			metrics: metrics,
 			want: `# HELP TEST_METRIC 
 # TYPE TEST_METRIC gauge
-TEST_METRIC{cpu="0",Hostname="testhost"} 42
+TEST_METRIC{cpu="0",hostname="testhost"} 42
 `,
 		},
 		{
@@ -109,7 +109,7 @@ TEST_METRIC{cpu="0",Hostname="testhost"} 42
 			metrics: metrics,
 			want: `# HELP TEST_METRIC 
 # TYPE TEST_METRIC gauge
-TEST_METRIC{cpucore="0",cpu="testdevice",Hostname="testhost"} 42
+TEST_METRIC{cpucore="0",cpu="testdevice",hostname="testhost"} 42
 `,
 		},
 		{
