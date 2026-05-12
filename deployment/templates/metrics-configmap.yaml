@@ -67,8 +67,8 @@ data:
       # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
       # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
       # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
-      DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
-      # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
+      DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            gauge,   NVLink total throughput for all lanes (MiB/s, TX+RX combined).
+      # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               gauge,   NVLink throughput for lane 0 (MiB/s, TX+RX combined).
 
       # VGPU License status
       DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
