@@ -30,9 +30,13 @@ spec:
   clusterIP: {{ .Values.service.clusterIP | quote }}
   {{- end }}
   internalTrafficPolicy: {{ .Values.service.internalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
   ports:
   - name: "metrics"
     port: {{ .Values.service.port }}
+    {{- if ( and (eq .Values.service.type "NodePort" ) (not (empty .Values.service.nodePort)) ) }}
+    nodePort: {{ .Values.service.nodePort }}
+    {{- end }}
     targetPort: {{ .Values.service.port }}
     protocol: TCP
   selector:
