@@ -354,6 +354,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
 
+# Remove unused helper binaries from the base image that are built with an
+# older Go toolchain and carry known CVEs (e.g. CVE-2025-68121).
+# dcgm-exporter does not reference these binaries.
+COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /bin/rm /bin/rm
+RUN rm -f /usr/bin/shelless_ulimit_* /usr/bin/sleep_* /bin/rm
+
 # Security Note: Default USER
 #
 # This container runs as root by default because:
