@@ -388,6 +388,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					if pi.VGPU != "" {
 						metric.Attributes[vgpuAttribute] = pi.VGPU
 					}
+					maps.Copy(metric.Labels, pi.Labels)
 
 					// Robustness: ensure no overlap between Labels and Attributes
 					for k := range metric.Attributes {
