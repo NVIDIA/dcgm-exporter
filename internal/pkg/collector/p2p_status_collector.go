@@ -63,9 +63,10 @@ func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
 		uuid = "uuid"
 	}
 
-	labels := map[string]string{}
-
 	for i, status := range p2pStatus.Gpus {
+		// Build a fresh label set per source GPU. getLabelsFromCounters only adds keys, so a
+		// map shared across entities would leak stale label keys to GPUs that lack them.
+		labels := map[string]string{}
 		for j, link := range status {
 			if i == j {
 				continue

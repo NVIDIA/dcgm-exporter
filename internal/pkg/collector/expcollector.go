@@ -70,9 +70,6 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		}
 	}
 
-	labels := map[string]string{}
-	labels[windowSizeInMSLabel] = fmt.Sprint(c.windowSize)
-
 	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
 	metrics := make(MetricsByCounter)
 	useOld := c.config.UseOldNamespace
@@ -81,6 +78,11 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		uuid = "uuid"
 	}
 	for _, mi := range monitoringInfo {
+		// Build a fresh label set per entity. getLabelsFromCounters only adds keys, so a map
+		// shared across entities would leak stale label keys to GPUs that lack them, and the
+		// idle-GPU branch below hands the map to createMetric, which stores it by reference.
+		labels := map[string]string{}
+		labels[windowSizeInMSLabel] = fmt.Sprint(c.windowSize)
 		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
 			err := c.getLabelsFromCounters(mi, labels)
 			if err != nil {

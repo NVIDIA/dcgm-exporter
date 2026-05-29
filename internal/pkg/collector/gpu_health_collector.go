@@ -164,9 +164,10 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 	// Each health watch may contribute at most one incident per entity for this scrape.
 	applyGPUHealthIncidents(entityHealthSystemToIncident, gpuHealthStatus.Incidents)
 
-	labels := map[string]string{}
-
 	for _, mi := range monitoringInfoInGroup {
+		// Build a fresh label set per entity. getLabelsFromCounters only adds keys, so a map
+		// shared across entities would leak stale label keys to GPUs that lack them.
+		labels := map[string]string{}
 		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
 			err := c.getLabelsFromCounters(mi, labels)
 			if err != nil {

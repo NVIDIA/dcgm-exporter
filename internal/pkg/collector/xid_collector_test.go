@@ -601,3 +601,83 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 		})
 	}
 }
+
+// Test_xidCollector_GetMetrics_PerEntityLabelIsolation verifies that per-entity labels do not
+// bleed between GPUs. An idle GPU (no XID events) takes the zero-value branch, which previously
+// shared a single label map across all entities: the map was handed to createMetric by reference
+// and then mutated by the next GPU's getLabelsFromCounters call, so the idle GPU ended up
+// reporting another GPU's label value.
+func Test_xidCollector_GetMetrics_PerEntityLabelIsolation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() { dcgmprovider.SetClient(realDCGM) }()
+	dcgmprovider.SetClient(mockDCGM)
+
+	xidCounter := counters.Counter{FieldID: 1, FieldName: counters.DCGMExpXIDErrorsCount}
+	labelFieldID := dcgm.Short(3)
+	labelName := "label_field"
+	labelCounter := counters.Counter{FieldID: labelFieldID, FieldName: labelName, PromType: "label"}
+
+	gOpts := appconfig.DeviceOptions{Flex: true}
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(gOpts).AnyTimes()
+
+	gpuID0 := uint(0)
+	gpuID1 := uint(1)
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(uintptr(1))
+	mockFieldGroupHandle := dcgm.FieldHandle{}
+	mockFieldGroupHandle.SetHandle(uintptr(1))
+
+	// Distinct per-GPU label values so a cross-entity bleed is observable.
+	const gpu0Label = "gpu0-label"
+	const gpu1Label = "gpu1-label"
+	labelValuesFor := func(v string) []dcgm.FieldValue_v1 {
+		return []dcgm.FieldValue_v1{
+			{FieldID: labelFieldID, FieldType: dcgm.DCGM_FT_STRING, Value: testutils.StrToByteArray(v)},
+		}
+	}
+
+	// Only GPU1 has an XID event; GPU0 is idle and takes the zero-value branch.
+	mockEntitiesResult := []dcgm.FieldValue_v2{
+		{EntityID: gpuID1, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{42}},
+	}
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return([]dcgm.GroupHandle{mockGroupHandle}, mockFieldGroupHandle, []func(){}, nil)
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(mockGroupHandle, mockFieldGroupHandle,
+		gomock.AssignableToTypeOf(time.Time{})).Return(mockEntitiesResult, time.Time{}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID0, []dcgm.Short{labelFieldID}).
+		Return(labelValuesFor(gpu0Label), nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID1, []dcgm.Short{labelFieldID}).
+		Return(labelValuesFor(gpu1Label), nil)
+
+	counterList := counters.CounterList{xidCounter, labelCounter}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, []dcgm.Short{42},
+		[]dcgm.Short{labelFieldID}, mockDeviceWatcher, int64(1))
+
+	config := appconfig.Config{}
+	collector, err := NewXIDCollector(counterList, "localhost", &config, *deviceWatchList)
+	assert.NoError(t, err)
+
+	got, err := collector.GetMetrics()
+	assert.NoError(t, err)
+
+	metrics := got[xidCounter]
+	assert.Len(t, metrics, 2)
+
+	byGPU := map[string]Metric{}
+	for _, m := range metrics {
+		byGPU[m.GPU] = m
+	}
+
+	// The idle GPU0 must keep its own label, not inherit GPU1's.
+	assert.Equal(t, gpu0Label, byGPU["0"].Labels[labelName],
+		"idle GPU label bled from another entity via a shared label map")
+	assert.Equal(t, gpu1Label, byGPU["1"].Labels[labelName])
+}
