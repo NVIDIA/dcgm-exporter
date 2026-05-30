@@ -72,6 +72,10 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name:
 
+  # Whether to mount the SA token on the DaemonSet pod and the ServiceAccount.
+  # If not set, derived from kubernetes.enablePodLabels/enablePodUID with rbac.create, or kubernetesDRA.enabled.
+  automountServiceAccountToken:
+
 rollingUpdate:
   # Specifies maximum number of DaemonSet pods that can be unavailable during the update
   maxUnavailable: 1
