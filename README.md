@@ -140,7 +140,7 @@ To enable GPU-to-job mapping on the DCGM-exporter side, users must run the DCGM-
 
 In order to build dcgm-exporter ensure you have the following:
 
-* [Golang >= 1.24 installed](https://go.dev/)
+* [Golang >= 1.26 installed](https://go.dev/)
 * [DCGM installed](https://developer.nvidia.com/dcgm)
 * Have Linux machine with GPU, compatible with DCGM.
 
