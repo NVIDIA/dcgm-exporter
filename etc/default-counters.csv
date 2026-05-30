@@ -53,8 +53,8 @@ DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
 # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
 
 # Retired pages
-# DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
-# DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
+DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
+DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
 # DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
 
 # NVLink
