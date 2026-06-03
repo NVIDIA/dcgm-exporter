@@ -167,6 +167,8 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 
 ### Changing Metrics
 
+See [`METRICS.md`](METRICS.md) for a reference of the metrics exported by default, the metric families, and what each one means.
+
 With `dcgm-exporter` you can configure which fields are collected by specifying a custom CSV file.
 You will find the default CSV file under `etc/default-counters.csv` in the repository, which is copied on your system or container to `/etc/dcgm-exporter/default-counters.csv`
 
