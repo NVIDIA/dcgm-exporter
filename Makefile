@@ -29,7 +29,7 @@ VERSION        := $(NEW_EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
 OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
-DOCKERCMD      := docker --debug buildx build
+DOCKERCMD      := docker --debug buildx build --provenance=false
 MODULE         := github.com/NVIDIA/dcgm-exporter
 CONTAINER      ?= all
 
