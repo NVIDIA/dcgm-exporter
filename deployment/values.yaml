@@ -348,6 +348,16 @@ kubernetesDRA:
 livenessProbe:
   initialDelaySeconds: 45
   periodSeconds: 5
+  # When unset, the kubelet defaults apply (timeoutSeconds: 1, failureThreshold: 3).
+  # On busy nodes the /health endpoint can take longer than 1s to respond, so raise
+  # these to avoid the kubelet false-killing a healthy container.
+  # timeoutSeconds: 5
+  # failureThreshold: 5
 
 readinessProbe:
   initialDelaySeconds: 45
+  # When unset, the kubelet defaults apply (periodSeconds: 10, timeoutSeconds: 1,
+  # failureThreshold: 3).
+  # periodSeconds: 10
+  # timeoutSeconds: 5
+  # failureThreshold: 3
