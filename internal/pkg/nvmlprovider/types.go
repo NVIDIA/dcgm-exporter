@@ -20,6 +20,7 @@ package nvmlprovider
 
 type NVML interface {
 	GetMIGDeviceInfoByID(string) (*MIGDeviceInfo, error)
+	GetGPUInstanceProfileName(parentGPUUUID string, profileID uint) (string, error)
 	// GetDeviceProcessMemory returns memory usage for processes running on the GPU.
 	// Returns a map from PID to memory used in bytes.
 	GetDeviceProcessMemory(gpuUUID string) (map[uint32]uint64, error)

@@ -17,6 +17,7 @@
 package nvmlprovider
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,32 @@ func TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to get MIG device process memory")
+}
+
+func TestGetGPUInstanceProfileName_When_NVML_Not_Initialized(t *testing.T) {
+	provider := nvmlProvider{}
+	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", 9)
+	assert.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), "failed to get GPU instance profile name")
+}
+
+func TestMigProfileNameFromBytes(t *testing.T) {
+	profileName, err := migProfileNameFromBytes([]int8{'7', 'g', '.', '8', '0', 'g', 'b', 0, 'x'})
+	require.NoError(t, err)
+	assert.Equal(t, "7g.80gb", profileName)
+
+	profileName, err = migProfileNameFromBytes([]int8{0})
+	assert.Error(t, err)
+	assert.Empty(t, profileName)
+}
+
+func TestGetGPUInstanceProfileName_When_ProfileID_Exceeds_MaxInt(t *testing.T) {
+	provider := nvmlProvider{initialized: true}
+	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", uint(math.MaxInt)+1)
+	assert.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), "exceeds maximum int value")
 }
 
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {

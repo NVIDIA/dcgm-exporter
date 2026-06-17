@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 
@@ -107,6 +108,48 @@ func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) 
 	}
 
 	return getMIGDeviceInfoForOldDriver(uuid)
+}
+
+// GetGPUInstanceProfileName returns the canonical NVML name for a MIG GPU instance profile.
+func (n nvmlProvider) GetGPUInstanceProfileName(parentGPUUUID string, profileID uint) (string, error) {
+	if err := n.preCheck(); err != nil {
+		return "", fmt.Errorf("failed to get GPU instance profile name: %w", err)
+	}
+
+	device, ret := nvml.DeviceGetHandleByUUID(parentGPUUUID)
+	if ret != nvml.SUCCESS {
+		return "", fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentGPUUUID, nvml.ErrorString(ret))
+	}
+
+	if profileID > uint(math.MaxInt) {
+		return "", fmt.Errorf("GPU instance profile ID %d exceeds maximum int value %d", profileID, math.MaxInt)
+	}
+
+	profileIDInt := int(profileID)
+	infoV2, ret := device.GetGpuInstanceProfileInfoByIdV(profileIDInt).V2()
+	if ret != nvml.SUCCESS {
+		return "", fmt.Errorf("failed to get GPU instance profile info for UUID %s profile %d: %s",
+			parentGPUUUID, profileID, nvml.ErrorString(ret))
+	}
+
+	return migProfileNameFromBytes(infoV2.Name[:])
+}
+
+func migProfileNameFromBytes[T ~int8 | ~uint8](name []T) (string, error) {
+	var builder strings.Builder
+	for _, b := range name {
+		if b == 0 {
+			break
+		}
+		builder.WriteByte(byte(b))
+	}
+
+	profileName := builder.String()
+	if profileName == "" {
+		return "", errors.New("GPU instance profile name is empty")
+	}
+
+	return profileName, nil
 }
 
 // getMIGDeviceInfoForNewDriver identifies MIG Device Information for drivers >= R470 (470.42.01+),
