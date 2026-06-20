@@ -331,7 +331,7 @@ LABEL summary="Exports GPU Metrics to Prometheus"
 LABEL description="See summary"
 
 # Copy binary and configs
-COPY --chown=root:root --chmod=644 ./LICENSE ./licenses/LICENSE
+COPY --chown=root:root --chmod=644 ./LICENSE /licenses/LICENSE
 COPY --from=builder --chown=root:root --chmod=755 /usr/bin/dcgm-exporter /usr/bin/
 COPY --chown=root:root --chmod=755 etc /etc/dcgm-exporter
 
