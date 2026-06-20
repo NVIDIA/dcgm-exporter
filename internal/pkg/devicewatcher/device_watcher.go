@@ -28,7 +28,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
-	. "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
@@ -60,7 +60,7 @@ func (r *WatchResources) Cleanup() {
 				errMsg := unwatchErr.Error()
 				if !strings.Contains(errMsg, DCGM_ST_NOT_CONFIGURED) &&
 					!strings.Contains(errMsg, DCGM_ST_FIELD_NOT_WATCHED) {
-					slog.Warn("Failed to unwatch fields", slog.String(ErrorKey, errMsg))
+					slog.Warn("Failed to unwatch fields", slog.String(logging.ErrorKey, errMsg))
 				}
 			}
 		}
@@ -70,7 +70,7 @@ func (r *WatchResources) Cleanup() {
 	if r.fieldGroup != (dcgm.FieldHandle{}) {
 		if err := client.FieldGroupDestroy(r.fieldGroup); err != nil {
 			if !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
-				slog.Warn("Cannot destroy field group", slog.String(ErrorKey, err.Error()))
+				slog.Warn("Cannot destroy field group", slog.String(logging.ErrorKey, err.Error()))
 			}
 		}
 	}
@@ -80,8 +80,8 @@ func (r *WatchResources) Cleanup() {
 		if destroyErr := client.DestroyGroup(group); destroyErr != nil {
 			if !strings.Contains(destroyErr.Error(), DCGM_ST_NOT_CONFIGURED) {
 				slog.LogAttrs(context.Background(), slog.LevelWarn, "cannot destroy group",
-					slog.Any(GroupIDKey, group),
-					slog.String(ErrorKey, destroyErr.Error()),
+					slog.Any(logging.GroupIDKey, group),
+					slog.String(logging.ErrorKey, destroyErr.Error()),
 				)
 			}
 		}
@@ -101,7 +101,7 @@ func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType 
 			failedCount++
 			slog.Debug("FieldGetByID failed; skipping field",
 				slog.Any("field_id", counter.FieldID),
-				slog.String(ErrorKey, err.Error()),
+				slog.String(logging.ErrorKey, err.Error()),
 			)
 			continue
 		}
@@ -403,8 +403,8 @@ func createGroup() (dcgm.GroupHandle, func(), error) {
 		destroyErr := dcgmprovider.Client().DestroyGroup(groupID)
 		if destroyErr != nil && !strings.Contains(destroyErr.Error(), DCGM_ST_NOT_CONFIGURED) {
 			slog.LogAttrs(context.Background(), slog.LevelWarn, "cannot destroy group",
-				slog.Any(GroupIDKey, groupID),
-				slog.String(ErrorKey, destroyErr.Error()),
+				slog.Any(logging.GroupIDKey, groupID),
+				slog.String(logging.ErrorKey, destroyErr.Error()),
 			)
 		}
 	}
@@ -427,7 +427,7 @@ func newFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 		err := dcgmprovider.Client().FieldGroupDestroy(fieldGroup)
 		if err != nil {
 			slog.Warn("Cannot destroy field group.",
-				slog.String(ErrorKey, err.Error()),
+				slog.String(logging.ErrorKey, err.Error()),
 			)
 		}
 	}
