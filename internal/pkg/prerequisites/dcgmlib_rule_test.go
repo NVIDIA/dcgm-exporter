@@ -129,7 +129,7 @@ func Test_dcgmLibExistsRule_Validate(t *testing.T) {
 			},
 		},
 		{
-			Name: "returns error when library architecture missmatch",
+			Name: "returns error when library architecture mismatch",
 			ExecMockExpectations: func(ctrl *gomock.Controller, mockExec *mockexec.MockExec) {
 				output := `1211 libs found in cache '/etc/ld.so.cache'
 				libdcgm.so.4 (libc6,x86-64) => /lib/x86_64-linux-gnu/libdcgm.so.4

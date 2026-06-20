@@ -1134,7 +1134,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	numGPUs, err = dcgmprovider.Client().GetAllDeviceCount()
 	require.NoError(t, err)
 
-	intputCounters := []counters.Counter{
+	inputCounters := []counters.Counter{
 		{
 			FieldID:   100,
 			FieldName: "DCGM_FI_DEV_SM_CLOCK",
@@ -1143,7 +1143,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		},
 	}
 
-	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(intputCounters, config)
+	deviceWatchListManager := devicewatchlistmanager.NewWatchListManager(inputCounters, config)
 	err = deviceWatchListManager.CreateEntityWatchList(dcgm.FE_GPU, deviceWatcher,
 		int64(config.CollectInterval))
 	require.NoError(t, err)
@@ -1155,7 +1155,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	gpuItem, exists := deviceWatchListManager.EntityWatchList(dcgm.FE_GPU)
 	require.True(t, exists)
 
-	c, err := collector.NewDCGMCollector(intputCounters, "", config, gpuItem)
+	c, err := collector.NewDCGMCollector(inputCounters, "", config, gpuItem)
 	require.NoError(t, err)
 
 	defer c.Cleanup()
@@ -1164,7 +1164,7 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 
-	values := out[intputCounters[0]]
+	values := out[inputCounters[0]]
 
 	require.Equal(t, numGPUs, uint(len(values)))
 }

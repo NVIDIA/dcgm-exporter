@@ -166,7 +166,7 @@ func GetStructPrivateFieldValue[T any](t *testing.T, v any, fieldName string) T 
 	}
 
 	if value.Kind() != reflect.Struct {
-		t.Errorf("The type %s is not stuct", value.Type())
+		t.Errorf("The type %s is not struct", value.Type())
 		return result
 	}
 

@@ -53,7 +53,7 @@ func TestNewGPUHealthStatusCollector(t *testing.T) {
 			},
 		},
 		{
-			name: "returns no errors, whe collector is enabled",
+			name: "returns no errors, when collector is enabled",
 			counterList: []counters.Counter{
 				{
 					FieldName: "DCGM_EXP_GPU_HEALTH_STATUS",
@@ -196,13 +196,13 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 	type testCase struct {
 		name                 string
 		setDCGMproviderState func(*mockdcgm.MockDCGM)
-		asserResult          func(MetricsByCounter, error)
+		assertResult         func(MetricsByCounter, error)
 	}
 
 	testCases := []testCase{
 		{
 			name: "returns Metrics without errors",
-			asserResult: func(metrics MetricsByCounter, err error) {
+			assertResult: func(metrics MetricsByCounter, err error) {
 				require.NoError(t, err)
 				// We expect 1 metric: DCGM_EXP_GPU_HEALTH_STATUS
 				require.Len(t, metrics, 1)
@@ -233,7 +233,7 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 				mockDCGMProvider.EXPECT().HealthCheck(gomock.Any()).Return(dcgm.HealthResponse{},
 					errors.New("boom!"))
 			},
-			asserResult: func(metrics MetricsByCounter, err error) {
+			assertResult: func(metrics MetricsByCounter, err error) {
 				assert.Error(t, err)
 				assert.Empty(t, metrics)
 			},
@@ -243,7 +243,7 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 			setDCGMproviderState: func(mockDCGMProvider *mockdcgm.MockDCGM) {
 				mockDCGMProvider.EXPECT().GetGroupInfo(gomock.Any()).Return(nil, errors.New("boom!")).AnyTimes()
 			},
-			asserResult: func(metrics MetricsByCounter, err error) {
+			assertResult: func(metrics MetricsByCounter, err error) {
 				assert.Error(t, err)
 				assert.Empty(t, metrics)
 			},
@@ -254,7 +254,7 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 				mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).
 					Return([]dcgm.FieldValue_v1{}, errors.New("boom!")).AnyTimes()
 			},
-			asserResult: func(metrics MetricsByCounter, err error) {
+			assertResult: func(metrics MetricsByCounter, err error) {
 				assert.Error(t, err)
 				assert.Empty(t, metrics)
 			},
@@ -295,7 +295,7 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 
 			metrics, err := collector.GetMetrics()
 
-			tc.asserResult(metrics, err)
+			tc.assertResult(metrics, err)
 
 			ctrl.Finish() // This will finish the current controller
 		})
