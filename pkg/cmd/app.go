@@ -453,7 +453,7 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	// Validate prerequisites once
 	if !config.DisableStartupValidate {
-		err = prerequisites.Validate()
+		err = prerequisites.Validate(c.Context)
 		if err != nil {
 			return err
 		}

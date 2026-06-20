@@ -16,6 +16,8 @@
 
 package prerequisites
 
+import "context"
+
 type rule interface {
-	Validate() error
+	Validate(ctx context.Context) error
 }

@@ -17,30 +17,44 @@
 package prerequisites
 
 import (
+	"context"
 	debugelf "debug/elf"
 	"fmt"
 	"log/slog"
+	osexec "os/exec"
 	"strings"
+	"time"
 )
 
 const (
-	libdcgmco     = "libdcgm.so.4"
-	procSelfExe   = "/proc/self/exe"
-	ldconfig      = "ldconfig"
-	ldconfigParam = "-p"
+	libdcgmco       = "libdcgm.so.4"
+	procSelfExe     = "/proc/self/exe"
+	ldconfig        = "ldconfig"
+	ldconfigParam   = "-p"
+	ldconfigTimeout = 10 * time.Second
 )
 
 type dcgmLibExistsRule struct{}
 
 // Validate checks if libdcgm.so.4 exists and matches with the machine architecture.
-func (c dcgmLibExistsRule) Validate() error {
+func (c dcgmLibExistsRule) Validate(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, ldconfigTimeout)
+	defer cancel()
+
 	// On Ubuntu, ldconfig is a wrapper around ldconfig.real
 	ldconfigPath := fmt.Sprintf("/sbin/%s.real", ldconfig)
 	if _, err := os.Stat(ldconfigPath); err != nil {
 		ldconfigPath = "/sbin/" + ldconfig
 	}
+	// NixOS does not ship /sbin/ldconfig unless symlinked by systemd-tmpfiles;
+	// fall back to PATH lookup when the chosen path is not present on disk.
+	if _, err := os.Stat(ldconfigPath); err != nil {
+		if found, lpErr := osexec.LookPath(ldconfig); lpErr == nil {
+			ldconfigPath = found
+		}
+	}
 	// Get list of shared libraries. See: man ldconfig
-	out, err := exec.Command(ldconfigPath, ldconfigParam).Output()
+	out, err := exec.CommandContext(ctx, ldconfigPath, ldconfigParam).Output()
 	if err != nil {
 		return err
 	}
