@@ -1002,7 +1002,7 @@ func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 	letterAndRange := strings.Split(devices, ":")
 	count := len(letterAndRange)
 	if count > 2 {
-		return dOpt, fmt.Errorf("Invalid ranged device option '%s': there can only be one specified range", devices)
+		return dOpt, fmt.Errorf("invalid ranged device option %q: there can only be one specified range", devices)
 	}
 
 	letter := letterAndRange[0]

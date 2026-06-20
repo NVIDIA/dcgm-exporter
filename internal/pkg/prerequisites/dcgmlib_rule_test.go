@@ -97,7 +97,7 @@ func Test_dcgmLibExistsRule_Validate(t *testing.T) {
 			},
 			AssertErr: func(err error) {
 				require.Error(t, err)
-				require.ErrorContains(t, err, "the libdcgm.so.4 library was not found. Install Data Center GPU Manager (DCGM).")
+				require.ErrorContains(t, err, "the libdcgm.so.4 library was not found. Install Data Center GPU Manager (DCGM)")
 			},
 		},
 		{
