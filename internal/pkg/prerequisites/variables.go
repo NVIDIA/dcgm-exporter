@@ -38,5 +38,5 @@ var (
 	// ld-linux-x86-64.so.2 (libc6,x86-64) => /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
 	rxLDCacheEntry = regexp.MustCompile(`(?m)^(.*)\s*\(.*\)\s*=>\s*(.*)$`)
 
-	errLibdcgmNotFound = fmt.Errorf("the %s library was not found. Install Data Center GPU Manager (DCGM).", libdcgmco)
+	errLibdcgmNotFound = fmt.Errorf("the %s library was not found. Install Data Center GPU Manager (DCGM)", libdcgmco)
 )

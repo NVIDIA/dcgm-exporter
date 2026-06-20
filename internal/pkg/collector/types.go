@@ -161,7 +161,7 @@ func (m MetricsByCounter) GoString() string {
 		}
 		first = false
 
-		result.WriteString(fmt.Sprintf("%q: %#v", counter.FieldName, metrics))
+		fmt.Fprintf(&result, "%q: %#v", counter.FieldName, metrics)
 	}
 
 	result.WriteString("}")
