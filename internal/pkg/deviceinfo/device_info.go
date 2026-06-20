@@ -598,9 +598,7 @@ func getCoreArray(bitmask []uint64) []uint {
 	var cores []uint
 	bits := make([]uint64, dcgm.MAX_CPU_CORE_BITMASK_COUNT)
 
-	for i := 0; i < len(bitmask); i++ {
-		bits[i] = bitmask[i]
-	}
+	copy(bits, bitmask)
 
 	b := bitset.From(bits)
 
