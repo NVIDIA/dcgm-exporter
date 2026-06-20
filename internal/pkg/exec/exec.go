@@ -16,11 +16,14 @@
 
 package exec
 
-import "os/exec"
+import (
+	"context"
+	"os/exec"
+)
 
 //go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/exec/mock_exec.go -package=exec -copyright_file=../../../hack/header.txt . Exec
 type Exec interface {
-	Command(name string, arg ...string) Cmd
+	CommandContext(ctx context.Context, name string, arg ...string) Cmd
 }
 
 //go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/exec/mock_cmd.go -package=exec -copyright_file=../../../hack/header.txt . Cmd
@@ -35,8 +38,11 @@ var (
 
 type RealExec struct{}
 
-func (r RealExec) Command(name string, arg ...string) Cmd {
-	return &RealCmd{cmd: exec.Command(name, arg...)}
+// CommandContext wraps os/exec.CommandContext so call sites can be audited
+// from one place. Callers MUST pass a context with a timeout; see README.md.
+func (r RealExec) CommandContext(ctx context.Context, name string, arg ...string) Cmd {
+	// #nosec G204 -- generic wrapper; callers whitelisted, no shell, no user-supplied PATH
+	return &RealCmd{cmd: exec.CommandContext(ctx, name, arg...)}
 }
 
 type RealCmd struct {

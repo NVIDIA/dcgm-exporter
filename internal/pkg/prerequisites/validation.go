@@ -16,13 +16,15 @@
 
 package prerequisites
 
+import "context"
+
 var rules = []rule{
 	dcgmLibExistsRule{},
 }
 
-func Validate() error {
+func Validate(ctx context.Context) error {
 	for _, rule := range rules {
-		err := rule.Validate()
+		err := rule.Validate(ctx)
 		if err != nil {
 			return err
 		}

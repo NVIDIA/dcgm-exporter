@@ -24,6 +24,7 @@
 package exec
 
 import (
+	context "context"
 	reflect "reflect"
 
 	exec "github.com/NVIDIA/dcgm-exporter/internal/pkg/exec"
@@ -54,21 +55,21 @@ func (m *MockExec) EXPECT() *MockExecMockRecorder {
 	return m.recorder
 }
 
-// Command mocks base method.
-func (m *MockExec) Command(name string, arg ...string) exec.Cmd {
+// CommandContext mocks base method.
+func (m *MockExec) CommandContext(ctx context.Context, name string, arg ...string) exec.Cmd {
 	m.ctrl.T.Helper()
-	varargs := []any{name}
+	varargs := []any{ctx, name}
 	for _, a := range arg {
 		varargs = append(varargs, a)
 	}
-	ret := m.ctrl.Call(m, "Command", varargs...)
+	ret := m.ctrl.Call(m, "CommandContext", varargs...)
 	ret0, _ := ret[0].(exec.Cmd)
 	return ret0
 }
 
-// Command indicates an expected call of Command.
-func (mr *MockExecMockRecorder) Command(name any, arg ...any) *gomock.Call {
+// CommandContext indicates an expected call of CommandContext.
+func (mr *MockExecMockRecorder) CommandContext(ctx, name any, arg ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{name}, arg...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Command", reflect.TypeOf((*MockExec)(nil).Command), varargs...)
+	varargs := append([]any{ctx, name}, arg...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CommandContext", reflect.TypeOf((*MockExec)(nil).CommandContext), varargs...)
 }
