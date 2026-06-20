@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"slices"
 	"strconv"
 
@@ -33,6 +34,17 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
+
+// boundedLinkValue returns the link value as int, or (_, false) if the
+// value exceeds math.MaxInt32. dcgm.Link_State is a small enum in
+// practice; the guard protects against future SDK changes that could
+// silently produce garbage metric values.
+func boundedLinkValue(link uint64) (int, bool) {
+	if link > math.MaxInt32 {
+		return 0, false
+	}
+	return int(link), true
+}
 
 // IsDCGMExpP2PStatusEnabled checks if the DCGM_EXP_P2P_STATUS counter exists
 func IsDCGMExpP2PStatusEnabled(counterList counters.CounterList) bool {
@@ -81,8 +93,12 @@ func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
 			metricValueLabels := maps.Clone(labels)
 			metricValueLabels[PeerGPULabel] = strconv.Itoa(j)
 			metricValueLabels[LinkStatusLabel] = p2pStatusToString(uint64(link))
-			// Safe conversion from link to int, assuming link values are small
-			linkValue := int(uint64(link)) //nolint:gosec // link values are small in practice
+			linkValue, ok := boundedLinkValue(uint64(link))
+			if !ok {
+				slog.Warn("unexpected NVLink state value; skipping metric",
+					slog.Uint64("value", uint64(link)))
+				continue
+			}
 			m := c.createMetric(metricValueLabels, monitoringInfo[i], uuid, linkValue)
 			metrics[c.counter] = append(metrics[c.counter], m)
 		}
