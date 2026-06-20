@@ -5,7 +5,7 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 # Create a user 'developer' with UID=1000, add to 'developer' group, and add to 'sudo' group
 RUN groupadd -g $USER_GID $USERNAME && \
-	useradd -m -u $USER_GID -g $USERNAME -s /bin/bash $USERNAME && \
+	useradd -m -l -u $USER_GID -g $USERNAME -s /bin/bash $USERNAME && \
 	usermod -aG sudo $USERNAME
 # Allow 'developer' to use sudo without a password
 RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
