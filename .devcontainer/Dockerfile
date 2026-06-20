@@ -1,4 +1,10 @@
 FROM nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
+
+# Fail on errors in piped RUN commands (hadolint DL4006).
+# /bin/bash is a symlink to /usr/bin/bash on usrmerged Debian/Ubuntu;
+# we use /bin/bash here so hadolint recognises the pipefail SHELL.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ARG GOLANG_VERSION=1.26.2
 ARG USERNAME=developer
 ARG USER_UID=1000

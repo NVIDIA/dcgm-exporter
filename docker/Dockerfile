@@ -19,6 +19,11 @@ ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
 #####
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
 
+# Fail on errors in piped RUN commands (hadolint DL4006).
+# /bin/bash is a symlink to /usr/bin/bash on usrmerged Debian/Ubuntu;
+# we use /bin/bash here so hadolint recognises the pipefail SHELL.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ARG GOLANG_VERSION=1.26.2
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
@@ -286,6 +291,11 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 # Distroless helper stage - builds full Ubuntu container with DCGM libraries
 #####
 FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04 AS runtime-distroless-helper
+
+# Fail on errors in piped RUN commands (hadolint DL4006).
+# /bin/bash is a symlink to /usr/bin/bash on usrmerged Debian/Ubuntu;
+# we use /bin/bash here so hadolint recognises the pipefail SHELL.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
 
