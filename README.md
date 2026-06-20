@@ -239,6 +239,7 @@ make REGISTRY=<private_registry> push
 
 * For community support, please [file a new issue](https://github.com/NVIDIA/dcgm-exporter/issues/new)
 * You can contribute by opening a [pull request](https://github.com/NVIDIA/dcgm-exporter)
+* [Context architecture](docs/CONTEXTS.md) — how `context.Context` flows through the daemon, when to add one, how to test it.
 
 ### Reporting Security Issues
 

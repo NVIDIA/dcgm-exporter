@@ -392,7 +392,7 @@ func newOSWatcher(sigs ...os.Signal) (chan os.Signal, func()) {
 }
 
 func action(c *cli.Context) (err error) {
-	return stdout.Capture(context.Background(), func() error {
+	return stdout.Capture(c.Context, func() error {
 		// The purpose of this function is to capture any panic that may occur
 		// during initialization and return an error.
 		defer func() {
@@ -490,7 +490,11 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	slog.Info("DCGM successfully initialized!")
 
-	ctx := context.Background()
+	// Root context, plumbed from cmd/dcgm-exporter/main.go via
+	// signal.NotifyContext + app.RunContext. Cancelled by SIGINT or
+	// SIGTERM so the watcher / gRPC / informer subtrees below inherit
+	// shutdown cancellation. See docs/CONTEXTS.md.
+	ctx := c.Context
 
 	// Query DCGM profiling metrics at startup
 	// This is re-queried on every hot reload to handle GPU changes
@@ -522,8 +526,10 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	slog.Info("HTTP server started - ready to serve metrics")
 
-	// Start watchers
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
+	// Start watchers — derive from the startup ctx so a SIGINT/SIGTERM
+	// also stops the file / GPU bind-unbind watchers below in addition
+	// to the explicit watcherCancel() in the shutdown path.
+	watcherCtx, watcherCancel := context.WithCancel(ctx)
 	var watcherWg sync.WaitGroup
 
 	// File watcher (config changes) - hot reload on change
@@ -543,23 +549,33 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 		runGPUWatcher(watcherCtx, gpuWatcher, metricsServer, c, dcgmCleanup, &watcherWg)
 	}
 
-	// Wait for shutdown signal (SIGTERM, SIGINT) - ignore SIGHUP for compatibility
+	// Wait for shutdown signal (SIGTERM, SIGINT) or root ctx cancellation.
+	// SIGHUP triggers hot reload and continues the loop.
 	sigs := sigSource.Signals()
+shutdownLoop:
 	for {
-		sig := <-sigs
-		slog.Info("Received signal", slog.String("signal", sig.String()))
+		select {
+		case sig := <-sigs:
+			slog.Info("Received signal", slog.String("signal", sig.String()))
 
-		if sig == syscall.SIGHUP {
-			// SIGHUP triggers hot reload instead of full restart
-			slog.Info("SIGHUP received - triggering hot reload")
-			if err := hotReload(watcherCtx, metricsServer, c, dcgmCleanup); err != nil {
-				slog.Error("Hot reload failed", slog.String("error", err.Error()))
+			if sig == syscall.SIGHUP {
+				// SIGHUP triggers hot reload instead of full restart
+				slog.Info("SIGHUP received - triggering hot reload")
+				if err := hotReload(watcherCtx, metricsServer, c, dcgmCleanup); err != nil {
+					slog.Error("Hot reload failed", slog.String("error", err.Error()))
+				}
+				continue
 			}
-			continue
-		}
 
-		// SIGTERM/SIGINT/SIGQUIT - graceful shutdown
-		break
+			// SIGTERM/SIGINT/SIGQUIT - graceful shutdown
+			break shutdownLoop
+		case <-ctx.Done():
+			// Root context cancelled (signal.NotifyContext fired upstream,
+			// or a parent caller cancelled the cli.Context). Shut down.
+			slog.Info("Root context cancelled - shutting down",
+				slog.String("err", ctx.Err().Error()))
+			break shutdownLoop
+		}
 	}
 
 	// Graceful shutdown
