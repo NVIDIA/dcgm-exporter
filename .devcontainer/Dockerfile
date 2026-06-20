@@ -22,11 +22,10 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	libc6-dev \
 	make \
 	pkg-config \
-	wget \
 	datacenter-gpu-manager-4-core \
 	libcap2-bin \
 	&& install -m 0755 -d /etc/apt/keyrings \
-	&& wget -O /etc/apt/keyrings/docker.asc https://download.docker.com/linux/ubuntu/gpg \
+	&& curl -fSL --retry 3 -o /etc/apt/keyrings/docker.asc https://download.docker.com/linux/ubuntu/gpg \
 	&& chmod a+r /etc/apt/keyrings/docker.asc \
 	&& echo \
 	"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
@@ -66,10 +65,10 @@ RUN set -eux; \
 	echo >&2 "warning: current architecture ($arch) does not have a compatible Go binary release; will be building from source"; \
 	echo >&2; \
 	fi; \
-	wget -O go.tgz "$url" --progress=dot:giga; \
+	curl -fSL --retry 3 -o go.tgz "$url"; \
 	\
 	echo "Verifying SHA256 checksum..."; \
-	wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
+	curl -fSL --retry 3 -o go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
 	expected_sha256=$(cat go.sha256); \
 	actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
 	if [ "$expected_sha256" != "$actual_sha256" ]; then \
