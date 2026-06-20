@@ -17,8 +17,11 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/NVIDIA/dcgm-exporter/pkg/cmd"
 )
@@ -26,8 +29,14 @@ import (
 var BuildVersion = "Filled by the build system"
 
 func main() {
+	// Root context, cancelled by SIGINT or SIGTERM. SIGHUP keeps flowing
+	// through SignalSource for hot reload (different semantics — see
+	// docs/CONTEXTS.md).
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	app := cmd.NewApp(BuildVersion)
-	if err := app.Run(os.Args); err != nil {
+	if err := app.RunContext(ctx, os.Args); err != nil {
 		slog.Error(err.Error())
 		os.Exit(1)
 	}

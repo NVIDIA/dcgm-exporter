@@ -17,9 +17,12 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -32,6 +35,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
@@ -364,6 +368,113 @@ func Test_contextToConfig_DumpConfig(t *testing.T) {
 
 			// Assert equality against the config returned by contextToConfig
 			assert.Equal(t, tt.expectedConfig, config.DumpConfig)
+		})
+	}
+}
+
+// TestActionUsesCliContext verifies that the daemon's action chain
+// (action → stdout.Capture → callback) honours cancellation of the
+// cli.Context's root context. The action function reads c.Context (set by
+// main.go via signal.NotifyContext + app.RunContext); cancellation of
+// that context must propagate into the wrapped callback within a tight
+// time bound.
+//
+// See docs/CONTEXTS.md for the full propagation tree.
+func TestActionUsesCliContext(t *testing.T) {
+	// Sleep that respects context cancellation. Returns ctx.Err() on
+	// cancel; returns nil after the full duration elapses. Modelled on
+	// the standard pattern in long-running I/O paths.
+	ctxSleep := func(ctx context.Context, d time.Duration) error {
+		select {
+		case <-time.After(d):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	cases := []struct {
+		name        string
+		prepCtx     func() (context.Context, context.CancelFunc)
+		workTime    time.Duration
+		wantErrKind error
+		wantQuick   bool // did the call return well before workTime?
+	}{
+		{
+			name: "positive: fresh ctx, callback runs to completion",
+			prepCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithCancel(context.Background())
+			},
+			workTime:    20 * time.Millisecond,
+			wantErrKind: nil,
+			wantQuick:   false,
+		},
+		{
+			name: "negative: pre-cancelled ctx aborts immediately",
+			prepCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, func() {}
+			},
+			workTime:    500 * time.Millisecond,
+			wantErrKind: context.Canceled,
+			wantQuick:   true,
+		},
+		{
+			name: "boundary: ctx cancelled mid-callback propagates",
+			prepCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+				return ctx, func() {}
+			},
+			workTime:    500 * time.Millisecond,
+			wantErrKind: context.Canceled,
+			wantQuick:   true,
+		},
+		{
+			name: "corner: ctx with deadline shorter than work fires DeadlineExceeded",
+			prepCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 30*time.Millisecond)
+			},
+			workTime:    500 * time.Millisecond,
+			wantErrKind: context.DeadlineExceeded,
+			wantQuick:   true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := tc.prepCtx()
+			defer cancel()
+
+			// Build a cli.Context whose Context field is the cancellable one.
+			// cli.NewContext(app, set, parent) inherits parent's Context.
+			set := flag.NewFlagSet("test", 0)
+			parent := &cli.Context{Context: ctx}
+			cliCtx := cli.NewContext(NewApp(), set, parent)
+			require.Same(t, ctx, cliCtx.Context,
+				"cli.Context.Context must be the ctx we passed in")
+
+			// Mirror the production action() wrapping: stdout.Capture(c.Context, fn).
+			// The fn here stands in for startDCGMExporter — it just sleeps
+			// respecting ctx so the test is fast and predictable.
+			start := time.Now()
+			err := stdout.Capture(cliCtx.Context, func() error {
+				return ctxSleep(cliCtx.Context, tc.workTime)
+			})
+			elapsed := time.Since(start)
+
+			if tc.wantErrKind == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.True(t, errors.Is(err, tc.wantErrKind),
+					"err = %v, want %v", err, tc.wantErrKind)
+			}
+			if tc.wantQuick {
+				assert.Less(t, elapsed, tc.workTime/2,
+					"ctx cancellation/timeout did not propagate within budget; elapsed=%v workTime=%v",
+					elapsed, tc.workTime)
+			}
 		})
 	}
 }

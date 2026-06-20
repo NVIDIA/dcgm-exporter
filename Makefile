@@ -151,6 +151,15 @@ package-build:
 test-integration: generate
 	go test -race -count=1 -timeout 5m -v $(TEST_ARGS) ./tests/integration/
 
+.PHONY: test-signals
+# Black-box signal handling test — runs the real binary, sends real
+# signals, scrapes real /metrics. Proves SIGTERM/SIGINT shut the daemon
+# down within a budget and SIGHUP triggers hot reload without exiting.
+# Requires libdcgm.so.4 and libnvidia-ml.so.1 at runtime — same as
+# test-integration. See tests/signals/README.md.
+test-signals: binary
+	./tests/signals/test_signals.sh
+
 .PHONY: test-coverage
 test-coverage:
 	@echo "Preparing coverage data directories..."
