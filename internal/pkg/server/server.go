@@ -246,7 +246,8 @@ func (s *MetricsServer) fatal() {
 	os.Exit(1)
 }
 
-func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
+func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	currentRegistry := s.GetRegistry()
@@ -258,7 +259,7 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	var buf bytes.Buffer
-	err = s.render(&buf, metricGroups)
+	err = s.render(ctx, &buf, metricGroups)
 	if err != nil {
 		http.Error(w, internalServerError, http.StatusInternalServerError)
 		return
@@ -271,8 +272,13 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCounterGroup) error {
+func (s *MetricsServer) render(ctx context.Context, w io.Writer, metricGroups registry.MetricsByCounterGroup) error {
 	for group, metrics := range metricGroups {
+		// Honour scrape cancellation between metric groups so a timed-out
+		// Prometheus scrape stops wasting CPU within one group.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		deviceWatchList, exists := s.deviceWatchListManager.EntityWatchList(group)
 		if exists {
 
@@ -308,7 +314,7 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 			for _, transformation := range s.transformations {
 				transformErr := transformation.Process(metrics, deviceWatchList.DeviceInfo())
 				if transformErr != nil {
-					slog.LogAttrs(context.Background(), slog.LevelError, "Failed to apply transformations on metrics",
+					slog.LogAttrs(ctx, slog.LevelError, "Failed to apply transformations on metrics",
 						slog.String(logging.ErrorKey, transformErr.Error()),
 						slog.String(logging.FieldEntityGroupKey, group.String()),
 						slog.String("transformation", transformation.Name()),
@@ -325,7 +331,7 @@ func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCount
 				slog.String("metrics_debug_file", metricsFile))
 			err = rendermetrics.RenderGroup(w, group, metrics)
 			if err != nil {
-				slog.LogAttrs(context.Background(), slog.LevelError, "Failed to renderGroup metrics",
+				slog.LogAttrs(ctx, slog.LevelError, "Failed to renderGroup metrics",
 					slog.String(logging.ErrorKey, err.Error()),
 					slog.String(logging.FieldEntityGroupKey, group.String()),
 					slog.Int("metrics_count", len(metrics)),
