@@ -183,8 +183,8 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 		for i := uint(0); i < hierarchy.Count; i++ {
 			entityID := hierarchy.EntityList[i].Entity.EntityId
 
-			if hierarchy.EntityList[i].Parent.EntityGroupId == dcgm.FE_GPU {
-
+			switch hierarchy.EntityList[i].Parent.EntityGroupId {
+			case dcgm.FE_GPU:
 				// We are adding a GPU instance
 				gpuID = hierarchy.EntityList[i].Parent.EntityId
 
@@ -197,7 +197,7 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 				s.gpus[gpuID].GPUInstances = append(s.gpus[gpuID].GPUInstances, instanceInfo)
 				entities = append(entities, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: entityID})
 				instanceIndex = len(s.gpus[gpuID].GPUInstances) - 1
-			} else if hierarchy.EntityList[i].Parent.EntityGroupId == dcgm.FE_GPU_I {
+			case dcgm.FE_GPU_I:
 				// TODO (roarora): Fix this implementation as it expects Instances and Compute Instances to be reported
 				//                 in a certain sequence if, that is not the case results are incorrect.
 
