@@ -18,6 +18,7 @@ package hostname
 
 import (
 	"net"
+	"strings"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
@@ -46,7 +47,32 @@ func parseRemoteHostname(config *appconfig.Config) (string, error) {
 		// In that case, use the appconfig.RemoteHEInfo as is
 		host = config.RemoteHEInfo
 	}
+
+	// When the remote hostengine runs on the local node (for example a non-default
+	// port on "localhost"), the extracted host ("localhost", "127.0.0.1", "::1", ...)
+	// is not a useful label value and would make metrics impossible to filter by node.
+	// Fall back to the local hostname in that case.
+	if isLoopbackHost(host) {
+		return getLocalHostname()
+	}
+
 	return host, nil
+}
+
+// isLoopbackHost reports whether host refers to the local node, i.e. "localhost"
+// or any loopback IP address (127.0.0.0/8, ::1). Surrounding brackets on an IPv6
+// literal (for example "[::1]") are tolerated.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func getLocalHostname() (string, error) {

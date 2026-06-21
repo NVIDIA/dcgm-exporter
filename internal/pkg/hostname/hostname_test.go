@@ -29,6 +29,21 @@ import (
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
 
+// mockLocalHostname returns a hook that makes getLocalHostname resolve to name
+// via os.Hostname() (with NODE_NAME unset).
+func mockLocalHostname(t *testing.T, name string) func() func() {
+	return func() func() {
+		ctrl := gomock.NewController(t)
+		m := osmock.NewMockOS(ctrl)
+		m.EXPECT().Getenv(gomock.Eq("NODE_NAME"))
+		m.EXPECT().Hostname().Return(name, nil).AnyTimes()
+		os = m
+		return func() {
+			os = osinterface.RealOS{}
+		}
+	}
+}
+
 func TestGetHostname(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -106,12 +121,30 @@ func TestGetHostname(t *testing.T) {
 			want: "example.com",
 		},
 		{
-			name: "When appconfig.UseRemoteHE is true and hostname is IP address",
+			name: "When appconfig.UseRemoteHE is true and hostname is public IP address",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "192.168.1.1",
+			},
+			want: "192.168.1.1",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and hostname is loopback IP address",
 			config: &appconfig.Config{
 				UseRemoteHE:  true,
 				RemoteHEInfo: "127.0.0.1",
 			},
-			want: "127.0.0.1",
+			hook: mockLocalHostname(t, "test-hostname"),
+			want: "test-hostname",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote is loopback IP with custom port",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "127.0.0.1:5556",
+			},
+			hook: mockLocalHostname(t, "test-hostname"),
+			want: "test-hostname",
 		},
 		{
 			name: "When appconfig.UseRemoteHE is true, kubernetes is true, and hostname is localhost",
@@ -133,12 +166,30 @@ func TestGetHostname(t *testing.T) {
 			want: "test-hostname",
 		},
 		{
-			name: "When appconfig.UseRemoteHE is true and remote hostname is name",
+			name: "When appconfig.UseRemoteHE is true and remote is localhost with custom port",
 			config: &appconfig.Config{
 				UseRemoteHE:  true,
 				RemoteHEInfo: "localhost:5555",
 			},
-			want: "localhost",
+			hook: mockLocalHostname(t, "test-hostname"),
+			want: "test-hostname",
+		},
+		{
+			name: "When appconfig.UseRemoteHE is true and remote is localhost using NODE_NAME",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "localhost:5556",
+			},
+			hook: func() func() {
+				ctrl := gomock.NewController(t)
+				m := osmock.NewMockOS(ctrl)
+				m.EXPECT().Getenv(gomock.Eq("NODE_NAME")).Return("node-from-env")
+				os = m
+				return func() {
+					os = osinterface.RealOS{}
+				}
+			},
+			want: "node-from-env",
 		},
 		{
 			name: "When appconfig.UseRemoteHE is true and remote address is IPv6 loopback with port",
@@ -146,7 +197,8 @@ func TestGetHostname(t *testing.T) {
 				UseRemoteHE:  true,
 				RemoteHEInfo: "[::1]:5555",
 			},
-			want: "::1",
+			hook: mockLocalHostname(t, "test-hostname"),
+			want: "test-hostname",
 		},
 		{
 			name: "When appconfig.UseRemoteHE is true and remote address is full IPv6 with port",
@@ -165,20 +217,22 @@ func TestGetHostname(t *testing.T) {
 			want: "::",
 		},
 		{
-			name: "When appconfig.UseRemoteHE is true and remote address is IPv6 without port",
+			name: "When appconfig.UseRemoteHE is true and remote address is IPv6 loopback without port",
 			config: &appconfig.Config{
 				UseRemoteHE:  true,
 				RemoteHEInfo: "[::1]",
 			},
-			want: "[::1]",
+			hook: mockLocalHostname(t, "test-hostname"),
+			want: "test-hostname",
 		},
 		{
-			name: "When appconfig.UseRemoteHE is true and remote address is bare IPv6 without brackets or port",
+			name: "When appconfig.UseRemoteHE is true and remote address is bare IPv6 loopback without brackets or port",
 			config: &appconfig.Config{
 				UseRemoteHE:  true,
 				RemoteHEInfo: "::1",
 			},
-			want: "::1",
+			hook: mockLocalHostname(t, "test-hostname"),
+			want: "test-hostname",
 		},
 		{
 			name: "When appconfig.UseRemoteHE is true and remote address is empty",
