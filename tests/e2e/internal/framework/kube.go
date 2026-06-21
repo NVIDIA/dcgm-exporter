@@ -23,7 +23,6 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/pkg/errors"
 	"k8s.io/client-go/transport/spdy"
 
 	"k8s.io/client-go/tools/portforward"
@@ -323,7 +322,7 @@ func (c *KubeClient) PortForward(
 
 	select {
 	case err = <-errCh:
-		return -1, errors.Wrap(err, "port forwarding failed")
+		return -1, fmt.Errorf("port forwarding failed: %w", err)
 	case <-fw.Ready:
 	}
 
