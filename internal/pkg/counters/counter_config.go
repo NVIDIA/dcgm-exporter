@@ -29,7 +29,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
 
 func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error) {
@@ -42,15 +41,18 @@ func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error
 
 	if c.ConfigMapData != undefinedConfigMapData {
 		var client kubernetes.Interface
-		client, err = kubeclient.GetKubeClient()
+		client, err = getKubeClient()
 		if err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
-		}
-		records, err = readConfigMap(ctx, client, c)
-		if err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
+			slog.Warn("Failed to create Kubernetes client to read the counters ConfigMap; "+
+				"falling back to the metrics file. In Kubernetes this usually means the pod has no "+
+				"mounted ServiceAccount token (/var/run/secrets/kubernetes.io/serviceaccount/token); "+
+				"ensure a ServiceAccount is configured and automountServiceAccountToken is enabled.",
+				"configMap", c.ConfigMapData,
+				"error", err)
+		} else if records, err = readConfigMap(ctx, client, c); err != nil {
+			slog.Warn("Failed to read the counters ConfigMap; falling back to the metrics file.",
+				"configMap", c.ConfigMapData,
+				"error", err)
 		}
 	} else {
 		err = fmt.Errorf("no configmap data specified")

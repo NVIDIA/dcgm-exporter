@@ -16,9 +16,18 @@
 
 package counters
 
-import osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
+import (
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
+	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
+)
 
 var os osinterface.OS = osinterface.RealOS{}
+
+// getKubeClient returns an in-cluster Kubernetes client. It is declared as a
+// variable so tests can override it.
+var getKubeClient func() (kubernetes.Interface, error) = kubeclient.GetKubeClient
 
 var promMetricType = map[string]bool{
 	"gauge":     true,
