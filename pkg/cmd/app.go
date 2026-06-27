@@ -32,6 +32,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/prerequisites"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/profiling"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout"
@@ -976,6 +977,15 @@ func queryDCPMetrics(config *appconfig.Config, reloadID uint64) {
 		config.CollectDCP = false
 		config.MetricGroups = nil
 		slog.Info("Not collecting DCP metrics: " + err.Error())
+		return
+	}
+
+	if supported, reason := profiling.ValidateGPMSupport(); !supported {
+		config.CollectDCP = false
+		config.MetricGroups = nil
+		slog.Info("Not collecting DCP metrics: GPM validation failed",
+			slog.Uint64("reload_id", reloadID),
+			slog.String("reason", reason))
 		return
 	}
 
