@@ -309,7 +309,10 @@ RUN set -e; \
     ARCH_DIR=$(ls -d /usr/lib/*-linux-gnu | head -n1 | xargs basename); \
     mkdir -p /opt/distroless-libs/$ARCH_DIR; \
     cp -P /usr/lib/$ARCH_DIR/libdcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
-    cp -P /usr/lib/$ARCH_DIR/libnvperf_dcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libnvperf* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    for so in $(dpkg -L datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary 2>/dev/null | grep -E '^/usr/lib/.*\.so(\.|$)'); do \
+        cp -P "$so" /opt/distroless-libs/$ARCH_DIR/ 2>/dev/null || true; \
+    done; \
     cp -P /usr/lib/$ARCH_DIR/libcap.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
     cp -P /usr/lib/$ARCH_DIR/libtinfo.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
     ls -la /opt/distroless-libs/$ARCH_DIR/
