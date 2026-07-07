@@ -169,6 +169,7 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 
 With `dcgm-exporter` you can configure which fields are collected by specifying a custom CSV file.
 You will find the default CSV file under `etc/default-counters.csv` in the repository, which is copied on your system or container to `/etc/dcgm-exporter/default-counters.csv`
+See the [metrics reference](docs/metrics.md) for the default metric names, descriptions, Prometheus types, and units.
 
 The layout and format of this file is as follows:
 
