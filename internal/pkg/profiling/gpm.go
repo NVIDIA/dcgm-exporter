@@ -24,83 +24,160 @@ import (
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
 const gpmProbeSampleInterval = 500 * time.Millisecond
 
-// VirtualizationModeBlocksGPM reports whether the NVML virtualization mode prevents
-// collection of GPM-backed DCGM_FI_PROF_* metrics. Fractional vGPU guests (for example
-// GKE G4 g4-standard-6/12/24 shapes) run in vGPU mode and cannot provide GPM samples.
-func VirtualizationModeBlocksGPM(mode nvml.GpuVirtualizationMode) bool {
-	switch mode {
-	case nvml.GPU_VIRTUALIZATION_MODE_VGPU, nvml.GPU_VIRTUALIZATION_MODE_HOST_VGPU:
-		return true
-	default:
-		return false
-	}
-}
+// gpuGPMStatus captures the GPM capability of a single GPU as observed at runtime.
+type gpuGPMStatus int
 
-// ValidateGPMSupport checks whether GPM profiling metrics can be collected on all
-// visible GPUs. When validation fails, callers should disable DCP metric collection
-// while continuing to export standard NVML-backed DCGM metrics.
-func ValidateGPMSupport() (bool, string) {
+const (
+	// gpmUnknown means GPM capability could not be determined (for example an NVML
+	// handle or query error). Such GPUs are ignored by the DCP decision so a transient
+	// lookup failure never disables profiling on its own.
+	gpmUnknown gpuGPMStatus = iota
+	// gpmNotApplicable means the GPU does not use GPM. Its DCGM_FI_PROF_* fields are
+	// served by the DCGM profiling module (DCP), not GPM (for example pre-Hopper GPUs
+	// such as the A100), so GPM validation must not disable profiling for it.
+	gpmNotApplicable
+	// gpmHealthy means the GPU supports GPM and a live sample probe succeeded.
+	gpmHealthy
+	// gpmBroken means the GPU advertises GPM support but a live sample probe failed.
+	// Fractional vGPU guests (for example GKE G4 g4-standard-6/12/24 shapes) exhibit
+	// this and trigger the repeated "-14 from m_gpmManager.GetLatestSample" error
+	// loop described in issue #661.
+	gpmBroken
+)
+
+// ValidateGPMSupport inspects every visible GPU and decides whether DCP/profiling
+// metric collection should be disabled for this cycle. It returns (true, reason) only
+// when disabling profiling is required to stop the GPM error loop and no GPU is able
+// to produce profiling metrics.
+//
+// The decision is intentionally conservative to avoid removing profiling from GPUs
+// that still support it:
+//   - Remote hostengine deployments are trusted, because local NVML cannot describe
+//     GPUs owned by a remote DCGM host.
+//   - GPUs that do not use GPM are left untouched; their profiling flows through the
+//     DCGM profiling module and is unaffected by GPM sample availability.
+//   - Profiling is disabled globally only when at least one GPM-capable GPU fails a
+//     live probe AND no other GPU (healthy GPM or non-GPM) can serve profiling.
+func ValidateGPMSupport(config *appconfig.Config) (bool, string) {
+	// Remote hostengine: GPU UUIDs come from the remote host and cannot be resolved
+	// through the local NVML library, so trust DCGM's capability result instead.
+	if config != nil && config.UseRemoteHE {
+		return false, ""
+	}
+
 	gpuCount, err := dcgmprovider.Client().GetAllDeviceCount()
 	if err != nil {
-		return false, fmt.Sprintf("failed to get GPU count: %v", err)
+		// Unable to enumerate GPUs; keep existing behavior rather than disabling.
+		slog.Debug("Skipping GPM validation: could not get GPU count",
+			slog.String("error", err.Error()))
+		return false, ""
 	}
 	if gpuCount == 0 {
-		return false, "no GPUs found"
+		return false, ""
 	}
 
 	ret := nvml.Init()
 	if ret != nvml.SUCCESS {
 		slog.Warn("Skipping GPM validation because NVML could not be initialized",
 			slog.String("error", nvml.ErrorString(ret)))
-		return true, ""
+		return false, ""
 	}
 	defer nvml.Shutdown()
 
+	statuses := make([]gpuGPMStatus, 0, gpuCount)
 	for gpuID := uint(0); gpuID < gpuCount; gpuID++ {
-		gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(gpuID)
-		if err != nil {
-			return false, fmt.Sprintf("failed to get device info for GPU %d: %v", gpuID, err)
-		}
+		statuses = append(statuses, gpmStatusForGPU(gpuID))
+	}
 
-		device, ret := nvml.DeviceGetHandleByUUID(gpuInfo.UUID)
-		if ret != nvml.SUCCESS {
-			return false, fmt.Sprintf("failed to get NVML handle for GPU %s: %s", gpuInfo.UUID, nvml.ErrorString(ret))
-		}
+	disableDCP, reason := decideDCPFromGPMStatuses(statuses)
 
-		if mode, ret := device.GetVirtualizationMode(); ret == nvml.SUCCESS {
-			if VirtualizationModeBlocksGPM(mode) {
-				return false, fmt.Sprintf(
-					"GPU %s is in vGPU virtualization mode; GPM profiling metrics are not available",
-					gpuInfo.UUID,
-				)
-			}
-		} else {
-			slog.Debug("Could not query GPU virtualization mode",
-				slog.String("gpu_uuid", gpuInfo.UUID),
-				slog.String("error", nvml.ErrorString(ret)))
-		}
-
-		gpmSupport, ret := device.GpmQueryDeviceSupport()
-		if ret != nvml.SUCCESS {
-			return false, fmt.Sprintf("GPU %s GPM support query failed: %s", gpuInfo.UUID, nvml.ErrorString(ret))
-		}
-		if gpmSupport.IsSupportedDevice == 0 {
-			return false, fmt.Sprintf("GPU %s does not support GPM", gpuInfo.UUID)
-		}
-
-		if !probeGPMSample(device) {
-			return false, fmt.Sprintf("GPU %s failed GPM sample probe", gpuInfo.UUID)
+	// When profiling is retained but some GPUs cannot serve GPM metrics, surface the
+	// partial-coverage situation so operators of heterogeneous nodes understand why a
+	// subset of GPUs is missing DCGM_FI_PROF_* values.
+	if !disableDCP {
+		if broken := countStatus(statuses, gpmBroken); broken > 0 {
+			slog.Warn("Some GPUs failed the GPM probe; profiling metrics will be incomplete for those GPUs",
+				slog.Int("gpm_broken_gpus", broken),
+				slog.Int("total_gpus", int(gpuCount)))
 		}
 	}
 
-	return true, ""
+	return disableDCP, reason
 }
 
+// gpmStatusForGPU determines the GPM status of a single GPU using NVML.
+func gpmStatusForGPU(gpuID uint) gpuGPMStatus {
+	gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(gpuID)
+	if err != nil {
+		slog.Debug("GPM validation: could not get device info",
+			slog.Uint64("gpu_id", uint64(gpuID)),
+			slog.String("error", err.Error()))
+		return gpmUnknown
+	}
+
+	device, ret := nvml.DeviceGetHandleByUUID(gpuInfo.UUID)
+	if ret != nvml.SUCCESS {
+		slog.Debug("GPM validation: could not get NVML handle",
+			slog.String("gpu_uuid", gpuInfo.UUID),
+			slog.String("error", nvml.ErrorString(ret)))
+		return gpmUnknown
+	}
+
+	gpmSupport, ret := device.GpmQueryDeviceSupport()
+	if ret != nvml.SUCCESS {
+		slog.Debug("GPM validation: GPM support query failed",
+			slog.String("gpu_uuid", gpuInfo.UUID),
+			slog.String("error", nvml.ErrorString(ret)))
+		return gpmUnknown
+	}
+	if gpmSupport.IsSupportedDevice == 0 {
+		// GPU does not use GPM for profiling; the DCGM profiling module serves its
+		// DCGM_FI_PROF_* fields, so GPM sample availability is irrelevant here.
+		return gpmNotApplicable
+	}
+
+	if !probeGPMSample(device) {
+		return gpmBroken
+	}
+	return gpmHealthy
+}
+
+// decideDCPFromGPMStatuses implements the per-GPU DCP policy. Profiling is disabled
+// globally only when at least one GPM-capable GPU is broken and no GPU (healthy GPM,
+// non-GPM/DCP-module, or not-yet-determined) can serve profiling metrics.
+func decideDCPFromGPMStatuses(statuses []gpuGPMStatus) (bool, string) {
+	healthy := countStatus(statuses, gpmHealthy)
+	broken := countStatus(statuses, gpmBroken)
+	notApplicable := countStatus(statuses, gpmNotApplicable)
+	unknown := countStatus(statuses, gpmUnknown)
+
+	if broken > 0 && healthy == 0 && notApplicable == 0 && unknown == 0 {
+		return true, fmt.Sprintf(
+			"all %d GPM-capable GPU(s) failed the live GPM probe; disabling profiling metrics "+
+				"(fractional vGPU guests cannot provide GPM samples, see issue #661)", broken)
+	}
+	return false, ""
+}
+
+func countStatus(statuses []gpuGPMStatus, want gpuGPMStatus) int {
+	n := 0
+	for _, s := range statuses {
+		if s == want {
+			n++
+		}
+	}
+	return n
+}
+
+// probeGPMSample takes two GPM samples and computes a metric from them to confirm that
+// GPM data can actually be retrieved at runtime. Fractional vGPU guests advertise GPM
+// support but fail here, which is the runtime signal used to gate profiling.
 func probeGPMSample(device nvml.Device) bool {
 	sample1, ret := nvml.GpmSampleAlloc()
 	if ret != nvml.SUCCESS {

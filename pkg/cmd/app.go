@@ -980,10 +980,10 @@ func queryDCPMetrics(config *appconfig.Config, reloadID uint64) {
 		return
 	}
 
-	if supported, reason := profiling.ValidateGPMSupport(); !supported {
+	if disableDCP, reason := profiling.ValidateGPMSupport(config); disableDCP {
 		config.CollectDCP = false
 		config.MetricGroups = nil
-		slog.Info("Not collecting DCP metrics: GPM validation failed",
+		slog.Info("Not collecting DCP metrics: GPM validation disabled profiling",
 			slog.Uint64("reload_id", reloadID),
 			slog.String("reason", reason))
 		return
