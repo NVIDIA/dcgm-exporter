@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"errors"
 	"flag"
 	"strconv"
 	"testing"
@@ -366,4 +367,73 @@ func Test_contextToConfig_DumpConfig(t *testing.T) {
 			assert.Equal(t, tt.expectedConfig, config.DumpConfig)
 		})
 	}
+}
+
+// TestQueryDCPMetrics verifies how queryDCPMetrics translates the metric-group query
+// and GPM validation result into config.CollectDCP / config.MetricGroups. GPM
+// validation is stubbed via validateGPMSupportFn so the test runs without NVML.
+func TestQueryDCPMetrics(t *testing.T) {
+	origClient := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(origClient)
+	origFn := validateGPMSupportFn
+	defer func() { validateGPMSupportFn = origFn }()
+
+	groups := []dcgm.MetricGroup{{Major: 1, Minor: 0, FieldIds: []uint{1001, 1004}}}
+
+	t.Run("metric group query error disables DCP without validating", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mock := mockdcgmprovider.NewMockDCGM(ctrl)
+		dcgmprovider.SetClient(mock)
+		mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("not supported"))
+
+		validateGPMSupportFn = func(*appconfig.Config) (bool, string) {
+			t.Fatal("validation must not run when the metric group query fails")
+			return false, ""
+		}
+
+		config := &appconfig.Config{CollectDCP: true}
+		queryDCPMetrics(config, 0)
+
+		assert.False(t, config.CollectDCP)
+		assert.Nil(t, config.MetricGroups)
+	})
+
+	t.Run("GPM validation disable turns off DCP", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mock := mockdcgmprovider.NewMockDCGM(ctrl)
+		dcgmprovider.SetClient(mock)
+		mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groups, nil)
+
+		validateGPMSupportFn = func(*appconfig.Config) (bool, string) {
+			return true, "all GPM-capable GPUs failed the probe"
+		}
+
+		config := &appconfig.Config{CollectDCP: true}
+		queryDCPMetrics(config, 0)
+
+		assert.False(t, config.CollectDCP)
+		assert.Nil(t, config.MetricGroups)
+	})
+
+	t.Run("GPM validation keep enables DCP with metric groups", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		mock := mockdcgmprovider.NewMockDCGM(ctrl)
+		dcgmprovider.SetClient(mock)
+		mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groups, nil)
+		mock.EXPECT().GetAllDeviceCount().Return(uint(1), nil).AnyTimes()
+		mock.EXPECT().GetDeviceInfo(uint(0)).Return(dcgm.Device{}, nil).AnyTimes()
+
+		validateGPMSupportFn = func(*appconfig.Config) (bool, string) {
+			return false, ""
+		}
+
+		config := &appconfig.Config{}
+		queryDCPMetrics(config, 0)
+
+		assert.True(t, config.CollectDCP)
+		assert.Equal(t, groups, config.MetricGroups)
+	})
 }

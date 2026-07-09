@@ -32,6 +32,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/prerequisites"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/profiling"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout"
@@ -954,6 +955,9 @@ func getCounters(ctx context.Context, config *appconfig.Config) *counters.Counte
 	return cs
 }
 
+// validateGPMSupportFn is a seam for tests to stub GPM validation without NVML.
+var validateGPMSupportFn = profiling.ValidateGPMSupport
+
 // queryDCPMetrics queries DCGM for supported profiling metric groups.
 // Called at: startup, GPU bind event (NOT regular hot reload - uses startup config).
 // If profiling not supported or query fails, DCP collection is disabled.
@@ -976,6 +980,15 @@ func queryDCPMetrics(config *appconfig.Config, reloadID uint64) {
 		config.CollectDCP = false
 		config.MetricGroups = nil
 		slog.Info("Not collecting DCP metrics: " + err.Error())
+		return
+	}
+
+	if disableDCP, reason := validateGPMSupportFn(config); disableDCP {
+		config.CollectDCP = false
+		config.MetricGroups = nil
+		slog.Info("Not collecting DCP metrics: GPM validation disabled profiling",
+			slog.Uint64("reload_id", reloadID),
+			slog.String("reason", reason))
 		return
 	}
 
