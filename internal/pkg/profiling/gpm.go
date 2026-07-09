@@ -30,6 +30,23 @@ import (
 
 const gpmProbeSampleInterval = 500 * time.Millisecond
 
+// gpmDeviceChecker abstracts the NVML operations required to determine a GPU's GPM
+// status. It is a package-level seam so tests can substitute a fake implementation
+// without a real NVML library or GPU.
+type gpmDeviceChecker interface {
+	// init prepares the checker. It returns false when NVML is unavailable, in which
+	// case GPM validation is skipped and existing behavior is preserved.
+	init() bool
+	// shutdown releases any resources acquired by init.
+	shutdown()
+	// statusForUUID returns the GPM status of the GPU identified by uuid.
+	statusForUUID(uuid string) gpuGPMStatus
+}
+
+// deviceChecker is the checker used by ValidateGPMSupport. It defaults to the real
+// NVML-backed implementation and is overridden in tests.
+var deviceChecker gpmDeviceChecker = nvmlGPMChecker{}
+
 // gpuGPMStatus captures the GPM capability of a single GPU as observed at runtime.
 type gpuGPMStatus int
 
@@ -82,17 +99,23 @@ func ValidateGPMSupport(config *appconfig.Config) (bool, string) {
 		return false, ""
 	}
 
-	ret := nvml.Init()
-	if ret != nvml.SUCCESS {
-		slog.Warn("Skipping GPM validation because NVML could not be initialized",
-			slog.String("error", nvml.ErrorString(ret)))
+	if !deviceChecker.init() {
+		// NVML unavailable; keep existing behavior rather than disabling.
 		return false, ""
 	}
-	defer nvml.Shutdown()
+	defer deviceChecker.shutdown()
 
 	statuses := make([]gpuGPMStatus, 0, gpuCount)
 	for gpuID := uint(0); gpuID < gpuCount; gpuID++ {
-		statuses = append(statuses, gpmStatusForGPU(gpuID))
+		gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(gpuID)
+		if err != nil {
+			slog.Debug("GPM validation: could not get device info",
+				slog.Uint64("gpu_id", uint64(gpuID)),
+				slog.String("error", err.Error()))
+			statuses = append(statuses, gpmUnknown)
+			continue
+		}
+		statuses = append(statuses, deviceChecker.statusForUUID(gpuInfo.UUID))
 	}
 
 	disableDCP, reason := decideDCPFromGPMStatuses(statuses)
@@ -111,20 +134,31 @@ func ValidateGPMSupport(config *appconfig.Config) (bool, string) {
 	return disableDCP, reason
 }
 
-// gpmStatusForGPU determines the GPM status of a single GPU using NVML.
-func gpmStatusForGPU(gpuID uint) gpuGPMStatus {
-	gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(gpuID)
-	if err != nil {
-		slog.Debug("GPM validation: could not get device info",
-			slog.Uint64("gpu_id", uint64(gpuID)),
-			slog.String("error", err.Error()))
-		return gpmUnknown
-	}
+// nvmlGPMChecker is the production gpmDeviceChecker backed by the NVML library.
+type nvmlGPMChecker struct{}
 
-	device, ret := nvml.DeviceGetHandleByUUID(gpuInfo.UUID)
+func (nvmlGPMChecker) init() bool {
+	ret := nvml.Init()
+	if ret != nvml.SUCCESS {
+		slog.Warn("Skipping GPM validation because NVML could not be initialized",
+			slog.String("error", nvml.ErrorString(ret)))
+		return false
+	}
+	return true
+}
+
+func (nvmlGPMChecker) shutdown() {
+	if ret := nvml.Shutdown(); ret != nvml.SUCCESS {
+		slog.Debug("NVML shutdown after GPM validation failed",
+			slog.String("error", nvml.ErrorString(ret)))
+	}
+}
+
+func (nvmlGPMChecker) statusForUUID(uuid string) gpuGPMStatus {
+	device, ret := nvml.DeviceGetHandleByUUID(uuid)
 	if ret != nvml.SUCCESS {
 		slog.Debug("GPM validation: could not get NVML handle",
-			slog.String("gpu_uuid", gpuInfo.UUID),
+			slog.String("gpu_uuid", uuid),
 			slog.String("error", nvml.ErrorString(ret)))
 		return gpmUnknown
 	}
@@ -132,7 +166,7 @@ func gpmStatusForGPU(gpuID uint) gpuGPMStatus {
 	gpmSupport, ret := device.GpmQueryDeviceSupport()
 	if ret != nvml.SUCCESS {
 		slog.Debug("GPM validation: GPM support query failed",
-			slog.String("gpu_uuid", gpuInfo.UUID),
+			slog.String("gpu_uuid", uuid),
 			slog.String("error", nvml.ErrorString(ret)))
 		return gpmUnknown
 	}

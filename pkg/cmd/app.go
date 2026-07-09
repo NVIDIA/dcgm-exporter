@@ -955,6 +955,9 @@ func getCounters(ctx context.Context, config *appconfig.Config) *counters.Counte
 	return cs
 }
 
+// validateGPMSupportFn is a seam for tests to stub GPM validation without NVML.
+var validateGPMSupportFn = profiling.ValidateGPMSupport
+
 // queryDCPMetrics queries DCGM for supported profiling metric groups.
 // Called at: startup, GPU bind event (NOT regular hot reload - uses startup config).
 // If profiling not supported or query fails, DCP collection is disabled.
@@ -980,7 +983,7 @@ func queryDCPMetrics(config *appconfig.Config, reloadID uint64) {
 		return
 	}
 
-	if disableDCP, reason := profiling.ValidateGPMSupport(config); disableDCP {
+	if disableDCP, reason := validateGPMSupportFn(config); disableDCP {
 		config.CollectDCP = false
 		config.MetricGroups = nil
 		slog.Info("Not collecting DCP metrics: GPM validation disabled profiling",
