@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
@@ -55,6 +56,29 @@ func TestGetTransformations(t *testing.T) {
 			},
 			assert: func(t *testing.T, transforms []Transform) {
 				assert.Len(t, transforms, 1)
+			},
+		},
+		{
+			name: "The environment has non-Kubernetes container labels enabled",
+			config: &appconfig.Config{
+				ContainerLabels:        true,
+				ContainerRuntimeSocket: "/run/podman/podman.sock",
+			},
+			assert: func(t *testing.T, transforms []Transform) {
+				require.Len(t, transforms, 1)
+				assert.Equal(t, "containerMapper", transforms[0].Name())
+			},
+		},
+		{
+			name: "Kubernetes mode owns the container label",
+			config: &appconfig.Config{
+				Kubernetes:             true,
+				ContainerLabels:        true,
+				ContainerRuntimeSocket: "/run/podman/podman.sock",
+			},
+			assert: func(t *testing.T, transforms []Transform) {
+				require.Len(t, transforms, 1)
+				assert.NotEqual(t, "containerMapper", transforms[0].Name())
 			},
 		},
 	}

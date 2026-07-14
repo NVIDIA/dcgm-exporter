@@ -58,7 +58,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "dcgm-exporter.serviceAccountName" . }}
-      automountServiceAccountToken: {{ or (and (or .Values.kubernetes.enablePodLabels .Values.kubernetes.enablePodUID) .Values.kubernetes.rbac.create) .Values.kubernetesDRA.enabled }}
+      automountServiceAccountToken: {{ include "dcgm-exporter.automountServiceAccountToken" . }}
       {{- if .Values.podSecurityContext }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -85,10 +85,16 @@ spec:
           secretName: {{ include "dcgm-exporter.tlsCertsSecretName" . }}
           defaultMode: 0664
       {{- end }}
-      {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
+      {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users }}
       - name: "web-config-yaml"
         configMap:
           name: {{ include "dcgm-exporter.webConfigConfigMap" . }}
+          defaultMode: 0664
+      {{- end }}
+      {{- if .Values.config.enabled }}
+      - name: "dcgm-exporter-config"
+        configMap:
+          name: {{ include "dcgm-exporter.configConfigMap" . }}
           defaultMode: 0664
       {{- end }}
       {{- range .Values.extraHostVolumes }}
@@ -113,12 +119,15 @@ spec:
       - name: exporter
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
-        {{- if .Values.image.tag }}
+        {{- if .Values.image.digest }}
+        image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+        {{- else if .Values.image.tag }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         {{- else }}
         image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
         {{- end }}
         imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+        {{- if or .Values.arguments .Values.debugDump.enabled }}
         args:
         {{- range $.Values.arguments }}
         - {{ . }}
@@ -129,6 +138,7 @@ spec:
         - "--dump-retention={{ .Values.debugDump.retention }}"
         {{- if .Values.debugDump.compression }}
         - "--dump-compression"
+        {{- end }}
         {{- end }}
         {{- end }}
         env:
@@ -148,13 +158,21 @@ spec:
         {{- end }}
         - name: "DCGM_EXPORTER_LISTEN"
           value: "{{ .Values.service.address }}"
+        - name: "DCGM_EXPORTER_WEB_READ_TIMEOUT"
+          value: "{{ .Values.service.webReadTimeout }}"
+        - name: "DCGM_EXPORTER_WEB_WRITE_TIMEOUT"
+          value: "{{ .Values.service.webWriteTimeout }}"
         - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
+        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users }}
         - name: "DCGM_EXPORTER_WEB_CONFIG_FILE"
           value: /etc/dcgm-exporter/web-config.yaml
+        {{- end }}
+        {{- if .Values.config.enabled }}
+        - name: "DCGM_EXPORTER_CONFIG_FILE"
+          value: {{ .Values.config.mountPath | quote }}
         {{- end }}
         {{- if .Values.kubernetesDRA.enabled }}
         - name: "KUBERNETES_ENABLE_DRA"
@@ -174,10 +192,15 @@ spec:
         - name: "tls"
           mountPath: /etc/dcgm-exporter/tls
         {{- end }}
-        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
+        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users }}
         - name: "web-config-yaml"
           mountPath: /etc/dcgm-exporter/web-config.yaml
           subPath: web-config.yaml
+        {{- end }}
+        {{- if .Values.config.enabled }}
+        - name: "dcgm-exporter-config"
+          mountPath: {{ .Values.config.mountPath | quote }}
+          subPath: {{ .Values.config.key | quote }}
         {{- end }}
         {{- if .Values.extraVolumeMounts }}
         {{- toYaml .Values.extraVolumeMounts | nindent 8 }}

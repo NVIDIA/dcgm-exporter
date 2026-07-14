@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASEIMAGE=nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
-
 #####
 # Common builder stage - compiles dcgm-exporter with CGO for all targets
 #####
-FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS builder
+ARG UBUNTU_IMAGE=ubuntu:26.04
+FROM --platform=$BUILDPLATFORM ${UBUNTU_IMAGE} AS builder
 
-ARG GOLANG_VERSION=1.26.2
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG GOLANG_VERSION=1.26.4
 
 WORKDIR /go/src/github.com/NVIDIA/dcgm-exporter
 
@@ -41,12 +42,12 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     && apt-get autoremove -y \
     && ln -sf /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1 /lib/ld-linux-aarch64.so.1
 
-# Copy cached Go compiler and modules for STIG hermetic builds.
+# Copy cached Go compiler and modules for offline hermetic builds.
 # In regular mode these directories exist but are empty (created by Makefile/CI).
 COPY .go/compiler/ .go/compiler/
 COPY .go/pkg/mod/ /go/pkg/mod/
 
-# Install Go - uses cached compiler for STIG hermetic builds, otherwise downloads
+# Install Go - uses a cached compiler for offline builds, otherwise downloads
 # with SHA256 verification for standard builds.
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
@@ -59,7 +60,7 @@ RUN set -eux; \
         url="https://dl.google.com/go/${filename}"; \
         wget -O go.tgz "$url" --progress=dot:giga; \
         echo "Verifying SHA256 checksum..."; \
-        wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
+        wget -q -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
         expected_sha256=$(cat go.sha256); \
         actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
         if [ "$expected_sha256" != "$actual_sha256" ]; then \
@@ -78,18 +79,23 @@ ENV GOTOOLCHAIN=local GOPATH=/go
 ENV PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 700 "$GOPATH"
 
-# GOPROXY support for STIG hermetic builds - these ARGs are only set when
-# GOPROXY_ENABLED=true in CI; in regular mode they remain empty.
-ARG GOPROXY
+# Go module settings for hermetic builds. Credentialed GOPROXY values are
+# consumed from a BuildKit secret during module download and are never persisted.
+ARG GOPROXY_ENABLED
 ARG GONOSUMDB
 ARG GOSUMDB
-ENV GOPROXY=${GOPROXY}
 ENV GONOSUMDB=${GONOSUMDB}
 ENV GOSUMDB=${GOSUMDB}
 
 # Download dependencies - skipped when pre-cached modules exist (hermetic build)
 COPY go.mod go.sum ./
-RUN set -eux; \
+RUN --mount=type=secret,id=goproxy \
+    set -eu; \
+    if [ -s /run/secrets/goproxy ]; then \
+        GOPROXY="$(cat /run/secrets/goproxy)"; \
+        export GOPROXY; \
+    fi; \
+    set -x; \
     if [ -d "/go/pkg/mod" ] && [ "$(ls -A /go/pkg/mod 2>/dev/null)" ]; then \
         echo "Using pre-cached Go modules (hermetic build)"; \
     else \
@@ -113,7 +119,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg \
-    TARGETOS=$TARGETOS TARGETARCH=$TARGETARCH /usr/local/bin/build-cross.sh
+    TARGETOS=$TARGETOS TARGETARCH=$TARGETARCH GOPROXY_ENABLED=$GOPROXY_ENABLED /usr/local/bin/build-cross.sh
 
 # Verify binary
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
@@ -122,9 +128,11 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
     file /usr/bin/dcgm-exporter
 
 #####
-# Ubuntu 22.04 runtime target
+# Ubuntu runtime target
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04 AS runtime-ubuntu
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.3.0-base-ubuntu26.04 AS runtime-ubuntu
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG VERSION
 ARG DCGM_VERSION
@@ -138,9 +146,17 @@ LABEL release="N/A"
 LABEL summary="Exports GPU Metrics to Prometheus"
 LABEL description="See summary"
 
-# Create non-root user for running the exporter
-RUN groupadd -r dcgm-exporter -g 1000 \
-    && useradd -r -g dcgm-exporter -u 1000 -m -s /sbin/nologin dcgm-exporter
+# Ensure UID/GID 1000 can be used for non-root runs; some base images already provide them.
+RUN set -eux; \
+    group_entry="$(getent group 1000 || true)"; \
+    group_name="${group_entry%%:*}"; \
+    if [ -z "$group_name" ]; then \
+        groupadd -r dcgm-exporter -g 1000; \
+        group_name=dcgm-exporter; \
+    fi; \
+    if ! id -u dcgm-exporter >/dev/null 2>&1 && ! getent passwd 1000 >/dev/null; then \
+        useradd -r -g "$group_name" -u 1000 -m -s /sbin/nologin dcgm-exporter; \
+    fi
 
 # Copy binary and configs
 WORKDIR /
@@ -150,10 +166,20 @@ COPY --chown=root:root --chmod=755 etc /etc/dcgm-exporter
 RUN chmod 644 /etc/dcgm-exporter/*
 
 # Install DCGM packages
+# VSOCK requires libdcgm.so.4 to export dcgmConnect_v3, and Grace CPU
+# serial labels require dcgmGetCpuHierarchy_v2. Keep the symbol checks below
+# so apt repository changes cannot silently ship an older library.
 ENV DEBIAN_FRONTEND=noninteractive
 RUN echo "$TARGETARCH" && apt-get -qq update && apt-get upgrade -y --no-install-recommends && \
+    DCGM_PACKAGE_VERSION="1:${DCGM_VERSION}-1" && \
     apt-get -qq install -y --no-install-recommends \
-    datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap2-bin && \
+    binutils \
+    "datacenter-gpu-manager-4-core=${DCGM_PACKAGE_VERSION}" \
+    "datacenter-gpu-manager-4-proprietary=${DCGM_PACKAGE_VERSION}" \
+    libcap2-bin lshw && \
+    nm -D --defined-only /usr/lib/*-linux-gnu/libdcgm.so.4 | grep -w dcgmConnect_v3 && \
+    nm -D --defined-only /usr/lib/*-linux-gnu/libdcgm.so.4 | grep -w dcgmGetCpuHierarchy_v2 && \
+    apt-get -qq purge -y --auto-remove binutils && \
     apt-get -qq clean && apt-get -qq autoclean && apt-get -qq autoremove -y && \
     rm -rf /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* && \
     # ldconfig may segfault under QEMU ARM64 emulation during cross-platform builds.
@@ -195,86 +221,7 @@ RUN uname -a
 #   (Profiling metrics will not be available, but basic metrics will work)
 #
 # Security measures in place:
-# - Non-root user (dcgm-exporter:1000) available for basic metrics
-# - All files have restrictive permissions (644 for data, 755 for executables/directories)
-# - Runtime capability checking with clear warnings
-# - Deployment configs drop all unnecessary capabilities
-USER root
-
-ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
-
-#####
-# UBI9 runtime target
-#####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubi9 AS runtime-ubi
-
-ARG VERSION
-ARG DCGM_VERSION
-
-LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
-LABEL name="NVIDIA DCGM Exporter"
-LABEL vendor="NVIDIA"
-LABEL version="${VERSION}"
-LABEL release="N/A"
-LABEL summary="Exports GPU Metrics to Prometheus"
-LABEL description="See summary"
-
-# Create non-root user for running the exporter
-RUN groupadd -r dcgm-exporter -g 1000 \
-    && useradd -r -g dcgm-exporter -u 1000 -m -s /sbin/nologin dcgm-exporter
-
-# Install DCGM packages
-RUN dnf update --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
-    && dnf upgrade --disablerepo=* --enablerepo=ubi-9-appstream-rpms --enablerepo=ubi-9-baseos-rpms -y \
-    && dnf install --nodocs --setopt=install_weak_deps=False -y \
-    datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap \
-    && dnf clean all \
-    && rm -rf /var/cache/* /var/lib/dnf/history.* /var/log/* /tmp/* /var/tmp/* \
-    # ldconfig may segfault under QEMU ARM64 emulation during cross-platform builds.
-    # The || true prevents build failures; ldconfig cache is optional (dynamic linker works without it).
-    && ldconfig || true
-
-# Copy binary and configs
-COPY --chown=root:root --chmod=644 ./LICENSE ./licenses/LICENSE
-COPY --from=builder --chown=root:root --chmod=755 /usr/bin/dcgm-exporter /usr/bin/
-COPY --chown=root:root --chmod=755 etc /etc/dcgm-exporter
-RUN chmod 644 /etc/dcgm-exporter/*
-
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DISABLE_REQUIRE="true"
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
-
-COPY --chown=root:root --chmod=755 docker/dcgm-exporter-entrypoint.sh /usr/local/dcgm/dcgm-exporter-entrypoint.sh
-
-# Security Note: Default USER
-#
-# This container runs as root by default because:
-# 1. Docker's --cap-add only grants capabilities to root (UID 0), not non-root users
-# 2. Profiling metrics (DCGM_FI_PROF_*) require CAP_SYS_ADMIN capability
-# 3. Without root, profiling metrics cannot be collected even with --cap-add SYS_ADMIN
-#
-# Capability checking is done in Go code (internal/pkg/capabilities):
-# - The application detects if CAP_SYS_ADMIN is available
-# - Warns at startup if profiling metrics are requested but capability is missing
-# - Basic metrics work as root without additional capabilities
-# - Profiling metrics require: root + --cap-add SYS_ADMIN
-#
-# For maximum security with profiling metrics:
-#   Docker: docker run --user 0 --cap-add SYS_ADMIN --cap-drop ALL ...
-#   Kubernetes securityContext:
-#     runAsUser: 0
-#     capabilities:
-#       add: ["SYS_ADMIN"]  # Required for profiling metrics
-#       drop: ["ALL"]
-#     allowPrivilegeEscalation: false
-#
-# For non-root without profiling metrics:
-#   Docker: docker run --user 1000 ...
-#   Kubernetes: runAsNonRoot: true, runAsUser: 1000
-#   (Profiling metrics will not be available, but basic metrics will work)
-#
-# Security measures in place:
-# - Non-root user (dcgm-exporter:1000) available for basic metrics
+# - UID/GID 1000 non-root identity available for basic metrics
 # - All files have restrictive permissions (644 for data, 755 for executables/directories)
 # - Runtime capability checking with clear warnings
 # - Deployment configs drop all unnecessary capabilities
@@ -285,14 +232,27 @@ ENTRYPOINT ["/usr/local/dcgm/dcgm-exporter-entrypoint.sh"]
 #####
 # Distroless helper stage - builds full Ubuntu container with DCGM libraries
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04 AS runtime-distroless-helper
+FROM --platform=$TARGETARCH nvcr.io/nvidia/cuda:13.3.0-base-ubuntu24.04 AS runtime-distroless-helper
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
+ARG DCGM_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
+# VSOCK requires libdcgm.so.4 to export dcgmConnect_v3, and Grace CPU
+# serial labels require dcgmGetCpuHierarchy_v2. Keep these checks in the
+# helper stage because the distroless final image copies libdcgm from here.
 RUN apt-get -qq update && apt-get upgrade -y --no-install-recommends && \
+    DCGM_PACKAGE_VERSION="1:${DCGM_VERSION}-1" && \
     apt-get -qq install -y --no-install-recommends \
-    datacenter-gpu-manager-4-core datacenter-gpu-manager-4-proprietary libcap2-bin && \
+    binutils \
+    "datacenter-gpu-manager-4-core=${DCGM_PACKAGE_VERSION}" \
+    "datacenter-gpu-manager-4-proprietary=${DCGM_PACKAGE_VERSION}" \
+    libcap2-bin lshw && \
+    nm -D --defined-only /usr/lib/*-linux-gnu/libdcgm.so.4 | grep -w dcgmConnect_v3 && \
+    nm -D --defined-only /usr/lib/*-linux-gnu/libdcgm.so.4 | grep -w dcgmGetCpuHierarchy_v2 && \
+    apt-get -qq purge -y --auto-remove binutils && \
     apt-get -qq clean && apt-get -qq autoclean && apt-get -qq autoremove -y && \
     rm -rf /var/lib/apt/lists/* /var/log/* /tmp/* /var/tmp/* && \
     # ldconfig may segfault under QEMU ARM64 emulation during cross-platform builds.
@@ -309,18 +269,23 @@ RUN set -e; \
     ARCH_DIR=$(ls -d /usr/lib/*-linux-gnu | head -n1 | xargs basename); \
     mkdir -p /opt/distroless-libs/$ARCH_DIR; \
     cp -P /usr/lib/$ARCH_DIR/libdcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
-    cp -P /usr/lib/$ARCH_DIR/libnvperf_dcgm* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    cp -P /usr/lib/$ARCH_DIR/libnvperf_dcgm* /opt/distroless-libs/$ARCH_DIR/; \
+    ln -s libnvperf_dcgm_host.so /opt/distroless-libs/$ARCH_DIR/libnvperf_host.so; \
+    test -e /opt/distroless-libs/$ARCH_DIR/libnvperf_host.so; \
     cp -P /usr/lib/$ARCH_DIR/libcap.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
     cp -P /usr/lib/$ARCH_DIR/libtinfo.so* /opt/distroless-libs/$ARCH_DIR/ || true; \
+    install -D -m 755 "$(if [ -e /sbin/ldconfig.real ]; then echo /sbin/ldconfig.real; else echo /sbin/ldconfig; fi)" /opt/distroless-bin/ldconfig; \
     ls -la /opt/distroless-libs/$ARCH_DIR/
 
 #####
 # Distroless runtime target - minimal container image
 #####
-FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v4.0.4 AS runtime-distroless
+FROM --platform=$TARGETARCH nvcr.io/nvidia/distroless/cc:v4.0.8 AS runtime-distroless
 
 ARG VERSION
 ARG TARGETARCH
+
+WORKDIR /
 
 LABEL io.k8s.display-name="NVIDIA DCGM Exporter"
 LABEL name="NVIDIA DCGM Exporter"
@@ -342,11 +307,12 @@ COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/local/d
 # Copy required utilities for runtime
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/sh /bin/
+COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/lshw /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/lshw /bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/setcap /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/env /usr/bin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/bin/bash /usr/bin/
-COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /usr/sbin/ldconfig.real /sbin/
+COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /opt/distroless-bin/ldconfig /sbin/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=644 /etc/passwd /etc/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=644 /etc/group /etc/
 
@@ -384,4 +350,3 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 USER root:root
 
 ENTRYPOINT ["/usr/bin/dcgm-exporter-entrypoint.sh"]
-

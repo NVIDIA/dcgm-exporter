@@ -42,11 +42,12 @@ const (
 	FlexKey                = "f" // Monitor all GPUs if MIG is disabled or all GPU instances if MIG is enabled
 	MajorKey               = "g" // Monitor top-level entities: GPUs or NvSwitches or CPUs
 	MinorKey               = "i" // Monitor sub-level entities: GPU instances/NvLinks/CPUCores - GPUI cannot be specified if MIG is disabled
-	undefinedConfigMapData = "none"
+	undefinedConfigMapData = appconfig.UndefinedConfigMapData
 	deviceUsageTemplate    = `Specify which devices dcgm-exporter monitors.
-	Possible values: {{.FlexKey}} or 
-	                 {{.MajorKey}}[:id1[,-id2...] or 
-	                 {{.MinorKey}}[:id1[,-id2...].
+	Possible values: {{.FlexKey}} or
+	                 {{.MajorKey}}[:id1[,-id2...]] or
+	                 {{.MinorKey}}[:id1[,-id2...]] or
+	                 {{.MajorKey}}[:id1[,-id2...]]+{{.MinorKey}}[:id1[,-id2...]].
 	If an id list is used, then devices with match IDs must exist on the system. For example:
 		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled. (See {{.FlexKey}})
 		{{.MajorKey}} = Monitor all GPUs
@@ -57,14 +58,17 @@ const (
                              This is our recommended option for single or mixed MIG Strategies.
 		{{.MajorKey}}:0,1 = monitor GPUs 0 and 1
 		{{.MinorKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
+		{{.MajorKey}}+{{.MinorKey}} = monitor all GPUs and GPU instances.
 
-	NOTE 1: -i cannot be specified unless MIG mode is enabled.
-	NOTE 2: Any time indices are specified, those indices must exist on the system.
-	NOTE 3: In MIG mode, only -f or -i with a range can be specified. GPUs are not assigned to pods
-		and therefore reporting must occur at the GPU instance level.`
+	NOTE 1: Any time indices are specified, those indices must exist on the system.
+	NOTE 2: The flex option {{.FlexKey}} cannot be combined with {{.MajorKey}} or {{.MinorKey}}.`
+	deviceGPUUsageNote = `
+
+	NOTE 3: For GPU devices, i cannot be specified unless MIG mode is enabled.`
 )
 
 const (
+	CLIConfigFile                       = "config-file"
 	CLIFieldsFile                       = "collectors"
 	CLIAddress                          = "address"
 	CLICollectInterval                  = "collect-interval"
@@ -83,6 +87,8 @@ const (
 	CLIConfigMapData                    = "configmap-data"
 	CLIWebSystemdSocket                 = "web-systemd-socket"
 	CLIWebConfigFile                    = "web-config-file"
+	CLIWebReadTimeout                   = "web-read-timeout"
+	CLIWebWriteTimeout                  = "web-write-timeout"
 	CLIXIDCountWindowSize               = "xid-count-window-size"
 	CLIReplaceBlanksInModelName         = "replace-blanks-in-model-name"
 	CLIDebugMode                        = "debug"
@@ -92,6 +98,8 @@ const (
 	CLILogFormat                        = "log-format"
 	CLIPodResourcesKubeletSocket        = "pod-resources-kubelet-socket"
 	CLIHPCJobMappingDir                 = "hpc-job-mapping-dir"
+	CLIContainerLabels                  = "container-labels"
+	CLIContainerRuntimeSocket           = "container-runtime-socket"
 	CLINvidiaResourceNames              = "nvidia-resource-names"
 	CLIKubernetesVirtualGPUs            = "kubernetes-virtual-gpus"
 	CLIDumpEnabled                      = "dump-enabled"
@@ -103,6 +111,20 @@ const (
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
 	CLIEnablePprof                      = "enable-pprof"
+)
+
+var (
+	validatePrerequisitesFunc   = prerequisites.Validate
+	initializeDCGMProviderFunc  = dcgmprovider.Initialize
+	initializeNVMLProviderFunc  = nvmlprovider.Initialize
+	buildRegistryFunc           = buildRegistry
+	getCountersFunc             = getCounters
+	startWatchListManagerFunc   = startDeviceWatchListManager
+	getHostnameFunc             = hostname.GetHostname
+	initCollectorFactoryFunc    = collector.InitCollectorFactory
+	newMetricsServerFunc        = server.NewMetricsServer
+	newFileWatcherFunc          = watcher.NewFileWatcher
+	newGPUBindUnbindWatcherFunc = watcher.NewGPUBindUnbindWatcher
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -117,15 +139,22 @@ func NewApp(buildVersion ...string) *cli.App {
 	var deviceUsageBuffer bytes.Buffer
 	t := template.Must(template.New("").Parse(deviceUsageTemplate))
 	_ = t.Execute(&deviceUsageBuffer, map[string]string{"FlexKey": FlexKey, "MajorKey": MajorKey, "MinorKey": MinorKey})
-	DeviceUsageStr := deviceUsageBuffer.String()
+	deviceUsageStr := deviceUsageBuffer.String()
+	gpuDeviceUsageStr := deviceUsageStr + deviceGPUUsageNote
 
 	c.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:    CLIFieldsFile,
 			Aliases: []string{"f"},
 			Usage:   "Path to the file, that contains the DCGM fields to collect",
-			Value:   "/etc/dcgm-exporter/default-counters.csv",
+			Value:   appconfig.DefaultCollectorsFile,
 			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
+		},
+		&cli.StringFlag{
+			Name:    CLIConfigFile,
+			Usage:   "Path to a YAML configuration file. Legacy flags and environment variables explicitly set on startup override YAML values.",
+			Value:   "",
+			EnvVars: []string{"DCGM_EXPORTER_CONFIG_FILE"},
 		},
 		&cli.StringFlag{
 			Name:    CLIAddress,
@@ -133,6 +162,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   ":9400",
 			Usage:   "Listen address as <HOST>:<PORT>. For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::]:9400\")",
 			EnvVars: []string{"DCGM_EXPORTER_LISTEN"},
+		},
+		&cli.StringFlag{
+			Name:    CLIWebReadTimeout,
+			Value:   appconfig.DefaultWebReadTimeout.String(),
+			Usage:   "Maximum duration for reading an HTTP request.",
+			EnvVars: []string{"DCGM_EXPORTER_WEB_READ_TIMEOUT"},
+		},
+		&cli.StringFlag{
+			Name:    CLIWebWriteTimeout,
+			Value:   appconfig.DefaultWebWriteTimeout.String(),
+			Usage:   "Maximum duration for generating and writing an HTTP response.",
+			EnvVars: []string{"DCGM_EXPORTER_WEB_WRITE_TIMEOUT"},
 		},
 		&cli.IntFlag{
 			Name:    CLICollectInterval,
@@ -159,7 +200,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLICPUDevices,
 			Aliases: []string{"p"},
 			Value:   FlexKey,
-			Usage:   DeviceUsageStr,
+			Usage:   deviceUsageStr,
 			EnvVars: []string{"DCGM_EXPORTER_CPU_DEVICES_STR"},
 		},
 		&cli.StringFlag{
@@ -173,7 +214,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLIRemoteHEInfo,
 			Aliases: []string{"r"},
 			Value:   "localhost:5555",
-			Usage:   "Connect to remote hostengine at <HOST>:<PORT>. For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::1]:5555\")",
+			Usage:   "Connect to remote hostengine at <HOST>:<PORT> or a DCGM URI (tcp://<HOST>:<PORT>, unix:///<SOCKET_PATH>, vsock://<CID>:<PORT>). For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::1]:5555\")",
 			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
 		},
 		&cli.BoolFlag{
@@ -205,7 +246,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLIGPUDevices,
 			Aliases: []string{"d"},
 			Value:   FlexKey,
-			Usage:   DeviceUsageStr,
+			Usage:   gpuDeviceUsageStr,
 			EnvVars: []string{"DCGM_EXPORTER_DEVICES_STR"},
 		},
 		&cli.BoolFlag{
@@ -219,7 +260,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLISwitchDevices,
 			Aliases: []string{"s"},
 			Value:   FlexKey,
-			Usage:   DeviceUsageStr,
+			Usage:   deviceUsageStr,
 			EnvVars: []string{"DCGM_EXPORTER_OTHER_DEVICES_STR"},
 		},
 		&cli.BoolFlag{
@@ -238,7 +279,7 @@ func NewApp(buildVersion ...string) *cli.App {
 			Name:    CLIXIDCountWindowSize,
 			Aliases: []string{"x"},
 			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Set time window size in milliseconds (ms) for counting active XID errors in DCGM Exporter.",
+			Usage:   "Window size in milliseconds (ms) for counting XID errors in DCGM_EXP_XID_ERRORS_COUNT.",
 			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
 		},
 		&cli.BoolFlag{
@@ -257,7 +298,7 @@ func NewApp(buildVersion ...string) *cli.App {
 		&cli.IntFlag{
 			Name:    CLIClockEventsCountWindowSize,
 			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Set time window size in milliseconds (ms) for counting clock events in DCGM Exporter.",
+			Usage:   "Window size in milliseconds (ms) for counting clock events in DCGM_EXP_CLOCK_EVENTS_COUNT.",
 			EnvVars: []string{"DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE"},
 		},
 		&cli.BoolFlag{
@@ -289,6 +330,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   "",
 			Usage:   "Path to HPC job mapping file directory used for mapping GPUs to jobs.",
 			EnvVars: []string{"DCGM_HPC_JOB_MAPPING_DIR"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIContainerLabels,
+			Value:   false,
+			Usage:   "Enable runtime container labels in metrics.",
+			EnvVars: []string{"DCGM_EXPORTER_CONTAINER_LABELS"},
+		},
+		&cli.StringFlag{
+			Name:    CLIContainerRuntimeSocket,
+			Value:   "",
+			Usage:   "Path to a container runtime socket used for container labels.",
+			EnvVars: []string{"DCGM_CONTAINER_RUNTIME_SOCKET"},
 		},
 		&cli.StringSliceFlag{
 			Name:    CLINvidiaResourceNames,
@@ -391,8 +444,8 @@ func newOSWatcher(sigs ...os.Signal) (chan os.Signal, func()) {
 	return sigChan, cleanup
 }
 
-func action(c *cli.Context) (err error) {
-	return stdout.Capture(context.Background(), func() error {
+func action(c *cli.Context) error {
+	return stdout.Capture(context.Background(), func() (err error) {
 		// The purpose of this function is to capture any panic that may occur
 		// during initialization and return an error.
 		defer func() {
@@ -426,18 +479,15 @@ func configureLogger(c *cli.Context) error {
 	return nil
 }
 
-// StartDCGMExporterWithSignalSource starts the exporter with a custom signal source.
-// This variant allows dependency injection for testing.
-func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) error {
+// runDCGMExporter starts the exporter until lifecycleCtx is canceled.
+// Reload requests trigger the same hot-reload path as SIGHUP in production.
+func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequests <-chan struct{}) error {
 	if err := configureLogger(c); err != nil {
 		return err
 	}
-
-	// Use OS signals if not provided (production path)
-	if sigSource == nil {
-		sigSource = NewOSSignalSource(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	if lifecycleCtx == nil {
+		return errors.New("lifecycle context is required")
 	}
-	defer sigSource.Cleanup()
 
 	var version string
 	if c != nil && c.App != nil {
@@ -453,14 +503,14 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	// Validate prerequisites once
 	if !config.DisableStartupValidate {
-		err = prerequisites.Validate()
+		err = validatePrerequisitesFunc()
 		if err != nil {
 			return err
 		}
 	}
 
 	// Initialize DCGM Provider Instance (once)
-	dcgmprovider.Initialize(config)
+	initializeDCGMProviderFunc(config)
 
 	// Create cleanup function that calls the CURRENT provider's Cleanup method
 	// This is critical to avoid closure capture bugs when reinitializing DCGM
@@ -478,7 +528,7 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 	// Initialize NVML Provider Instance only if Kubernetes mode is enabled
 	// NVML is only needed for MIG device UUID parsing in Kubernetes environments
 	if config.Kubernetes {
-		err = nvmlprovider.Initialize()
+		err = initializeNVMLProviderFunc()
 		if err != nil && !config.DisableStartupValidate {
 			return err
 		}
@@ -490,25 +540,38 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 
 	slog.Info("DCGM successfully initialized!")
 
-	ctx := context.Background()
+	ctx := lifecycleCtx
 
-	// Query DCGM profiling metrics at startup
-	// This is re-queried on every hot reload to handle GPU changes
-	queryDCPMetrics(config, 0)
+	// Construct and seed the reload coordinator in one step. The seeding
+	// call is load-bearing: without it, coord.dcp stays nil until the first
+	// GPU topology event and a CSV reload in that window would drop profiling
+	// metrics. Extracted as its own function so tests can assert the
+	// seeding happens without driving the full startup pipeline.
+	coord := initReloadCoordinator(c, dcgmCleanup, config)
 
 	// Build initial registry
-	initialRegistry, deviceWatchListManager, err := buildRegistry(ctx, c, config)
+	initialRegistry, deviceWatchListManager, err := buildRegistryFunc(ctx, c, config)
 	if err != nil {
 		return err
 	}
-	defer initialRegistry.Cleanup()
+	cleanupRegistry := initialRegistry.Cleanup
+	defer func() {
+		cleanupRegistry()
+	}()
 
 	// Create metrics server (will run throughout entire lifecycle)
-	metricsServer, serverCleanup, err := server.NewMetricsServer(config, deviceWatchListManager, initialRegistry)
+	metricsServer, serverCleanup, err := newMetricsServerFunc(config, deviceWatchListManager, initialRegistry)
 	if err != nil {
 		return err
 	}
 	defer serverCleanup()
+	coord.setServer(metricsServer)
+	cleanupRegistry = func() {
+		currentRegistry := metricsServer.ClearRegistry()
+		if currentRegistry != nil {
+			currentRegistry.Cleanup()
+		}
+	}
 
 	// Start HTTP server (runs continuously until shutdown signal)
 	var serverWg sync.WaitGroup
@@ -523,46 +586,60 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 	slog.Info("HTTP server started - ready to serve metrics")
 
 	// Start watchers
-	watcherCtx, watcherCancel := context.WithCancel(context.Background())
+	watcherCtx, watcherCancel := context.WithCancel(lifecycleCtx)
 	var watcherWg sync.WaitGroup
 
-	// File watcher (config changes) - hot reload on change
-	fileWatcher := watcher.NewFileWatcher(config.CollectorsFile)
-	runWatcher(watcherCtx, fileWatcher, func() {
-		slog.Info("Config file changed - triggering hot reload")
-		if err := hotReload(watcherCtx, metricsServer, c, dcgmCleanup); err != nil {
-			slog.Error("Hot reload failed", slog.String("error", err.Error()))
-		}
-	}, &watcherWg)
+	// Reload coordinator goroutine. Must be started BEFORE watchers so
+	// early-fired events are not lost.
+	watcherWg.Add(1)
+	go func() {
+		defer watcherWg.Done()
+		coord.Run(watcherCtx)
+	}()
 
-	// GPU bind/unbind watcher (optional) - handles GPU topology changes
-	if config.EnableGPUBindUnbindWatch {
-		gpuWatcher := watcher.NewGPUBindUnbindWatcher(
-			watcher.WithPollInterval(config.GPUBindUnbindPollInterval),
-		)
-		runGPUWatcher(watcherCtx, gpuWatcher, metricsServer, c, dcgmCleanup, &watcherWg)
+	// File watcher (metric source changes) — trigger a config reload on change.
+	// YAML config is startup-only; only a resolved CSV metric source is watched.
+	if metricFile, ok := config.MetricFileWatcherPath(); ok {
+		fileWatcher := newFileWatcherFunc(metricFile)
+		runWatcher(watcherCtx, fileWatcher, func() {
+			slog.Info("Metric file changed - triggering hot reload")
+			coord.Trigger(evConfigChanged)
+		}, &watcherWg)
 	}
 
-	// Wait for shutdown signal (SIGTERM, SIGINT) - ignore SIGHUP for compatibility
-	sigs := sigSource.Signals()
+	// GPU bind/unbind watcher (optional) — trigger a topology change.
+	if config.EnableGPUBindUnbindWatch {
+		gpuWatcher := newGPUWatcherLifecycle(watcherCtx, func() *watcher.GPUBindUnbindWatcher {
+			return newGPUBindUnbindWatcherFunc(
+				watcher.WithPollInterval(config.GPUBindUnbindPollInterval),
+			)
+		}, func() {
+			slog.DebugContext(watcherCtx, "GPU topology change detected")
+			coord.Trigger(evTopologyChanged)
+		})
+		coord.setGPUWatcher(gpuWatcher)
+		runGPUWatcher(gpuWatcher, &watcherWg)
+	}
+
+	// Wait for shutdown. Reload requests trigger the same handler as a CSV
+	// change, matching SIGHUP production behavior.
 	for {
-		sig := <-sigs
-		slog.Info("Received signal", slog.String("signal", sig.String()))
-
-		if sig == syscall.SIGHUP {
-			// SIGHUP triggers hot reload instead of full restart
-			slog.Info("SIGHUP received - triggering hot reload")
-			if err := hotReload(watcherCtx, metricsServer, c, dcgmCleanup); err != nil {
-				slog.Error("Hot reload failed", slog.String("error", err.Error()))
+		select {
+		case <-lifecycleCtx.Done():
+			slog.Info("Shutdown requested", slog.String("reason", lifecycleCtx.Err().Error()))
+			goto shutdown
+		case _, ok := <-reloadRequests:
+			if !ok {
+				reloadRequests = nil
+				continue
 			}
-			continue
+			slog.Info("Reload requested - triggering hot reload")
+			coord.Trigger(evConfigChanged)
 		}
-
-		// SIGTERM/SIGINT/SIGQUIT - graceful shutdown
-		break
 	}
 
 	// Graceful shutdown
+shutdown:
 	slog.Info("Shutting down gracefully...")
 
 	// Stop watchers first
@@ -583,9 +660,51 @@ func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) e
 	return nil
 }
 
+// StartDCGMExporterWithSignalSource starts the exporter with injectable signal handling.
+func StartDCGMExporterWithSignalSource(c *cli.Context, sigSource SignalSource) error {
+	lifecycleCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reloadRequests := make(chan struct{}, 1)
+	if sigSource == nil {
+		sigSource = NewOSSignalSource(syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	}
+	defer sigSource.Cleanup()
+
+	go func() {
+		for {
+			select {
+			case sig, ok := <-sigSource.Signals():
+				if !ok {
+					return
+				}
+				slog.Info("Received signal", slog.String("signal", sig.String()))
+				if sig == syscall.SIGHUP {
+					slog.Info("SIGHUP received - triggering hot reload")
+					queueReload(reloadRequests)
+					continue
+				}
+				cancel()
+				return
+			case <-lifecycleCtx.Done():
+				return
+			}
+		}
+	}()
+
+	return runDCGMExporter(lifecycleCtx, c, reloadRequests)
+}
+
 // startDCGMExporter starts the exporter with OS signal handling (production use).
 func startDCGMExporter(c *cli.Context) error {
 	return StartDCGMExporterWithSignalSource(c, nil)
+}
+
+// queueReload records one pending reload without blocking signal delivery.
+func queueReload(reloadRequests chan<- struct{}) {
+	select {
+	case reloadRequests <- struct{}{}:
+	default:
+	}
 }
 
 // buildRegistry creates a new registry with current GPU topology.
@@ -594,36 +713,104 @@ func startDCGMExporter(c *cli.Context) error {
 func buildRegistry(ctx context.Context, _ *cli.Context, config *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error) {
 	slog.Info("Building registry for current GPU topology")
 
-	cs := getCounters(ctx, config)
-
-	deviceWatchListManager := startDeviceWatchListManager(cs, config)
-
-	hostName, err := hostname.GetHostname(config)
+	cs, err := getCountersFunc(ctx, config)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get hostname: %w", err)
+		return nil, nil, fmt.Errorf("failed to get counters: %w", err)
 	}
 
-	cf := collector.InitCollectorFactory(cs, deviceWatchListManager, hostName, config)
+	deviceWatchListManager, err := startWatchListManagerFunc(cs, config)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	hostName := ""
+	if !config.NoHostname {
+		var err error
+		hostName, err = getHostnameFunc(config)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get hostname: %w", err)
+		}
+	}
+
+	cf := initCollectorFactoryFunc(cs, deviceWatchListManager, hostName, config)
 
 	cRegistry := registry.NewRegistry()
-	for _, entityCollector := range cf.NewCollectors() {
-		cRegistry.Register(entityCollector)
-	}
+	count := populateRegistry(cf, cRegistry)
 
-	slog.Info("Registry built successfully",
-		slog.Int("collector_count", len(cf.NewCollectors())))
+	slog.Info("Registry built successfully", slog.Int("collector_count", count))
 
 	return cRegistry, deviceWatchListManager, nil
 }
 
-var (
-	hotReloadCounter  atomic.Uint64
-	lastReloadTime    atomic.Int64
-	minReloadInterval = 2 * time.Second // Prevent rapid successive reloads while allowing reasonably fast recovery
+// populateRegistry calls cf.NewCollectors exactly once and registers every
+// returned collector. It returns the number of collectors registered.
+//
+// The exactly-once contract matters: each collector returned by NewCollectors
+// installs DCGM field watches and GPU groups as a side effect, which are only
+// released by (*registry.Registry).Cleanup once the collector is registered.
+// A second call to NewCollectors without registering would leak DCGM
+// resources, surfacing as "RemoveFieldWatch returned -16 (NOT_WATCHED)"
+// warnings in nv-hostengine.log. This helper makes that contract both
+// readable at the call site and testable in isolation.
+func populateRegistry(cf collector.Factory, r *registry.Registry) int {
+	collectors := cf.NewCollectors()
+	for _, entityCollector := range collectors {
+		r.Register(entityCollector)
+	}
+	return len(collectors)
+}
 
-	// Pending event tracking for GPU topology changes that occur during hot reload
-	pendingGPUTopologyChange atomic.Bool
-)
+// hotReloadCounter assigns a monotonically increasing ID to each reload for
+// correlating logs across the reload paths.
+var hotReloadCounter atomic.Uint64
+
+// dcpCapabilities is an immutable snapshot of DCGM profiling capabilities
+// discovered at runtime. Fields are unexported so the stored value cannot be
+// mutated from outside this file; construct via newDCPCapabilities and read
+// via applyTo.
+//
+// The snapshot exists because hot reload rebuilds an appconfig.Config from the
+// CLI context, which cannot itself discover DCP capabilities — those come from
+// DCGM and must be preserved across reloads. A fresh config with CollectDCP=true
+// but MetricGroups=nil causes counters.fieldIsSupported to drop every
+// DCGM_FI_PROF_* metric.
+type dcpCapabilities struct {
+	collectDCP   bool
+	metricGroups []dcgm.MetricGroup
+}
+
+// newDCPCapabilities snapshots the DCP fields of c. The returned value owns
+// its own copy of MetricGroups and nested FieldIds, so later mutation of c does
+// not affect the snapshot.
+func newDCPCapabilities(c *appconfig.Config) *dcpCapabilities {
+	return &dcpCapabilities{
+		collectDCP:   c.CollectDCP,
+		metricGroups: cloneMetricGroups(c.MetricGroups),
+	}
+}
+
+// applyTo overlays the snapshot onto c. c receives its own copy of the metric
+// groups, so later mutation of c cannot reach back into the snapshot.
+func (d *dcpCapabilities) applyTo(c *appconfig.Config) {
+	c.CollectDCP = d.collectDCP
+	c.MetricGroups = cloneMetricGroups(d.metricGroups)
+}
+
+// cloneMetricGroups deep-copies the slice and each element's FieldIds so that
+// the caller and callee cannot share any mutable state.
+func cloneMetricGroups(in []dcgm.MetricGroup) []dcgm.MetricGroup {
+	if in == nil {
+		return nil
+	}
+	out := make([]dcgm.MetricGroup, len(in))
+	for i, g := range in {
+		out[i] = g
+		if g.FieldIds != nil {
+			out[i].FieldIds = append([]uint(nil), g.FieldIds...)
+		}
+	}
+	return out
+}
 
 // logTopologyInfo logs comprehensive information about the loaded GPU topology
 func logTopologyInfo(reloadID uint64, deviceWatchListMgr devicewatchlistmanager.Manager, duration time.Duration) {
@@ -652,182 +839,274 @@ func logTopologyInfo(reloadID uint64, deviceWatchListMgr devicewatchlistmanager.
 		slog.Uint64("cpus", uint64(cpuCount)))
 }
 
-// processPendingEvents checks for and executes any pending GPU topology change events
-// that were queued while a reload was in progress.
-// Returns true if an event was processed, false otherwise.
-func processPendingEvents(ctx context.Context, server *server.MetricsServer, c *cli.Context, dcgmCleanup func()) bool {
-	if pendingGPUTopologyChange.Load() {
-		pendingGPUTopologyChange.Store(false)
-		slog.Info("Processing queued GPU topology change event")
-		handleGPUTopologyChange(ctx, server, c, dcgmCleanup)
-		return true
-	}
+// reloadEvent is the mailbox payload. Values are ordered: higher ordinals
+// dominate lower ones when both are pending, via the CAS-upgrade in Trigger.
+type reloadEvent int32
 
-	return false
+const (
+	evNone            reloadEvent = -1 // sentinel for an empty mailbox
+	evConfigChanged   reloadEvent = 0  // CSV file change OR SIGHUP — same handler
+	evTopologyChanged reloadEvent = 1  // strongest; dominates the mailbox
+)
+
+// String satisfies fmt.Stringer for readable logs and test names.
+func (e reloadEvent) String() string {
+	switch e {
+	case evNone:
+		return "none"
+	case evConfigChanged:
+		return "configChanged"
+	case evTopologyChanged:
+		return "topologyChanged"
+	default:
+		return fmt.Sprintf("reloadEvent(%d)", int32(e))
+	}
 }
 
-// hotReload rebuilds the registry when configuration file changes (SIGHUP or file watcher).
-// During rebuild, /metrics returns empty responses (HTTP 200, no metrics) for 2-3 seconds.
-// Note: Does NOT reset DCGM connection (unlike handleGPUTopologyChange which does full reset).
-func hotReload(ctx context.Context, server *server.MetricsServer, c *cli.Context, dcgmCleanup func()) (err error) {
-	// Panic recovery for hot reload - critical to prevent exporter crash
+// reloadCoordinator owns all reload state. Every piece of that state is
+// either written only by producers via the documented Trigger path (the
+// mailbox) or accessed only from the Run goroutine (dcp and the apply
+// seams). No atomic dances, no in-progress flag races, no replay loops.
+//
+// Single-threaded ownership replaces the previous atomics-plus-ordering
+// defenses: a topology event arriving during a config reload simply updates
+// the mailbox; the coordinator picks it up at the start of the next loop
+// iteration with no "too soon" rate-limit to defeat.
+type reloadCoordinator struct {
+	server       *server.MetricsServer
+	c            *cli.Context
+	dcgmCleanup  func()
+	reloadConfig *appconfig.Config
+
+	// mailbox holds the strongest pending event, or evNone if empty. Writers
+	// CAS-upgrade; the consumer swaps it out at the start of each iteration.
+	mailbox atomic.Int32
+	// wake is a single-slot signal. Multiple Triggers between consumptions
+	// collapse to one wakeup; a spurious wake (mailbox empty at swap) is
+	// harmless.
+	wake chan struct{}
+
+	// Single-goroutine-owned state (accessed only from Run).
+	dcp *dcpCapabilities
+
+	// Test seams — default to the real implementations. Both receive the
+	// already-constructed reload config so tests can inspect exactly what
+	// the rebuild would use without driving the full DCGM stack.
+	applyConfigReload   func(ctx context.Context, cfg *appconfig.Config, reloadID uint64)
+	applyTopologyChange func(ctx context.Context, reloadID uint64)
+	buildRegistry       func(ctx context.Context, c *cli.Context, cfg *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error)
+	initializeDCGM      func(cfg *appconfig.Config)
+	gpuWatcher          gpuWatcherLifecycle
+}
+
+// newReloadCoordinator builds a coordinator ready to Trigger. Call setServer
+// and seed DCP via queryDCPMetrics before Run.
+func newReloadCoordinator(c *cli.Context, dcgmCleanup func()) *reloadCoordinator {
+	r := &reloadCoordinator{
+		c:           c,
+		dcgmCleanup: dcgmCleanup,
+		wake:        make(chan struct{}, 1),
+	}
+	r.mailbox.Store(int32(evNone))
+	r.applyConfigReload = r.doConfigReload
+	r.applyTopologyChange = r.doTopologyChange
+	r.buildRegistry = buildRegistryFunc
+	r.initializeDCGM = initializeDCGMProviderFunc
+	return r
+}
+
+// setServer installs the metrics server. Must be called before Run; not safe
+// to call concurrently with Run.
+func (r *reloadCoordinator) setServer(s *server.MetricsServer) { r.server = s }
+
+// setGPUWatcher installs the optional GPU watcher lifecycle. Must be called
+// before Run; not safe to call concurrently with Run.
+func (r *reloadCoordinator) setGPUWatcher(w gpuWatcherLifecycle) { r.gpuWatcher = w }
+
+// initReloadCoordinator constructs a reload coordinator and seeds its DCP
+// capabilities in one step, which is the load-bearing startup sequence.
+// Extracted from runDCGMExporter so TestInitReloadCoordinator
+// can assert that startup seeding actually happens, instead of relying on
+// a test that manually calls queryDCPMetrics.
+func initReloadCoordinator(c *cli.Context, dcgmCleanup func(), config *appconfig.Config) *reloadCoordinator {
+	coord := newReloadCoordinator(c, dcgmCleanup)
+	coord.reloadConfig = config.Clone()
+	coord.queryDCPMetrics(config, 0)
+	return coord
+}
+
+// Trigger is safe to call from any goroutine. O(1), non-blocking, zero
+// allocation. CAS-upgrades the mailbox to max(current, ev) so a stronger
+// event is never lost behind weaker ones.
+func (r *reloadCoordinator) Trigger(ev reloadEvent) {
+	for {
+		cur := reloadEvent(r.mailbox.Load())
+		if cur != evNone && cur >= ev {
+			// Mailbox already holds an equal-or-stronger event; don't
+			// downgrade. Still signal in case the consumer missed it.
+			break
+		}
+		if r.mailbox.CompareAndSwap(int32(cur), int32(ev)) {
+			break
+		}
+	}
+	select {
+	case r.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Run processes events serially until ctx is cancelled.
+func (r *reloadCoordinator) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.wake:
+			ev := reloadEvent(r.mailbox.Swap(int32(evNone)))
+			if ev == evNone {
+				continue // spurious wake
+			}
+			r.handle(ctx, ev)
+		}
+	}
+}
+
+// handle dispatches a single event. Sets the server's reload-in-progress
+// flag so /health reports accurately, and recovers from handler panics so
+// the coordinator outlives them.
+func (r *reloadCoordinator) handle(ctx context.Context, ev reloadEvent) {
+	reloadID := hotReloadCounter.Add(1)
+
 	defer func() {
-		if r := recover(); r != nil {
-			// Capture stack trace for debugging
+		if p := recover(); p != nil {
 			stackBuf := make([]byte, 8192)
-			stackSize := runtime.Stack(stackBuf, false)
-			stack := string(stackBuf[:stackSize])
-
-			// Log comprehensive panic information
-			slog.Error("PANIC RECOVERED in hotReload",
-				slog.String("panic_value", fmt.Sprintf("%v", r)),
-				slog.String("panic_type", fmt.Sprintf("%T", r)),
-				slog.Uint64("reload_id", hotReloadCounter.Load()),
-				slog.String("stack_trace", stack))
-
-			err = fmt.Errorf("hot reload panic: %v", r)
+			n := runtime.Stack(stackBuf, false)
+			slog.ErrorContext(ctx, "PANIC RECOVERED in reload",
+				slog.String("panic_value", fmt.Sprintf("%v", p)),
+				slog.String("panic_type", fmt.Sprintf("%T", p)),
+				slog.Uint64("reload_id", reloadID),
+				slog.String("stack_trace", string(stackBuf[:n])))
 		}
 	}()
 
-	// Safeguard 1: Check if reload is already in progress
-	if server.IsReloadInProgress() {
-		slog.Warn("Hot reload already in progress - ignoring duplicate request")
-		return nil
+	r.server.SetReloadInProgress(true)
+	defer r.server.SetReloadInProgress(false)
+
+	switch ev {
+	case evConfigChanged:
+		cfg, err := r.buildReloadConfig()
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to build reload config",
+				slog.Uint64("reload_id", reloadID),
+				slog.String("error", err.Error()))
+			return
+		}
+		r.applyConfigReload(ctx, cfg, reloadID)
+	case evTopologyChanged:
+		r.applyTopologyChange(ctx, reloadID)
 	}
-
-	// Safeguard 2: Rate limiting - prevent rapid successive reloads
-	now := time.Now()
-	last := time.Unix(lastReloadTime.Load(), 0)
-	timeSinceLast := now.Sub(last)
-
-	if timeSinceLast < minReloadInterval {
-		slog.Warn("Hot reload rate limited - too soon after previous reload",
-			slog.Duration("time_since_last", timeSinceLast),
-			slog.Duration("min_interval", minReloadInterval))
-		return nil
-	}
-
-	reloadID := hotReloadCounter.Add(1)
-	lastReloadTime.Store(now.Unix())
-	startTime := time.Now()
-
-	slog.Info("Hot reload triggered - building new registry in background",
-		slog.Uint64("reload_id", reloadID))
-
-	server.SetReloadInProgress(true)
-	defer server.SetReloadInProgress(false)
-
-	config, err := contextToConfig(c)
-	if err != nil {
-		return fmt.Errorf("failed to read config during hot reload: %w", err)
-	}
-
-	// Step 1: Cleanup old registry (ensures only one registry exists at a time)
-	slog.Info("Clearing registry - /metrics will return empty until rebuild completes",
-		slog.Uint64("reload_id", reloadID))
-	oldRegistry := server.ClearRegistry()
-	if oldRegistry != nil {
-		slog.Debug("Waiting for in-flight /metrics requests to complete",
-			slog.Uint64("reload_id", reloadID))
-		oldRegistry.Cleanup() // Waits up to 2 seconds for active scrapes
-	}
-
-	// Step 2: Build new registry with current GPU topology
-	slog.Info("Building new registry with updated GPU topology", slog.Uint64("reload_id", reloadID))
-
-	// Note: DCP metrics are NOT re-queried during hot reload (use startup config)
-	// This avoids profiling API segfaults during GPU state changes
-	slog.Debug("Using DCP metrics from startup (not re-querying)",
-		slog.Uint64("reload_id", reloadID))
-
-	newRegistry, deviceWatchListMgr, err := buildRegistry(ctx, c, config)
-	if err != nil {
-		return fmt.Errorf("failed to build new registry during hot reload: %w", err)
-	}
-
-	// Step 3: Activate new registry (/metrics now serves GPU metrics again)
-	slog.Info("Activating new registry - /metrics now serves updated GPU metrics",
-		slog.Uint64("reload_id", reloadID))
-	server.SetRegistry(newRegistry)
-	duration := time.Since(startTime)
-
-	slog.Info("Hot reload complete",
-		slog.Uint64("reload_id", reloadID),
-		slog.Duration("downtime", duration))
-
-	logTopologyInfo(reloadID, deviceWatchListMgr, duration)
-
-	// Step 4: Process any GPU bind/unbind events that were queued during this reload
-	// This ensures we don't miss hardware topology changes
-	if processPendingEvents(ctx, server, c, dcgmCleanup) {
-		slog.Info("Processed queued GPU event after hot reload completion",
-			slog.Uint64("reload_id", reloadID))
-	}
-
-	return nil
 }
 
-// handleGPUTopologyChange handles any GPU topology change (bind, unbind, or hardware swap).
-// It performs a full cleanup → reinitialize → rebuild cycle, ensuring system is always in sync.
-// This unified approach works for all scenarios:
-//   - GPU unbind: cleanup succeeds, reinit fails (no GPU), /metrics returns empty
-//   - GPU bind: cleanup succeeds, reinit succeeds, /metrics serves new GPU
-//   - GPU swap: cleanup succeeds, reinit succeeds with new GPU, /metrics serves new GPU
-func handleGPUTopologyChange(ctx context.Context, server *server.MetricsServer, c *cli.Context, dcgmCleanup func()) {
-	reloadID := hotReloadCounter.Add(1)
+// buildReloadConfig returns a fresh appconfig.Config for reload paths by cloning
+// the startup snapshot so startup-only YAML is not re-read.
+// The latest DCP capabilities are also overlaid: config reloads consume that
+// snapshot directly, while topology reloads overwrite it by re-querying DCP
+// after DCGM is stable.
+func (r *reloadCoordinator) buildReloadConfig() (*appconfig.Config, error) {
+	if r.reloadConfig != nil {
+		cfg := r.reloadConfig.Clone()
+		if r.dcp != nil {
+			r.dcp.applyTo(cfg)
+		}
+		return cfg, nil
+	}
 
-	slog.InfoContext(ctx, "GPU topology change detected - full reset",
+	return nil, fmt.Errorf("buildReloadConfig: no startup config snapshot; coordinator was not initialized via initReloadCoordinator")
+}
+
+// doConfigReload rebuilds the registry after a CSV file change or SIGHUP.
+// During rebuild, /metrics continues serving the last-good registry until a
+// replacement has been built successfully. Does NOT reset DCGM — it reuses the
+// DCP capabilities most recently discovered during startup or a topology
+// change.
+func (r *reloadCoordinator) doConfigReload(ctx context.Context, cfg *appconfig.Config, reloadID uint64) {
+	slog.InfoContext(ctx, "Hot reload triggered - building new registry",
 		slog.Uint64("reload_id", reloadID))
+	startTime := time.Now()
 
-	// Safeguard: Rate limiting to prevent reload thrashing
-	lastReload := time.Unix(0, lastReloadTime.Load())
-	if time.Since(lastReload) < minReloadInterval {
-		slog.WarnContext(ctx, "Ignoring topology change - too soon after last reload",
+	newRegistry, deviceWatchListMgr, err := r.buildRegistry(ctx, r.c, cfg)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to build new registry during hot reload",
 			slog.Uint64("reload_id", reloadID),
-			slog.Duration("time_since_last", time.Since(lastReload)))
+			slog.String("error", err.Error()),
+			slog.String("metrics_state", "preserving last-good registry"))
 		return
 	}
-	lastReloadTime.Store(time.Now().UnixNano())
 
-	// Safeguard: Don't start if reload already in progress - queue the event instead
-	if server.IsReloadInProgress() {
-		slog.WarnContext(ctx, "Reload in progress - queuing topology change event",
-			slog.Uint64("reload_id", reloadID))
-		pendingGPUTopologyChange.Store(true)
-		return
-	}
-	server.SetReloadInProgress(true)
-	defer server.SetReloadInProgress(false)
-
-	// Step 1: Cleanup old registry (wait for in-flight scrapes)
-	slog.InfoContext(ctx, "Clearing registry - /metrics will return empty during reset",
-		slog.Uint64("reload_id", reloadID))
-	oldRegistry := server.ClearRegistry()
+	oldRegistry := r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
 	if oldRegistry != nil {
 		oldRegistry.Cleanup()
 	}
 
-	// Step 2: Cleanup DCGM completely (release all GPU resources)
-	slog.InfoContext(ctx, "Cleaning up DCGM resources",
-		slog.Uint64("reload_id", reloadID))
-	dcgmCleanup()
+	duration := time.Since(startTime)
 
-	// Step 3: Reinitialize DCGM from scratch
-	// This will succeed if GPU is present, fail gracefully if not
-	config, err := contextToConfig(c)
+	slog.InfoContext(ctx, "Hot reload complete",
+		slog.Uint64("reload_id", reloadID),
+		slog.Duration("reload_duration", duration))
+
+	logTopologyInfo(reloadID, deviceWatchListMgr, duration)
+}
+
+// doTopologyChange handles a GPU bind/unbind/swap event: reuse the startup
+// config snapshot, cleanup old registry, reset DCGM, re-query DCP, rebuild.
+// Works for all scenarios:
+//   - GPU unbind: cleanup succeeds, reinit fails (no GPU), /metrics returns empty
+//   - GPU bind: cleanup succeeds, reinit succeeds, /metrics serves new GPU
+//   - GPU swap: cleanup succeeds, reinit succeeds with new GPU
+func (r *reloadCoordinator) doTopologyChange(ctx context.Context, reloadID uint64) {
+	slog.InfoContext(ctx, "GPU topology change detected - full reset",
+		slog.Uint64("reload_id", reloadID))
+
+	cfg, err := r.buildReloadConfig()
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to read config",
+		slog.ErrorContext(ctx, "Failed to build topology reload config",
 			slog.Uint64("reload_id", reloadID),
 			slog.String("error", err.Error()))
 		return
 	}
 
+	// Pessimistically invalidate the DCP snapshot. The hardware topology is
+	// about to change; any capabilities published for the previous topology
+	// must not survive into a subsequent config reload. queryDCPMetrics
+	// below republishes on success; if we return early or a later step
+	// panics, the next config reload sees a disabled snapshot rather than
+	// stale capabilities from the pre-change hardware.
+	r.dcp = &dcpCapabilities{}
+
+	if r.gpuWatcher != nil {
+		r.gpuWatcher.Stop()
+	}
+
+	slog.InfoContext(ctx, "Clearing registry - /metrics will return empty during reset",
+		slog.Uint64("reload_id", reloadID))
+	oldRegistry := r.server.ClearRegistry()
+	if oldRegistry != nil {
+		oldRegistry.Cleanup()
+	}
+
+	slog.InfoContext(ctx, "Cleaning up DCGM resources",
+		slog.Uint64("reload_id", reloadID))
+	r.dcgmCleanup()
+
 	slog.InfoContext(ctx, "Reinitializing DCGM",
 		slog.Uint64("reload_id", reloadID))
-	dcgmprovider.Initialize(config)
+	r.initializeDCGM(cfg)
+	if r.gpuWatcher != nil {
+		r.gpuWatcher.Start()
+	}
 
-	// Step 3b: Reinitialize NVML
-	if config.Kubernetes && config.KubernetesVirtualGPUs {
+	if cfg.Kubernetes && cfg.KubernetesVirtualGPUs {
 		slog.InfoContext(ctx, "Cleaning up NVML resources", slog.Uint64("reload_id", reloadID))
 		nvmlprovider.Client().Cleanup()
 
@@ -839,28 +1118,22 @@ func handleGPUTopologyChange(ctx context.Context, server *server.MetricsServer, 
 		}
 	}
 
-	// Step 4: Query DCP metrics (safe now - GPU is stable after topology change)
-	queryDCPMetrics(config, reloadID)
+	// Safe to re-query DCP: the GPU is stable after a topology change.
+	r.queryDCPMetrics(cfg, reloadID)
 
-	// Step 5: Build new registry with current GPU topology
-	// This will create empty registry if no GPUs present
 	slog.InfoContext(ctx, "Building registry for current GPU topology",
 		slog.Uint64("reload_id", reloadID))
 
 	startTime := time.Now()
-	newRegistry, deviceWatchListMgr, err := buildRegistry(ctx, c, config)
+	newRegistry, deviceWatchListMgr, err := r.buildRegistry(ctx, r.c, cfg)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to build registry",
 			slog.Uint64("reload_id", reloadID),
 			slog.String("error", err.Error()))
-		// Keep registry as nil - /metrics will return empty
 		return
 	}
 
-	// Step 6: Activate new registry (/metrics now serves current GPU state)
-	slog.InfoContext(ctx, "Activating new registry - /metrics now serves current GPU topology",
-		slog.Uint64("reload_id", reloadID))
-	server.SetRegistry(newRegistry)
+	r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
 	duration := time.Since(startTime)
 
 	slog.InfoContext(ctx, "GPU topology change complete",
@@ -872,15 +1145,19 @@ func handleGPUTopologyChange(ctx context.Context, server *server.MetricsServer, 
 
 func startDeviceWatchListManager(
 	cs *counters.CounterSet, config *appconfig.Config,
-) devicewatchlistmanager.Manager {
+) (devicewatchlistmanager.Manager, error) {
 	// Create a list containing DCGM Collector, Exp Collectors and all the label Collectors
 	var allCounters counters.CounterList
 	var deviceWatchListManager devicewatchlistmanager.Manager
 
 	allCounters = append(allCounters, cs.DCGMCounters...)
 
-	allCounters = appendDCGMXIDErrorsCountDependency(allCounters, cs)
-	allCounters = appendDCGMClockEventsCountDependency(cs, allCounters)
+	allCounters = appendDCGMXIDErrorsDependency(allCounters, cs)
+	allCounters = appendDCGMClockEventsDependency(cs, allCounters)
+
+	if err := devicewatchlistmanager.ValidateWatchGroups(allCounters, config.WatchGroups); err != nil {
+		return nil, err
+	}
 
 	deviceWatchListManager = devicewatchlistmanager.NewWatchListManager(allCounters, config)
 	deviceWatcher := devicewatcher.NewDeviceWatcher()
@@ -891,7 +1168,7 @@ func startDeviceWatchListManager(
 			slog.Info(fmt.Sprintf("Not collecting %s metrics; %s", deviceType.String(), err))
 		}
 	}
-	return deviceWatchListManager
+	return deviceWatchListManager, nil
 }
 
 func containsDCGMField(slice []counters.Counter, fieldID dcgm.Short) bool {
@@ -906,43 +1183,46 @@ func containsExporterField(slice []counters.Counter, fieldID counters.ExporterCo
 	})
 }
 
-// appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_CLOCK_EVENTS_COUNT metric
-func appendDCGMClockEventsCountDependency(
+// appendDCGMClockEventsDependency appends DCGM counters required for clock event exporter metrics.
+func appendDCGMClockEventsDependency(
 	cs *counters.CounterSet, allCounters []counters.Counter,
 ) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
-		if containsExporterField(cs.ExporterCounters, counters.DCGMClockEventsCount) &&
+		if (containsExporterField(cs.ExporterCounters, counters.DCGMClockEventsCount) ||
+			containsExporterField(cs.ExporterCounters, counters.DCGMClockEventsTotal)) &&
 			!containsDCGMField(allCounters, dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS) {
 			allCounters = append(allCounters,
 				counters.Counter{
-					FieldID: dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
+					FieldID:   dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
+					FieldName: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
 				})
 		}
 	}
 	return allCounters
 }
 
-// appendDCGMXIDErrorsCountDependency appends DCGM counters required for the DCGM_EXP_XID_ERRORS_COUNT metric
-func appendDCGMXIDErrorsCountDependency(
+// appendDCGMXIDErrorsDependency appends DCGM counters required for XID exporter metrics.
+func appendDCGMXIDErrorsDependency(
 	allCounters []counters.Counter, cs *counters.CounterSet,
 ) []counters.Counter {
 	if len(cs.ExporterCounters) > 0 {
-		if containsExporterField(cs.ExporterCounters, counters.DCGMXIDErrorsCount) &&
+		if (containsExporterField(cs.ExporterCounters, counters.DCGMXIDErrorsCount) ||
+			containsExporterField(cs.ExporterCounters, counters.DCGMXIDErrorsTotal)) &&
 			!containsDCGMField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
 			allCounters = append(allCounters,
 				counters.Counter{
-					FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS,
+					FieldID:   dcgm.DCGM_FI_DEV_XID_ERRORS,
+					FieldName: "DCGM_FI_DEV_XID_ERRORS",
 				})
 		}
 	}
 	return allCounters
 }
 
-func getCounters(ctx context.Context, config *appconfig.Config) *counters.CounterSet {
+func getCounters(ctx context.Context, config *appconfig.Config) (*counters.CounterSet, error) {
 	cs, err := counters.GetCounterSet(ctx, config)
 	if err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
+		return nil, err
 	}
 
 	// Copy labels from DCGM Counters to ExporterCounters
@@ -951,35 +1231,45 @@ func getCounters(ctx context.Context, config *appconfig.Config) *counters.Counte
 			cs.ExporterCounters = append(cs.ExporterCounters, cs.DCGMCounters[i])
 		}
 	}
-	return cs
+	return cs, nil
 }
 
-// queryDCPMetrics queries DCGM for supported profiling metric groups.
-// Called at: startup, GPU bind event (NOT regular hot reload - uses startup config).
-// If profiling not supported or query fails, DCP collection is disabled.
-func queryDCPMetrics(config *appconfig.Config, reloadID uint64) {
+// queryDCPMetrics queries DCGM for supported profiling metric groups,
+// mutates cfg to reflect the result, and publishes the resulting snapshot to
+// r.dcp so later config reloads can apply it without re-querying (which can
+// segfault during GPU state transitions).
+//
+// Called at: startup (from runDCGMExporter before the
+// first buildRegistry) and from doTopologyChange after DCGM reinitialises.
+// Config reloads do NOT call this; they apply r.dcp instead.
+//
+// Single deferred epilogue: recover from any profiling API panic, then
+// publish whatever DCP state remains in cfg. Explicit sequencing within one
+// defer guarantees that error and panic paths publish a disabled snapshot
+// — overwriting any prior enabled snapshot — without depending on LIFO
+// declaration order.
+func (r *reloadCoordinator) queryDCPMetrics(cfg *appconfig.Config, reloadID uint64) {
 	slog.Debug("Querying DCGM profiling metric groups", slog.Uint64("reload_id", reloadID))
 
-	// Add panic recovery in case profiling API segfaults during query
 	defer func() {
-		if r := recover(); r != nil {
+		if p := recover(); p != nil {
 			slog.Warn("Profiling API panic - DCP metrics disabled",
 				slog.Uint64("reload_id", reloadID),
-				slog.String("panic", fmt.Sprintf("%v", r)))
-			config.CollectDCP = false
-			config.MetricGroups = nil
+				slog.String("panic", fmt.Sprintf("%v", p)))
+			cfg.CollectDCP = false
+			cfg.MetricGroups = nil
 		}
+		r.dcp = newDCPCapabilities(cfg)
 	}()
 
 	groups, err := dcgmprovider.Client().GetSupportedMetricGroups(0)
 	if err != nil {
-		config.CollectDCP = false
-		config.MetricGroups = nil
+		cfg.CollectDCP = false
+		cfg.MetricGroups = nil
 		slog.Info("Not collecting DCP metrics: " + err.Error())
 		return
 	}
 
-	// Log GPU model for debugging (optional)
 	gpuModel := "unknown"
 	if gpuCount, err := dcgmprovider.Client().GetAllDeviceCount(); err == nil && gpuCount > 0 {
 		if gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(0); err == nil {
@@ -992,139 +1282,420 @@ func queryDCPMetrics(config *appconfig.Config, reloadID uint64) {
 		slog.Int("count", len(groups)),
 		slog.String("gpu_model", gpuModel))
 
-	config.MetricGroups = groups
-	config.CollectDCP = true
+	cfg.MetricGroups = groups
+	cfg.CollectDCP = true
 }
 
+// parseDeviceOptions parses the flex, major, minor, and combined selector grammar used by device flags.
 func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
 	var dOpt appconfig.DeviceOptions
 
-	letterAndRange := strings.Split(devices, ":")
-	count := len(letterAndRange)
-	if count > 2 {
-		return dOpt, fmt.Errorf("Invalid ranged device option '%s': there can only be one specified range", devices)
-	}
-
-	letter := letterAndRange[0]
-	switch letter {
-	case FlexKey:
-		dOpt.Flex = true
-		if count > 1 {
-			return dOpt, fmt.Errorf("no range can be specified with the flex option 'f'")
+	parts := strings.Split(devices, "+")
+	for _, part := range parts {
+		if part == "" {
+			return dOpt, fmt.Errorf("invalid device option '%s': empty selector", devices)
 		}
-	case MajorKey, MinorKey:
-		var indices []int
-		if count == 1 {
-			// No range means all present devices of the type
-			indices = append(indices, -1)
-		} else {
-			numbers := strings.Split(letterAndRange[1], ",")
-			for _, numberOrRange := range numbers {
-				rangeTokens := strings.Split(numberOrRange, "-")
-				rangeTokenCount := len(rangeTokens)
-				switch rangeTokenCount {
-				case 1:
-					number, err := strconv.Atoi(rangeTokens[0])
-					if err != nil {
-						return dOpt, err
-					}
-					indices = append(indices, number)
-				case 2:
-					start, err := strconv.Atoi(rangeTokens[0])
-					if err != nil {
-						return dOpt, err
-					}
-					end, err := strconv.Atoi(rangeTokens[1])
-					if err != nil {
-						return dOpt, err
-					}
 
-					// Add the range to the indices
-					for i := start; i <= end; i++ {
-						indices = append(indices, i)
-					}
-				default:
-					return dOpt, fmt.Errorf("range can only be '<number>-<number>', but found '%s'", numberOrRange)
-				}
+		letter, rangeSpec, hasRange := strings.Cut(part, ":")
+		if strings.Contains(rangeSpec, ":") {
+			return dOpt, fmt.Errorf("invalid ranged device option '%s': there can only be one specified range", devices)
+		}
+
+		switch letter {
+		case FlexKey:
+			if len(parts) > 1 {
+				return dOpt, fmt.Errorf("the flex option 'f' cannot be combined with other device options")
 			}
-		}
-
-		if letter == MajorKey {
+			if hasRange {
+				return dOpt, fmt.Errorf("no range can be specified with the flex option 'f'")
+			}
+			dOpt.Flex = true
+		case MajorKey:
+			if dOpt.MajorRange != nil {
+				return dOpt, fmt.Errorf("duplicate device option '%s'", MajorKey)
+			}
+			indices, err := parseDeviceRange(rangeSpec, hasRange, int(dcgm.MAX_NUM_CPU_CORES))
+			if err != nil {
+				return dOpt, err
+			}
 			dOpt.MajorRange = indices
-		} else {
+		case MinorKey:
+			if dOpt.MinorRange != nil {
+				return dOpt, fmt.Errorf("duplicate device option '%s'", MinorKey)
+			}
+			indices, err := parseDeviceRange(rangeSpec, hasRange, int(dcgm.MAX_NUM_CPU_CORES))
+			if err != nil {
+				return dOpt, err
+			}
 			dOpt.MinorRange = indices
+		default:
+			return dOpt, fmt.Errorf("the only valid options are 'f', 'g', or 'i', but found '%s'", letter)
 		}
-	default:
-		return dOpt, fmt.Errorf("the only valid options preceding ':<range>' are 'g' or 'i', but found '%s'", letter)
 	}
 
 	return dOpt, nil
 }
 
+// parseDeviceRange expands an optional comma-separated selector range into device indices.
+func parseDeviceRange(rangeSpec string, hasRange bool, limit int) ([]int, error) {
+	if !hasRange {
+		// No range means all present devices of the type.
+		if limit < 1 {
+			return nil, fmt.Errorf("device selector expands to more than %d indices", dcgm.MAX_NUM_CPU_CORES)
+		}
+		return []int{-1}, nil
+	}
+
+	var indices []int
+	numbers := strings.Split(rangeSpec, ",")
+	for _, numberOrRange := range numbers {
+		rangeTokens := strings.Split(numberOrRange, "-")
+		rangeTokenCount := len(rangeTokens)
+		switch rangeTokenCount {
+		case 1:
+			number, err := strconv.Atoi(rangeTokens[0])
+			if err != nil {
+				return nil, err
+			}
+			if len(indices) >= limit {
+				return nil, fmt.Errorf("device selector expands to more than %d indices", dcgm.MAX_NUM_CPU_CORES)
+			}
+			indices = append(indices, number)
+		case 2:
+			start, err := strconv.Atoi(rangeTokens[0])
+			if err != nil {
+				return nil, err
+			}
+			end, err := strconv.Atoi(rangeTokens[1])
+			if err != nil {
+				return nil, err
+			}
+
+			if start > end {
+				return nil, fmt.Errorf("invalid range '%s': start (%d) must not exceed end (%d)", numberOrRange, start, end)
+			}
+
+			// Add the range to the indices.
+			for i := start; i <= end; i++ {
+				if len(indices) >= limit {
+					return nil, fmt.Errorf("device selector expands to more than %d indices", dcgm.MAX_NUM_CPU_CORES)
+				}
+				indices = append(indices, i)
+			}
+		default:
+			return nil, fmt.Errorf("range can only be '<number>-<number>', but found '%s'", numberOrRange)
+		}
+	}
+
+	return indices, nil
+}
+
 func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
-	gOpt, err := parseDeviceOptions(c.String(CLIGPUDevices))
+	config, err := defaultConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	sOpt, err := parseDeviceOptions(c.String(CLISwitchDevices))
-	if err != nil {
+	if c.IsSet(CLIConfigFile) {
+		config.ConfigFile = c.String(CLIConfigFile)
+		yamlConfig, err := appconfig.LoadYAMLConfigFile(config.ConfigFile)
+		if err != nil {
+			return nil, err
+		}
+		if err := yamlConfig.ApplyTo(config); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := applyExplicitConfigOverrides(c, config); err != nil {
+		return nil, err
+	}
+	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
 
-	cOpt, err := parseDeviceOptions(c.String(CLICPUDevices))
+	return config, nil
+}
+
+// defaultConfig builds the runtime defaults used before YAML and explicit CLI overrides are applied.
+func defaultConfig() (*appconfig.Config, error) {
+	gOpt, err := parseDeviceOptions(FlexKey)
 	if err != nil {
 		return nil, err
 	}
-
-	dcgmLogLevel := c.String(CLIDCGMLogLevel)
-	if !slices.Contains(DCGMDbgLvlValues, dcgmLogLevel) {
-		return nil, fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, dcgmLogLevel)
+	sOpt, err := parseDeviceOptions(FlexKey)
+	if err != nil {
+		return nil, err
+	}
+	cOpt, err := parseDeviceOptions(FlexKey)
+	if err != nil {
+		return nil, err
 	}
 
 	return &appconfig.Config{
-		CollectorsFile:                   c.String(CLIFieldsFile),
-		Address:                          c.String(CLIAddress),
-		CollectInterval:                  c.Int(CLICollectInterval),
-		Kubernetes:                       c.Bool(CLIKubernetes),
-		KubernetesEnablePodLabels:        c.Bool(CLIKubernetesEnablePodLabels),
-		KubernetesEnablePodUID:           c.Bool(CLIKubernetesEnablePodUID),
-		KubernetesGPUIdType:              appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
-		KubernetesPodLabelAllowlistRegex: c.StringSlice(CLIKubernetesPodLabelAllowlistRegex),
+		CollectorsFile:                   appconfig.DefaultCollectorsFile,
+		Address:                          ":9400",
+		CollectInterval:                  30000,
+		Kubernetes:                       false,
+		KubernetesEnablePodLabels:        false,
+		KubernetesEnablePodUID:           false,
+		KubernetesGPUIdType:              appconfig.GPUUID,
+		KubernetesPodLabelAllowlistRegex: nil,
 		CollectDCP:                       true,
-		UseOldNamespace:                  c.Bool(CLIUseOldNamespace),
-		UseRemoteHE:                      c.IsSet(CLIRemoteHEInfo),
-		RemoteHEInfo:                     c.String(CLIRemoteHEInfo),
+		UseOldNamespace:                  false,
+		UseRemoteHE:                      false,
+		RemoteHEInfo:                     "localhost:5555",
 		GPUDeviceOptions:                 gOpt,
 		SwitchDeviceOptions:              sOpt,
 		CPUDeviceOptions:                 cOpt,
-		NoHostname:                       c.Bool(CLINoHostname),
-		UseFakeGPUs:                      c.Bool(CLIUseFakeGPUs),
-		ConfigMapData:                    c.String(CLIConfigMapData),
-		WebSystemdSocket:                 c.Bool(CLIWebSystemdSocket),
-		WebConfigFile:                    c.String(CLIWebConfigFile),
-		XIDCountWindowSize:               c.Int(CLIXIDCountWindowSize),
-		ReplaceBlanksInModelName:         c.Bool(CLIReplaceBlanksInModelName),
-		Debug:                            c.Bool(CLIDebugMode),
-		ClockEventsCountWindowSize:       c.Int(CLIClockEventsCountWindowSize),
-		EnableDCGMLog:                    c.Bool(CLIEnableDCGMLog),
-		DCGMLogLevel:                     dcgmLogLevel,
-		PodResourcesKubeletSocket:        c.String(CLIPodResourcesKubeletSocket),
-		HPCJobMappingDir:                 c.String(CLIHPCJobMappingDir),
-		NvidiaResourceNames:              c.StringSlice(CLINvidiaResourceNames),
-		KubernetesVirtualGPUs:            c.Bool(CLIKubernetesVirtualGPUs),
-		DumpConfig: appconfig.DumpConfig{
-			Enabled:     c.Bool(CLIDumpEnabled),
-			Directory:   c.String(CLIDumpDirectory),
-			Retention:   c.Int(CLIDumpRetention),
-			Compression: c.Bool(CLIDumpCompression),
+		NoHostname:                       false,
+		UseFakeGPUs:                      false,
+		ConfigMapData:                    undefinedConfigMapData,
+		MetricSource: appconfig.MetricSource{
+			Kind: appconfig.MetricSourceFile,
+			File: appconfig.DefaultCollectorsFile,
 		},
-		KubernetesEnableDRA:       c.Bool(CLIKubernetesEnableDRA),
-		DisableStartupValidate:    c.Bool(CLIDisableStartupValidate),
-		EnableGPUBindUnbindWatch:  c.Bool(CLIEnableGPUBindUnbindWatch),
-		GPUBindUnbindPollInterval: parseDuration(c.String(CLIGPUBindUnbindPollInterval), 1*time.Second),
-		EnablePprof:               c.Bool(CLIEnablePprof),
+		WebSystemdSocket:           false,
+		WebConfigFile:              "",
+		WebReadTimeout:             appconfig.DefaultWebReadTimeout,
+		WebWriteTimeout:            appconfig.DefaultWebWriteTimeout,
+		XIDCountWindowSize:         int((5 * time.Minute).Milliseconds()),
+		ReplaceBlanksInModelName:   false,
+		Debug:                      false,
+		ClockEventsCountWindowSize: int((5 * time.Minute).Milliseconds()),
+		EnableDCGMLog:              false,
+		DCGMLogLevel:               DCGMDbgLvlNone,
+		PodResourcesKubeletSocket:  "/var/lib/kubelet/pod-resources/kubelet.sock",
+		HPCJobMappingDir:           "",
+		ContainerLabels:            false,
+		ContainerRuntimeSocket:     "",
+		NvidiaResourceNames:        nil,
+		KubernetesVirtualGPUs:      false,
+		DumpConfig: appconfig.DumpConfig{
+			Enabled:     false,
+			Directory:   "/tmp/dcgm-exporter-debug",
+			Retention:   24,
+			Compression: true,
+		},
+		KubernetesEnableDRA:       false,
+		DisableStartupValidate:    false,
+		EnableGPUBindUnbindWatch:  false,
+		GPUBindUnbindPollInterval: time.Second,
+		EnablePprof:               false,
 	}, nil
+}
+
+// applyExplicitConfigOverrides applies only startup flags and env vars that were explicitly set.
+func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) error {
+	if c.IsSet(CLIFieldsFile) {
+		applyMetricFileSource(config, c.String(CLIFieldsFile))
+	}
+	if c.IsSet(CLIAddress) {
+		config.Address = c.String(CLIAddress)
+	}
+	if c.IsSet(CLICollectInterval) {
+		config.CollectInterval = c.Int(CLICollectInterval)
+	}
+	if c.IsSet(CLIKubernetes) {
+		config.Kubernetes = c.Bool(CLIKubernetes)
+	}
+	if c.IsSet(CLIKubernetesEnablePodLabels) {
+		config.KubernetesEnablePodLabels = c.Bool(CLIKubernetesEnablePodLabels)
+	}
+	if c.IsSet(CLIKubernetesEnablePodUID) {
+		config.KubernetesEnablePodUID = c.Bool(CLIKubernetesEnablePodUID)
+	}
+	if c.IsSet(CLIKubernetesGPUIDType) {
+		config.KubernetesGPUIdType = appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType))
+	}
+	if c.IsSet(CLIKubernetesPodLabelAllowlistRegex) {
+		config.KubernetesPodLabelAllowlistRegex = c.StringSlice(CLIKubernetesPodLabelAllowlistRegex)
+	}
+	if c.IsSet(CLIUseOldNamespace) {
+		config.UseOldNamespace = c.Bool(CLIUseOldNamespace)
+	}
+	if c.IsSet(CLIRemoteHEInfo) {
+		config.UseRemoteHE = true
+		config.RemoteHEInfo = c.String(CLIRemoteHEInfo)
+	}
+	if c.IsSet(CLIGPUDevices) {
+		opt, err := parseDeviceOptions(c.String(CLIGPUDevices))
+		if err != nil {
+			return err
+		}
+		config.GPUDeviceOptions = opt
+	}
+	if c.IsSet(CLISwitchDevices) {
+		opt, err := parseDeviceOptions(c.String(CLISwitchDevices))
+		if err != nil {
+			return err
+		}
+		config.SwitchDeviceOptions = opt
+	}
+	if c.IsSet(CLICPUDevices) {
+		opt, err := parseDeviceOptions(c.String(CLICPUDevices))
+		if err != nil {
+			return err
+		}
+		config.CPUDeviceOptions = opt
+	}
+	if c.IsSet(CLINoHostname) {
+		config.NoHostname = c.Bool(CLINoHostname)
+	}
+	if c.IsSet(CLIUseFakeGPUs) {
+		config.UseFakeGPUs = c.Bool(CLIUseFakeGPUs)
+	}
+	if c.IsSet(CLIConfigMapData) {
+		if err := applyConfigMapDataSource(config, c.String(CLIConfigMapData)); err != nil {
+			return err
+		}
+	}
+	if c.IsSet(CLIWebSystemdSocket) {
+		config.WebSystemdSocket = c.Bool(CLIWebSystemdSocket)
+	}
+	if c.IsSet(CLIWebConfigFile) {
+		config.WebConfigFile = c.String(CLIWebConfigFile)
+	}
+	if c.IsSet(CLIWebReadTimeout) {
+		config.WebReadTimeout = parseDuration(c.String(CLIWebReadTimeout), appconfig.DefaultWebReadTimeout)
+	}
+	if c.IsSet(CLIWebWriteTimeout) {
+		config.WebWriteTimeout = parseDuration(c.String(CLIWebWriteTimeout), appconfig.DefaultWebWriteTimeout)
+	}
+	if c.IsSet(CLIXIDCountWindowSize) {
+		config.XIDCountWindowSize = c.Int(CLIXIDCountWindowSize)
+	}
+	if c.IsSet(CLIReplaceBlanksInModelName) {
+		config.ReplaceBlanksInModelName = c.Bool(CLIReplaceBlanksInModelName)
+	}
+	if c.IsSet(CLIDebugMode) {
+		config.Debug = c.Bool(CLIDebugMode)
+	}
+	if c.IsSet(CLIClockEventsCountWindowSize) {
+		config.ClockEventsCountWindowSize = c.Int(CLIClockEventsCountWindowSize)
+	}
+	if c.IsSet(CLIEnableDCGMLog) {
+		config.EnableDCGMLog = c.Bool(CLIEnableDCGMLog)
+	}
+	if c.IsSet(CLIDCGMLogLevel) {
+		config.DCGMLogLevel = c.String(CLIDCGMLogLevel)
+	}
+	if c.IsSet(CLIPodResourcesKubeletSocket) {
+		config.PodResourcesKubeletSocket = c.String(CLIPodResourcesKubeletSocket)
+	}
+	if c.IsSet(CLIHPCJobMappingDir) {
+		config.HPCJobMappingDir = c.String(CLIHPCJobMappingDir)
+	}
+	if c.IsSet(CLIContainerLabels) {
+		config.ContainerLabels = c.Bool(CLIContainerLabels)
+	}
+	if c.IsSet(CLIContainerRuntimeSocket) {
+		config.ContainerRuntimeSocket = c.String(CLIContainerRuntimeSocket)
+	}
+	if c.IsSet(CLINvidiaResourceNames) {
+		config.NvidiaResourceNames = c.StringSlice(CLINvidiaResourceNames)
+	}
+	if c.IsSet(CLIKubernetesVirtualGPUs) {
+		config.KubernetesVirtualGPUs = c.Bool(CLIKubernetesVirtualGPUs)
+	}
+	if c.IsSet(CLIDumpEnabled) {
+		config.DumpConfig.Enabled = c.Bool(CLIDumpEnabled)
+	}
+	if c.IsSet(CLIDumpDirectory) {
+		config.DumpConfig.Directory = c.String(CLIDumpDirectory)
+	}
+	if c.IsSet(CLIDumpRetention) {
+		config.DumpConfig.Retention = c.Int(CLIDumpRetention)
+	}
+	if c.IsSet(CLIDumpCompression) {
+		config.DumpConfig.Compression = c.Bool(CLIDumpCompression)
+	}
+	if c.IsSet(CLIKubernetesEnableDRA) {
+		config.KubernetesEnableDRA = c.Bool(CLIKubernetesEnableDRA)
+	}
+	if c.IsSet(CLIDisableStartupValidate) {
+		config.DisableStartupValidate = c.Bool(CLIDisableStartupValidate)
+	}
+	if c.IsSet(CLIEnableGPUBindUnbindWatch) {
+		config.EnableGPUBindUnbindWatch = c.Bool(CLIEnableGPUBindUnbindWatch)
+	}
+	if c.IsSet(CLIGPUBindUnbindPollInterval) {
+		config.GPUBindUnbindPollInterval = parseDuration(c.String(CLIGPUBindUnbindPollInterval), time.Second)
+	}
+	if c.IsSet(CLIEnablePprof) {
+		config.EnablePprof = c.Bool(CLIEnablePprof)
+	}
+
+	return nil
+}
+
+// applyMetricFileSource selects a file-backed metric source and clears compatibility ConfigMap data.
+func applyMetricFileSource(config *appconfig.Config, file string) {
+	config.CollectorsFile = file
+	config.ConfigMapData = undefinedConfigMapData
+	config.MetricSource = appconfig.MetricSource{
+		Kind: appconfig.MetricSourceFile,
+		File: file,
+	}
+}
+
+// applyConfigMapDataSource selects the compatibility API-backed ConfigMap metric source.
+func applyConfigMapDataSource(config *appconfig.Config, configMapData string) error {
+	config.ConfigMapData = configMapData
+	if configMapData == "" || configMapData == undefinedConfigMapData {
+		applyMetricFileSource(config, config.CollectorsFile)
+		return nil
+	}
+
+	parts := strings.Split(configMapData, ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("malformed configmap-data %q", configMapData)
+	}
+	config.MetricSource = appconfig.MetricSource{
+		Kind: appconfig.MetricSourceConfigMap,
+		ConfigMap: appconfig.ConfigMapMetricSource{
+			Namespace: parts[0],
+			Name:      parts[1],
+		},
+	}
+	return nil
+}
+
+// validateConfig checks cross-field runtime requirements after all config sources are applied.
+func validateConfig(config *appconfig.Config) error {
+	if !slices.Contains(DCGMDbgLvlValues, config.DCGMLogLevel) {
+		return fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, config.DCGMLogLevel)
+	}
+	if config.EnableGPUBindUnbindWatch && config.GPUBindUnbindPollInterval <= 0 {
+		return fmt.Errorf(
+			"invalid %s parameter value: %q, must be greater than 0",
+			CLIGPUBindUnbindPollInterval,
+			config.GPUBindUnbindPollInterval.String(),
+		)
+	}
+	if config.EnablePprof && strings.TrimSpace(config.WebConfigFile) == "" {
+		return fmt.Errorf(
+			"%s requires %s so profiling endpoints are protected by exporter-toolkit auth or TLS",
+			CLIEnablePprof,
+			CLIWebConfigFile,
+		)
+	}
+	if config.ContainerLabels && config.Kubernetes {
+		slog.Warn(
+			"container runtime labels are ignored when kubernetes mode is enabled",
+			slog.String("flag", CLIContainerLabels),
+			slog.String("mode", CLIKubernetes),
+		)
+	}
+	if config.ContainerLabels && !config.Kubernetes && strings.TrimSpace(config.ContainerRuntimeSocket) == "" {
+		return fmt.Errorf(
+			"%s requires %s or DCGM_CONTAINER_RUNTIME_SOCKET",
+			CLIContainerLabels,
+			CLIContainerRuntimeSocket,
+		)
+	}
+
+	return nil
 }
 
 // parseDuration parses a duration string and returns the parsed duration.
@@ -1156,22 +1727,88 @@ func runWatcher(ctx context.Context, w watcher.Watcher, onChange func(), wg *syn
 	}()
 }
 
-// runGPUWatcher runs the GPU bind/unbind watcher with unified topology change handler
-func runGPUWatcher(ctx context.Context, w *watcher.GPUBindUnbindWatcher, server *server.MetricsServer, c *cli.Context, dcgmCleanup func(), wg *sync.WaitGroup) {
+// runGPUWatcher runs the managed GPU bind/unbind watcher lifecycle.
+func runGPUWatcher(w *gpuWatcherLifecycleController, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := w.Watch(ctx, func() {
-			// Any GPU topology change (bind or unbind) triggers full reset
-			// This unified approach is simpler and handles all edge cases:
-			// - Multiple rapid events: only last state matters
-			// - Event during reload: queued and processed after
-			// - GPU swap: always leaves system in correct state
-			slog.DebugContext(ctx, "GPU topology change detected")
-			handleGPUTopologyChange(ctx, server, c, dcgmCleanup)
-		})
+		w.Run()
+	}()
+}
+
+type gpuWatcherLifecycle interface {
+	Start()
+	Stop()
+}
+
+type gpuWatcherLifecycleController struct {
+	ctx        context.Context
+	newWatcher func() *watcher.GPUBindUnbindWatcher
+	onChange   func()
+
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func newGPUWatcherLifecycle(
+	ctx context.Context,
+	newWatcher func() *watcher.GPUBindUnbindWatcher,
+	onChange func(),
+) *gpuWatcherLifecycleController {
+	return &gpuWatcherLifecycleController{
+		ctx:        ctx,
+		newWatcher: newWatcher,
+		onChange:   onChange,
+	}
+}
+
+func (g *gpuWatcherLifecycleController) Run() {
+	g.Start()
+	<-g.ctx.Done()
+	g.Stop()
+}
+
+func (g *gpuWatcherLifecycleController) Start() {
+	select {
+	case <-g.ctx.Done():
+		return
+	default:
+	}
+
+	g.mu.Lock()
+	if g.cancel != nil {
+		g.mu.Unlock()
+		return
+	}
+
+	watchCtx, cancel := context.WithCancel(g.ctx)
+	done := make(chan struct{})
+	g.cancel = cancel
+	g.done = done
+	w := g.newWatcher()
+	g.mu.Unlock()
+
+	go func() {
+		defer close(done)
+		err := w.Watch(watchCtx, g.onChange)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			slog.ErrorContext(ctx, "GPU watcher failed", slog.String("error", err.Error()))
+			slog.ErrorContext(watchCtx, "GPU watcher failed", slog.String("error", err.Error()))
 		}
 	}()
+}
+
+func (g *gpuWatcherLifecycleController) Stop() {
+	g.mu.Lock()
+	cancel := g.cancel
+	done := g.done
+	g.cancel = nil
+	g.done = nil
+	g.mu.Unlock()
+
+	if cancel == nil {
+		return
+	}
+	cancel()
+	<-done
 }

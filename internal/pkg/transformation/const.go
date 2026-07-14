@@ -23,6 +23,7 @@ const (
 	containerAttribute = "container"
 	uidAttribute       = "pod_uid"
 	vgpuAttribute      = "vgpu"
+	podLabelPrefix     = "pod_label_"
 
 	hpcJobAttribute = "hpc_job"
 

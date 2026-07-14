@@ -88,28 +88,26 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 		return nil, ErrRegistryShuttingDown
 	}
 
-	var wg sync.WaitGroup
-
 	g := new(errgroup.Group)
 
-	var sm sync.Map
+	metricsByCounterGroup := map[groupCounterTuple][]collector.Metric{}
+	var metricsByCounterGroupMtx sync.Mutex
 
 	for group, collectors := range r.collectorGroups {
 		for _, c := range collectors {
 			c := c // creates new c, see https://golang.org/doc/faq#closures_and_goroutines
 			group := group
-			wg.Add(1)
 			g.Go(func() error {
 				metrics, err := c.GetMetrics()
 				if err != nil {
 					return err
 				}
 
+				metricsByCounterGroupMtx.Lock()
+				defer metricsByCounterGroupMtx.Unlock()
 				for counter, metricVals := range metrics {
-					val, _ := sm.LoadOrStore(groupCounterTuple{Group: group, Counter: counter}, []collector.Metric{})
-					out := val.([]collector.Metric)
-					out = append(out, metricVals...)
-					sm.Store(groupCounterTuple{Group: group, Counter: counter}, out)
+					tuple := groupCounterTuple{Group: group, Counter: counter}
+					metricsByCounterGroup[tuple] = append(metricsByCounterGroup[tuple], metricVals...)
 				}
 
 				return nil
@@ -123,14 +121,12 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 
 	output := MetricsByCounterGroup{}
 
-	sm.Range(func(key, value interface{}) bool {
-		tuple := key.(groupCounterTuple)
+	for tuple, metricVals := range metricsByCounterGroup {
 		if _, exists := output[tuple.Group]; !exists {
 			output[tuple.Group] = map[counters.Counter][]collector.Metric{}
 		}
-		output[tuple.Group][tuple.Counter] = value.([]collector.Metric)
-		return true // continue iteration
-	})
+		output[tuple.Group][tuple.Counter] = metricVals
+	}
 
 	return output, nil
 }

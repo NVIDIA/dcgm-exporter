@@ -36,6 +36,18 @@ func TestIdentifyMetricType(t *testing.T) {
 			valid:  true,
 		},
 		{
+			name:   "Valid Input DCGM_EXP_XID_ERRORS_TOTAL",
+			field:  "DCGM_EXP_XID_ERRORS_TOTAL",
+			output: DCGMXIDErrorsTotal,
+			valid:  true,
+		},
+		{
+			name:   "Valid Input DCGM_EXP_CLOCK_EVENTS_TOTAL",
+			field:  "DCGM_EXP_CLOCK_EVENTS_TOTAL",
+			output: DCGMClockEventsTotal,
+			valid:  true,
+		},
+		{
 			name:   "Valid Input DCGM_FI_UNKNOWN",
 			field:  "DCGM_FI_UNKNOWN",
 			output: DCGMFIUnknown,

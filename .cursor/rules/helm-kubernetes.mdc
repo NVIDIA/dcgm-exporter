@@ -1,0 +1,14 @@
+---
+description: Helm chart and Kubernetes deployment conventions
+globs: ["deployment/**/*.yaml", "deployment/**/*.tpl", "deployment/**/*.md", "*.yaml"]
+alwaysApply: false
+---
+
+# Helm And Kubernetes
+
+- Use real dcgm-exporter flags from `pkg/cmd/app.go` in Helm `arguments`.
+- Keep values, templates, raw YAML, and README examples aligned.
+- RBAC changes must match the Kubernetes feature being enabled.
+- Keep service read/write timeouts coherent with ServiceMonitor scrape
+  timeout/interval.
+- Document GPU/Kubernetes prerequisites for e2e validation.

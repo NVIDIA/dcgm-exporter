@@ -1,0 +1,13 @@
+---
+description: Review a DCGM Exporter change before MR handoff
+globs: ["**/*"]
+---
+
+# Code Review
+
+Check:
+
+- Metric, CLI, Helm, Docker, and package contracts stayed aligned.
+- Tests prove the behavior named by each test.
+- Shell and CI verification commands are not masked.
+- No secrets, local settings, coverage outputs, or unrelated files are staged.

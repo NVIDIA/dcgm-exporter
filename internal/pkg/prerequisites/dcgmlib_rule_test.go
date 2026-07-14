@@ -28,6 +28,8 @@ import (
 
 	mockelf "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/elf"
 	mockexec "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/exec"
+	mockos "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
+	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
 
 func Test_dcgmLibExistsRule_Validate(t *testing.T) {
@@ -190,6 +192,10 @@ func Test_dcgmLibExistsRule_Validate(t *testing.T) {
 			ctrl := gomock.NewController(t)
 
 			executor := mockexec.NewMockExec(ctrl)
+			osreader := mockos.NewMockOS(ctrl)
+			osreader.EXPECT().Stat(gomock.Eq(ldconfigPath)).AnyTimes().Return(mockos.NewMockFileInfo(ctrl), nil)
+			os = osreader
+			t.Cleanup(func() { os = osinterface.RealOS{} })
 
 			if tc.ExecMockExpectations != nil {
 				tc.ExecMockExpectations(ctrl, executor)

@@ -17,9 +17,27 @@
 package appconfig
 
 import (
+	"strings"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+)
+
+const (
+	DefaultWebReadTimeout  = 10 * time.Second
+	DefaultWebWriteTimeout = 30 * time.Second
+	DefaultCollectorsFile  = "/etc/dcgm-exporter/default-counters.csv"
+	UndefinedConfigMapData = "none"
+	DefaultConfigMapKey    = "metrics"
+)
+
+// MetricSourceKind identifies where dcgm-exporter should load metric definitions from.
+type MetricSourceKind string
+
+const (
+	MetricSourceFile      MetricSourceKind = "file"
+	MetricSourceInline    MetricSourceKind = "inline"
+	MetricSourceConfigMap MetricSourceKind = "configMap"
 )
 
 type KubernetesGPUIDType string
@@ -38,7 +56,36 @@ type DumpConfig struct {
 	Compression bool   `yaml:"compression" json:"compression"` // Use gzip compression for dump files
 }
 
+// MetricField is one inline metric definition in the same shape as a three-column metric CSV row.
+type MetricField struct {
+	Name           string
+	PrometheusType string
+	Help           string
+}
+
+// ConfigMapMetricSource identifies the compatibility API-backed ConfigMap metric source.
+type ConfigMapMetricSource struct {
+	Namespace string
+	Name      string
+}
+
+// MetricSource is the resolved metric definition source used after config parsing and overrides.
+type MetricSource struct {
+	Kind      MetricSourceKind
+	File      string
+	Fields    []MetricField
+	ConfigMap ConfigMapMetricSource
+}
+
+// WatchGroup assigns a set of metric fields to a collection interval.
+type WatchGroup struct {
+	Name     string
+	Interval int
+	Fields   []string
+}
+
 type Config struct {
+	ConfigFile                       string
 	CollectorsFile                   string
 	Address                          string
 	CollectInterval                  int
@@ -58,9 +105,13 @@ type Config struct {
 	NoHostname                       bool
 	UseFakeGPUs                      bool
 	ConfigMapData                    string
+	MetricSource                     MetricSource
+	WatchGroups                      []WatchGroup
 	MetricGroups                     []dcgm.MetricGroup
 	WebSystemdSocket                 bool
 	WebConfigFile                    string
+	WebReadTimeout                   time.Duration
+	WebWriteTimeout                  time.Duration
 	XIDCountWindowSize               int
 	ReplaceBlanksInModelName         bool
 	Debug                            bool
@@ -69,6 +120,8 @@ type Config struct {
 	DCGMLogLevel                     string
 	PodResourcesKubeletSocket        string
 	HPCJobMappingDir                 string
+	ContainerLabels                  bool
+	ContainerRuntimeSocket           string
 	NvidiaResourceNames              []string
 	KubernetesVirtualGPUs            bool
 	DumpConfig                       DumpConfig // Configuration for file-based dumps
@@ -77,4 +130,46 @@ type Config struct {
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
 	EnablePprof                      bool          // Enable /debug/pprof/ HTTP endpoints
+}
+
+// Clone returns a copy of Config with slices duplicated for reload snapshots.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+
+	clone := *c
+	clone.KubernetesPodLabelAllowlistRegex = append([]string(nil), c.KubernetesPodLabelAllowlistRegex...)
+	clone.NvidiaResourceNames = append([]string(nil), c.NvidiaResourceNames...)
+	clone.MetricSource.Fields = append([]MetricField(nil), c.MetricSource.Fields...)
+	clone.WatchGroups = append([]WatchGroup(nil), c.WatchGroups...)
+	for i := range clone.WatchGroups {
+		clone.WatchGroups[i].Fields = append([]string(nil), c.WatchGroups[i].Fields...)
+	}
+	clone.MetricGroups = append([]dcgm.MetricGroup(nil), c.MetricGroups...)
+	for i := range clone.MetricGroups {
+		clone.MetricGroups[i].FieldIds = append([]uint(nil), c.MetricGroups[i].FieldIds...)
+	}
+
+	return &clone
+}
+
+// MetricFileWatcherPath returns the resolved metrics file path when file reloads should be watched.
+func (c *Config) MetricFileWatcherPath() (string, bool) {
+	if c == nil {
+		return "", false
+	}
+
+	source := c.MetricSource
+	if source.Kind == "" {
+		if c.ConfigMapData != "" && c.ConfigMapData != UndefinedConfigMapData {
+			return "", false
+		}
+		source = MetricSource{Kind: MetricSourceFile, File: c.CollectorsFile}
+	}
+
+	if source.Kind != MetricSourceFile || strings.TrimSpace(source.File) == "" {
+		return "", false
+	}
+	return source.File, true
 }

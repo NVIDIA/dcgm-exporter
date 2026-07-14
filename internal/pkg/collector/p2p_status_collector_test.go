@@ -222,3 +222,60 @@ func TestP2PStatusCollector_GetMetrics(t *testing.T) {
 	_, err = c.GetMetrics()
 	assert.Error(t, err)
 }
+
+func TestP2PStatusCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	labelFieldID := dcgm.Short(3)
+	labelName := "label_field"
+	counter := counters.Counter{FieldID: 1, FieldName: counters.DCGMExpP2PStatus}
+	labelCounter := counters.Counter{FieldID: labelFieldID, FieldName: labelName, PromType: "label"}
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, nil)
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+	watchList := devicewatchlistmanager.NewWatchList(
+		deviceInfo,
+		nil,
+		[]dcgm.Short{labelFieldID},
+		devicewatcher.NewDeviceWatcher(),
+		1,
+	)
+	collector := &p2pStatusCollector{
+		baseExpCollector: baseExpCollector{
+			deviceWatchList: *watchList,
+			counter:         counter,
+			labelsCounters:  []counters.Counter{labelCounter},
+			config:          &appconfig.Config{},
+		},
+		deviceInfoProvider: deviceInfo,
+	}
+
+	mockDCGM.EXPECT().GetNvLinkP2PStatus().Return(dcgm.NvLinkP2PStatus{Gpus: [][]dcgm.Link_State{
+		{0, 1},
+		{1, 0},
+	}}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{labelFieldID}).
+		Return([]dcgm.FieldValue_v1{{
+			FieldID:   labelFieldID,
+			FieldType: dcgm.DCGM_FT_STRING,
+			Value:     testutils.StrToByteArray("gpu0-label"),
+		}}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{labelFieldID}).
+		Return([]dcgm.FieldValue_v1{{
+			FieldID:   labelFieldID,
+			FieldType: dcgm.DCGM_FT_STRING,
+			Value:     testutils.StrToByteArray("gpu1-label"),
+		}}, nil)
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+	require.Len(t, got[counter], 2)
+
+	for _, metric := range got[counter] {
+		assert.Equal(t, "gpu"+metric.GPU+"-label", metric.Labels[labelName])
+	}
+}

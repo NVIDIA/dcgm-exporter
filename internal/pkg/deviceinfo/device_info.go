@@ -22,15 +22,21 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/bits-and-blooms/bitset"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
-const deviceInitMessage = "System entities of type %s initialized"
+const (
+	deviceInitMessage                  = "System entities of type %s initialized"
+	migGPUInstanceWithoutCIWarning     = "MIG GPU instance has no compute instances; FB metrics will be unavailable if this instance is monitored"
+	migGPUInstanceWithoutCIWarningHint = "create at least one MIG compute instance for this GPU instance"
+)
 
 type Info struct {
 	gpuCount uint
@@ -145,7 +151,10 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 				s.gpus[i].DeviceInfo.GPU = i
 				s.gpus[i].DeviceInfo.UUID = fmt.Sprintf("fake%d", i)
 			} else {
-				return err
+				s.gpus[i].DeviceInfo, err = minimalGPUDeviceInfo(i, err)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -172,40 +181,62 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 
 	hierarchy, err := dcgmprovider.Client().GetGPUInstanceHierarchy()
 	if err != nil {
-		return err
+		if !isMIGHierarchyNVMLUnavailable(err) {
+			return err
+		}
+		slog.Info("MIG hierarchy unavailable because NVML is not loaded; continuing without MIG device discovery",
+			"error", err)
 	}
 
 	if hierarchy.Count > 0 {
 		var entities []dcgm.GroupEntityPair
+		type gpuInstanceRef struct {
+			gpuID         uint
+			instanceIndex int
+		}
+		gpuInstanceRefs := make(map[uint]gpuInstanceRef)
 
-		gpuID := uint(0)
-		instanceIndex := 0
 		for i := uint(0); i < hierarchy.Count; i++ {
-			entityID := hierarchy.EntityList[i].Entity.EntityId
-
-			if hierarchy.EntityList[i].Parent.EntityGroupId == dcgm.FE_GPU {
-
-				// We are adding a GPU instance
-				gpuID = hierarchy.EntityList[i].Parent.EntityId
-
-				instanceInfo := GPUInstanceInfo{
-					Info:        hierarchy.EntityList[i].Info,
-					ProfileName: "",
-					EntityId:    entityID,
-				}
-				s.gpus[gpuID].MigEnabled = true
-				s.gpus[gpuID].GPUInstances = append(s.gpus[gpuID].GPUInstances, instanceInfo)
-				entities = append(entities, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: entityID})
-				instanceIndex = len(s.gpus[gpuID].GPUInstances) - 1
-			} else if hierarchy.EntityList[i].Parent.EntityGroupId == dcgm.FE_GPU_I {
-				// TODO (roarora): Fix this implementation as it expects Instances and Compute Instances to be reported
-				//                 in a certain sequence if, that is not the case results are incorrect.
-
-				// Add the compute instance, gpuId is recorded previously
-				ciInfo := ComputeInstanceInfo{hierarchy.EntityList[i].Info, "", entityID}
-				s.gpus[gpuID].GPUInstances[instanceIndex].ComputeInstances = append(s.gpus[gpuID].GPUInstances[instanceIndex].ComputeInstances,
-					ciInfo)
+			item := hierarchy.EntityList[i]
+			if item.Parent.EntityGroupId != dcgm.FE_GPU {
+				continue
 			}
+
+			entityID := item.Entity.EntityId
+			gpuID := item.Parent.EntityId
+			instanceInfo := GPUInstanceInfo{
+				Info:        item.Info,
+				ProfileName: "",
+				EntityId:    entityID,
+			}
+			s.gpus[gpuID].MigEnabled = true
+			s.gpus[gpuID].GPUInstances = append(s.gpus[gpuID].GPUInstances, instanceInfo)
+			gpuInstanceRefs[entityID] = gpuInstanceRef{
+				gpuID:         gpuID,
+				instanceIndex: len(s.gpus[gpuID].GPUInstances) - 1,
+			}
+			entities = append(entities, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: entityID})
+		}
+
+		for i := uint(0); i < hierarchy.Count; i++ {
+			item := hierarchy.EntityList[i]
+			if item.Parent.EntityGroupId != dcgm.FE_GPU_I {
+				continue
+			}
+
+			instanceRef, found := gpuInstanceRefs[item.Parent.EntityId]
+			if !found {
+				continue
+			}
+
+			ciInfo := ComputeInstanceInfo{
+				InstanceInfo: item.Info,
+				ProfileName:  "",
+				EntityId:     item.Entity.EntityId,
+			}
+			s.gpus[instanceRef.gpuID].GPUInstances[instanceRef.instanceIndex].ComputeInstances = append(
+				s.gpus[instanceRef.gpuID].GPUInstances[instanceRef.instanceIndex].ComputeInstances, ciInfo,
+			)
 		}
 
 		err = s.populateMigProfileNames(entities)
@@ -220,6 +251,104 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 		slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
 	}
 	return err
+}
+
+// minimalGPUDeviceInfo builds enough GPU identity metadata for remote-hostengine
+// metrics when the richer DCGM device-attributes API is unavailable.
+func minimalGPUDeviceInfo(gpuID uint, deviceInfoErr error) (dcgm.Device, error) {
+	diagnostic, ok := dcgmerrors.Classify(deviceInfoErr)
+	if !ok || diagnostic.Code != dcgm.DCGM_ST_FUNCTION_NOT_FOUND {
+		return dcgm.Device{}, deviceInfoErr
+	}
+
+	fields := []dcgm.Short{
+		dcgm.DCGM_FI_DEV_NAME,
+		dcgm.DCGM_FI_DEV_UUID,
+		dcgm.DCGM_FI_DEV_PCI_BUSID,
+	}
+	values, err := dcgmprovider.Client().EntityGetLatestValues(dcgm.FE_GPU, gpuID, fields)
+	if err != nil {
+		diagnostic, ok := dcgmerrors.Classify(err)
+		if !ok || diagnostic.Code != dcgm.DCGM_ST_FUNCTION_NOT_FOUND {
+			return dcgm.Device{}, fmt.Errorf("query minimal GPU identity for gpu %d: %w", gpuID, err)
+		}
+		slog.Info("DCGM device identity fields unavailable; using GPU entity ID for minimal device identity",
+			"gpu_id", gpuID,
+			"error", err)
+		return syntheticMinimalGPUDeviceInfo(gpuID), nil
+	}
+
+	device := syntheticMinimalGPUDeviceInfo(gpuID)
+	for _, value := range values {
+		fieldValue := normalizeDCGMStringField(value.String())
+		switch value.FieldID {
+		case dcgm.DCGM_FI_DEV_NAME:
+			device.Identifiers.Model = fieldValue
+		case dcgm.DCGM_FI_DEV_UUID:
+			device.UUID = fieldValue
+		case dcgm.DCGM_FI_DEV_PCI_BUSID:
+			device.PCI.BusID = fieldValue
+		}
+	}
+
+	if device.UUID == "" {
+		device.UUID = syntheticGPUUUID(gpuID)
+	}
+
+	return device, nil
+}
+
+// syntheticMinimalGPUDeviceInfo builds the smallest stable GPU identity needed
+// to collect and label remote-hostengine metrics when DCGM identity fields are
+// not available through the remote connection.
+func syntheticMinimalGPUDeviceInfo(gpuID uint) dcgm.Device {
+	return dcgm.Device{
+		GPU:           gpuID,
+		UUID:          syntheticGPUUUID(gpuID),
+		DCGMSupported: "Yes",
+	}
+}
+
+// syntheticGPUUUID returns a deterministic placeholder for remote hostengine
+// paths where DCGM exposes entity IDs but not GPU UUID identity fields.
+func syntheticGPUUUID(gpuID uint) string {
+	return fmt.Sprintf("GPU-%d", gpuID)
+}
+
+// normalizeDCGMStringField converts DCGM string sentinels into empty values.
+func normalizeDCGMStringField(value string) string {
+	switch value {
+	case "", dcgm.DCGM_FT_STR_BLANK, dcgm.DCGM_FT_STR_NOT_FOUND, dcgm.DCGM_FT_STR_NOT_SUPPORTED, dcgm.DCGM_FT_STR_NOT_PERMISSIONED:
+		return ""
+	default:
+		return value
+	}
+}
+
+// WarnMIGInstancesWithoutComputeInstances logs one warning for every MIG GPU
+// instance that has no compute instances. FB metrics are resolved through a
+// compute instance's NVML handle, so an empty compute instance list can make
+// FB metrics unavailable for that GPU instance.
+func (s *Info) WarnMIGInstancesWithoutComputeInstances() {
+	for gpuIndex := uint(0); gpuIndex < s.gpuCount; gpuIndex++ {
+		gpu := s.gpus[gpuIndex]
+		if !gpu.MigEnabled {
+			continue
+		}
+
+		for _, instance := range gpu.GPUInstances {
+			if len(instance.ComputeInstances) > 0 {
+				continue
+			}
+
+			slog.Warn(migGPUInstanceWithoutCIWarning,
+				slog.Uint64("gpu_id", uint64(gpu.DeviceInfo.GPU)),
+				slog.Uint64("gpu_instance_entity_id", uint64(instance.EntityId)),
+				slog.Uint64("nvml_instance_id", uint64(instance.Info.NvmlInstanceId)),
+				slog.String("mig_profile", instance.ProfileName),
+				slog.String("hint", migGPUInstanceWithoutCIWarningHint))
+		}
+	}
 }
 
 func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
@@ -246,8 +375,9 @@ func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
 			}
 
 			cpu := CPUInfo{
-				hierarchy.CPUs[i].CPUID,
-				monitoredCores,
+				EntityId: hierarchy.CPUs[i].CPUID,
+				Cores:    monitoredCores,
+				Serial:   hierarchy.CPUs[i].Serial,
 			}
 
 			s.cpus = append(s.cpus, cpu)
@@ -446,6 +576,22 @@ func (s *Info) verifyDevicePresence() error {
 	}
 
 	return nil
+}
+
+// isMIGHierarchyNVMLUnavailable reports whether DCGM could not answer the MIG
+// hierarchy query because local NVML is not loaded. Remote hostengine mode can
+// still collect full-GPU metrics in that state, so this condition should not
+// suppress all GPU metric collection.
+func isMIGHierarchyNVMLUnavailable(err error) bool {
+	if diagnostic, ok := dcgmerrors.Classify(err); ok {
+		return diagnostic.Code == dcgm.DCGM_ST_NVML_NOT_LOADED
+	}
+
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "nvml") &&
+		(strings.Contains(message, "not loaded") ||
+			strings.Contains(message, "doesn't exist") ||
+			strings.Contains(message, "does not exist"))
 }
 
 func (s *Info) verifyCPUDevicePresence() error {

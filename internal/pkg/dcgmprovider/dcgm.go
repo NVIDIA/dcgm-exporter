@@ -17,9 +17,11 @@
 package dcgmprovider
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -27,7 +29,28 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
-var dcgmInterface DCGM
+var (
+	dcgmInterface DCGM
+
+	// These unexported function variables are test seams for DCGM initialization paths.
+	// Production code leaves them bound to the go-dcgm package functions.
+	initStandaloneDCGMFunc = func(remoteHostengineInfo string, socketFlag string) (func(), error) {
+		return dcgm.Init(dcgm.Standalone, remoteHostengineInfo, socketFlag)
+	}
+	initEmbeddedDCGMFunc = func() (func(), error) {
+		return dcgm.Init(dcgm.Embedded)
+	}
+	dcgmFieldsInitFunc    = dcgm.FieldsInit
+	getCPUHierarchyV2Func = dcgm.GetCPUHierarchy_v2
+	// Internal v1 fallback seam; callers and mocks use GetCPUHierarchy.
+	getCPUHierarchyV1Func = dcgm.GetCPUHierarchy
+)
+
+const (
+	// Legacy go-dcgm fallback strings from DCGM's dcgmlib/src/dcgm_errors.c.
+	cpuHierarchyV2VersionMismatchText  = "api version mismatch"
+	cpuHierarchyV2FunctionNotFoundText = "the requested function was not found"
+)
 
 // Initialize sets up the Singleton DCGM interface using the provided configuration.
 func Initialize(config *appconfig.Config) {
@@ -68,14 +91,14 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 	// Connect to a remote DCGM host engine if configured.
 	if config.UseRemoteHE {
 		slog.Info("Attempting to connect to remote hostengine at " + config.RemoteHEInfo)
-		cleanup, err := dcgm.Init(dcgm.Standalone, config.RemoteHEInfo, "0")
+		cleanup, err := initStandaloneDCGMFunc(config.RemoteHEInfo, "0")
 		if err != nil {
 			// Don't call cleanup on error - initialization failed, nothing to clean up
-			slog.Error("Failed to connect to remote hostengine",
-				slog.String("address", config.RemoteHEInfo),
-				slog.String("error", err.Error()),
-				slog.String("hint", "Verify nv-hostengine is running and listening on the expected address. "+
-					"For IPv6, use bracket notation: [<IPv6_ADDR>]:<PORT> (e.g., \"[::1]:5555\")"),
+			logDCGMInitFailure(
+				config,
+				dcgmInitModeStandalone,
+				err,
+				slog.String("hint", remoteHostengineHint),
 			)
 			os.Exit(1)
 		}
@@ -88,17 +111,17 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 
 		// Initialize a local/embedded DCGM instance.
 		slog.Info("Attempting to initialize DCGM.")
-		cleanup, err := dcgm.Init(dcgm.Embedded)
+		cleanup, err := initEmbeddedDCGMFunc()
 		if err != nil {
-			slog.Error(err.Error())
+			logDCGMInitFailure(config, dcgmInitModeEmbedded, err)
 			os.Exit(1)
 		}
 		client.shutdown = cleanup
 	}
 
 	// Initialize the DcgmFields module
-	if val := dcgm.FieldsInit(); val < 0 {
-		slog.Error(fmt.Sprintf("Failed to initialize DCGM Fields module; err: %d", val))
+	if val := dcgmFieldsInitFunc(); val < 0 {
+		logDCGMFieldsInitFailure(config, val)
 		os.Exit(1)
 	} else {
 		slog.Info("Initialized DCGM Fields module.")
@@ -164,12 +187,69 @@ func (d dcgmProvider) GetAllDeviceCount() (uint, error) {
 	return dcgm.GetAllDeviceCount()
 }
 
-func (d dcgmProvider) GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error) {
-	return dcgm.GetCPUHierarchy()
+// GetCPUHierarchy returns the CPU hierarchy in the v2 shape, falling back to v1
+// with empty CPU serials when v2 is unavailable.
+func (d dcgmProvider) GetCPUHierarchy() (dcgm.CPUHierarchy_v2, error) {
+	hierarchy, err := getCPUHierarchyV2Func()
+	if err == nil {
+		return hierarchy, nil
+	}
+
+	if !isCPUHierarchyV2Unsupported(err) {
+		return hierarchy, err
+	}
+
+	slog.Warn("Falling back to dcgmGetCpuHierarchy after dcgmGetCpuHierarchy_v2 failed",
+		slog.String("error", err.Error()))
+
+	v1Hierarchy, fallbackErr := getCPUHierarchyV1Func()
+	if fallbackErr != nil {
+		return dcgm.CPUHierarchy_v2{}, fmt.Errorf("fallback to dcgmGetCpuHierarchy failed after dcgmGetCpuHierarchy_v2 was unsupported: %w", fallbackErr)
+	}
+
+	return cpuHierarchyV1AsV2(v1Hierarchy), nil
+}
+
+// isCPUHierarchyV2Unsupported reports whether a v2 CPU hierarchy error can
+// safely fall back to the legacy v1 hierarchy call.
+func isCPUHierarchyV2Unsupported(err error) bool {
+	var dcgmErr *dcgm.Error
+	if errors.As(err, &dcgmErr) {
+		switch int(dcgmErr.Code) {
+		case dcgm.DCGM_ST_VER_MISMATCH, dcgm.DCGM_ST_FUNCTION_NOT_FOUND:
+			return true
+		}
+	}
+
+	errText := strings.ToLower(err.Error())
+	return strings.Contains(errText, cpuHierarchyV2VersionMismatchText) ||
+		strings.Contains(errText, cpuHierarchyV2FunctionNotFoundText)
+}
+
+// cpuHierarchyV1AsV2 adapts the legacy CPU hierarchy shape to the v2 shape
+// without serial values.
+func cpuHierarchyV1AsV2(v1Hierarchy dcgm.CPUHierarchy_v1) dcgm.CPUHierarchy_v2 {
+	numCPUs := min(v1Hierarchy.NumCPUs, dcgm.MAX_NUM_CPUS)
+	hierarchy := dcgm.CPUHierarchy_v2{
+		NumCPUs: numCPUs,
+	}
+	for i := uint(0); i < numCPUs; i++ {
+		hierarchy.CPUs[i] = dcgm.CPUHierarchyCPU_v2{
+			CPUID:      v1Hierarchy.CPUs[i].CPUID,
+			OwnedCores: append([]uint64(nil), v1Hierarchy.CPUs[i].OwnedCores...),
+		}
+	}
+
+	return hierarchy
 }
 
 func (d dcgmProvider) GetDeviceInfo(gpuID uint) (dcgm.Device, error) {
 	return dcgm.GetDeviceInfo(gpuID)
+}
+
+// GetErrorMeta returns DCGM-owned metadata for a health or diagnostic error code.
+func (d dcgmProvider) GetErrorMeta(code dcgm.HealthCheckErrorCode) *dcgm.ErrorMeta {
+	return dcgm.GetErrorMeta(code)
 }
 
 func (d dcgmProvider) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {

@@ -1,0 +1,15 @@
+---
+description: Show the DCGM Exporter development guide
+globs: ["**/*"]
+---
+
+# Development Guide
+
+Read these first:
+
+- `AGENTS.md`
+- scoped `AGENTS.md` files
+- `CONTRIBUTING.md`
+- `README.md`
+- `llms.txt`
+- `.codex/validation.md`

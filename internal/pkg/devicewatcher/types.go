@@ -25,7 +25,16 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
+// FieldWatchGroup contains the DCGM field IDs that should share one watch interval.
+type FieldWatchGroup struct {
+	Name         string
+	Fields       []dcgm.Short
+	IntervalMSec int64
+}
+
+// Watcher resolves device fields and starts DCGM field watches for entity devices.
 type Watcher interface {
 	GetDeviceFields([]counters.Counter, dcgm.Field_Entity_Group) []dcgm.Short
 	WatchDeviceFields([]dcgm.Short, deviceinfo.Provider, int64) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error)
+	WatchDeviceFieldGroups([]FieldWatchGroup, deviceinfo.Provider) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error)
 }

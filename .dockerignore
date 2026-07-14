@@ -32,6 +32,7 @@ grafana/
 # Docker files - allow Dockerfile, build script, and entrypoint
 .dockerignore
 !docker/Dockerfile
+!docker/package.Dockerfile
 !docker/build-cross.sh
 !docker/dcgm-exporter-entrypoint.sh
 
@@ -60,8 +61,11 @@ Thumbs.db
 staticcheck.conf
 lint/
 
-# Packaging
-packaging/
+# Packaging - include only the package service file needed for payload staging
+packaging/*
+!packaging/config-files/
+!packaging/config-files/systemd/
+!packaging/config-files/systemd/nvidia-dcgm-exporter.service
 
 # Scripts that aren't needed in build
 scripts/
@@ -76,4 +80,3 @@ scripts/
 # Coverage reports
 coverage.out
 coverage.html
-

@@ -1,0 +1,14 @@
+---
+description: DCGM Exporter test layer selection and validation gates
+globs: ["**/*_test.go", "tests/**", "Makefile"]
+alwaysApply: false
+---
+
+# Testing
+
+- Pick the lowest layer that proves the behavior.
+- Use package tests for parsing, rendering, and pure logic.
+- Use GPU integration tests only for behavior requiring DCGM/hardware.
+- Use Docker and Kubernetes e2e tests only when runtime/deployment behavior is
+  involved and prerequisites exist.
+- Document unavailable prerequisites instead of claiming a skipped gate passed.

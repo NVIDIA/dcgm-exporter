@@ -17,17 +17,16 @@
 Description=NVIDIA DCGM-exporter service
 Wants=nvidia-dcgm.service
 After=nvidia-dcgm.service
+StartLimitIntervalSec=0
 
 [Service]
 User=root
 PrivateTmp=false
 
-StandardOutput=append:/var/log/dcgm-exporter.log
-StandardError=append:/var/log/dcgm-exporter.log
-
 ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/default-counters.csv
 
-Restart=on-abort
+Restart=on-failure
+RestartSec=10s
 
 [Install]
 WantedBy=multi-user.target

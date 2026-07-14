@@ -32,6 +32,10 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient"
 )
 
+// getKubeClient is an unexported test seam for ConfigMap counter loading.
+// Production code leaves it bound to kubeclient.GetKubeClient.
+var getKubeClient = kubeclient.GetKubeClient
+
 func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error) {
 	var (
 		err     error
@@ -39,30 +43,30 @@ func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error
 	)
 
 	res := new(CounterSet)
-
-	if c.ConfigMapData != undefinedConfigMapData {
-		var client kubernetes.Interface
-		client, err = kubeclient.GetKubeClient()
-		if err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
-		}
-		records, err = readConfigMap(ctx, client, c)
-		if err != nil {
-			slog.Error(err.Error())
-			os.Exit(1)
-		}
-	} else {
-		err = fmt.Errorf("no configmap data specified")
+	source, err := metricSource(c)
+	if err != nil {
+		return nil, err
 	}
 
-	if err != nil || c.ConfigMapData == undefinedConfigMapData {
-		slog.Info(fmt.Sprintf("Falling back to metric file '%s'", c.CollectorsFile))
-
-		records, err = ReadCSVFile(c.CollectorsFile)
+	switch source.Kind {
+	case appconfig.MetricSourceConfigMap:
+		var client kubernetes.Interface
+		client, err = getKubeClient()
 		if err != nil {
-			slog.Error(fmt.Sprintf("Could not read metrics file '%s'; err: %v", c.CollectorsFile, err))
-			return res, err
+			return nil, err
+		}
+		records, err = readConfigMapSource(ctx, client, source.ConfigMap)
+		if err != nil {
+			return nil, err
+		}
+	case appconfig.MetricSourceInline:
+		records = metricFieldsToRecords(source.Fields)
+	default:
+		slog.Info(fmt.Sprintf("Using metric file '%s'", source.File))
+		records, err = ReadCSVFile(source.File)
+		if err != nil {
+			slog.Error(fmt.Sprintf("Could not read metrics file '%s'; err: %v", source.File, err))
+			return nil, err
 		}
 	}
 
@@ -72,6 +76,44 @@ func GetCounterSet(ctx context.Context, c *appconfig.Config) (*CounterSet, error
 	}
 
 	return res, err
+}
+
+// metricSource resolves the active metric source from explicit config, compatibility ConfigMap data, or file defaults.
+func metricSource(c *appconfig.Config) (appconfig.MetricSource, error) {
+	if c == nil {
+		return appconfig.MetricSource{}, fmt.Errorf("config is nil")
+	}
+	if c.MetricSource.Kind != "" {
+		return c.MetricSource, nil
+	}
+
+	if c.ConfigMapData != "" && c.ConfigMapData != appconfig.UndefinedConfigMapData {
+		parts := strings.Split(c.ConfigMapData, ":")
+		if len(parts) != 2 {
+			return appconfig.MetricSource{}, fmt.Errorf("malformed configmap-data '%s'", c.ConfigMapData)
+		}
+		return appconfig.MetricSource{
+			Kind: appconfig.MetricSourceConfigMap,
+			ConfigMap: appconfig.ConfigMapMetricSource{
+				Namespace: parts[0],
+				Name:      parts[1],
+			},
+		}, nil
+	}
+
+	return appconfig.MetricSource{
+		Kind: appconfig.MetricSourceFile,
+		File: c.CollectorsFile,
+	}, nil
+}
+
+// metricFieldsToRecords converts inline YAML metric fields to the existing three-column CSV record shape.
+func metricFieldsToRecords(fields []appconfig.MetricField) [][]string {
+	records := make([][]string, 0, len(fields))
+	for _, field := range fields {
+		records = append(records, []string{field.Name, field.PrometheusType, field.Help})
+	}
+	return records
 }
 
 func ReadCSVFile(filename string) ([][]string, error) {
@@ -89,6 +131,7 @@ func ReadCSVFile(filename string) ([][]string, error) {
 	return records, err
 }
 
+// ExtractCounters parses counter CSV rows into DCGM and exporter counter sets.
 func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, error) {
 	res := CounterSet{}
 
@@ -105,6 +148,14 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			return nil, fmt.Errorf("malformed CSV record; err: failed to parse line %d (`%v`), "+
 				"expected 3 fields", i,
 				record)
+		}
+
+		// Config may only declare scalar shapes the renderer can actually emit.
+		if _, ok := promMetricType[record[1]]; !ok {
+			return nil, fmt.Errorf(
+				"unsupported Prometheus metric type %q; supported types are counter, gauge, untyped, and label",
+				record[1],
+			)
 		}
 
 		fieldID, ok := dcgm.GetFieldID(record[0])
@@ -130,10 +181,6 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 		if !fieldIsSupported(uint(fieldID), c) {
 			slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
 			continue
-		}
-
-		if _, ok := promMetricType[record[1]]; !ok {
-			return nil, fmt.Errorf("could not find Prometheus metric type '%s'", record[1])
 		}
 
 		res.DCGMCounters = append(res.DCGMCounters,
@@ -163,23 +210,23 @@ func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {
 	return false
 }
 
-func readConfigMap(ctx context.Context, kubeClient kubernetes.Interface, c *appconfig.Config) ([][]string, error) {
-	parts := strings.Split(c.ConfigMapData, ":")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("malformed configmap-data '%s'", c.ConfigMapData)
-	}
-
+// readConfigMapSource loads the compatibility API-backed ConfigMap source from DefaultConfigMapKey.
+func readConfigMapSource(
+	ctx context.Context,
+	kubeClient kubernetes.Interface,
+	source appconfig.ConfigMapMetricSource,
+) ([][]string, error) {
 	var cm *corev1.ConfigMap
-	cm, err := kubeClient.CoreV1().ConfigMaps(parts[0]).Get(ctx, parts[1], metav1.GetOptions{})
+	cm, err := kubeClient.CoreV1().ConfigMaps(source.Namespace).Get(ctx, source.Name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("could not retrieve ConfigMap '%s'; err: %w", c.ConfigMapData, err)
+		return nil, fmt.Errorf("could not retrieve ConfigMap '%s:%s'; err: %w", source.Namespace, source.Name, err)
 	}
 
-	if _, ok := cm.Data["metrics"]; !ok {
-		return nil, fmt.Errorf("malformed ConfigMap '%s'; no 'metrics' key", c.ConfigMapData)
+	if _, ok := cm.Data[appconfig.DefaultConfigMapKey]; !ok {
+		return nil, fmt.Errorf("malformed ConfigMap '%s:%s'; no '%s' key", source.Namespace, source.Name, appconfig.DefaultConfigMapKey)
 	}
 
-	r := csv.NewReader(strings.NewReader(cm.Data["metrics"]))
+	r := csv.NewReader(strings.NewReader(cm.Data[appconfig.DefaultConfigMapKey]))
 	r.Comment = '#'
 	records, err := r.ReadAll()
 

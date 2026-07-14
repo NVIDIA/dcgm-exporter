@@ -24,6 +24,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
@@ -154,9 +155,8 @@ func TestNewXIDCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return(nil,
-					dcgm.FieldHandle{},
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+					nil,
 					sampleCleanups, fmt.Errorf("some error"))
 			},
 			want: func(
@@ -181,9 +181,8 @@ func TestNewXIDCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return(nil,
-					dcgm.FieldHandle{},
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+					nil,
 					sampleCleanups, nil)
 			},
 			want: func(
@@ -200,6 +199,9 @@ func TestNewXIDCollector(t *testing.T) {
 							hostname:        hostname,
 							config:          config,
 							cleanups:        sampleCleanups,
+						},
+						sourceFields: map[dcgm.Short]string{
+							dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
 						},
 						windowSize: config.XIDCountWindowSize,
 					},
@@ -220,9 +222,8 @@ func TestNewXIDCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return(nil,
-					dcgm.FieldHandle{},
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+					nil,
 					sampleCleanups, nil)
 			},
 			want: func(
@@ -239,6 +240,9 @@ func TestNewXIDCollector(t *testing.T) {
 							hostname:        hostname,
 							config:          config,
 							cleanups:        sampleCleanups,
+						},
+						sourceFields: map[dcgm.Short]string{
+							dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
 						},
 						windowSize: config.XIDCountWindowSize,
 					},
@@ -411,13 +415,12 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -461,18 +464,17 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, xidErr1, xidErr2 byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityID: gpuID1, Value: [4096]byte{xidErr1}},
-					{EntityID: gpuID1, Value: [4096]byte{xidErr1}},
-					{EntityID: gpuID1, Value: [4096]byte{xidErr2}},
-					{EntityID: gpuID2, Value: [4096]byte{xidErr1}},
-					{EntityID: gpuID2, Value: [4096]byte{xidErr2}},
-					{EntityID: gpuID2, Value: [4096]byte{xidErr2}},
-					{EntityID: gpuID2, Value: [4096]byte{xidErr2}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{xidErr1}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{xidErr1}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{xidErr2}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{xidErr1}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{xidErr2}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{xidErr2}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{xidErr2}},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -521,32 +523,21 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 				return collector
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, xidErr1, xidErr2 byte) {
-				// Create a byte array representing DCGM_INT64_BLANK (0x7FFFFFFFFFFFFFF0 = 9223372036854775792)
-				blankValue := [4096]byte{}
-				// Set the first 8 bytes to DCGM_INT64_BLANK in little-endian format
-				blankValue[0] = 0xF0
-				blankValue[1] = 0xFF
-				blankValue[2] = 0xFF
-				blankValue[3] = 0xFF
-				blankValue[4] = 0xFF
-				blankValue[5] = 0xFF
-				blankValue[6] = 0xFF
-				blankValue[7] = 0x7F
+				blankValue := createInt64ByteArray(dcgm.DCGM_FT_INT64_BLANK)
 
 				mockEntitiesResult := []dcgm.FieldValue_v2{
 					// Valid XID error from GPU 0
-					{EntityID: gpuID1, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{xidErr1}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{xidErr1}},
 					// DCGM_INT64_BLANK value from GPU 0 - should be filtered out
-					{EntityID: gpuID1, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
 					// Another valid XID error from GPU 1
-					{EntityID: gpuID2, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{xidErr2}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS, FieldType: dcgm.DCGM_FT_INT64, Value: [4096]byte{xidErr2}},
 					// Another DCGM_INT64_BLANK value from GPU 1 - should be filtered out
-					{EntityID: gpuID2, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -600,4 +591,204 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_xidCollector_GetMetricsReadsAllDeviceFieldGroups(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	groupHandle := dcgm.GroupHandle{}
+	groupHandle.SetHandle(uintptr(1))
+	fastFieldGroup := dcgm.FieldHandle{}
+	fastFieldGroup.SetHandle(uintptr(2))
+	slowFieldGroup := dcgm.FieldHandle{}
+	slowFieldGroup.SetHandle(uintptr(3))
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return(
+			[]dcgm.GroupHandle{groupHandle},
+			[]dcgm.FieldHandle{fastFieldGroup, slowFieldGroup},
+			nil,
+			nil,
+		)
+
+	counter := counters.Counter{
+		FieldID:   dcgm.Short(counters.DCGMXIDErrorsCount),
+		FieldName: counters.DCGMExpXIDErrorsCount,
+	}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, 1)
+	collector, err := NewXIDCollector(counters.CounterList{counter}, "localhost", &appconfig.Config{}, *deviceWatchList)
+	require.NoError(t, err)
+
+	xidValue := createInt64ByteArray(42)
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(groupHandle, fastFieldGroup, gomock.AssignableToTypeOf(time.Time{})).
+		Return([]dcgm.FieldValue_v2{
+			{
+				EntityGroupId: dcgm.FE_GPU,
+				EntityID:      0,
+				FieldID:       dcgm.DCGM_FI_DEV_XID_ERRORS,
+				FieldType:     dcgm.DCGM_FT_INT64,
+				Status:        0,
+				Value:         xidValue,
+			},
+		}, time.Time{}, nil)
+	mockDCGM.EXPECT().GetValuesSince(groupHandle, slowFieldGroup, gomock.AssignableToTypeOf(time.Time{})).
+		Return([]dcgm.FieldValue_v2{
+			{
+				EntityGroupId: dcgm.FE_GPU,
+				EntityID:      0,
+				FieldID:       dcgm.DCGM_FI_DEV_XID_ERRORS,
+				FieldType:     dcgm.DCGM_FT_INT64,
+				Status:        0,
+				Value:         xidValue,
+			},
+		}, time.Time{}, nil)
+
+	got, err := collector.GetMetrics()
+
+	require.NoError(t, err)
+	require.Len(t, got[counter], 1)
+	assert.Equal(t, "2", got[counter][0].Value)
+	assert.Equal(t, "42", got[counter][0].Labels["xid"])
+}
+
+func Test_xidCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
+	buf := setupDebugLogCapture(t)
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(uintptr(1))
+	mockFieldGroupHandle := dcgm.FieldHandle{}
+	mockFieldGroupHandle.SetHandle(uintptr(1))
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return([]dcgm.GroupHandle{mockGroupHandle}, []dcgm.FieldHandle{mockFieldGroupHandle}, nil, nil)
+
+	counterList := counters.CounterList{
+		{
+			FieldID:   dcgm.Short(counters.DCGMXIDErrorsCount),
+			FieldName: counters.DCGMExpXIDErrorsCount,
+		},
+	}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, 1)
+
+	collector, err := NewXIDCollector(counterList, "localhost", &appconfig.Config{}, *deviceWatchList)
+	require.NoError(t, err)
+
+	blankValue := createInt64ByteArray(dcgm.DCGM_FT_INT64_BLANK)
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(mockGroupHandle, mockFieldGroupHandle, gomock.AssignableToTypeOf(time.Time{})).
+		Return([]dcgm.FieldValue_v2{
+			{
+				EntityGroupId: dcgm.FE_GPU,
+				EntityID:      0,
+				FieldID:       dcgm.DCGM_FI_DEV_XID_ERRORS,
+				FieldType:     dcgm.DCGM_FT_INT64,
+				Status:        0,
+				Value:         blankValue,
+			},
+		}, time.Time{}, nil)
+
+	_, err = collector.GetMetrics()
+	require.NoError(t, err)
+
+	got := findLogRecord(t, buf, blankValueSkippedMessage)
+	assert.Equal(t, blankValueSkippedMessage, got["msg"])
+	assert.Equal(t, float64(dcgm.DCGM_FI_DEV_XID_ERRORS), got["fieldID"])
+	assert.Equal(t, "DCGM_FI_DEV_XID_ERRORS", got["fieldName"])
+	assert.Equal(t, dcgm.FE_GPU.String(), got["entityType"])
+	assert.Equal(t, float64(0), got["entityID"])
+}
+
+func Test_xidCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	labelFieldID := dcgm.Short(3)
+	labelName := "label_field"
+	xidCounter := counters.Counter{FieldID: 1, FieldName: counters.DCGMExpXIDErrorsCount}
+	labelCounter := counters.Counter{FieldID: labelFieldID, FieldName: labelName, PromType: "label"}
+
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	groupHandle := dcgm.GroupHandle{}
+	groupHandle.SetHandle(uintptr(1))
+	fieldGroupHandle := dcgm.FieldHandle{}
+	fieldGroupHandle.SetHandle(uintptr(1))
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return([]dcgm.GroupHandle{groupHandle}, []dcgm.FieldHandle{fieldGroupHandle}, nil, nil)
+
+	deviceWatchList := devicewatchlistmanager.NewWatchList(
+		mockGPUDeviceInfo,
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		[]dcgm.Short{labelFieldID},
+		mockDeviceWatcher,
+		1,
+	)
+	collector, err := NewXIDCollector(
+		counters.CounterList{xidCounter, labelCounter},
+		"localhost",
+		&appconfig.Config{},
+		*deviceWatchList,
+	)
+	require.NoError(t, err)
+
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(groupHandle, fieldGroupHandle, gomock.AssignableToTypeOf(time.Time{})).
+		Return([]dcgm.FieldValue_v2{{
+			EntityGroupId: dcgm.FE_GPU,
+			EntityID:      1,
+			FieldID:       dcgm.DCGM_FI_DEV_XID_ERRORS,
+			FieldType:     dcgm.DCGM_FT_INT64,
+			Status:        0,
+			Value:         createInt64ByteArray(42),
+		}}, time.Time{}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{labelFieldID}).
+		Return([]dcgm.FieldValue_v1{{
+			FieldID:   labelFieldID,
+			FieldType: dcgm.DCGM_FT_STRING,
+			Value:     testutils.StrToByteArray("gpu0-label"),
+		}}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{labelFieldID}).
+		Return([]dcgm.FieldValue_v1{{
+			FieldID:   labelFieldID,
+			FieldType: dcgm.DCGM_FT_STRING,
+			Value:     testutils.StrToByteArray("gpu1-label"),
+		}}, nil)
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+	require.Len(t, got[xidCounter], 2)
+
+	byGPU := map[string]Metric{}
+	for _, metric := range got[xidCounter] {
+		byGPU[metric.GPU] = metric
+	}
+	assert.Equal(t, "gpu0-label", byGPU["0"].Labels[labelName])
+	assert.Equal(t, "gpu1-label", byGPU["1"].Labels[labelName])
 }

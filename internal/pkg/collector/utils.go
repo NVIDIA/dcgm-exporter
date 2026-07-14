@@ -16,7 +16,77 @@
 
 package collector
 
-import "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+import (
+	"context"
+	"log/slog"
+
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+)
+
+const (
+	blankValueSkippedMessage  = "Skipping blank DCGM field value"
+	nonOKStatusSkippedMessage = "Skipping DCGM field value with non-OK status"
+
+	unknownFieldName = "unknown"
+)
+
+func isDebugLoggingEnabled() bool {
+	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
+}
+
+func counterFieldNameOrUnknown(c []counters.Counter, fieldID dcgm.Short) string {
+	counter, err := findCounterField(c, fieldID)
+	if err != nil {
+		return unknownFieldName
+	}
+	return counter.FieldName
+}
+
+func logBlankValueSkipped(
+	fieldID dcgm.Short,
+	fieldName string,
+	entityType dcgm.Field_Entity_Group,
+	entityID uint,
+) {
+	if !isDebugLoggingEnabled() {
+		return
+	}
+
+	slog.Debug(
+		blankValueSkippedMessage,
+		slog.Int("fieldID", int(fieldID)),
+		slog.String("fieldName", fieldName),
+		slog.String("entityType", entityType.String()),
+		slog.Uint64("entityID", uint64(entityID)),
+	)
+}
+
+func logFieldValueSkipped(
+	value dcgm.FieldValue_v1,
+	fieldName string,
+	entityType dcgm.Field_Entity_Group,
+	entityID uint,
+) {
+	if value.Status == dcgm.DCGM_ST_OK {
+		logBlankValueSkipped(value.FieldID, fieldName, entityType, entityID)
+		return
+	}
+
+	if !isDebugLoggingEnabled() {
+		return
+	}
+
+	slog.Debug(
+		nonOKStatusSkippedMessage,
+		slog.Int("fieldID", int(value.FieldID)),
+		slog.String("fieldName", fieldName),
+		slog.String("entityType", entityType.String()),
+		slog.Uint64("entityID", uint64(entityID)),
+		slog.Int("status", value.Status),
+	)
+}
 
 // isBlankValue checks if a FieldValue_v2 contains a DCGM blank/sentinel value
 // that should be filtered out. These values indicate no valid data is available.

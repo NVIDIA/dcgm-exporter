@@ -1,0 +1,17 @@
+# Format
+# If line starts with a '#' it is considered a comment
+# DCGM FIELD, Prometheus metric type, help message
+
+# Base metrics
+DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
+DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
+DCGM_FI_DEV_POWER_USAGE,   gauge, Power draw (in W).
+DCGM_FI_DEV_FB_USED,       gauge, Framebuffer memory used (in MiB).
+DCGM_FI_DRIVER_VERSION,    label, Driver Version.
+
+# DCP metrics
+DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
+DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
+DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
+DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus in bytes per second.
+DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus in bytes per second.

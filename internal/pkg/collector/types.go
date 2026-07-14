@@ -63,6 +63,7 @@ type Metric struct {
 	GPU           string                  `json:"gpu,omitempty"`
 	GPUUUID       string                  `json:"gpu_uuid,omitempty"`
 	GPUDevice     string                  `json:"gpu_device,omitempty"`
+	CPUSerial     string                  `json:"cpu_serial,omitempty"`
 	GPUModelName  string                  `json:"gpu_model,omitempty"`
 	GPUPCIBusID   string                  `json:"pci_bus_id,omitempty"`
 	UUID          string                  `json:"uuid,omitempty"`

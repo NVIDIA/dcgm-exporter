@@ -77,6 +77,14 @@ Create the name of the service account to use
 
 
 {{/*
+Determine whether the service account token should be mounted.
+*/}}
+{{- define "dcgm-exporter.automountServiceAccountToken" -}}
+{{- ternary (or (and (or .Values.kubernetes.enablePodLabels .Values.kubernetes.enablePodUID) .Values.kubernetes.rbac.create) .Values.kubernetesDRA.enabled) .Values.serviceAccount.automountServiceAccountToken (kindIs "invalid" .Values.serviceAccount.automountServiceAccountToken) -}}
+{{- end -}}
+
+
+{{/*
 Create the name of the tls secret to use
 */}}
 {{- define "dcgm-exporter.tlsCertsSecretName" -}}
@@ -93,4 +101,17 @@ Create the name of the web-config configmap name to use
 */}}
 {{- define "dcgm-exporter.webConfigConfigMap" -}}
   {{ printf "%s-web-config.yml" (include "dcgm-exporter.fullname" .) }}
+{{- end -}}
+
+{{/*
+Create the name of the dcgm-exporter YAML config configmap to use
+*/}}
+{{- define "dcgm-exporter.configConfigMap" -}}
+{{- if .Values.config.name -}}
+  {{- .Values.config.name -}}
+{{- else if .Values.config.create -}}
+  {{- printf "%s-config" (include "dcgm-exporter.fullname" .) -}}
+{{- else -}}
+  {{- fail "config.name must be set when config.create is false" -}}
+{{- end -}}
 {{- end -}}

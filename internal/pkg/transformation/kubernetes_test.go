@@ -17,8 +17,14 @@
 package transformation
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	stdos "os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,12 +36,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
@@ -54,6 +63,246 @@ import (
 //nolint:gosec // G115: test helper for non-negative int-to-uint conversion
 func toUint(v int) uint {
 	return uint(v)
+}
+
+func TestNewPodMapperOutsideClusterDefaults(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Setenv("KUBERNETES_SERVICE_PORT", "")
+
+	pm := NewPodMapper(&appconfig.Config{
+		KubernetesPodLabelAllowlistRegex: []string{"["},
+		KubernetesPodLabelCacheSize:      -1,
+	})
+
+	require.NotNil(t, pm)
+	assert.Equal(t, "podMapper", pm.Name())
+	assert.Equal(t, 150000, pm.labelFilterCache.maxSize)
+	assert.False(t, pm.labelFilterCache.enabled)
+
+	pm.Run()
+	pm.Stop()
+}
+
+func restorePodMapperSeams(t *testing.T) {
+	t.Helper()
+	prevInClusterConfig := inClusterConfigFunc
+	prevNewKubernetes := newKubernetesForConfigFunc
+	prevNewDRA := newDRAResourceSliceManagerFunc
+	t.Cleanup(func() {
+		inClusterConfigFunc = prevInClusterConfig
+		newKubernetesForConfigFunc = prevNewKubernetes
+		newDRAResourceSliceManagerFunc = prevNewDRA
+	})
+}
+
+func TestNewPodMapperInClusterInitialization(t *testing.T) {
+	restorePodMapperSeams(t)
+	inClusterConfigFunc = func() (*rest.Config, error) {
+		return &rest.Config{Host: "https://kubernetes.default.svc"}, nil
+	}
+	clientset := fake.NewClientset()
+	newKubernetesForConfigFunc = func(*rest.Config) (kubernetes.Interface, error) {
+		return clientset, nil
+	}
+
+	t.Run("skips Kubernetes client without metadata enrichment", func(t *testing.T) {
+		t.Setenv("NODE_NAME", "node-a")
+		inClusterCalls := 0
+		clientCalls := 0
+		inClusterConfigFunc = func() (*rest.Config, error) {
+			inClusterCalls++
+			return &rest.Config{Host: "https://kubernetes.default.svc"}, nil
+		}
+		newKubernetesForConfigFunc = func(*rest.Config) (kubernetes.Interface, error) {
+			clientCalls++
+			return clientset, nil
+		}
+		defer func() {
+			inClusterConfigFunc = func() (*rest.Config, error) {
+				return &rest.Config{Host: "https://kubernetes.default.svc"}, nil
+			}
+			newKubernetesForConfigFunc = func(*rest.Config) (kubernetes.Interface, error) {
+				return clientset, nil
+			}
+		}()
+
+		pm := NewPodMapper(&appconfig.Config{})
+
+		require.NotNil(t, pm)
+		assert.Nil(t, pm.Client)
+		assert.Nil(t, pm.podInformerFactory)
+		assert.Nil(t, pm.podLister)
+		assert.Equal(t, 0, inClusterCalls)
+		assert.Equal(t, 0, clientCalls)
+		pm.Stop()
+	})
+
+	t.Run("node scoped informer", func(t *testing.T) {
+		t.Setenv("NODE_NAME", "node-a")
+
+		pm := NewPodMapper(&appconfig.Config{KubernetesEnablePodLabels: true})
+
+		require.NotNil(t, pm.Client)
+		assert.NotNil(t, pm.podInformerFactory)
+		assert.NotNil(t, pm.podLister)
+		assert.NotNil(t, pm.podInformerSynced)
+		pm.Stop()
+	})
+
+	t.Run("client construction error", func(t *testing.T) {
+		newKubernetesForConfigFunc = func(*rest.Config) (kubernetes.Interface, error) {
+			return nil, errors.New("client failed")
+		}
+		defer func() {
+			newKubernetesForConfigFunc = func(*rest.Config) (kubernetes.Interface, error) {
+				return clientset, nil
+			}
+		}()
+
+		pm := NewPodMapper(&appconfig.Config{KubernetesEnablePodLabels: true})
+
+		assert.Nil(t, pm.Client)
+		pm.Stop()
+	})
+
+	t.Run("DRA manager success", func(t *testing.T) {
+		t.Setenv("NODE_NAME", "")
+		draManager := newTestDRAManager()
+		newDRAResourceSliceManagerFunc = func() (*DRAResourceSliceManager, error) {
+			return draManager, nil
+		}
+
+		pm := NewPodMapper(&appconfig.Config{KubernetesEnableDRA: true})
+
+		assert.Same(t, draManager, pm.ResourceSliceManager)
+		pm.Stop()
+	})
+
+	t.Run("DRA manager error keeps pod mapper usable", func(t *testing.T) {
+		newDRAResourceSliceManagerFunc = func() (*DRAResourceSliceManager, error) {
+			return nil, errors.New("dra failed")
+		}
+
+		pm := NewPodMapper(&appconfig.Config{KubernetesEnableDRA: true})
+
+		assert.Nil(t, pm.ResourceSliceManager)
+		pm.Stop()
+	})
+}
+
+func TestPodMapperRunWaitsForInformerSync(t *testing.T) {
+	clientset := fake.NewClientset(&v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "default"},
+	})
+	factory := informers.NewSharedInformerFactory(clientset, 0)
+	informer := factory.Core().V1().Pods().Informer()
+	pm := &PodMapper{
+		Config:             &appconfig.Config{},
+		podInformerFactory: factory,
+		podInformerSynced:  informer.HasSynced,
+		stopChan:           make(chan struct{}),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pm.Run()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		pm.Stop()
+		t.Fatal("pod mapper did not finish cache sync")
+	}
+	pm.Stop()
+}
+
+func TestPodMapperProcessMissingPodResourcesSocketIsNoop(t *testing.T) {
+	pm := &PodMapper{
+		Config: &appconfig.Config{
+			KubernetesGPUIdType:       appconfig.GPUUID,
+			PodResourcesKubeletSocket: filepath.Join(t.TempDir(), "missing.sock"),
+		},
+	}
+	counter := counters.Counter{FieldID: 155, FieldName: "DCGM_FI_DEV_POWER_USAGE", PromType: "gauge"}
+	metrics := collector.MetricsByCounter{
+		counter: {{
+			GPUUUID:    "gpu-0",
+			Counter:    counter,
+			Value:      "42",
+			Attributes: map[string]string{},
+			Labels:     map[string]string{},
+		}},
+	}
+
+	err := pm.Process(metrics, nil)
+
+	require.NoError(t, err)
+	require.Len(t, metrics[counter], 1)
+	assert.Empty(t, metrics[counter][0].Attributes)
+}
+
+func TestPodMapperGetMappingsValidatesPodResourcesSocketPath(t *testing.T) {
+	regularFilePath := filepath.Join(t.TempDir(), "regular-file")
+	require.NoError(t, stdos.WriteFile(regularFilePath, []byte("not a socket"), 0o600))
+
+	tests := []struct {
+		name        string
+		socketPath  string
+		errContains string
+	}{
+		{
+			name:        "relative path",
+			socketPath:  "kubelet.sock",
+			errContains: "must be absolute",
+		},
+		{
+			name:        "regular file",
+			socketPath:  regularFilePath,
+			errContains: "must be a Unix socket",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pm := &PodMapper{
+				Config: &appconfig.Config{
+					PodResourcesKubeletSocket: tc.socketPath,
+				},
+			}
+
+			_, _, _, err := pm.getMappings(nil)
+
+			require.ErrorContains(t, err, tc.errContains)
+		})
+	}
+}
+
+func TestIterateGPUDevicesFiltersResources(t *testing.T) {
+	pm := &PodMapper{Config: &appconfig.Config{NvidiaResourceNames: []string{"example.com/custom-gpu"}}}
+	response := &podresourcesapi.ListPodResourcesResponse{
+		PodResources: []*podresourcesapi.PodResources{{
+			Name:      "pod-a",
+			Namespace: "default",
+			Containers: []*podresourcesapi.ContainerResources{{
+				Name: "ctr-a",
+				Devices: []*podresourcesapi.ContainerDevices{
+					{ResourceName: "example.com/cpu", DeviceIds: []string{"cpu0"}},
+					{ResourceName: appconfig.NvidiaResourceName, DeviceIds: []string{"gpu0"}},
+					{ResourceName: "example.com/custom-gpu", DeviceIds: []string{"gpu1"}},
+					{ResourceName: appconfig.NvidiaMigResourcePrefix + "1g.10gb", DeviceIds: []string{"mig0"}},
+				},
+			}},
+		}},
+	}
+
+	var got []string
+	pm.iterateGPUDevices(response, func(_ *podresourcesapi.PodResources, _ *podresourcesapi.ContainerResources, device *podresourcesapi.ContainerDevices) {
+		got = append(got, device.GetDeviceIds()...)
+	})
+
+	assert.ElementsMatch(t, []string{"gpu0", "gpu1", "mig0"}, got)
 }
 
 func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
@@ -318,7 +567,8 @@ func TestProcessPodMapper_WithD_Different_Format_Of_DeviceID(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("when type %s, pod device ids %s metric device id %s and gpu device %s with virtual GPUs: %t and DRA: %t",
+		t.Run(fmt.Sprintf(
+			"when type %s, pod device ids %s metric device id %s and gpu device %s with virtual GPUs: %t and DRA: %t",
 			tc.KubernetesGPUIDType,
 			tc.PODGPUIDs,
 			tc.MetricGPUID,
@@ -512,11 +762,32 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 	testutils.RequireLinux(t)
 
 	pods := []struct {
-		name   string
-		labels map[string]string
+		name       string
+		labels     map[string]string
+		wantLabels map[string]string
 	}{
-		{"gpu-pod-0", map[string]string{"valid_label_key": "label-value"}},
-		{"gpu-pod-1", map[string]string{"invalid.label/key": "another-value"}},
+		{
+			name: "gpu-pod-0",
+			labels: map[string]string{
+				"hostname":           "pod-hostname",
+				"pod_label_hostname": "existing-prefixed",
+				"valid_label_key":    "label-value",
+			},
+			wantLabels: map[string]string{
+				"pod_label_hostname":           "existing-prefixed",
+				"pod_label_hostname_conflict1": "pod-hostname",
+				"valid_label_key":              "label-value",
+			},
+		},
+		{
+			name: "gpu-pod-1",
+			labels: map[string]string{
+				"invalid.label/key": "another-value",
+			},
+			wantLabels: map[string]string{
+				"invalid_label_key": "another-value",
+			},
+		},
 	}
 
 	// Create fake Kubernetes clientset with pods containing labels
@@ -588,6 +859,7 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 	}
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
 	mockDeviceInfo.EXPECT().GPUCount().Return(toUint(len(gpus))).AnyTimes()
 	for i := range gpus {
 		mockDeviceInfo.EXPECT().GPU(toUint(i)).Return(mockGPU).AnyTimes()
@@ -609,18 +881,157 @@ func TestProcessPodMapper_WithLabels(t *testing.T) {
 		require.Equal(t, "default", metric.Attributes[namespaceAttribute])
 		require.Equal(t, "default", metric.Attributes[containerAttribute])
 
-		// Verify labels were sanitized and added
-		expectedLabelCount := len(pod.labels)
-		require.Equal(t, expectedLabelCount, len(metric.Labels),
-			"Expected %d labels for pod %s, but got %d", expectedLabelCount, pod.name, len(metric.Labels))
+		require.Equal(t, pod.wantLabels, metric.Labels)
+	}
+}
 
-		for key, value := range pod.labels {
-			sanitizedKey := utils.SanitizeLabelName(key)
-			require.Contains(t, metric.Labels, sanitizedKey,
-				"Expected sanitized key '%s' to exist in labels", sanitizedKey)
-			require.Equal(t, value, metric.Labels[sanitizedKey],
-				"Expected sanitized key '%s' to map to value '%s'", sanitizedKey, value)
-		}
+func TestCopyPodLabelsPreservesCollisions(t *testing.T) {
+	metric := collector.Metric{
+		UUID:       "UUID",
+		Attributes: map[string]string{podAttribute: "gpu-pod-0"},
+		Labels:     map[string]string{"xid": "13"},
+	}
+	podLabels := map[string]string{
+		"UUID":               "pod-uuid-label",
+		"app":                "demo",
+		"hostname":           "pod-hostname",
+		"pod":                "pod-label",
+		"pod_label_hostname": "existing-prefixed",
+		"xid":                "pod-xid",
+	}
+
+	copyPodLabels(&metric, podLabels, dcgm.FE_GPU)
+
+	require.Equal(t, map[string]string{
+		"app":                          "demo",
+		"pod_label_UUID":               "pod-uuid-label",
+		"pod_label_hostname":           "existing-prefixed",
+		"pod_label_hostname_conflict1": "pod-hostname",
+		"pod_label_pod":                "pod-label",
+		"pod_label_xid":                "pod-xid",
+		"xid":                          "13",
+	}, metric.Labels)
+}
+
+func TestCopyPodLabelsRenamesCPUSerialForCPUMetrics(t *testing.T) {
+	podLabels := map[string]string{
+		"cpu_serial": "pod-cpu-serial",
+	}
+	cpuMetric := collector.Metric{
+		Attributes: map[string]string{},
+		Labels:     map[string]string{},
+	}
+	cpuCoreMetric := collector.Metric{
+		Attributes: map[string]string{},
+		Labels:     map[string]string{},
+	}
+
+	copyPodLabels(&cpuMetric, podLabels, dcgm.FE_CPU)
+	copyPodLabels(&cpuCoreMetric, podLabels, dcgm.FE_CPU_CORE)
+
+	require.Equal(t, map[string]string{
+		"pod_label_cpu_serial": "pod-cpu-serial",
+	}, cpuMetric.Labels)
+	require.Equal(t, map[string]string{
+		"cpu_serial": "pod-cpu-serial",
+	}, cpuCoreMetric.Labels)
+}
+
+func TestCopyPodLabelsDetachesSharedLabelMaps(t *testing.T) {
+	sharedLabels := map[string]string{
+		"DCGM_FI_DRIVER_VERSION": "595.58.03",
+	}
+	podLabels := map[string]string{
+		"app":      "demo",
+		"hostname": "pod-hostname",
+	}
+	firstMetric := collector.Metric{
+		Attributes: map[string]string{},
+		Labels:     sharedLabels,
+	}
+	secondMetric := collector.Metric{
+		Attributes: map[string]string{},
+		Labels:     sharedLabels,
+	}
+	wantLabels := map[string]string{
+		"DCGM_FI_DRIVER_VERSION": "595.58.03",
+		"app":                    "demo",
+		"pod_label_hostname":     "pod-hostname",
+	}
+
+	copyPodLabels(&firstMetric, podLabels, dcgm.FE_GPU)
+	copyPodLabels(&secondMetric, podLabels, dcgm.FE_GPU)
+
+	require.Equal(t, wantLabels, firstMetric.Labels)
+	require.Equal(t, wantLabels, secondMetric.Labels)
+	require.Equal(t, map[string]string{
+		"DCGM_FI_DRIVER_VERSION": "595.58.03",
+	}, sharedLabels)
+}
+
+func TestIsRendererReservedLabel(t *testing.T) {
+	tests := []struct {
+		name        string
+		metric      collector.Metric
+		metricGroup dcgm.Field_Entity_Group
+		label       string
+		want        bool
+	}{
+		{
+			name:        "GPU hostname label is reserved",
+			metricGroup: dcgm.FE_GPU,
+			label:       "hostname",
+			want:        true,
+		},
+		{
+			name:        "GPU UUID label follows metric UUID key",
+			metric:      collector.Metric{UUID: "UUID"},
+			metricGroup: dcgm.FE_GPU,
+			label:       "UUID",
+			want:        true,
+		},
+		{
+			name:        "Link GPU UUID label is reserved",
+			metricGroup: dcgm.FE_LINK,
+			label:       "gpu_uuid",
+			want:        true,
+		},
+		{
+			name:        "CPU core label is reserved only for CPU core metrics",
+			metricGroup: dcgm.FE_CPU_CORE,
+			label:       "cpucore",
+			want:        true,
+		},
+		{
+			name:        "CPU metrics do not reserve CPU core label",
+			metricGroup: dcgm.FE_CPU,
+			label:       "cpucore",
+			want:        false,
+		},
+		{
+			name:        "CPU serial label is reserved for CPU metrics",
+			metricGroup: dcgm.FE_CPU,
+			label:       "cpu_serial",
+			want:        true,
+		},
+		{
+			name:        "CPU core metrics do not reserve CPU serial label",
+			metricGroup: dcgm.FE_CPU_CORE,
+			label:       "cpu_serial",
+			want:        false,
+		},
+		{
+			name:        "Pod app label is not renderer-owned",
+			metricGroup: dcgm.FE_GPU,
+			label:       "app",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isRendererReservedLabel(tt.metric, tt.metricGroup, tt.label))
+		})
 	}
 }
 
@@ -636,54 +1047,34 @@ func TestPodDRAInfo(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		deviceToUUID map[string]string
-		migDevices   map[string]*DRAMigDeviceInfo
-		wantUUIDs    []string
-		isMIG        bool
+		name      string
+		devices   map[string]testDRADeviceMapping
+		wantUUIDs []string
 	}{
 		{
-			name:         "uuid-exists",
-			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
-			migDevices:   map[string]*DRAMigDeviceInfo{},
-			wantUUIDs:    []string{"GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
-			isMIG:        false,
-		},
-		{
-			name:         "uuid-updated",
-			deviceToUUID: map[string]string{"poolA/gpu-x": "GPU-UUID-Updated"},
-			migDevices:   map[string]*DRAMigDeviceInfo{},
-			wantUUIDs:    []string{"GPU-UUID-Updated"},
-			isMIG:        false,
-		},
-		{
-			name:         "no-uuid",
-			deviceToUUID: map[string]string{},
-			migDevices:   map[string]*DRAMigDeviceInfo{},
-			wantUUIDs:    nil,
-			isMIG:        false,
-		},
-		{
-			name:         "mig-device",
-			deviceToUUID: map[string]string{"poolA/gpu-x": "MIG-12345"},
-			migDevices: map[string]*DRAMigDeviceInfo{
-				"poolA/gpu-x": {
-					MIGDeviceUUID: "MIG-12345",
-					Profile:       "1g.12gb",
-					ParentUUID:    "GPU-parent-uuid",
-				},
+			name: "uuid-exists",
+			devices: map[string]testDRADeviceMapping{
+				"poolA/gpu-x": {uuid: "GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
 			},
-			wantUUIDs: []string{"GPU-parent-uuid"}, // Should map to parent UUID
-			isMIG:     true,
+			wantUUIDs: []string{"GPU-8a748984-0fe7-297f-916c-4b998ce202d1"},
+		},
+		{
+			name: "uuid-updated",
+			devices: map[string]testDRADeviceMapping{
+				"poolA/gpu-x": {uuid: "GPU-UUID-Updated"},
+			},
+			wantUUIDs: []string{"GPU-UUID-Updated"},
+		},
+		{
+			name:      "no-uuid",
+			devices:   map[string]testDRADeviceMapping{},
+			wantUUIDs: nil,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			draMgr := &DRAResourceSliceManager{
-				deviceToUUID: tc.deviceToUUID,
-				migDevices:   tc.migDevices,
-			}
+			draMgr := newTestDRAManagerWithDevices(tc.devices)
 
 			pm := &PodMapper{
 				Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
@@ -701,7 +1092,7 @@ func TestPodDRAInfo(t *testing.T) {
 				}},
 			}
 
-			got := pm.toDeviceToPodsDRA(resp)
+			got := pm.toDeviceToPodsDRA(resp, nil)
 
 			assert.Len(t, got, len(tc.wantUUIDs), "map size")
 			for _, want := range tc.wantUUIDs {
@@ -721,17 +1112,370 @@ func TestPodDRAInfo(t *testing.T) {
 				assert.Equal(t, "poolA", dr.PoolName)
 				assert.Equal(t, "gpu-x", dr.DeviceName)
 
-				if tc.isMIG {
-					require.NotNil(t, dr.MIGInfo, "MIG info should not be nil for MIG device")
-					assert.Equal(t, "MIG-12345", dr.MIGInfo.MIGDeviceUUID)
-					assert.Equal(t, "1g.12gb", dr.MIGInfo.Profile)
-					assert.Equal(t, "GPU-parent-uuid", dr.MIGInfo.ParentUUID)
-				} else {
-					assert.Nil(t, dr.MIGInfo, "MIG info should be nil for full GPU device")
-				}
+				assert.Nil(t, dr.MIGInfo, "MIG info should be nil for full GPU device")
+
 			}
 		})
 	}
+}
+
+func TestPodDRAInfo_MIGUsesGPUInstanceIdentifier(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	realNVML := nvmlprovider.Client()
+	t.Cleanup(func() { nvmlprovider.SetClient(realNVML) })
+
+	mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+	mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(&nvmlprovider.MIGDeviceInfo{
+		ParentUUID:    "GPU-parent-uuid",
+		GPUInstanceID: 3,
+	}, nil)
+	nvmlprovider.SetClient(mockNVMLProvider)
+
+	mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockSystemInfo.EXPECT().GPUCount().Return(toUint(1)).AnyTimes()
+	mockSystemInfo.EXPECT().GPU(toUint(0)).Return(deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "GPU-parent-uuid",
+			GPU:  0,
+		},
+		MigEnabled: true,
+	}).AnyTimes()
+
+	draMgr := newTestDRAManagerWithDevices(map[string]testDRADeviceMapping{
+		"poolA/gpu-x": {
+			uuid: "GPU-parent-uuid",
+			mig: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				Profile:       "1g.12gb",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+		},
+	})
+
+	pm := &PodMapper{
+		Config:               &appconfig.Config{NvidiaResourceNames: []string{appconfig.NvidiaResourceName}},
+		ResourceSliceManager: draMgr,
+	}
+
+	resp := &podresourcesapi.ListPodResourcesResponse{
+		PodResources: []*podresourcesapi.PodResources{{
+			Name:      "pod1",
+			Namespace: "default",
+			Containers: []*podresourcesapi.ContainerResources{{
+				Name: "ctr1",
+				DynamicResources: []*podresourcesapi.DynamicResource{{
+					ClaimName:      "claim1",
+					ClaimNamespace: "ns1",
+					ClaimResources: []*podresourcesapi.ClaimResource{{
+						DriverName: DRAGPUDriverName,
+						PoolName:   "poolA",
+						DeviceName: "gpu-x",
+					}},
+				}},
+			}},
+		}},
+	}
+
+	got := pm.toDeviceToPodsDRA(resp, mockSystemInfo)
+
+	require.Contains(t, got, "0-3", "MIG DRA mapping must use the same key as MIG metrics")
+	assert.NotContains(t, got, "GPU-parent-uuid")
+	require.Len(t, got["0-3"], 1)
+	dr := got["0-3"][0].DynamicResources
+	require.NotNil(t, dr)
+	require.NotNil(t, dr.MIGInfo)
+	assert.Equal(t, "MIG-12345", dr.MIGInfo.MIGDeviceUUID)
+	assert.Equal(t, "1g.12gb", dr.MIGInfo.Profile)
+	assert.Equal(t, "GPU-parent-uuid", dr.MIGInfo.ParentUUID)
+}
+
+func TestDRAMappingKey_MIGUnresolvedSkipsAttribution(t *testing.T) {
+	tests := []struct {
+		name             string
+		migInfo          *DRAMigDeviceInfo
+		setupNVML        func(*mocknvmlprovider.MockNVML)
+		setupDeviceInfo  func(*mockdeviceinfo.MockProvider)
+		wantMappingKey   string
+		expectNVMLMock   bool
+		expectDeviceMock bool
+	}{
+		{
+			name: "empty MIG UUID",
+			migInfo: &DRAMigDeviceInfo{
+				ParentUUID: "GPU-parent-uuid",
+			},
+		},
+		{
+			name: "NVML lookup failure",
+			migInfo: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+			setupNVML: func(mockNVML *mocknvmlprovider.MockNVML) {
+				mockNVML.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(nil, errors.New("lookup failed"))
+			},
+			expectNVMLMock: true,
+		},
+		{
+			name: "nil NVML MIG info",
+			migInfo: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+			setupNVML: func(mockNVML *mocknvmlprovider.MockNVML) {
+				mockNVML.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(nil, nil)
+			},
+			expectNVMLMock: true,
+		},
+		{
+			name: "negative GPU instance ID",
+			migInfo: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+			setupNVML: func(mockNVML *mocknvmlprovider.MockNVML) {
+				mockNVML.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(&nvmlprovider.MIGDeviceInfo{
+					ParentUUID:    "GPU-parent-uuid",
+					GPUInstanceID: -1,
+				}, nil)
+			},
+			expectNVMLMock: true,
+		},
+		{
+			name: "parent GPU not in device info",
+			migInfo: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+			setupNVML: func(mockNVML *mocknvmlprovider.MockNVML) {
+				mockNVML.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(&nvmlprovider.MIGDeviceInfo{
+					ParentUUID:    "GPU-parent-uuid",
+					GPUInstanceID: 3,
+				}, nil)
+			},
+			setupDeviceInfo: func(mockSystemInfo *mockdeviceinfo.MockProvider) {
+				mockSystemInfo.EXPECT().GPUCount().Return(toUint(1)).AnyTimes()
+				mockSystemInfo.EXPECT().GPU(toUint(0)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{UUID: "GPU-other", GPU: 0},
+				}).AnyTimes()
+			},
+			expectNVMLMock:   true,
+			expectDeviceMock: true,
+		},
+		{
+			name: "resolved MIG key",
+			migInfo: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+			setupNVML: func(mockNVML *mocknvmlprovider.MockNVML) {
+				mockNVML.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(&nvmlprovider.MIGDeviceInfo{
+					ParentUUID:    "GPU-parent-uuid",
+					GPUInstanceID: 3,
+				}, nil)
+			},
+			setupDeviceInfo: func(mockSystemInfo *mockdeviceinfo.MockProvider) {
+				mockSystemInfo.EXPECT().GPUCount().Return(toUint(1)).AnyTimes()
+				mockSystemInfo.EXPECT().GPU(toUint(0)).Return(deviceinfo.GPUInfo{
+					DeviceInfo: dcgm.Device{UUID: "GPU-parent-uuid", GPU: 0},
+				}).AnyTimes()
+			},
+			wantMappingKey:   "0-3",
+			expectNVMLMock:   true,
+			expectDeviceMock: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			realNVML := nvmlprovider.Client()
+			t.Cleanup(func() { nvmlprovider.SetClient(realNVML) })
+
+			if tc.expectNVMLMock {
+				mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+				tc.setupNVML(mockNVMLProvider)
+				nvmlprovider.SetClient(mockNVMLProvider)
+			}
+
+			var deviceInfo deviceinfo.Provider
+			if tc.expectDeviceMock {
+				mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+				tc.setupDeviceInfo(mockSystemInfo)
+				deviceInfo = mockSystemInfo
+			} else if tc.expectNVMLMock {
+				deviceInfo = mockdeviceinfo.NewMockProvider(ctrl)
+			}
+
+			got := draMappingKey("GPU-parent-uuid", tc.migInfo, deviceInfo)
+			assert.Equal(t, tc.wantMappingKey, got)
+		})
+	}
+}
+
+type dynamicResourcePodResourcesServer struct {
+	podresourcesapi.UnimplementedPodResourcesListerServer
+	response *podresourcesapi.ListPodResourcesResponse
+}
+
+func (s *dynamicResourcePodResourcesServer) List(
+	context.Context,
+	*podresourcesapi.ListPodResourcesRequest,
+) (*podresourcesapi.ListPodResourcesResponse, error) {
+	return s.response, nil
+}
+
+func (s *dynamicResourcePodResourcesServer) Get(
+	context.Context,
+	*podresourcesapi.GetPodResourcesRequest,
+) (*podresourcesapi.GetPodResourcesResponse, error) {
+	if len(s.response.GetPodResources()) == 0 {
+		return &podresourcesapi.GetPodResourcesResponse{}, nil
+	}
+	return &podresourcesapi.GetPodResourcesResponse{PodResources: s.response.GetPodResources()[0]}, nil
+}
+
+func (s *dynamicResourcePodResourcesServer) GetAllocatableResources(
+	context.Context,
+	*podresourcesapi.AllocatableResourcesRequest,
+) (*podresourcesapi.AllocatableResourcesResponse, error) {
+	return &podresourcesapi.AllocatableResourcesResponse{}, nil
+}
+
+func TestPodMapperProcessAddsDRAAttributesForMIGMetric(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	realNVML := nvmlprovider.Client()
+	t.Cleanup(func() { nvmlprovider.SetClient(realNVML) })
+
+	mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+	mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID("MIG-12345").Return(&nvmlprovider.MIGDeviceInfo{
+		ParentUUID:    "GPU-parent-uuid",
+		GPUInstanceID: 3,
+	}, nil)
+	nvmlprovider.SetClient(mockNVMLProvider)
+
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server, &dynamicResourcePodResourcesServer{
+		response: &podresourcesapi.ListPodResourcesResponse{
+			PodResources: []*podresourcesapi.PodResources{{
+				Name:      "pod1",
+				Namespace: "default",
+				Containers: []*podresourcesapi.ContainerResources{{
+					Name: "ctr1",
+					DynamicResources: []*podresourcesapi.DynamicResource{{
+						ClaimName:      "claim1",
+						ClaimNamespace: "ns1",
+						ClaimResources: []*podresourcesapi.ClaimResource{{
+							DriverName: DRAGPUDriverName,
+							PoolName:   "poolA",
+							DeviceName: "gpu-x",
+						}},
+					}},
+				}},
+			}},
+		},
+	})
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	clientset := fake.NewClientset(&v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod1",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app":            "demo",
+				"dra_claim_name": "pod-claim-label",
+				"hostname":       "pod-hostname",
+			},
+		},
+	})
+
+	draManager := newTestDRAManagerWithDevices(map[string]testDRADeviceMapping{
+		"poolA/gpu-x": {
+			uuid: "GPU-parent-uuid",
+			mig: &DRAMigDeviceInfo{
+				MIGDeviceUUID: "MIG-12345",
+				Profile:       "1g.12gb",
+				ParentUUID:    "GPU-parent-uuid",
+			},
+		},
+	})
+
+	pm := &PodMapper{
+		Config: &appconfig.Config{
+			KubernetesEnableDRA:       true,
+			KubernetesEnablePodLabels: true,
+			KubernetesGPUIdType:       appconfig.GPUUID,
+			PodResourcesKubeletSocket: socketPath,
+			NvidiaResourceNames:       []string{appconfig.NvidiaResourceName},
+		},
+		ResourceSliceManager: draManager,
+		Client:               clientset,
+		labelFilterCache:     newLabelFilterCache(nil, 1000),
+	}
+	setupMockInformer(t, pm, clientset)
+
+	mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockSystemInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
+	mockSystemInfo.EXPECT().GPUCount().Return(toUint(1)).AnyTimes()
+	mockSystemInfo.EXPECT().GPU(toUint(0)).Return(deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			UUID: "GPU-parent-uuid",
+			GPU:  0,
+		},
+		MigEnabled: true,
+	}).AnyTimes()
+
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	metrics := collector.MetricsByCounter{
+		counter: {{
+			GPU:           "0",
+			GPUUUID:       "MIG-12345",
+			GPUInstanceID: "3",
+			MigProfile:    "1g.12gb",
+			Value:         "42",
+			Attributes:    map[string]string{},
+			Labels:        map[string]string{},
+			Counter:       counter,
+		}},
+	}
+
+	err := pm.Process(metrics, mockSystemInfo)
+	require.NoError(t, err)
+	require.Len(t, metrics[counter], 1)
+
+	got := metrics[counter][0]
+	assert.Equal(t, "pod1", got.Attributes[podAttribute])
+	assert.Equal(t, "default", got.Attributes[namespaceAttribute])
+	assert.Equal(t, "ctr1", got.Attributes[containerAttribute])
+	assert.Equal(t, "claim1", got.Attributes[draClaimName])
+	assert.Equal(t, "ns1", got.Attributes[draClaimNamespace])
+	assert.Equal(t, DRAGPUDriverName, got.Attributes[draDriverName])
+	assert.Equal(t, "poolA", got.Attributes[draPoolName])
+	assert.Equal(t, "gpu-x", got.Attributes[draDeviceName])
+	assert.Equal(t, "1g.12gb", got.Attributes[draMigProfile])
+	assert.Equal(t, "MIG-12345", got.Attributes[draMigDeviceUUID])
+	assert.Equal(t, map[string]string{
+		"app":                      "demo",
+		"pod_label_dra_claim_name": "pod-claim-label",
+		"pod_label_hostname":       "pod-hostname",
+	}, got.Labels)
 }
 
 func TestProcessPodMapper_WithUID(t *testing.T) {
@@ -925,6 +1669,7 @@ func TestProcessPodMapper_WithLabelsAndUID(t *testing.T) {
 	}
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
 	mockDeviceInfo.EXPECT().GPUCount().Return(toUint(len(gpus))).AnyTimes()
 	for i := range gpus {
 		mockDeviceInfo.EXPECT().GPU(toUint(i)).Return(mockGPU).AnyTimes()
@@ -1225,10 +1970,30 @@ func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
 					},
 				},
 				pidToPod: map[uint32]*PodInfo{
-					1001: {Name: "test-pod", Namespace: "default", UID: podUID, Container: "app"},
+					1001: {
+						Name:      "test-pod",
+						Namespace: "default",
+						UID:       podUID,
+						Container: "app",
+						Labels: map[string]string{
+							"app":      "demo",
+							"hostname": "pod-hostname",
+							"pod":      "pod-label",
+						},
+					},
 				},
 				deviceToPods: map[string][]PodInfo{
-					gpuUUID: {{Name: "test-pod", Namespace: "default", UID: podUID, Container: "app"}},
+					gpuUUID: {{
+						Name:      "test-pod",
+						Namespace: "default",
+						UID:       podUID,
+						Container: "app",
+						Labels: map[string]string{
+							"app":      "demo",
+							"hostname": "pod-hostname",
+							"pod":      "pod-label",
+						},
+					}},
 				},
 			},
 			counter: counters.Counter{FieldName: metricGPUUtil},
@@ -1236,6 +2001,7 @@ func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
 				GPUUUID:    gpuUUID,
 				Value:      "0",
 				Attributes: map[string]string{},
+				Labels:     map[string]string{},
 			},
 			validate: func(t *testing.T, result []collector.Metric, err error) {
 				assert.NoError(t, err)
@@ -1245,6 +2011,11 @@ func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
 				assert.Equal(t, "default", result[0].Attributes[namespaceAttribute])
 				assert.Equal(t, "app", result[0].Attributes[containerAttribute])
 				assert.Equal(t, podUID, result[0].Attributes[uidAttribute])
+				assert.Equal(t, map[string]string{
+					"app":                "demo",
+					"pod_label_hostname": "pod-hostname",
+					"pod_label_pod":      "pod-label",
+				}, result[0].Labels)
 			},
 		},
 		{
@@ -1390,6 +2161,7 @@ func TestPodMapper_CreatePerProcessMetrics(t *testing.T) {
 				tc.counter,
 				tc.originalMetric,
 				tc.dataMap,
+				func() dcgm.Field_Entity_Group { return dcgm.FE_GPU },
 			)
 
 			tc.validate(t, result, err)
@@ -1501,6 +2273,17 @@ func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
 			cleanupServer := testutils.StartMockServer(t, server, socketPath)
 			defer cleanupServer()
 
+			clientset := fake.NewClientset(&v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "gpu-pod-0",
+					Namespace: "default",
+					Labels: map[string]string{
+						"app":      "demo",
+						"hostname": "pod-hostname",
+					},
+				},
+			})
+
 			ctrl := gomock.NewController(t)
 			mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
 			mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(&nvmlprovider.MIGDeviceInfo{}, nil).AnyTimes()
@@ -1511,10 +2294,13 @@ func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
 
 			podMapper := NewPodMapper(&appconfig.Config{
 				KubernetesGPUIdType:       appconfig.GPUUID,
+				KubernetesEnablePodLabels: true,
 				PodResourcesKubeletSocket: socketPath,
 				KubernetesVirtualGPUs:     true,
 			})
 			require.NotNil(t, podMapper)
+			podMapper.Client = clientset
+			setupMockInformer(t, podMapper, clientset)
 
 			metrics := collector.MetricsByCounter{}
 			for i, gpuUUID := range allGPUUUIDs {
@@ -1528,6 +2314,7 @@ func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
 			}
 
 			mockSystemInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			mockSystemInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
 			mockSystemInfo.EXPECT().GPUCount().Return(toUint(len(allGPUUUIDs))).AnyTimes()
 			for i, uuid := range allGPUUUIDs {
 				mockSystemInfo.EXPECT().GPU(toUint(i)).Return(deviceinfo.GPUInfo{
@@ -1553,6 +2340,8 @@ func TestKubernetesVirtualGPUs_UnusedGPUsPreserveMetrics(t *testing.T) {
 			require.Len(t, podMetrics, tc.wantPodMetrics)
 			require.Equal(t, "gpu-pod-0", podMetrics[0].Attributes[podAttribute])
 			require.Equal(t, "default", podMetrics[0].Attributes[namespaceAttribute])
+			require.Equal(t, "demo", podMetrics[0].Labels["app"])
+			require.Equal(t, "pod-hostname", podMetrics[0].Labels["pod_label_hostname"])
 
 			require.Len(t, deviceMetrics, tc.wantDeviceMetrics)
 			for _, m := range deviceMetrics {
@@ -1689,4 +2478,203 @@ func TestKubernetesVirtualGPUs_UnusedMIGInstancesPreserveMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+type largePodResourcesServer struct {
+	podresourcesapi.UnimplementedPodResourcesListerServer
+	response *podresourcesapi.ListPodResourcesResponse
+}
+
+func (s *largePodResourcesServer) List(
+	_ context.Context,
+	_ *podresourcesapi.ListPodResourcesRequest,
+) (*podresourcesapi.ListPodResourcesResponse, error) {
+	return s.response, nil
+}
+
+type errorPodResourcesServer struct {
+	podresourcesapi.UnimplementedPodResourcesListerServer
+	err error
+}
+
+func (s *errorPodResourcesServer) List(
+	_ context.Context,
+	_ *podresourcesapi.ListPodResourcesRequest,
+) (*podresourcesapi.ListPodResourcesResponse, error) {
+	return nil, s.err
+}
+
+func captureDefaultSlog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var logBuffer bytes.Buffer
+	previousLogger := slog.Default()
+	// Global slog mutation: tests using this helper must not run in parallel.
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuffer, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	return &logBuffer
+}
+
+func newListPodResourcesResponse(deviceID string) *podresourcesapi.ListPodResourcesResponse {
+	return &podresourcesapi.ListPodResourcesResponse{
+		PodResources: []*podresourcesapi.PodResources{{
+			Name:      "gpu-pod",
+			Namespace: "default",
+			Containers: []*podresourcesapi.ContainerResources{{
+				Name: "container",
+				Devices: []*podresourcesapi.ContainerDevices{{
+					ResourceName: appconfig.NvidiaResourceName,
+					DeviceIds:    []string{deviceID},
+				}},
+			}},
+		}},
+	}
+}
+
+func TestConnectToServerRejectsInvalidSocketPath(t *testing.T) {
+	regularFilePath := filepath.Join(t.TempDir(), "regular-file")
+	require.NoError(t, stdos.WriteFile(regularFilePath, []byte("not a socket"), 0o600))
+
+	tests := []struct {
+		name        string
+		socketPath  string
+		errContains string
+	}{
+		{
+			name:        "relative path",
+			socketPath:  "kubelet.sock",
+			errContains: "must be absolute",
+		},
+		{
+			name:        "regular file",
+			socketPath:  regularFilePath,
+			errContains: "must be a Unix socket",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, cleanup, err := connectToServer(tc.socketPath)
+
+			require.ErrorContains(t, err, tc.errContains)
+			require.Nil(t, conn)
+			cleanup()
+		})
+	}
+}
+
+func TestListPodsAllowsBoundedPodResourcesResponses(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	tests := []struct {
+		name             string
+		deviceIDByteSize int
+	}{
+		{name: "small standard response", deviceIDByteSize: len("gpu-0")},
+		{name: "larger than grpc default but below bounded limit", deviceIDByteSize: 5 * 1024 * 1024},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir, cleanup := testutils.CreateTmpDir(t)
+			defer cleanup()
+			socketPath := filepath.Join(tmpDir, "kubelet.sock")
+
+			deviceID := strings.Repeat("a", tc.deviceIDByteSize)
+			server := grpc.NewServer()
+			podresourcesapi.RegisterPodResourcesListerServer(server, &largePodResourcesServer{
+				response: newListPodResourcesResponse(deviceID),
+			})
+			cleanupServer := testutils.StartMockServer(t, server, socketPath)
+			defer cleanupServer()
+
+			conn, cleanupConn, err := connectToServer(socketPath)
+			require.NoError(t, err)
+			defer cleanupConn()
+
+			pm := &PodMapper{}
+			resp, err := pm.listPods(conn)
+			require.NoError(t, err)
+			require.Len(t, resp.GetPodResources(), 1)
+			require.Equal(t, deviceID, resp.GetPodResources()[0].GetContainers()[0].GetDevices()[0].GetDeviceIds()[0])
+		})
+	}
+}
+
+func TestListPodsRejectsPodResourcesResponseAboveBound(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+
+	deviceID := strings.Repeat("a", kubeletPodResourcesMaxRecvMsgSize+1024)
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server, &largePodResourcesServer{
+		response: newListPodResourcesResponse(deviceID),
+	})
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	conn, cleanupConn, err := connectToServer(socketPath)
+	require.NoError(t, err)
+	defer cleanupConn()
+
+	pm := &PodMapper{}
+	resp, err := pm.listPods(conn)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Equal(t, codes.ResourceExhausted, status.Code(err))
+}
+
+func TestProcessWarnsOnResourceExhaustedPodResourcesResponse(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	logBuffer := captureDefaultSlog(t)
+
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+
+	deviceID := strings.Repeat("a", kubeletPodResourcesMaxRecvMsgSize+1024)
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server, &largePodResourcesServer{
+		response: newListPodResourcesResponse(deviceID),
+	})
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	pm := &PodMapper{Config: &appconfig.Config{PodResourcesKubeletSocket: socketPath}}
+	err := pm.Process(collector.MetricsByCounter{}, nil)
+	require.NoError(t, err)
+
+	gotLog := logBuffer.String()
+	require.Contains(t, gotLog, "Kubelet pod-resources response exceeded gRPC receive limit")
+	require.Contains(t, gotLog, "limit_bytes")
+}
+
+func TestProcessKeepsGenericWarningOnNonResourceExhaustedPodResourcesError(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	logBuffer := captureDefaultSlog(t)
+
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server, &errorPodResourcesServer{
+		err: status.Error(codes.Unavailable, "boom"),
+	})
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	pm := &PodMapper{Config: &appconfig.Config{PodResourcesKubeletSocket: socketPath}}
+	err := pm.Process(collector.MetricsByCounter{}, nil)
+	require.NoError(t, err)
+
+	gotLog := logBuffer.String()
+	require.Contains(t, gotLog, "Failed to get pod mappings")
+	require.NotContains(t, gotLog, "Kubelet pod-resources response exceeded gRPC receive limit")
 }

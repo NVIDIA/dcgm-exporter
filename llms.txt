@@ -1,0 +1,145 @@
+# DCGM Exporter Metrics and Deployment Authoring Contract
+
+This file is for LLMs and agents generating or modifying DCGM Exporter metrics,
+configuration, deployment examples, and validation plans. Current repository
+code and checked-in artifacts are the mechanical source of truth.
+
+Do not invent flags, environment variables, metric labels, DCGM field names,
+exporter-owned counter names, Helm values, or package behavior. If required
+facts are not present in this repository, mark them unknown and ask for source
+material.
+
+## Source Of Truth And Validation Workflow
+
+Use this order:
+
+1. `pkg/cmd/app.go` defines CLI flags, environment variables, defaults, startup
+   behavior, web config, pprof, logging, and runtime reload wiring.
+2. `internal/pkg/counters/const.go` and `internal/pkg/counters/exporter_counters.go`
+   define exporter-owned metric names.
+3. `etc/default-counters.csv` defines the default shipped metric list.
+4. `deployment/values.yaml` and `deployment/templates/` define Helm behavior.
+5. `README.md`, `deployment/README.md`, and test READMEs document user-facing
+   workflows and prerequisites.
+6. Tests under `internal/pkg/`, `tests/helm`, `tests/docker`,
+   `tests/integration`, and `tests/ci` define executable contracts.
+
+Before handing off a metrics or deployment change, run the lowest applicable
+checks:
+
+- `go test ./internal/pkg/counters`
+- `make test-main`
+- `make lint`
+- `make check-fmt`
+- `make validate`
+- `make validate-versions` when version-derived artifacts change
+- `make generate` when generated mocks or `go:generate` inputs change
+- `make test-images` when Docker image behavior changes and prerequisites exist
+- `make test-integration` or `make test-e2e-k8s-gpu` only when GPU/Kubernetes
+  prerequisites exist
+
+Document GPU, Docker, Kubernetes, or DCGM prerequisites that prevent a gate from
+running. Do not report skipped hardware-backed gates as passing.
+
+## Metric CSV Authoring
+
+Metric CSV rows have exactly three fields:
+
+```text
+DCGM FIELD, Prometheus metric type, help message
+```
+
+Rules:
+
+- Lines beginning with `#` are comments.
+- Active metric fields begin with `DCGM_` or `dcgm_`.
+- Use a DCGM field that the current go-dcgm/DCGM bindings know, or one of the
+  exporter-owned counters listed below.
+- Supported scalar metric types are `counter`, `gauge`, and `untyped`.
+- `label` rows are static label sources and are not rendered as standalone
+  scalar metric families.
+- Custom metrics supplied through Helm `customMetrics` or mounted files are
+  complete replacements for the default list, not additive overlays.
+- Keep HELP text stable and clear; Prometheus families with the same name must
+  not have conflicting HELP or TYPE metadata.
+- Do not emit non-finite values or negative counter values.
+
+Exporter-owned counters:
+
+- `DCGM_EXP_CLOCK_EVENTS_COUNT`
+- `DCGM_EXP_XID_ERRORS_COUNT`
+- `DCGM_EXP_GPU_HEALTH_STATUS`
+- `DCGM_EXP_P2P_STATUS`
+- `DCGM_EXP_XID_ERRORS_TOTAL`
+- `DCGM_EXP_CLOCK_EVENTS_TOTAL`
+
+Every `DCGM_EXP_GPU_HEALTH_STATUS` sample includes `health_watch`,
+`health_error_code`, `health_error_severity`, and `health_error_category`
+labels. PASS samples use `NONE` for severity and category; unrecognized DCGM
+metadata uses `UNKNOWN`.
+
+The `_COUNT` counters describe events observed during the configured window.
+The `_TOTAL` counters are in-memory cumulative totals intended for Prometheus
+counter functions such as `increase()` and `rate()`. If reload, runtime swap,
+hot reload, or process restart behavior changes, document whether cumulative
+state is reset or preserved and add tests.
+
+## CLI, Environment, And Runtime
+
+CLI and environment behavior comes from `pkg/cmd/app.go`.
+
+Important contracts:
+
+- The default listen address is `:9400`.
+- The default collectors file is `/etc/dcgm-exporter/default-counters.csv`.
+- Remote hostengine values support `<HOST>:<PORT>`,
+  `tcp://<HOST>:<PORT>`, `unix:///<SOCKET_PATH>`,
+  `vsock://<CID>:<PORT>`, and bracketed IPv6 host:port values such as
+  `[::1]:5555`.
+- TLS and basic auth use Prometheus exporter-toolkit through
+  `--web-config-file`; do not invent a separate config format.
+- `--enable-pprof` exposes `/debug/pprof/` endpoints and should stay opt-in.
+- `--log-format` supports the formats declared by the CLI.
+- Startup validation should fail clearly when required DCGM or runtime
+  prerequisites are missing, unless startup validation is explicitly disabled.
+
+## Kubernetes And Helm
+
+Helm `arguments` pass through to the exporter binary. Use only CLI flags that
+exist in `pkg/cmd/app.go`.
+
+Rules:
+
+- Keep Helm values, templates, raw YAML, and README examples aligned.
+- Service read/write timeouts and ServiceMonitor scrape timeout/interval should
+  remain coherent.
+- Kubernetes pod labels and pod UID labels are emitted only when the matching
+  Kubernetes options are enabled and RBAC permits the required reads.
+- DRA and virtual GPU behavior must be explicitly enabled and tested or
+  documented as a prerequisite-dependent path.
+- Pod label allowlist regex values filter which pod labels are included in
+  metrics; an empty allowlist means include all labels.
+- Local GPU k3d validation requires Linux, NVIDIA driver, Docker, k3d,
+  kubectl, Helm, NVIDIA Container Toolkit, and a usable GPU.
+
+## HPC Job Mapping
+
+HPC job labels come from the HPC job mapping directory configured by the CLI or
+environment. Mapping files are named after GPU IDs or GPU/MIG identifiers, and
+each line contains job IDs for that GPU or MIG instance. Do not synthesize job
+IDs or mapping files in examples unless the user provides them.
+
+## Docker, Packages, And systemd
+
+Docker images and packages are user-visible release artifacts.
+
+- `docker/Dockerfile` defines Ubuntu support/debug and distroless runtime image
+  behavior.
+- `packaging/config-files/systemd/nvidia-dcgm-exporter.service` defines host
+  systemd defaults.
+- The package-managed systemd unit should not be edited in-place by users;
+  docs should prefer systemd drop-ins.
+- Release and CI scripts must preserve checksum/signature verification and
+  should not mask verification failures with `|| true`.
+- Version-derived files are updated through `hack/versions.env` plus
+  `make sync-versions`, then checked with `make validate-versions`.

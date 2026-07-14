@@ -18,6 +18,8 @@ package hostname
 
 import (
 	"net"
+	"net/url"
+	"strings"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
@@ -38,6 +40,10 @@ func GetHostname(config *appconfig.Config) (string, error) {
 }
 
 func parseRemoteHostname(config *appconfig.Config) (string, error) {
+	if host, ok, err := parseRemoteHostnameURI(config.RemoteHEInfo); ok || err != nil {
+		return host, err
+	}
+
 	// Extract the hostname or IP address part from the appconfig.RemoteHEInfo
 	// This handles inputs like "localhost:5555", "example.com:5555", or "192.168.1.1:5555"
 	host, _, err := net.SplitHostPort(config.RemoteHEInfo)
@@ -46,7 +52,47 @@ func parseRemoteHostname(config *appconfig.Config) (string, error) {
 		// In that case, use the appconfig.RemoteHEInfo as is
 		host = config.RemoteHEInfo
 	}
+	return normalizeRemoteHostname(host)
+}
+
+func parseRemoteHostnameURI(remoteHEInfo string) (string, bool, error) {
+	u, err := url.Parse(remoteHEInfo)
+	if err != nil {
+		return "", false, nil
+	}
+
+	switch strings.ToLower(u.Scheme) {
+	case "vsock", "unix":
+		hostname, err := getLocalHostname()
+		return hostname, true, err
+	case "tcp":
+		host := u.Hostname()
+		if host == "" {
+			return "", false, nil
+		}
+		hostname, err := normalizeRemoteHostname(host)
+		return hostname, true, err
+	}
+
+	return "", false, nil
+}
+
+func normalizeRemoteHostname(host string) (string, error) {
+	if isLoopbackHost(host) {
+		return getLocalHostname()
+	}
 	return host, nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func getLocalHostname() (string, error) {

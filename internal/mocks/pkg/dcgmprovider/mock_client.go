@@ -243,10 +243,10 @@ func (mr *MockDCGMMockRecorder) GetAllDeviceCount() *gomock.Call {
 }
 
 // GetCPUHierarchy mocks base method.
-func (m *MockDCGM) GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error) {
+func (m *MockDCGM) GetCPUHierarchy() (dcgm.CPUHierarchy_v2, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetCPUHierarchy")
-	ret0, _ := ret[0].(dcgm.CPUHierarchy_v1)
+	ret0, _ := ret[0].(dcgm.CPUHierarchy_v2)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -285,6 +285,20 @@ func (m *MockDCGM) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) (
 func (mr *MockDCGMMockRecorder) GetEntityGroupEntities(entityGroup any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEntityGroupEntities", reflect.TypeOf((*MockDCGM)(nil).GetEntityGroupEntities), entityGroup)
+}
+
+// GetErrorMeta mocks base method.
+func (m *MockDCGM) GetErrorMeta(arg0 dcgm.HealthCheckErrorCode) *dcgm.ErrorMeta {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetErrorMeta", arg0)
+	ret0, _ := ret[0].(*dcgm.ErrorMeta)
+	return ret0
+}
+
+// GetErrorMeta indicates an expected call of GetErrorMeta.
+func (mr *MockDCGMMockRecorder) GetErrorMeta(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetErrorMeta", reflect.TypeOf((*MockDCGM)(nil).GetErrorMeta), arg0)
 }
 
 // GetGPUInstanceHierarchy mocks base method.

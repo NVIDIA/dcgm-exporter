@@ -14,6 +14,100 @@ helm install dcgm-exporter ./deployment -f my-debug-values.yaml
 
 ## Configuration
 
+### YAML Exporter Configuration
+
+The chart can mount an optional dcgm-exporter YAML config and set `DCGM_EXPORTER_CONFIG_FILE`.
+The YAML file is read at exporter startup; changing it requires restarting the pod.
+
+```yaml
+config:
+  enabled: true
+  create: true
+  data: |
+    version: 1
+    metrics:
+      file: /etc/dcgm-exporter/default-counters.csv
+    collection:
+      interval: 30s
+```
+
+Inline metric definitions can be supplied without a CSV file:
+
+```yaml
+config:
+  enabled: true
+  create: true
+  data: |
+    version: 1
+    metrics:
+      fields:
+        - name: DCGM_FI_DEV_GPU_TEMP
+          prometheusType: gauge
+          help: GPU temperature (in C).
+```
+
+For Kubernetes deployments, mount custom metric ConfigMaps as files and point
+YAML `metrics.file` at the mounted CSV path. The chart defaults mount the
+`exporter-metrics-config-map` `metrics` key at
+`/etc/dcgm-exporter/default-counters.csv`; set `customMetrics` to replace that
+CSV content.
+
+```yaml
+customMetrics: |
+  DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
+  DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
+```
+
+When using an existing ConfigMap for the YAML file, set `config.create=false` and `config.name` to the existing ConfigMap name.
+
+Per-field watch intervals can be configured with `collection.watchGroups`. Unmatched fields use
+`collection.interval`; startup fails if a field matches multiple named groups or a named group matches no
+configured fields.
+
+```yaml
+config:
+  enabled: true
+  create: true
+  data: |
+    version: 1
+    metrics:
+      file: /etc/dcgm-exporter/default-counters.csv
+    collection:
+      interval: 30s
+      watchGroups:
+        - name: fast-thermals
+          interval: 5s
+          fields:
+            - DCGM_FI_DEV_GPU_TEMP
+            - DCGM_FI_DEV_POWER_USAGE
+        - name: slow-nvlink-prm
+          interval: 5m
+          fields:
+            - DCGM_FI_DEV_NVLINK_PPCNT_*
+```
+
+When upgrading from older chart values, the default `arguments: []` may remove
+the rendered container `args:` stanza and roll the DaemonSet. The exporter still
+uses its built-in runtime defaults when no arguments are set.
+
+### Scrape Timeout Configuration
+
+Kubernetes pod metadata enrichment can add scrape latency on dense GPU or MIG nodes. The chart exposes the exporter HTTP server timeouts and the ServiceMonitor scrape budget so they can be kept aligned.
+
+```yaml
+service:
+  webReadTimeout: 10s
+  webWriteTimeout: 30s
+
+serviceMonitor:
+  interval: 30s
+  scrapeTimeout: 25s
+```
+
+- `service.webReadTimeout`: Maximum time for the exporter to read an HTTP scrape request.
+- `service.webWriteTimeout`: Maximum time for the exporter to generate and write an HTTP scrape response.
+- `serviceMonitor.scrapeTimeout`: Maximum scrape duration used by Prometheus Operator when the ServiceMonitor is enabled. Keep this lower than `service.webWriteTimeout` and no greater than `serviceMonitor.interval`.
+
 ### Debug Dump Functionality
 
 The chart supports runtime object dumping for troubleshooting purposes. This feature allows dcgm-exporter to write debug information to files that can be analyzed later.
@@ -138,6 +232,17 @@ See `values.yaml` for all available configuration options including:
 - TLS configuration
 - Basic authentication
 
+### Securing Pprof
+
+If you add `--enable-pprof` to `arguments`, also enable `tlsServerConfig`
+and/or configure `basicAuth.users`. The chart will then mount the
+exporter-toolkit web config and set
+`DCGM_EXPORTER_WEB_CONFIG_FILE=/etc/dcgm-exporter/web-config.yaml`.
+
+`dcgm-exporter` rejects startup when pprof is enabled without a web config
+file, because `/debug/pprof/` can expose runtime profiling details and must be
+protected by exporter-toolkit authentication or TLS.
+
 ## Troubleshooting
 
 ### Debug Dump Files
@@ -157,4 +262,4 @@ These files are compressed with gzip if compression is enabled and are automatic
 
 ## Support
 
-For issues related to DCGM Exporter, please refer to the main project documentation or create an issue in the project repository. 
+For issues related to DCGM Exporter, please refer to the main project documentation or create an issue in the project repository.

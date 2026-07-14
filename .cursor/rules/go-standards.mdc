@@ -1,0 +1,16 @@
+---
+description: Go implementation standards for DCGM Exporter
+globs: ["**/*.go"]
+alwaysApply: false
+---
+
+# Go Standards
+
+- Read the owning package and nearby tests before editing.
+- Keep package APIs narrow; prefer package-local helpers.
+- Use explicit errors with useful context.
+- Do not log secrets, auth headers, kubeconfig contents, web config secrets,
+  registry tokens, or secret-manager values.
+- Preserve mockability through existing wrapper packages.
+- Run `make lint`, `make check-fmt`, and targeted `go test` for changed Go
+  packages.

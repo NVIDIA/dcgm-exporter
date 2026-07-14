@@ -82,6 +82,19 @@ func (enm clockEventBitmask) String() string {
 	return clockEventToString[enm]
 }
 
+func parseClockEventReasons(value int64) []clockEventBitmask {
+	var reasons []clockEventBitmask
+
+	reasonBitmask := clockEventBitmask(value)
+	for tr := range clockEventToString {
+		if reasonBitmask&tr != 0 {
+			reasons = append(reasons, tr)
+		}
+	}
+
+	return reasons
+}
+
 func (c *clockEventsCollector) GetMetrics() (MetricsByCounter, error) {
 	return c.expCollector.getMetrics()
 }
@@ -99,7 +112,7 @@ func NewClockEventsCollector(
 
 	collector := clockEventsCollector{}
 	var err error
-	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
+	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
 
 	collector.expCollector, err = newExpCollector(
 		counterList.LabelCounters(),
@@ -109,6 +122,9 @@ func NewClockEventsCollector(
 	)
 	if err != nil {
 		return nil, err
+	}
+	collector.sourceFields = map[dcgm.Short]string{
+		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
 	}
 
 	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
@@ -123,15 +139,8 @@ func NewClockEventsCollector(
 
 	collector.fieldValueParser = func(value int64) []int64 {
 		var reasons []int64
-
-		// The int64 value may represent multiple events.
-		// To extract a specific event, we need to perform an XOR operation with a bitmask.
-		reasonBitmask := clockEventBitmask(value)
-
-		for tr := range clockEventToString {
-			if reasonBitmask&tr != 0 {
-				reasons = append(reasons, int64(tr))
-			}
+		for _, tr := range parseClockEventReasons(value) {
+			reasons = append(reasons, int64(tr))
 		}
 
 		return reasons

@@ -20,10 +20,10 @@ import osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 
 var os osinterface.OS = osinterface.RealOS{}
 
+// promMetricType lists config metric types dcgm-exporter can render as scalar samples.
 var promMetricType = map[string]bool{
-	"gauge":     true,
-	"counter":   true,
-	"histogram": true,
-	"summary":   true,
-	"label":     true,
+	"counter": true,
+	"gauge":   true,
+	"label":   true,
+	"untyped": true,
 }

@@ -17,8 +17,13 @@
 package deviceinfo
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -32,6 +37,49 @@ import (
 )
 
 var fakeProfileName = "2fake.4gb"
+
+func captureWarnLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+	})
+
+	return &logs
+}
+
+func warningRecords(t *testing.T, logs *bytes.Buffer, message string) []map[string]any {
+	t.Helper()
+
+	var records []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record["msg"] == message {
+			records = append(records, record)
+		}
+	}
+
+	return records
+}
+
+// dcgmStringFieldValue builds a string DCGM field value for device identity fallback tests.
+func dcgmStringFieldValue(fieldID dcgm.Short, value string) dcgm.FieldValue_v1 {
+	var raw [4096]byte
+	copy(raw[:], value)
+	return dcgm.FieldValue_v1{
+		FieldID:   fieldID,
+		FieldType: dcgm.DCGM_FT_STRING,
+		Value:     raw,
+	}
+}
 
 func SpoofGPUDeviceInfo() Info {
 	var deviceInfo Info
@@ -52,6 +100,103 @@ func SpoofGPUDeviceInfo() Info {
 	deviceInfo.gpus[1].DeviceInfo.GPU = 1
 
 	return deviceInfo
+}
+
+type nonInfoProvider struct{}
+
+func (nonInfoProvider) GPUCount() uint                    { return 0 }
+func (nonInfoProvider) GPUs() []GPUInfo                   { return nil }
+func (nonInfoProvider) GPU(uint) GPUInfo                  { return GPUInfo{} }
+func (nonInfoProvider) Switches() []SwitchInfo            { return nil }
+func (nonInfoProvider) Switch(uint) SwitchInfo            { return SwitchInfo{} }
+func (nonInfoProvider) CPUs() []CPUInfo                   { return nil }
+func (nonInfoProvider) CPU(uint) CPUInfo                  { return CPUInfo{} }
+func (nonInfoProvider) GOpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
+func (nonInfoProvider) SOpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
+func (nonInfoProvider) COpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
+func (nonInfoProvider) InfoType() dcgm.Field_Entity_Group { return dcgm.FE_NONE }
+func (nonInfoProvider) IsCPUWatched(uint) bool            { return false }
+func (nonInfoProvider) IsCoreWatched(uint, uint) bool     { return false }
+func (nonInfoProvider) IsSwitchWatched(uint) bool         { return false }
+func (nonInfoProvider) IsLinkWatched(uint, uint) bool     { return false }
+
+func TestWarnMIGInstancesWithoutComputeInstances(t *testing.T) {
+	t.Run("GI with compute instances does not warn", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		info := Info{gpuCount: 1}
+		info.gpus[0].DeviceInfo.GPU = 0
+		info.gpus[0].MigEnabled = true
+		info.gpus[0].GPUInstances = append(info.gpus[0].GPUInstances, GPUInstanceInfo{
+			EntityId:         1,
+			ProfileName:      "1g.10gb",
+			ComputeInstances: []ComputeInstanceInfo{{EntityId: 2}},
+		})
+
+		info.WarnMIGInstancesWithoutComputeInstances()
+
+		assert.Empty(t, warningRecords(t, logs, migGPUInstanceWithoutCIWarning))
+	})
+
+	t.Run("GI without compute instances warns with attrs", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		info := Info{gpuCount: 1}
+		info.gpus[0].DeviceInfo.GPU = 0
+		info.gpus[0].MigEnabled = true
+		info.gpus[0].GPUInstances = append(info.gpus[0].GPUInstances, GPUInstanceInfo{
+			EntityId:    7,
+			ProfileName: "1g.10gb",
+			Info:        dcgm.MigEntityInfo{NvmlInstanceId: 3},
+		})
+
+		info.WarnMIGInstancesWithoutComputeInstances()
+
+		records := warningRecords(t, logs, migGPUInstanceWithoutCIWarning)
+		require.Len(t, records, 1)
+		assert.EqualValues(t, 0, records[0]["gpu_id"])
+		assert.EqualValues(t, 7, records[0]["gpu_instance_entity_id"])
+		assert.EqualValues(t, 3, records[0]["nvml_instance_id"])
+		assert.Equal(t, "1g.10gb", records[0]["mig_profile"])
+		assert.Equal(t, migGPUInstanceWithoutCIWarningHint, records[0]["hint"])
+	})
+
+	t.Run("non-MIG GPU does not warn", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		info := Info{gpuCount: 1}
+		info.gpus[0].DeviceInfo.GPU = 0
+		info.gpus[0].MigEnabled = false
+
+		info.WarnMIGInstancesWithoutComputeInstances()
+
+		assert.Empty(t, warningRecords(t, logs, migGPUInstanceWithoutCIWarning))
+	})
+
+	t.Run("mixed GPUs warn only for empty GI", func(t *testing.T) {
+		logs := captureWarnLogs(t)
+		info := Info{gpuCount: 2}
+		info.gpus[0].DeviceInfo.GPU = 0
+		info.gpus[0].MigEnabled = true
+		info.gpus[0].GPUInstances = append(info.gpus[0].GPUInstances, GPUInstanceInfo{
+			EntityId:         1,
+			ProfileName:      "3g.40gb",
+			ComputeInstances: []ComputeInstanceInfo{{EntityId: 2}},
+		})
+		info.gpus[1].DeviceInfo.GPU = 1
+		info.gpus[1].MigEnabled = true
+		info.gpus[1].GPUInstances = append(info.gpus[1].GPUInstances, GPUInstanceInfo{
+			EntityId:    14,
+			ProfileName: "1g.10gb",
+			Info:        dcgm.MigEntityInfo{NvmlInstanceId: 4},
+		})
+
+		info.WarnMIGInstancesWithoutComputeInstances()
+
+		records := warningRecords(t, logs, migGPUInstanceWithoutCIWarning)
+		require.Len(t, records, 1)
+		assert.EqualValues(t, 1, records[0]["gpu_id"])
+		assert.EqualValues(t, 14, records[0]["gpu_instance_entity_id"])
+		assert.EqualValues(t, 4, records[0]["nvml_instance_id"])
+		assert.Equal(t, "1g.10gb", records[0]["mig_profile"])
+	})
 }
 
 func TestGetters(t *testing.T) {
@@ -128,6 +273,186 @@ func TestGetters(t *testing.T) {
 	assert.Equal(t, fakeSOpts, deviceInfo.SOpts(), "Switches options mismatch")
 	assert.Equal(t, fakeCOpts, deviceInfo.COpts(), "CPUs options mismatch")
 	assert.Equal(t, fakeInfoType, deviceInfo.InfoType(), "InfoType mismatch")
+}
+
+func TestInfoJSONAndBase64RoundTrip(t *testing.T) {
+	info := SpoofGPUDeviceInfo()
+	info.infoType = dcgm.FE_GPU
+	info.gOpt = appconfig.DeviceOptions{Flex: true}
+	info.switches = []SwitchInfo{{EntityId: 7, NvLinks: []dcgm.NvLinkStatus{{Index: 2}}}}
+	info.cpus = []CPUInfo{{EntityId: 3, Cores: []uint{0, 1}}}
+
+	data, err := json.Marshal(&info)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"gpu_count":2`)
+
+	encoded := info.ToBase64()
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(data), string(decoded))
+
+	var roundTrip Info
+	require.NoError(t, json.Unmarshal(data, &roundTrip))
+	assert.Equal(t, info.GPUCount(), roundTrip.GPUCount())
+	assert.Equal(t, info.GPUs(), roundTrip.GPUs())
+	assert.Equal(t, info.Switches(), roundTrip.Switches())
+	assert.Equal(t, info.CPUs(), roundTrip.CPUs())
+	assert.Equal(t, info.GOpts(), roundTrip.GOpts())
+	assert.Equal(t, info.InfoType(), roundTrip.InfoType())
+}
+
+func TestToBase64Provider_NonInfoProvider(t *testing.T) {
+	got := ToBase64Provider(nonInfoProvider{})
+	decoded, err := base64.StdEncoding.DecodeString(got)
+
+	require.NoError(t, err)
+	assert.JSONEq(t, `{}`, string(decoded))
+}
+
+func TestInfoUnmarshalJSONRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    string
+		wantErr string
+	}{
+		{name: "malformed json", data: `{`, wantErr: "unexpected end of JSON input"},
+		{name: "gpu count mismatch", data: `{"gpu_count":2,"gpus":[{}]}`, wantErr: "data inconsistency"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var info Info
+			err := json.Unmarshal([]byte(tt.data), &info)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// TestInitializeUsesMinimalGPUInfoFallback verifies GPU identity can be
+// populated from DCGM field values when GetDeviceInfo is unavailable.
+func TestInitializeUsesMinimalGPUInfoFallback(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+	mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(
+		dcgm.Device{},
+		&dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND},
+	)
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(
+		dcgm.FE_GPU,
+		uint(0),
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_NAME, dcgm.DCGM_FI_DEV_UUID, dcgm.DCGM_FI_DEV_PCI_BUSID},
+	).Return([]dcgm.FieldValue_v1{
+		dcgmStringFieldValue(dcgm.DCGM_FI_DEV_NAME, "NVIDIA GB200"),
+		dcgmStringFieldValue(dcgm.DCGM_FI_DEV_UUID, "GPU-remote"),
+		dcgmStringFieldValue(dcgm.DCGM_FI_DEV_PCI_BUSID, "00000008:01:00.0"),
+	}, nil)
+	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+
+	info, err := Initialize(appconfig.DeviceOptions{Flex: true}, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+
+	require.NoError(t, err)
+	require.Equal(t, uint(1), info.GPUCount())
+	gpu := info.GPU(0).DeviceInfo
+	assert.Equal(t, uint(0), gpu.GPU)
+	assert.Equal(t, "Yes", gpu.DCGMSupported)
+	assert.Equal(t, "GPU-remote", gpu.UUID)
+	assert.Equal(t, "NVIDIA GB200", gpu.Identifiers.Model)
+	assert.Equal(t, "00000008:01:00.0", gpu.PCI.BusID)
+}
+
+// TestInitializeUsesSyntheticMinimalGPUInfoFallback verifies remote hostengine
+// metrics still initialize when DCGM exposes GPU entity IDs but not identity fields.
+func TestInitializeUsesSyntheticMinimalGPUInfoFallback(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+	mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(
+		dcgm.Device{},
+		&dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND},
+	)
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(
+		dcgm.FE_GPU,
+		uint(0),
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_NAME, dcgm.DCGM_FI_DEV_UUID, dcgm.DCGM_FI_DEV_PCI_BUSID},
+	).Return(nil, &dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND})
+	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+
+	info, err := Initialize(appconfig.DeviceOptions{Flex: true}, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+
+	require.NoError(t, err)
+	require.Equal(t, uint(1), info.GPUCount())
+	gpu := info.GPU(0).DeviceInfo
+	assert.Equal(t, uint(0), gpu.GPU)
+	assert.Equal(t, "Yes", gpu.DCGMSupported)
+	assert.Equal(t, "GPU-0", gpu.UUID)
+	assert.Empty(t, gpu.Identifiers.Model)
+	assert.Empty(t, gpu.PCI.BusID)
+}
+
+func TestInitializeDoesNotFallbackForMinimalGPUInfoQueryErrors(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+	mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(
+		dcgm.Device{},
+		&dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND},
+	)
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(
+		dcgm.FE_GPU,
+		uint(0),
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_NAME, dcgm.DCGM_FI_DEV_UUID, dcgm.DCGM_FI_DEV_PCI_BUSID},
+	).Return(nil, fmt.Errorf("identity query failed"))
+
+	_, err := Initialize(appconfig.DeviceOptions{Flex: true}, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "identity query failed")
+}
+
+// TestInitializeDoesNotFallbackForOtherGPUInfoErrors verifies unrelated
+// GetDeviceInfo errors still fail initialization instead of being hidden.
+func TestInitializeDoesNotFallbackForOtherGPUInfoErrors(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+	mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(dcgm.Device{}, fmt.Errorf("device info failed"))
+
+	_, err := Initialize(appconfig.DeviceOptions{Flex: true}, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "device info failed")
 }
 
 func TestInitialize(t *testing.T) {
@@ -366,12 +691,13 @@ func TestInitialize(t *testing.T) {
 			cOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_CPU,
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 1,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
+							Serial:     "CPU-SERIAL-123",
 						},
 					},
 				}
@@ -384,8 +710,9 @@ func TestInitialize(t *testing.T) {
 					switches: nil,
 					cpus: []CPUInfo{
 						{
-							EntityId: uint(1),
+							EntityId: uint(0),
 							Cores:    []uint{0, 65, 131},
+							Serial:   "CPU-SERIAL-123",
 						},
 					},
 					gOpt:     appconfig.DeviceOptions{},
@@ -398,8 +725,11 @@ func TestInitialize(t *testing.T) {
 				assert.Equal(t, len(expected.cpus), len(actual.cpus),
 					"CPU length mismatch")
 
-				assert.Equal(t, expected.cpus[0].EntityId, expected.cpus[0].EntityId,
+				assert.Equal(t, expected.cpus[0].EntityId, actual.cpus[0].EntityId,
 					"CPU Entity ID mismatch")
+
+				assert.Equal(t, expected.cpus[0].Serial, actual.cpus[0].Serial,
+					"CPU serial mismatch")
 
 				assert.Equal(t, len(expected.cpus[0].Cores), len(actual.cpus[0].Cores),
 					"CPU Core length mismatch")
@@ -418,7 +748,7 @@ func TestInitialize(t *testing.T) {
 			cOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_CPU_CORE,
 			mockCalls: func() {
-				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(dcgm.CPUHierarchy_v1{}, fmt.Errorf("some error"))
+				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(dcgm.CPUHierarchy_v2{}, fmt.Errorf("some error"))
 			},
 			wantErr: true,
 		},
@@ -570,6 +900,25 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			expectedOutput: map[uint]GPUInfo{},
 			wantErr:        true,
+		},
+		{
+			name: "GPU Count 1 with MIG hierarchy unavailable because NVML is not loaded",
+			gOpts: appconfig.DeviceOptions{
+				Flex: true,
+			},
+			mockCalls: func() {
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+				mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(fakeDevices[0], nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{},
+					fmt.Errorf("error retrieving DCGM MIG hierarchy: Cannot perform the requested operation because NVML doesn't exist on this system."))
+			},
+			expectedOutput: map[uint]GPUInfo{
+				0: {
+					DeviceInfo: fakeDevices[0],
+				},
+			},
+			wantErr: false,
 		},
 		{
 			name: "GPU Count 1 with Hierarchy",
@@ -727,6 +1076,72 @@ func TestInitializeGPUInfo(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "GPU Count 1 with MIG compute instance before parent GPU instance",
+			gOpts: appconfig.DeviceOptions{
+				Flex: true,
+			},
+			mockCalls: func() {
+				mockHierarchy := dcgm.MigHierarchy_v2{
+					Count: 5,
+				}
+				mockHierarchy.EntityList[0] = fakeGPUs[0]
+				mockHierarchy.EntityList[1] = fakeGPUInstances[0]
+				mockHierarchy.EntityList[2] = fakeGPUComputeInstances[2]
+				mockHierarchy.EntityList[3] = fakeGPUInstances[1]
+				mockHierarchy.EntityList[4] = fakeGPUComputeInstances[0]
+
+				mockEntitiesInput := []dcgm.GroupEntityPair{
+					{EntityGroupId: dcgm.FE_GPU_I, EntityId: fakeGPUInstances[0].Entity.EntityId},
+					{EntityGroupId: dcgm.FE_GPU_I, EntityId: fakeGPUInstances[1].Entity.EntityId},
+				}
+
+				mockEntitiesResult := []dcgm.FieldValue_v2{
+					{EntityID: mockEntitiesInput[0].EntityId},
+					{EntityID: mockEntitiesInput[1].EntityId},
+				}
+
+				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+				mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(fakeDevices[0], nil)
+				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(mockHierarchy, nil)
+				mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
+					gomock.Any()).Return(mockEntitiesResult, nil)
+				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
+				mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[1]).Return("instance_profile_1")
+			},
+			expectedOutput: map[uint]GPUInfo{
+				0: {
+					DeviceInfo: fakeDevices[0],
+					GPUInstances: []GPUInstanceInfo{
+						{
+							EntityId: fakeGPUInstances[0].Entity.EntityId,
+							Info:     fakeGPUInstances[0].Info,
+							ComputeInstances: []ComputeInstanceInfo{
+								{
+									EntityId:     fakeGPUComputeInstances[0].Entity.EntityId,
+									InstanceInfo: fakeGPUComputeInstances[0].Info,
+								},
+							},
+							ProfileName: "instance_profile_0",
+						},
+						{
+							EntityId: fakeGPUInstances[1].Entity.EntityId,
+							Info:     fakeGPUInstances[1].Info,
+							ComputeInstances: []ComputeInstanceInfo{
+								{
+									EntityId:     fakeGPUComputeInstances[2].Entity.EntityId,
+									InstanceInfo: fakeGPUComputeInstances[2].Info,
+								},
+							},
+							ProfileName: "instance_profile_1",
+						},
+					},
+					MigEnabled: true,
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "GPU Count 2 with Hierarchy but EntitiesGetLatestValues error",
 			gOpts: appconfig.DeviceOptions{
 				Flex: true,
@@ -744,104 +1159,6 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			wantErr: true,
 		},
-		/*
-			// TODO (roarora): Today, a different sequence out of GetGpuInstanceHierarchy causes an error in exporter
-			{
-				name: "GPU Count 2 with Hierarchy Different MIG Hierarchy Sequence",
-				gOpts: appconfig.DeviceOptions{
-					Flex: true,
-				},
-				mockCalls: func() {
-					mockHierarchy := dcgm.MigHierarchy_v2{
-						Count: 9,
-					}
-					mockHierarchy.EntityList[0] = fakeGPUs[0]
-					mockHierarchy.EntityList[1] = fakeGPUInstances[0]
-					mockHierarchy.EntityList[2] = fakeGPUInstances[1]
-					mockHierarchy.EntityList[3] = fakeGPUComputeInstances[0]
-					mockHierarchy.EntityList[4] = fakeGPUComputeInstances[1]
-					mockHierarchy.EntityList[5] = fakeGPUComputeInstances[2]
-					mockHierarchy.EntityList[6] = fakeGPUs[1]
-					mockHierarchy.EntityList[7] = fakeGPUInstances[2]
-					mockHierarchy.EntityList[8] = fakeGPUComputeInstances[3]
-
-					mockEntitiesInput := []dcgm.GroupEntityPair{
-						{EntityGroupId: dcgm.FE_GPU_I, EntityId: fakeGPUInstances[0].Entity.EntityId},
-						{EntityGroupId: dcgm.FE_GPU_I, EntityId: fakeGPUInstances[1].Entity.EntityId},
-						{EntityGroupId: dcgm.FE_GPU_I, EntityId: fakeGPUInstances[2].Entity.EntityId},
-					}
-
-					mockEntitiesResult := []dcgm.FieldValue_v2{
-						{EntityId: mockEntitiesInput[0].EntityId},
-						{EntityId: mockEntitiesInput[1].EntityId},
-						{EntityId: mockEntitiesInput[2].EntityId},
-					}
-
-					mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
-					mockDCGMProvider.EXPECT().GetGpuInstanceHierarchy().Return(mockHierarchy, nil)
-					mockDCGMProvider.EXPECT().EntitiesGetLatestValues(mockEntitiesInput, gomock.Any(),
-						gomock.Any()).Return(mockEntitiesResult, nil)
-					mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[0]).Return("instance_profile_0")
-					mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[1]).Return("instance_profile_1")
-					mockDCGMProvider.EXPECT().Fv2_String(mockEntitiesResult[2]).Return("instance_profile_2")
-
-					for i := 0; i < len(fakeDevices); i++ {
-						mockDCGMProvider.EXPECT().GetDeviceInfo(uint(i)).Return(fakeDevices[i], nil)
-					}
-				},
-				expectedOutput: map[uint]GPUInfo{
-					0: {
-						DeviceInfo: fakeDevices[0],
-						GPUInstances: []GPUInstanceInfo{
-							{
-								EntityId: fakeGPUInstances[0].Entity.EntityId,
-								Info:     fakeGPUInstances[0].Info,
-								ComputeInstances: []ComputeInstanceInfo{
-									{
-										EntityId:     fakeGPUComputeInstances[0].Entity.EntityId,
-										InstanceInfo: fakeGPUComputeInstances[0].Info,
-									},
-									{
-										EntityId:     fakeGPUComputeInstances[1].Entity.EntityId,
-										InstanceInfo: fakeGPUComputeInstances[1].Info,
-									},
-								},
-								ProfileName: "instance_profile_0",
-							},
-							{
-								EntityId: fakeGPUInstances[1].Entity.EntityId,
-								Info:     fakeGPUInstances[1].Info,
-								ComputeInstances: []ComputeInstanceInfo{
-									{
-										EntityId:     fakeGPUComputeInstances[2].Entity.EntityId,
-										InstanceInfo: fakeGPUComputeInstances[2].Info,
-									},
-								},
-								ProfileName: "instance_profile_1",
-							},
-						},
-						MigEnabled: true,
-					},
-					1: {
-						DeviceInfo: fakeDevices[1],
-						GPUInstances: []GPUInstanceInfo{
-							{
-								EntityId: fakeGPUInstances[2].Entity.EntityId,
-								Info:     fakeGPUInstances[2].Info,
-								ComputeInstances: []ComputeInstanceInfo{
-									{
-										EntityId:     fakeGPUComputeInstances[3].Entity.EntityId,
-										InstanceInfo: fakeGPUComputeInstances[3].Info,
-									},
-								},
-								ProfileName: "instance_profile_2",
-							},
-						},
-						MigEnabled: true,
-					},
-				},
-				wantErr: false,
-			},*/
 		{
 			name: "GPU Count 2 with Hierarchy and device options",
 			gOpts: appconfig.DeviceOptions{
@@ -1377,6 +1694,7 @@ func TestInitializeCPUInfo(t *testing.T) {
 		cOpts                 appconfig.DeviceOptions
 		mockCalls             func()
 		expectedCPUCoreOutput map[uint][]int
+		expectedCPUSerials    map[uint]string
 		wantErr               bool
 	}{
 		{
@@ -1385,7 +1703,7 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 0,
 				}
 				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
@@ -1398,9 +1716,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 1,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
@@ -1418,9 +1736,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 1,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
@@ -1437,22 +1755,25 @@ func TestInitializeCPUInfo(t *testing.T) {
 				Flex: true,
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 2,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{1, 2, 8},
+							Serial:     "CPU-SERIAL-000",
 						},
 						{
 							CPUID:      1,
 							OwnedCores: []uint64{8, 16, 32},
+							Serial:     "CPU-SERIAL-001",
 						},
 					},
 				}
 				mockDCGMProvider.EXPECT().GetCPUHierarchy().Return(mockCPUHierarchy, nil)
 			},
 			expectedCPUCoreOutput: map[uint][]int{0: {0, 65, 131}, 1: {3, 68, 133}},
+			expectedCPUSerials:    map[uint]string{0: "CPU-SERIAL-000", 1: "CPU-SERIAL-001"},
 			wantErr:               false,
 		},
 		{
@@ -1463,9 +1784,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1500,9 +1821,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1537,9 +1858,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1574,9 +1895,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1611,9 +1932,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{-1},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1648,9 +1969,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1684,9 +2005,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 				MinorRange: []int{1, 2, 4, 8, 16, 32, 64, 128, 256, 1024},
 			},
 			mockCalls: func() {
-				mockCPUHierarchy := dcgm.CPUHierarchy_v1{
+				mockCPUHierarchy := dcgm.CPUHierarchy_v2{
 					NumCPUs: 5,
-					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v1{
+					CPUs: [dcgm.MAX_NUM_CPUS]dcgm.CPUHierarchyCPU_v2{
 						{
 							CPUID:      0,
 							OwnedCores: []uint64{0b10110},
@@ -1727,6 +2048,9 @@ func TestInitializeCPUInfo(t *testing.T) {
 
 				for _, cpu := range deviceInfo.cpus {
 					assert.Equal(t, len(tt.expectedCPUCoreOutput[cpu.EntityId]), len(cpu.Cores), "Core length mismatch")
+					if tt.expectedCPUSerials != nil {
+						assert.Equal(t, tt.expectedCPUSerials[cpu.EntityId], cpu.Serial, "CPU serial mismatch")
+					}
 
 					for _, core := range cpu.Cores {
 						assert.True(t, slices.Contains(tt.expectedCPUCoreOutput[cpu.EntityId], int(core)),
@@ -1769,7 +2093,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			switchOutput: []uint{},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 			},
 			wantErr: true,
 		},
@@ -1784,7 +2109,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1}},
@@ -1803,7 +2129,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2, 3}},
@@ -1822,7 +2149,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2}, 2: {3}, 3: {}},
@@ -1849,7 +2177,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2, 3}, 2: {4, 5, 6}, 3: {7, 8}, 4: {9}, 5: {}},
@@ -1876,7 +2205,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2, 3}, 2: {4, 5, 6}, 3: {7, 8}},
@@ -1903,7 +2233,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2, 3}, 2: {4, 5, 6}, 3: {7}},
@@ -1930,7 +2261,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2, 3}, 2: {4, 5, 6}, 3: {7, 8}, 4: {9}, 5: {}},
@@ -1957,7 +2289,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{},
@@ -1984,7 +2317,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			expectedSwitchToLinkMap: map[uint][]uint{1: {1, 2, 3}, 2: {4, 5, 6}, 3: {7, 8}, 4: {9}, 5: {}},
@@ -2011,7 +2345,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			wantErr: true,
@@ -2037,7 +2372,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, nil)
 			},
 			wantErr: true,
@@ -2049,7 +2385,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, fmt.Errorf("some error"))
+					switchOutput, fmt.Errorf("some error"),
+				)
 			},
 			wantErr: true,
 		},
@@ -2061,7 +2398,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 			switchOutput: []uint{1},
 			mockCalls: func(switchOutput []uint, linkStatusOutput []dcgm.NvLinkStatus) {
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(gomock.Any()).Return(
-					switchOutput, nil)
+					switchOutput, nil,
+				)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return(linkStatusOutput, fmt.Errorf("some error"))
 			},
 			wantErr: true,

@@ -17,13 +17,17 @@
 package devicewatcher
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
@@ -32,6 +36,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
@@ -69,8 +74,11 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 					{ParentID: 1, ChildID: 0}: true,
 					{ParentID: 1, ChildID: 1}: true,
 				}
-				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
+				mockDeviceInfo := testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
+				mockDeviceInfo.EXPECT().SOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+				return mockDeviceInfo
 			},
 			expectGroupIDs: func() []dcgm.GroupHandle {
 				mockGroupHandle1 := dcgm.GroupHandle{}
@@ -143,8 +151,11 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 					{ParentID: 1, ChildID: 0}: true,
 					{ParentID: 1, ChildID: 1}: true,
 				}
-				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
+				mockDeviceInfo := testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
+				mockDeviceInfo.EXPECT().SOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+				return mockDeviceInfo
 			},
 			expectGroupIDs: func() []dcgm.GroupHandle {
 				mockGroupHandle1 := dcgm.GroupHandle{}
@@ -174,6 +185,9 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[1], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(nil)
 
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[1]).Return(nil)
+				mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[0]).Return(nil)
 				mockDCGM.EXPECT().DestroyGroup(mockGroupHandles[1]).Return(nil)
 			},
@@ -246,8 +260,11 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 					{ParentID: 1, ChildID: 0}: true,
 					{ParentID: 1, ChildID: 1}: true,
 				}
-				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
+				mockDeviceInfo := testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
+				mockDeviceInfo.EXPECT().SOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+				return mockDeviceInfo
 			},
 			expectGroupIDs: func() []dcgm.GroupHandle {
 				mockGroupHandle1 := dcgm.GroupHandle{}
@@ -281,6 +298,9 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 					gomock.Any(), gomock.Any()).Return(nil)
 				mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandles[1], gomock.Any(),
 					gomock.Any(), gomock.Any()).Return(fmt.Errorf("some error"))
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[0]).Return(nil)
+				mockDCGM.EXPECT().UnwatchFields(mockFieldGroupHandle, mockGroupHandles[1]).Return(nil)
+				mockDCGM.EXPECT().FieldGetByID(gomock.Any()).Return(dcgm.FieldMeta{}, fmt.Errorf("unknown field")).AnyTimes()
 			},
 			wantErr: true,
 		},
@@ -713,6 +733,174 @@ func TestDeviceWatcher_WatchDeviceFields(t *testing.T) {
 
 			ctrl.Finish()
 		})
+	}
+}
+
+func TestDeviceWatcher_WatchDeviceFieldGroupsUsesGroupIntervals(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	groupHandle := dcgm.GroupHandle{}
+	groupHandle.SetHandle(uintptr(1))
+	fastFieldGroup := dcgm.FieldHandle{}
+	fastFieldGroup.SetHandle(uintptr(2))
+	slowFieldGroup := dcgm.FieldHandle{}
+	slowFieldGroup.SetHandle(uintptr(3))
+
+	fastFields := []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP}
+	slowFields := []dcgm.Short{dcgm.DCGM_FI_DEV_POWER_USAGE}
+
+	mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(groupHandle, nil)
+	mockDCGM.EXPECT().AddEntityToGroup(groupHandle, dcgm.FE_GPU, uint(0)).Return(nil)
+	mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), fastFields).Return(fastFieldGroup, nil)
+	mockDCGM.EXPECT().
+		WatchFieldsWithGroupEx(fastFieldGroup, groupHandle, int64(5_000_000), gomock.Any(), gomock.Any()).
+		Return(nil)
+	mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), slowFields).Return(slowFieldGroup, nil)
+	mockDCGM.EXPECT().
+		WatchFieldsWithGroupEx(slowFieldGroup, groupHandle, int64(60_000_000), gomock.Any(), gomock.Any()).
+		Return(nil)
+	mockDCGM.EXPECT().UnwatchFields(fastFieldGroup, groupHandle).Return(nil)
+	mockDCGM.EXPECT().UnwatchFields(slowFieldGroup, groupHandle).Return(nil)
+	mockDCGM.EXPECT().FieldGroupDestroy(fastFieldGroup).Return(nil)
+	mockDCGM.EXPECT().FieldGroupDestroy(slowFieldGroup).Return(nil)
+	mockDCGM.EXPECT().DestroyGroup(groupHandle).Return(nil)
+
+	gotGroups, gotFieldGroups, cleanups, err := NewDeviceWatcher().WatchDeviceFieldGroups(
+		[]FieldWatchGroup{
+			{Name: "fast", Fields: fastFields, IntervalMSec: 5000},
+			{Name: "slow", Fields: slowFields, IntervalMSec: 60000},
+		},
+		deviceInfo,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []dcgm.GroupHandle{groupHandle}, gotGroups)
+	assert.Equal(t, []dcgm.FieldHandle{fastFieldGroup, slowFieldGroup}, gotFieldGroups)
+	require.Len(t, cleanups, 1)
+	cleanups[0]()
+}
+
+func TestDeviceWatcher_WatchDeviceFieldGroupsCleansUpStartedWatchOnLaterFailure(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	groupHandle := dcgm.GroupHandle{}
+	groupHandle.SetHandle(uintptr(1))
+	fastFieldGroup := dcgm.FieldHandle{}
+	fastFieldGroup.SetHandle(uintptr(2))
+
+	fastFields := []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP}
+	slowFields := []dcgm.Short{dcgm.DCGM_FI_DEV_POWER_USAGE}
+
+	mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(groupHandle, nil)
+	mockDCGM.EXPECT().AddEntityToGroup(groupHandle, dcgm.FE_GPU, uint(0)).Return(nil)
+	mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), fastFields).Return(fastFieldGroup, nil)
+	mockDCGM.EXPECT().
+		WatchFieldsWithGroupEx(fastFieldGroup, groupHandle, int64(5_000_000), gomock.Any(), gomock.Any()).
+		Return(nil)
+	mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), slowFields).Return(dcgm.FieldHandle{}, fmt.Errorf("boom"))
+	mockDCGM.EXPECT().UnwatchFields(fastFieldGroup, groupHandle).Return(nil)
+	mockDCGM.EXPECT().FieldGroupDestroy(fastFieldGroup).Return(nil)
+	mockDCGM.EXPECT().DestroyGroup(groupHandle).Return(nil)
+
+	gotGroups, gotFieldGroups, cleanups, err := NewDeviceWatcher().WatchDeviceFieldGroups(
+		[]FieldWatchGroup{
+			{Name: "fast", Fields: fastFields, IntervalMSec: 5000},
+			{Name: "slow", Fields: slowFields, IntervalMSec: 60000},
+		},
+		deviceInfo,
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, gotGroups)
+	assert.Nil(t, gotFieldGroups)
+	assert.Nil(t, cleanups)
+}
+
+func TestDeviceWatcher_WatchDeviceFieldsLogsFieldDetailsOnWatchFailure(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previousLogger)
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	mockDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{MajorRange: []int{-1}}).AnyTimes()
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(uintptr(42))
+	mockFieldGroupHandle := dcgm.FieldHandle{}
+	mockFieldGroupHandle.SetHandle(uintptr(43))
+	fieldIDs := []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP, dcgm.DCGM_FI_DRIVER_VERSION}
+
+	mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(mockGroupHandle, nil)
+	mockDCGM.EXPECT().AddEntityToGroup(mockGroupHandle, dcgm.FE_GPU, uint(0)).Return(nil)
+	mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Eq(fieldIDs)).Return(mockFieldGroupHandle, nil)
+	mockDCGM.EXPECT().WatchFieldsWithGroupEx(mockFieldGroupHandle, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(fmt.Errorf("watch failed"))
+	mockDCGM.EXPECT().FieldGetByID(dcgm.DCGM_FI_DEV_GPU_TEMP).
+		Return(dcgm.FieldMeta{Tag: "DCGM_FI_DEV_GPU_TEMP"}, nil).AnyTimes()
+	mockDCGM.EXPECT().FieldGetByID(dcgm.DCGM_FI_DRIVER_VERSION).
+		Return(dcgm.FieldMeta{Tag: "DCGM_FI_DRIVER_VERSION"}, nil).AnyTimes()
+	mockDCGM.EXPECT().FieldGroupDestroy(mockFieldGroupHandle).Return(nil)
+	mockDCGM.EXPECT().DestroyGroup(mockGroupHandle).Return(nil)
+
+	d := NewDeviceWatcher()
+	_, _, cleanups, err := d.WatchDeviceFields(
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP, dcgm.DCGM_FI_DRIVER_VERSION, dcgm.DCGM_FI_DEV_GPU_TEMP},
+		mockDeviceInfo,
+		1000000,
+	)
+
+	assert.Error(t, err)
+	assert.Nil(t, cleanups)
+
+	var failureRecord map[string]any
+	for _, rawRecord := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var record map[string]any
+		assert.NoError(t, json.Unmarshal(rawRecord, &record))
+		if record["msg"] == "Failed to watch DCGM fields" {
+			failureRecord = record
+			break
+		}
+	}
+
+	if assert.NotNil(t, failureRecord) {
+		assert.Equal(t, dcgm.FE_NONE.String(), failureRecord["entity_type"])
+		assert.Equal(t, []any{float64(dcgm.DCGM_FI_DEV_GPU_TEMP), float64(dcgm.DCGM_FI_DRIVER_VERSION)},
+			failureRecord["field_ids"])
+		assert.Equal(t, []any{"DCGM_FI_DEV_GPU_TEMP", "DCGM_FI_DRIVER_VERSION"}, failureRecord["field_names"])
+		assert.Contains(t, failureRecord, "field_group")
+		assert.Contains(t, failureRecord, logging.GroupIDKey)
+		assert.Equal(t, "g", failureRecord["device_option_mode"])
+		assert.Equal(t, "watch failed", failureRecord[logging.ErrorKey])
 	}
 }
 
@@ -1803,6 +1991,28 @@ func Test_newFieldGroup(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_newFieldGroupSimpleDedupesFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGM)
+
+	mockFieldGroupHandle := dcgm.FieldHandle{}
+	mockFieldGroupHandle.SetHandle(uintptr(1))
+	mockDCGM.EXPECT().
+		FieldGroupCreate(gomock.Any(), gomock.Eq([]dcgm.Short{1, 2, 3})).
+		Return(mockFieldGroupHandle, nil)
+
+	got, err := newFieldGroupSimple([]dcgm.Short{1, 2, 1, 3, 2})
+
+	assert.NoError(t, err)
+	assert.Equal(t, mockFieldGroupHandle, got)
 }
 
 func TestDeviceWatcher_GetDeviceFields(t *testing.T) {

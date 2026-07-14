@@ -24,6 +24,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
@@ -156,9 +157,8 @@ func TestNewClockEventsCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return(nil,
-					dcgm.FieldHandle{},
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+					nil,
 					sampleCleanups, fmt.Errorf("some error"))
 			},
 			want: func(
@@ -183,9 +183,8 @@ func TestNewClockEventsCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return(nil,
-					dcgm.FieldHandle{},
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+					nil,
 					sampleCleanups, nil)
 			},
 			want: func(
@@ -202,6 +201,9 @@ func TestNewClockEventsCollector(t *testing.T) {
 							hostname:        hostname,
 							config:          config,
 							cleanups:        sampleCleanups,
+						},
+						sourceFields: map[dcgm.Short]string{
+							dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
 						},
 						windowSize: config.ClockEventsCountWindowSize,
 					},
@@ -222,9 +224,8 @@ func TestNewClockEventsCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return(nil,
-					dcgm.FieldHandle{},
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+					nil,
 					sampleCleanups, nil)
 			},
 			want: func(
@@ -241,6 +242,9 @@ func TestNewClockEventsCollector(t *testing.T) {
 							hostname:        hostname,
 							config:          config,
 							cleanups:        sampleCleanups,
+						},
+						sourceFields: map[dcgm.Short]string{
+							dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
 						},
 						windowSize: config.ClockEventsCountWindowSize,
 					},
@@ -429,13 +433,12 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -488,14 +491,13 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
-					{EntityID: uint(2), Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: uint(2), Value: [4096]byte{gpu2Value}},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -533,7 +535,7 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "missing values for a GPU that is monitored",
+			name: "MIG entity with no events in window returns 0",
 			collector: func() Collector {
 				counterList := counters.CounterList{
 					mockDCGMExpClockEventsCounter,
@@ -555,13 +557,12 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -573,7 +574,7 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
 				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(2),
 					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
-				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU_I, uint(14),
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU_I, testutils.MockGPUInstanceInfo2.EntityId,
 					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
 			},
 			want: func() (MetricsByCounter, byte, byte) {
@@ -613,6 +614,156 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "MIG entity with events in window returns count",
+			collector: func() Collector {
+				counterList := counters.CounterList{
+					mockDCGMExpClockEventsCounter,
+					mockOtherCounter,
+					mockLabelCounter,
+				}
+
+				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
+				gpuInstanceInfos[3] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo2}
+
+				mockGPUDeviceInfoTemp := testutils.MockGPUDeviceInfo(ctrl, 4, gpuInstanceInfos)
+				mockGPUDeviceInfoTemp.EXPECT().GOpts().Return(gOpts).AnyTimes()
+
+				deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfoTemp, mockDeviceFields,
+					[]dcgm.Short{mockLabelDeviceField}, mockDeviceWatcher, mockCollectorInterval)
+
+				collector, _ := NewClockEventsCollector(counterList, mockHostname, &mockConfig, *deviceWatchList)
+				return collector
+			},
+			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
+				mockEntitiesResult := []dcgm.FieldValue_v2{
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityID:      testutils.MockGPUInstanceInfo2.EntityId,
+						Value:         [4096]byte{byte(DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL)},
+					},
+				}
+
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
+					mockCleanups, nil)
+
+				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+				mockDCGM.EXPECT().GetValuesSince(mockGroupHandle1, mockFieldGroupHandle,
+					gomock.AssignableToTypeOf(time.Time{})).Return(mockEntitiesResult, time.Time{}, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID1,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID2,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(2),
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU_I, testutils.MockGPUInstanceInfo2.EntityId,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+			},
+			want: func() (MetricsByCounter, byte, byte) {
+				mockClockOutput11 := uint64(DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP)
+				mockClockOutput12 := uint64(DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL)
+
+				mockClockOutput21 := uint64(DCGM_CLOCKS_THROTTLE_REASON_HW_POWER_BRAKE)
+				mockClockOutput22 := uint64(DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL)
+
+				mockMIGClockOutput := uint64(DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL)
+				migClockEvent := clockEventMetricsCreator(mockDCGMExpClockEventsCounter, uint(3), "1", mockHostname,
+					mockFieldName,
+					mockLabelValue, mockMIGClockOutput, false)
+				migClockEvent.MigProfile = testutils.MockGPUInstanceInfo2.ProfileName
+				migClockEvent.GPUInstanceID = fmt.Sprintf("%d", testutils.MockGPUInstanceInfo2.Info.NvmlInstanceId)
+
+				return MetricsByCounter{
+					mockDCGMExpClockEventsCounter: []Metric{
+						clockEventMetricsCreator(mockDCGMExpClockEventsCounter, gpuID1, "1", mockHostname,
+							mockFieldName,
+							mockLabelValue, mockClockOutput11, false),
+						clockEventMetricsCreator(mockDCGMExpClockEventsCounter, gpuID1, "1", mockHostname,
+							mockFieldName,
+							mockLabelValue, mockClockOutput12, false),
+						clockEventMetricsCreator(mockDCGMExpClockEventsCounter, gpuID2, "1", mockHostname,
+							mockFieldName,
+							mockLabelValue, mockClockOutput21, false),
+						clockEventMetricsCreator(mockDCGMExpClockEventsCounter, gpuID2, "1", mockHostname,
+							mockFieldName,
+							mockLabelValue, mockClockOutput22, false),
+						clockEventMetricsCreator(mockDCGMExpClockEventsCounter, uint(2), "0", mockHostname,
+							mockFieldName,
+							mockLabelValue, invalidClockEventValue, false),
+						migClockEvent,
+					},
+				}, byte(mockClockOutput11 + mockClockOutput12), byte(mockClockOutput21 + mockClockOutput22)
+			},
+			wantErr: false,
+		},
+		{
+			// Pre-fix, the storage map was keyed by EntityID (uint), so a
+			// (FE_GPU, 0) value and a (FE_GPU_I, 0) value would collapse
+			// into the same map slot. Post-fix, the GroupEntityPair key
+			// keeps them distinct.
+			name: "cross-group entity-id collision is not conflated",
+			collector: func() Collector {
+				counterList := counters.CounterList{
+					mockDCGMExpClockEventsCounter,
+					mockOtherCounter,
+					mockLabelCounter,
+				}
+
+				gpuInstanceInfos := make(map[int][]deviceinfo.GPUInstanceInfo)
+				gpuInstanceInfos[1] = []deviceinfo.GPUInstanceInfo{testutils.MockGPUInstanceInfo1}
+
+				mockGPUDeviceInfoTemp := testutils.MockGPUDeviceInfo(ctrl, 2, gpuInstanceInfos)
+				mockGPUDeviceInfoTemp.EXPECT().GOpts().Return(gOpts).AnyTimes()
+
+				deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfoTemp, mockDeviceFields,
+					[]dcgm.Short{mockLabelDeviceField}, mockDeviceWatcher, mockCollectorInterval)
+
+				collector, _ := NewClockEventsCollector(counterList, mockHostname, &mockConfig, *deviceWatchList)
+				return collector
+			},
+			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpuValue, giValue byte) {
+				mockEntitiesResult := []dcgm.FieldValue_v2{
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpuValue}},
+					{
+						EntityGroupId: dcgm.FE_GPU_I,
+						EntityID:      testutils.MockGPUInstanceInfo1.EntityId,
+						Value:         [4096]byte{giValue},
+					},
+				}
+
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
+					mockCleanups, nil)
+
+				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+				mockDCGM.EXPECT().GetValuesSince(mockGroupHandle1, mockFieldGroupHandle,
+					gomock.AssignableToTypeOf(time.Time{})).Return(mockEntitiesResult, time.Time{}, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID1,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+				mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU_I, testutils.MockGPUInstanceInfo1.EntityId,
+					[]dcgm.Short{mockLabelDeviceField}).Return(mockLatestValues, nil)
+			},
+			want: func() (MetricsByCounter, byte, byte) {
+				gpuReason := uint64(DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP)
+				giReason := uint64(DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL)
+
+				gpuMetric := clockEventMetricsCreator(mockDCGMExpClockEventsCounter, gpuID1, "1", mockHostname,
+					mockFieldName, mockLabelValue, gpuReason, false)
+
+				giMetric := clockEventMetricsCreator(mockDCGMExpClockEventsCounter, gpuID2, "1", mockHostname,
+					mockFieldName, mockLabelValue, giReason, false)
+				giMetric.MigProfile = testutils.MockGPUInstanceInfo1.ProfileName
+				giMetric.GPUInstanceID = fmt.Sprintf("%d", testutils.MockGPUInstanceInfo1.Info.NvmlInstanceId)
+
+				return MetricsByCounter{
+					mockDCGMExpClockEventsCounter: []Metric{gpuMetric, giMetric},
+				}, byte(gpuReason), byte(giReason)
+			},
+			wantErr: false,
+		},
+		{
 			name: "clock events collector with multiple clock events",
 			collector: func() Collector {
 				counterList := counters.CounterList{
@@ -628,16 +779,15 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, gpu1Value, gpu2Value byte) {
 				mockEntitiesResult := []dcgm.FieldValue_v2{
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
-					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
-					{EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID1, Value: [4096]byte{gpu1Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
+					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -689,9 +839,8 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 				return collector
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, _, _ byte) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(fmt.Errorf("some error"))
@@ -716,9 +865,8 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 				return collector
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, _, _ byte) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -746,9 +894,8 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 				return collector
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher, _, _ byte) {
-				watcher.EXPECT().WatchDeviceFields(gomock.Any(), gomock.Any(),
-					gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
-					mockFieldGroupHandle,
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
 				mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -795,4 +942,62 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_clockEventsCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
+	buf := setupDebugLogCapture(t)
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	mockGroupHandle := dcgm.GroupHandle{}
+	mockGroupHandle.SetHandle(uintptr(1))
+	mockFieldGroupHandle := dcgm.FieldHandle{}
+	mockFieldGroupHandle.SetHandle(uintptr(1))
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return([]dcgm.GroupHandle{mockGroupHandle}, []dcgm.FieldHandle{mockFieldGroupHandle}, nil, nil)
+
+	counterList := counters.CounterList{
+		{
+			FieldID:   dcgm.Short(counters.DCGMClockEventsCount),
+			FieldName: counters.DCGMExpClockEventsCount,
+		},
+	}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, 1)
+
+	collector, err := NewClockEventsCollector(counterList, "localhost", &appconfig.Config{}, *deviceWatchList)
+	require.NoError(t, err)
+
+	blankValue := createInt64ByteArray(dcgm.DCGM_FT_INT64_BLANK)
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(mockGroupHandle, mockFieldGroupHandle, gomock.AssignableToTypeOf(time.Time{})).
+		Return([]dcgm.FieldValue_v2{
+			{
+				EntityGroupId: dcgm.FE_GPU,
+				EntityID:      0,
+				FieldID:       dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
+				FieldType:     dcgm.DCGM_FT_INT64,
+				Status:        0,
+				Value:         blankValue,
+			},
+		}, time.Time{}, nil)
+
+	_, err = collector.GetMetrics()
+	require.NoError(t, err)
+
+	got := findLogRecord(t, buf, blankValueSkippedMessage)
+	assert.Equal(t, blankValueSkippedMessage, got["msg"])
+	assert.Equal(t, float64(dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS), got["fieldID"])
+	assert.Equal(t, "DCGM_FI_DEV_CLOCKS_EVENT_REASONS", got["fieldName"])
+	assert.Equal(t, dcgm.FE_GPU.String(), got["entityType"])
+	assert.Equal(t, float64(0), got["entityID"])
 }

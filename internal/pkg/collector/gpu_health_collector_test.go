@@ -33,6 +33,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
 func TestNewGPUHealthStatusCollector(t *testing.T) {
@@ -88,7 +89,8 @@ func TestNewGPUHealthStatusCollector(t *testing.T) {
 			setDefaultExpectationsForGPUHealthStatusCollectorMockDCGMProvider(t, mockDCGMProvider)
 
 			// Create a new collector
-			collector, err := NewGPUHealthStatusCollector(tc.counterList,
+			collector, err := NewGPUHealthStatusCollector(
+				tc.counterList,
 				"",
 				&appconfig.Config{},
 				getDefaultDeviceWatchListForGPUHealthStatusCollectorMockDCGMProvider(ctrl),
@@ -137,6 +139,8 @@ func setDefaultExpectationsForGPUHealthStatusCollectorMockDCGMProviderWithGroup(
 	}), gomock.Any()).Return(dcgm.FieldHandle{}, nil).AnyTimes()
 	mockDCGMProvider.EXPECT().WatchFieldsWithGroupEx(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().UnwatchFields(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockDCGMProvider.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
 	mockDCGMProvider.EXPECT().EntityGetLatestValues(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return([]dcgm.FieldValue_v1{}, nil).AnyTimes()
 
@@ -162,6 +166,18 @@ func setDefaultExpectationsForGPUHealthStatusCollectorMockDCGMProviderWithGroup(
 	}
 
 	mockDCGMProvider.EXPECT().HealthCheck(gomock.Any()).Return(healthCheckResponse, nil).AnyTimes()
+	mockDCGMProvider.EXPECT().GetErrorMeta(gomock.Any()).DoAndReturn(
+		func(code dcgm.HealthCheckErrorCode) *dcgm.ErrorMeta {
+			if code != dcgm.DCGM_FR_THERMAL_VIOLATIONS {
+				return nil
+			}
+			return &dcgm.ErrorMeta{
+				ErrorID:  code,
+				Severity: dcgm.DCGM_ERROR_MONITOR,
+				Category: dcgm.DCGM_FR_EC_HARDWARE_THERMAL,
+			}
+		},
+	).AnyTimes()
 	mockDCGMProvider.EXPECT().GetGroupInfo(gomock.Any()).Return(&dcgm.GroupInfo{
 		EntityList: groupEntities,
 	}, nil).AnyTimes()
@@ -217,9 +233,13 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 					healthErrorCode := value.Labels["health_error_code"]
 					if healthWatch == "THERMAL" && healthErrorCode == "DCGM_FR_THERMAL_VIOLATIONS" {
 						assert.Equal(t, "20", value.Value)
+						assert.Equal(t, "MONITOR", value.Labels["health_error_severity"])
+						assert.Equal(t, "HARDWARE_THERMAL", value.Labels["health_error_category"])
 						thermalViolationsFound = true
 					} else {
 						assert.Equal(t, "0", value.Value)
+						assert.Equal(t, "NONE", value.Labels["health_error_severity"])
+						assert.Equal(t, "NONE", value.Labels["health_error_category"])
 					}
 				}
 				assert.True(t, thermalViolationsFound, "expected DCGM_FR_THERMAL_VIOLATIONS error not found")
@@ -283,7 +303,8 @@ func TestGPUHealthStatusCollector_GetMetrics_ErrorHandling(t *testing.T) {
 			setDefaultExpectationsForGPUHealthStatusCollectorMockDCGMProvider(t, mockDCGMProvider)
 
 			// Create a new collector
-			collector, err := NewGPUHealthStatusCollector(counterList,
+			collector, err := NewGPUHealthStatusCollector(
+				counterList,
 				"",
 				&appconfig.Config{
 					UseOldNamespace: true,
@@ -507,7 +528,8 @@ func TestGPUHealthStatusCollector_GetMetrics_HealthGroupContainsUnmonitoredGPU_N
 		{FieldName: counters.DCGMExpGPUHealthStatus},
 	}
 
-	collector, err := NewGPUHealthStatusCollector(counterList,
+	collector, err := NewGPUHealthStatusCollector(
+		counterList,
 		"",
 		&appconfig.Config{},
 		getDefaultDeviceWatchListForGPUHealthStatusCollectorMockDCGMProvider(ctrl),
@@ -551,6 +573,16 @@ func TestHealthCheckErrorToString(t *testing.T) {
 			expected: "DCGM_FR_BROKEN_P2P_NVLINK_WRITER_DEVICE",
 		},
 		{
+			name:     "returns DCGM_FR_CONTAINED_ERROR",
+			code:     dcgm.DCGM_FR_CONTAINED_ERROR,
+			expected: "DCGM_FR_CONTAINED_ERROR",
+		},
+		{
+			name:     "returns DCGM_FR_UNCORRECTABLE_ROW_REMAP_LIMIT",
+			code:     dcgm.DCGM_FR_UNCORRECTABLE_ROW_REMAP_LIMIT,
+			expected: "DCGM_FR_UNCORRECTABLE_ROW_REMAP_LIMIT",
+		},
+		{
 			name:     "returns DCGM_FR_UNKNOWN(N) for unmapped code",
 			code:     dcgm.HealthCheckErrorCode(424242),
 			expected: "DCGM_FR_UNKNOWN(424242)",
@@ -559,6 +591,67 @@ func TestHealthCheckErrorToString(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, healthCheckErrorToString(tc.code))
+		})
+	}
+}
+
+func TestHealthErrorMetadataLabels(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	realDCGM := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGM)
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	testCases := []struct {
+		name         string
+		code         dcgm.HealthCheckErrorCode
+		metadata     *dcgm.ErrorMeta
+		wantSeverity string
+		wantCategory string
+	}{
+		{
+			name: "known metadata",
+			code: dcgm.DCGM_FR_PCI_REPLAY_RATE,
+			metadata: &dcgm.ErrorMeta{
+				Severity: dcgm.DCGM_ERROR_ISOLATE,
+				Category: dcgm.DCGM_FR_EC_HARDWARE_PCIE,
+			},
+			wantSeverity: "ISOLATE",
+			wantCategory: "HARDWARE_PCIE",
+		},
+		{
+			name:         "pass",
+			code:         dcgm.DCGM_FR_OK,
+			wantSeverity: "NONE",
+			wantCategory: "NONE",
+		},
+		{
+			name:         "unknown metadata",
+			code:         dcgm.HealthCheckErrorCode(424242),
+			wantSeverity: "UNKNOWN",
+			wantCategory: "UNKNOWN",
+		},
+		{
+			name: "unmapped metadata",
+			code: dcgm.HealthCheckErrorCode(424242),
+			metadata: &dcgm.ErrorMeta{
+				Severity: dcgm.ErrorSeverity(424242),
+				Category: dcgm.ErrorCategory(424242),
+			},
+			wantSeverity: "UNKNOWN",
+			wantCategory: "UNKNOWN",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.code != dcgm.DCGM_FR_OK {
+				mockDCGMProvider.EXPECT().GetErrorMeta(tc.code).Return(tc.metadata)
+			}
+
+			severity, category := healthErrorMetadataLabels(tc.code)
+			assert.Equal(t, tc.wantSeverity, severity)
+			assert.Equal(t, tc.wantCategory, category)
 		})
 	}
 }
@@ -667,7 +760,8 @@ func TestGPUHealthStatusCollector_GetMetrics_WatchAllIncident(t *testing.T) {
 		{FieldName: counters.DCGMExpGPUHealthStatus},
 	}
 
-	collector, err := NewGPUHealthStatusCollector(counterList,
+	collector, err := NewGPUHealthStatusCollector(
+		counterList,
 		"",
 		&appconfig.Config{},
 		getDefaultDeviceWatchListForGPUHealthStatusCollectorMockDCGMProvider(ctrl),
@@ -699,4 +793,64 @@ func TestGPUHealthStatusCollector_GetMetrics_WatchAllIncident(t *testing.T) {
 		}
 	}
 	assert.True(t, allRowFound, "expected a row with health_watch=ALL")
+}
+
+func TestGPUHealthStatusCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	labelFieldID := dcgm.Short(3)
+	labelName := "label_field"
+	counter := counters.Counter{FieldID: 1, FieldName: counters.DCGMExpGPUHealthStatus}
+	labelCounter := counters.Counter{FieldID: labelFieldID, FieldName: labelName, PromType: "label"}
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, nil)
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+	watchList := devicewatchlistmanager.NewWatchList(
+		deviceInfo,
+		nil,
+		[]dcgm.Short{labelFieldID},
+		deviceWatcher,
+		1,
+	)
+	groupHandle := dcgm.GroupHandle{}
+	collector := &gpuHealthStatusCollector{
+		baseExpCollector: baseExpCollector{
+			deviceWatchList: *watchList,
+			counter:         counter,
+			labelsCounters:  []counters.Counter{labelCounter},
+			config:          &appconfig.Config{},
+		},
+		groupID:            groupHandle,
+		deviceInfoProvider: deviceInfo,
+	}
+
+	mockDCGM.EXPECT().HealthCheck(groupHandle).Return(dcgm.HealthResponse{}, nil)
+	mockDCGM.EXPECT().GetGroupInfo(groupHandle).Return(&dcgm.GroupInfo{EntityList: []dcgm.GroupEntityPair{
+		{EntityGroupId: dcgm.FE_GPU, EntityId: 0},
+		{EntityGroupId: dcgm.FE_GPU, EntityId: 1},
+	}}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{labelFieldID}).
+		Return([]dcgm.FieldValue_v1{{
+			FieldID:   labelFieldID,
+			FieldType: dcgm.DCGM_FT_STRING,
+			Value:     testutils.StrToByteArray("gpu0-label"),
+		}}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{labelFieldID}).
+		Return([]dcgm.FieldValue_v1{{
+			FieldID:   labelFieldID,
+			FieldType: dcgm.DCGM_FT_STRING,
+			Value:     testutils.StrToByteArray("gpu1-label"),
+		}}, nil)
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+	require.Len(t, got[counter], 2*len(gpuHealthChecks))
+
+	for _, metric := range got[counter] {
+		assert.Equal(t, "gpu"+metric.GPU+"-label", metric.Labels[labelName])
+	}
 }

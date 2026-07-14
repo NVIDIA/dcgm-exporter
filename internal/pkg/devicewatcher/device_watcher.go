@@ -24,6 +24,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
@@ -36,9 +37,9 @@ type DeviceWatcher struct{}
 
 // WatchResources holds all DCGM resources that need cleanup
 type WatchResources struct {
-	groups     []dcgm.GroupHandle
-	fieldGroup dcgm.FieldHandle
-	hasWatch   bool // tracks if WatchFields was called
+	groups      []dcgm.GroupHandle
+	fieldGroups []dcgm.FieldHandle
+	hasWatch    bool // tracks if WatchFields was called
 }
 
 // Cleanup releases all DCGM resources in the correct order
@@ -53,22 +54,24 @@ func (r *WatchResources) Cleanup() {
 	}
 
 	// 1. Unwatch all fields for all groups
-	if r.hasWatch && r.fieldGroup != (dcgm.FieldHandle{}) {
+	if r.hasWatch {
 		for _, group := range r.groups {
-			if unwatchErr := client.UnwatchFields(r.fieldGroup, group); unwatchErr != nil {
-				// Ignore benign errors that happen when DCGM shuts down before our cleanup
-				errMsg := unwatchErr.Error()
-				if !strings.Contains(errMsg, DCGM_ST_NOT_CONFIGURED) &&
-					!strings.Contains(errMsg, DCGM_ST_FIELD_NOT_WATCHED) {
-					slog.Warn("Failed to unwatch fields", slog.String(ErrorKey, errMsg))
+			for _, fieldGroup := range r.fieldGroups {
+				if unwatchErr := client.UnwatchFields(fieldGroup, group); unwatchErr != nil {
+					// Ignore benign errors that happen when DCGM shuts down before our cleanup
+					errMsg := unwatchErr.Error()
+					if !strings.Contains(errMsg, DCGM_ST_NOT_CONFIGURED) &&
+						!strings.Contains(errMsg, DCGM_ST_FIELD_NOT_WATCHED) {
+						slog.Warn("Failed to unwatch fields", slog.String(ErrorKey, errMsg))
+					}
 				}
 			}
 		}
 	}
 
 	// 2. Destroy field group
-	if r.fieldGroup != (dcgm.FieldHandle{}) {
-		if err := client.FieldGroupDestroy(r.fieldGroup); err != nil {
+	for _, fieldGroup := range r.fieldGroups {
+		if err := client.FieldGroupDestroy(fieldGroup); err != nil {
 			if !strings.Contains(err.Error(), DCGM_ST_NOT_CONFIGURED) {
 				slog.Warn("Cannot destroy field group", slog.String(ErrorKey, err.Error()))
 			}
@@ -79,7 +82,8 @@ func (r *WatchResources) Cleanup() {
 	for _, group := range r.groups {
 		if destroyErr := client.DestroyGroup(group); destroyErr != nil {
 			if !strings.Contains(destroyErr.Error(), DCGM_ST_NOT_CONFIGURED) {
-				slog.LogAttrs(context.Background(), slog.LevelWarn, "cannot destroy group",
+				slog.LogAttrs(
+					context.Background(), slog.LevelWarn, "cannot destroy group",
 					slog.Any(GroupIDKey, group),
 					slog.String(ErrorKey, destroyErr.Error()),
 				)
@@ -99,7 +103,8 @@ func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType 
 		fieldMeta, err := dcgmprovider.Client().FieldGetByID(counter.FieldID)
 		if err != nil {
 			failedCount++
-			slog.Debug("FieldGetByID failed; skipping field",
+			slog.Debug(
+				"FieldGetByID failed; skipping field",
 				slog.Any("field_id", counter.FieldID),
 				slog.String(ErrorKey, err.Error()),
 			)
@@ -112,7 +117,8 @@ func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType 
 	}
 
 	if failedCount > 0 {
-		slog.Warn("Some fields were skipped because FieldGetByID failed",
+		slog.Warn(
+			"Some fields were skipped because FieldGetByID failed",
 			slog.Int("failed_count", failedCount),
 			slog.Int("total_count", len(counters)),
 			slog.Any("entity_type", entityType),
@@ -142,6 +148,24 @@ func shouldIncludeField(entityType, fieldLevel dcgm.Field_Entity_Group) bool {
 func (d *DeviceWatcher) WatchDeviceFields(
 	deviceFields []dcgm.Short, deviceInfo deviceinfo.Provider, updateFreqInUsec int64,
 ) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
+	fieldWatchGroups := []FieldWatchGroup{
+		{
+			Name:         "default",
+			Fields:       deviceFields,
+			IntervalMSec: updateFreqInUsec / 1000,
+		},
+	}
+	groups, fieldGroups, cleanups, err := d.WatchDeviceFieldGroups(fieldWatchGroups, deviceInfo)
+	if len(fieldGroups) == 0 {
+		return groups, dcgm.FieldHandle{}, cleanups, err
+	}
+	return groups, fieldGroups[0], cleanups, err
+}
+
+// WatchDeviceFieldGroups creates one DCGM field group per configured watch interval.
+func (d *DeviceWatcher) WatchDeviceFieldGroups(
+	fieldWatchGroups []FieldWatchGroup, deviceInfo deviceinfo.Provider,
+) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
 	resources := &WatchResources{}
 
 	// Create groups based on device type
@@ -156,31 +180,40 @@ func (d *DeviceWatcher) WatchDeviceFields(
 	}
 	if err != nil {
 		resources.Cleanup()
-		return nil, dcgm.FieldHandle{}, nil, err
+		return nil, nil, nil, err
 	} else if len(resources.groups) == 0 {
-		return nil, dcgm.FieldHandle{}, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	// Create field group
-	resources.fieldGroup, err = newFieldGroupSimple(deviceFields)
-	if err != nil {
-		resources.Cleanup()
-		return nil, dcgm.FieldHandle{}, nil, err
-	}
+	for _, fieldWatchGroup := range fieldWatchGroups {
+		fields := dedupeFields(fieldWatchGroup.Fields)
+		if len(fields) == 0 {
+			continue
+		}
 
-	// Watch fields for all groups
-	for _, group := range resources.groups {
-		err = watchFieldGroupSimple(group, resources.fieldGroup, updateFreqInUsec)
+		fieldGroup, err := newFieldGroupSimple(fields)
 		if err != nil {
 			resources.Cleanup()
-			return nil, dcgm.FieldHandle{}, nil, err
+			return nil, nil, nil, err
+		}
+		resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
+
+		// Watch fields for all groups
+		for _, group := range resources.groups {
+			logWatchFieldsCall(deviceInfo, group, fieldGroup, fields)
+			err = watchFieldGroupSimple(group, fieldGroup, fieldWatchGroup.IntervalMSec*1000)
+			if err != nil {
+				logWatchFieldsFailure(deviceInfo, group, fieldGroup, fields, err)
+				resources.Cleanup()
+				return nil, nil, nil, err
+			}
+			resources.hasWatch = true
 		}
 	}
-	resources.hasWatch = true
 
 	// Return single cleanup function
 	cleanup := func() { resources.Cleanup() }
-	return resources.groups, resources.fieldGroup, []func(){cleanup}, nil
+	return resources.groups, resources.fieldGroups, []func(){cleanup}, nil
 }
 
 func (d *DeviceWatcher) createGenericGroup(deviceInfo deviceinfo.Provider) (*dcgm.GroupHandle, func(),
@@ -374,12 +407,121 @@ func newFieldGroupSimple(deviceFields []dcgm.Short) (dcgm.FieldHandle, error) {
 	}
 
 	name := fmt.Sprintf("gpu-collector-fieldgroup-%d", newFieldGroupNumber)
-	fieldGroup, err := dcgmprovider.Client().FieldGroupCreate(name, deviceFields)
+	fieldGroup, err := dcgmprovider.Client().FieldGroupCreate(name, dedupeFields(deviceFields))
 	if err != nil {
 		return dcgm.FieldHandle{}, err
 	}
 
 	return fieldGroup, nil
+}
+
+func dedupeFields(fields []dcgm.Short) []dcgm.Short {
+	if len(fields) == 0 {
+		return nil
+	}
+
+	seen := make(map[dcgm.Short]struct{}, len(fields))
+	deduped := make([]dcgm.Short, 0, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		deduped = append(deduped, field)
+	}
+
+	return deduped
+}
+
+func logWatchFieldsCall(
+	deviceInfo deviceinfo.Provider,
+	group dcgm.GroupHandle,
+	fieldGroup dcgm.FieldHandle,
+	fieldIDs []dcgm.Short,
+) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+
+	slog.LogAttrs(
+		context.Background(),
+		slog.LevelDebug,
+		"Watching DCGM fields",
+		watchLogAttrs(deviceInfo, group, fieldGroup, fieldIDs)...,
+	)
+}
+
+func logWatchFieldsFailure(
+	deviceInfo deviceinfo.Provider,
+	group dcgm.GroupHandle,
+	fieldGroup dcgm.FieldHandle,
+	fieldIDs []dcgm.Short,
+	err error,
+) {
+	attrs := append(
+		watchLogAttrs(deviceInfo, group, fieldGroup, fieldIDs),
+		slog.String(ErrorKey, err.Error()),
+	)
+	slog.LogAttrs(context.Background(), slog.LevelError, "Failed to watch DCGM fields", attrs...)
+}
+
+func watchLogAttrs(
+	deviceInfo deviceinfo.Provider,
+	group dcgm.GroupHandle,
+	fieldGroup dcgm.FieldHandle,
+	fieldIDs []dcgm.Short,
+) []slog.Attr {
+	options := deviceOptionsForInfoType(deviceInfo)
+	return []slog.Attr{
+		slog.String("entity_type", deviceInfo.InfoType().String()),
+		slog.Any(GroupIDKey, group),
+		slog.Any("field_group", fieldGroup),
+		slog.Any("field_ids", fieldIDs),
+		slog.Any("field_names", fieldNames(fieldIDs)),
+		slog.String("device_option_mode", deviceOptionMode(options)),
+		slog.Any("device_options", options),
+	}
+}
+
+func fieldNames(fieldIDs []dcgm.Short) []string {
+	names := make([]string, 0, len(fieldIDs))
+	client := dcgmprovider.Client()
+	if client == nil {
+		return names
+	}
+
+	for _, fieldID := range fieldIDs {
+		meta, err := client.FieldGetByID(fieldID)
+		if err == nil && meta.Tag != "" {
+			names = append(names, meta.Tag)
+		}
+	}
+
+	return names
+}
+
+func deviceOptionsForInfoType(deviceInfo deviceinfo.Provider) appconfig.DeviceOptions {
+	switch deviceInfo.InfoType() {
+	case dcgm.FE_SWITCH, dcgm.FE_LINK:
+		return deviceInfo.SOpts()
+	case dcgm.FE_CPU, dcgm.FE_CPU_CORE:
+		return deviceInfo.COpts()
+	default:
+		return deviceInfo.GOpts()
+	}
+}
+
+func deviceOptionMode(options appconfig.DeviceOptions) string {
+	switch {
+	case options.Flex:
+		return "f"
+	case len(options.MajorRange) > 0:
+		return "g"
+	case len(options.MinorRange) > 0:
+		return "i"
+	default:
+		return ""
+	}
 }
 
 func watchFieldGroupSimple(group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64) error {
@@ -402,7 +544,8 @@ func createGroup() (dcgm.GroupHandle, func(), error) {
 	cleanup := func() {
 		destroyErr := dcgmprovider.Client().DestroyGroup(groupID)
 		if destroyErr != nil && !strings.Contains(destroyErr.Error(), DCGM_ST_NOT_CONFIGURED) {
-			slog.LogAttrs(context.Background(), slog.LevelWarn, "cannot destroy group",
+			slog.LogAttrs(
+				context.Background(), slog.LevelWarn, "cannot destroy group",
 				slog.Any(GroupIDKey, groupID),
 				slog.String(ErrorKey, destroyErr.Error()),
 			)
@@ -426,7 +569,8 @@ func newFieldGroup(deviceFields []dcgm.Short) (dcgm.FieldHandle, func(), error) 
 	cleanup := func() {
 		err := dcgmprovider.Client().FieldGroupDestroy(fieldGroup)
 		if err != nil {
-			slog.Warn("Cannot destroy field group.",
+			slog.Warn(
+				"Cannot destroy field group.",
 				slog.String(ErrorKey, err.Error()),
 			)
 		}

@@ -1,11 +1,21 @@
-FROM nvcr.io/nvidia/cuda:13.2.1-base-ubuntu22.04
-ARG GOLANG_VERSION=1.26.2
+FROM nvcr.io/nvidia/cuda:13.3.0-base-ubuntu26.04
+ARG GOLANG_VERSION=1.26.4
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
-# Create a user 'developer' with UID=1000, add to 'developer' group, and add to 'sudo' group
-RUN groupadd -g $USER_GID $USERNAME && \
-	useradd -m -u $USER_GID -g $USERNAME -s /bin/bash $USERNAME && \
+# Create or reuse a UID=1000 user named 'developer', and add it to 'sudo'.
+RUN set -eux; \
+	getent group $USER_GID || groupadd -g $USER_GID $USERNAME; \
+	existing_user="$(getent passwd $USER_UID | cut -d: -f1 || true)"; \
+	if [ -n "$existing_user" ]; then \
+		if [ "$existing_user" != "$USERNAME" ] && id -u $USERNAME >/dev/null 2>&1; then userdel -r $USERNAME || true; fi; \
+		if [ "$existing_user" != "$USERNAME" ]; then usermod -l $USERNAME -d /home/$USERNAME -m "$existing_user"; fi; \
+		usermod -g $USER_GID $USERNAME; \
+	elif id -u $USERNAME >/dev/null 2>&1; then \
+		usermod -u $USER_UID -g $USER_GID $USERNAME; \
+	else \
+		useradd -m -u $USER_UID -g $USER_GID -s /bin/bash $USERNAME; \
+	fi; \
 	usermod -aG sudo $USERNAME
 # Allow 'developer' to use sudo without a password
 RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
@@ -19,9 +29,12 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	curl \
 	g++ \
 	gcc \
+	gcc-aarch64-linux-gnu \
 	libc6-dev \
+	libc6-dev-arm64-cross \
 	make \
 	pkg-config \
+	shellcheck \
 	wget \
 	datacenter-gpu-manager-4-core \
 	libcap2-bin \
@@ -83,20 +96,11 @@ RUN set -eux; \
 	\
 	tar -C /usr/local -xzf go.tgz; \
 	rm go.tgz
-# GOTOOLCHAIN=auto lets Go honour `toolchain` directives in go.mod, auto-
-# fetching the matching version if the baked-in compiler is older. Costs
-# one toolchain download per fresh build cache, then nothing.
-ENV GOTOOLCHAIN=auto
+ENV GOTOOLCHAIN=local
 ENV GOPATH=/go
 ENV PATH=$GOPATH/bin:$PATH
 RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
 ENV PATH=$PATH:/usr/local/go/bin
-
-ARG UV_VERSION=0.11.7
-RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
-	&& mv /root/.local/bin/uv /usr/local/bin/uv \
-	&& mv /root/.local/bin/uvx /usr/local/bin/uvx \
-	&& uv --version
 
 # Required for DCGM metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32

@@ -41,7 +41,13 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
-const internalServerError = "internal server error"
+const (
+	contentTypeOptionsHeader  = "X-Content-Type-Options"
+	failedWriteResponseError  = "Failed to write response."
+	internalServerError       = "internal server error"
+	prometheusTextContentType = "text/plain; version=0.0.4; charset=utf-8"
+	shutdownWaitTimeout       = 3 * time.Second
+)
 
 func NewMetricsServer(
 	c *appconfig.Config,
@@ -52,13 +58,15 @@ func NewMetricsServer(
 
 	// Initialize file dumper
 	fileDumper := debug.NewFileDumper(c.DumpConfig)
+	readTimeout := timeoutOrDefault(c.WebReadTimeout, appconfig.DefaultWebReadTimeout)
+	writeTimeout := timeoutOrDefault(c.WebWriteTimeout, appconfig.DefaultWebWriteTimeout)
 
 	serverv1 := &MetricsServer{
 		server: &http.Server{
 			Addr:         c.Address,
 			Handler:      router,
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
+			ReadTimeout:  readTimeout,
+			WriteTimeout: writeTimeout,
 		},
 		webConfig: &web.FlagConfig{
 			WebListenAddresses: &[]string{c.Address},
@@ -75,7 +83,7 @@ func NewMetricsServer(
 	serverv1.registry.Store(registry)
 	serverv1.reloadInProgress.Store(false)
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set(contentTypeOptionsHeader, "nosniff")
 		pprofHTML := ""
 		if c.EnablePprof {
 			pprofHTML = `
@@ -96,7 +104,7 @@ func NewMetricsServer(
 			</body>
 			</html>`))
 		if err != nil {
-			slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
+			slog.Error(failedWriteResponseError, slog.String(logging.ErrorKey, err.Error()))
 			http.Error(w, internalServerError, http.StatusInternalServerError)
 			return
 		}
@@ -147,21 +155,56 @@ func NewMetricsServer(
 	return serverv1, cleanup, nil
 }
 
+func timeoutOrDefault(timeout, defaultTimeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return defaultTimeout
+	}
+	return timeout
+}
+
+func shutdownTimeout(writeTimeout time.Duration) time.Duration {
+	return timeoutOrDefault(writeTimeout, appconfig.DefaultWebWriteTimeout)
+}
+
 // ClearRegistry removes the current registry and returns it for cleanup.
 // After calling this, /metrics will return empty responses until SetRegistry is called.
 func (s *MetricsServer) ClearRegistry() *registry.Registry {
+	s.Lock()
+	defer s.Unlock()
+
 	return s.registry.Swap(nil)
 }
 
 // SetRegistry sets the new registry to serve metrics from.
 // /metrics will now serve metrics from the new registry.
 func (s *MetricsServer) SetRegistry(newRegistry *registry.Registry) {
+	s.Lock()
+	defer s.Unlock()
+
 	s.registry.Store(newRegistry)
+}
+
+// SwapMetricsRuntime atomically replaces the registry and device topology used
+// to gather and render metrics. It waits for in-flight scrapes to finish and
+// returns the previous registry for cleanup.
+func (s *MetricsServer) SwapMetricsRuntime(
+	newRegistry *registry.Registry,
+	newDeviceWatchListManager devicewatchlistmanager.Manager,
+) *registry.Registry {
+	s.Lock()
+	defer s.Unlock()
+
+	oldRegistry := s.registry.Swap(newRegistry)
+	s.deviceWatchListManager = newDeviceWatchListManager
+	return oldRegistry
 }
 
 // GetRegistry returns the current registry (atomic read).
 // Returns an empty registry if nil (during hot reload/bind/unbind).
 func (s *MetricsServer) GetRegistry() *registry.Registry {
+	s.RLock()
+	defer s.RUnlock()
+
 	reg := s.registry.Load()
 	if reg == nil {
 		// This is expected during hot reload, bind, or unbind
@@ -229,14 +272,14 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 	}()
 
 	<-stop
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout(s.server.WriteTimeout))
 	defer shutdownCancel()
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Failed to shutdown HTTP server.", slog.String(logging.ErrorKey, err.Error()))
 		s.fatal()
 	}
 
-	if err := utils.WaitWithTimeout(&httpwg, 3*time.Second); err != nil {
+	if err := utils.WaitWithTimeout(&httpwg, shutdownWaitTimeout); err != nil {
 		slog.Error("Failed waiting for HTTP server to shutdown.", slog.String(logging.ErrorKey, err.Error()))
 		s.fatal()
 	}
@@ -246,101 +289,131 @@ func (s *MetricsServer) fatal() {
 	os.Exit(1)
 }
 
-func (s *MetricsServer) Metrics(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+// Metrics gathers the current registry and serves Prometheus text exposition.
+func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", prometheusTextContentType)
+	w.Header().Set(contentTypeOptionsHeader, "nosniff")
 
-	currentRegistry := s.GetRegistry()
-
-	metricGroups, err := currentRegistry.Gather()
-	if err != nil {
-		slog.Error("Failed to gather metrics from collectors", slog.String(logging.ErrorKey, err.Error()))
-		http.Error(w, internalServerError, http.StatusInternalServerError)
-		return
-	}
 	var buf bytes.Buffer
-	err = s.render(&buf, metricGroups)
-	if err != nil {
+	if err := s.gatherAndRenderMetrics(r.Context(), &buf); err != nil {
 		http.Error(w, internalServerError, http.StatusInternalServerError)
+
 		return
 	}
-	_, err = w.Write(buf.Bytes())
+
+	_, err := w.Write(buf.Bytes())
 	if err != nil {
-		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
+		slog.Error(failedWriteResponseError, slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
+
 		return
 	}
 }
 
-func (s *MetricsServer) render(w io.Writer, metricGroups registry.MetricsByCounterGroup) error {
+func (s *MetricsServer) gatherAndRenderMetrics(ctx context.Context, w io.Writer) error {
+	// Keep the registry and device topology paired for the whole scrape. This
+	// lets reload cleanup wait until rendering no longer references the old
+	// runtime.
+	s.RLock()
+	defer s.RUnlock()
+
+	currentRegistry := s.registry.Load()
+	if currentRegistry == nil {
+		currentRegistry = registry.NewRegistry()
+	}
+	deviceWatchListManager := s.deviceWatchListManager
+	metricGroups, err := currentRegistry.Gather()
+	if err != nil {
+		slog.Error("Failed to gather metrics from collectors", slog.String(logging.ErrorKey, err.Error()))
+		return err
+	}
+	return s.render(ctx, w, deviceWatchListManager, metricGroups)
+}
+
+// render transforms all gathered groups before rendering one combined metrics document.
+func (s *MetricsServer) render(
+	ctx context.Context,
+	w io.Writer,
+	deviceWatchListManager devicewatchlistmanager.Manager,
+	metricGroups registry.MetricsByCounterGroup,
+) error {
+	renderableGroups := registry.MetricsByCounterGroup{}
+
 	for group, metrics := range metricGroups {
-		deviceWatchList, exists := s.deviceWatchListManager.EntityWatchList(group)
-		if exists {
+		deviceWatchList, exists := deviceWatchListManager.EntityWatchList(group)
+		if !exists {
+			continue
+		}
 
-			// Write debug files and log references
-			var metricsFile, deviceInfoFile string
-			var err error
+		// Write debug files before transformations so failures can reference inputs.
+		var metricsFile, deviceInfoFile string
+		var err error
 
-			if s.fileDumper != nil {
-				metricsFile, err = s.fileDumper.DumpToFile(metrics, "metrics", group.String())
-				if err != nil {
-					slog.Warn("Failed to write metrics debug file",
-						slog.String(logging.ErrorKey, err.Error()),
-						slog.String(logging.FieldEntityGroupKey, group.String()))
-				}
-
-				deviceInfoFile, err = s.fileDumper.DumpToFile(deviceWatchList.DeviceInfo(), "deviceinfo", group.String())
-				if err != nil {
-					slog.Warn("Failed to write device info debug file",
-						slog.String(logging.ErrorKey, err.Error()),
-						slog.String(logging.FieldEntityGroupKey, group.String()))
-				}
-			}
-
-			// Log summary information with file references
-			slog.Debug("Applying transformations",
-				slog.String(logging.FieldEntityGroupKey, group.String()),
-				slog.Int("metrics_count", len(metrics)),
-				slog.Int("transformations_count", len(s.transformations)),
-				slog.String("metrics_debug_file", metricsFile),
-				slog.String("deviceinfo_debug_file", deviceInfoFile),
-			)
-
-			for _, transformation := range s.transformations {
-				transformErr := transformation.Process(metrics, deviceWatchList.DeviceInfo())
-				if transformErr != nil {
-					slog.LogAttrs(context.Background(), slog.LevelError, "Failed to apply transformations on metrics",
-						slog.String(logging.ErrorKey, transformErr.Error()),
-						slog.String(logging.FieldEntityGroupKey, group.String()),
-						slog.String("transformation", transformation.Name()),
-						slog.Int("metrics_count", len(metrics)),
-						slog.String("metrics_debug_file", metricsFile),
-						slog.String("deviceinfo_debug_file", deviceInfoFile),
-					)
-					return transformErr
-				}
-			}
-			slog.Debug("Rendering metrics",
-				slog.String(logging.FieldEntityGroupKey, group.String()),
-				slog.Int("metrics_count", len(metrics)),
-				slog.String("metrics_debug_file", metricsFile))
-			err = rendermetrics.RenderGroup(w, group, metrics)
+		if s.fileDumper != nil {
+			metricsFile, err = s.fileDumper.DumpToFile(metrics, "metrics", group.String())
 			if err != nil {
-				slog.LogAttrs(context.Background(), slog.LevelError, "Failed to renderGroup metrics",
+				slog.Warn("Failed to write metrics debug file",
 					slog.String(logging.ErrorKey, err.Error()),
+					slog.String(logging.FieldEntityGroupKey, group.String()))
+			}
+
+			deviceInfoFile, err = s.fileDumper.DumpToFile(deviceWatchList.DeviceInfo(), "deviceinfo", group.String())
+			if err != nil {
+				slog.Warn("Failed to write device info debug file",
+					slog.String(logging.ErrorKey, err.Error()),
+					slog.String(logging.FieldEntityGroupKey, group.String()))
+			}
+		}
+
+		slog.Debug(
+			"Applying transformations",
+			slog.String(logging.FieldEntityGroupKey, group.String()),
+			slog.Int("metrics_count", len(metrics)),
+			slog.Int("transformations_count", len(s.transformations)),
+			slog.String("metrics_debug_file", metricsFile),
+			slog.String("deviceinfo_debug_file", deviceInfoFile),
+		)
+
+		for _, transformation := range s.transformations {
+			transformErr := transformation.Process(metrics, deviceWatchList.DeviceInfo())
+			if transformErr != nil {
+				slog.LogAttrs(
+					ctx, slog.LevelError, "Failed to apply transformations on metrics",
+					slog.String(logging.ErrorKey, transformErr.Error()),
 					slog.String(logging.FieldEntityGroupKey, group.String()),
+					slog.String("transformation", transformation.Name()),
 					slog.Int("metrics_count", len(metrics)),
 					slog.String("metrics_debug_file", metricsFile),
 					slog.String("deviceinfo_debug_file", deviceInfoFile),
 				)
-				return err
+
+				return transformErr
 			}
 		}
+
+		slog.Debug("Prepared metrics for rendering",
+			slog.String(logging.FieldEntityGroupKey, group.String()),
+			slog.Int("metrics_count", len(metrics)),
+			slog.String("metrics_debug_file", metricsFile))
+		renderableGroups[group] = metrics
 	}
+
+	// Render once across all groups so shared families emit one HELP/TYPE block.
+	if err := rendermetrics.Render(w, renderableGroups); err != nil {
+		slog.LogAttrs(
+			ctx, slog.LevelError, "Failed to render metrics",
+			slog.String(logging.ErrorKey, err.Error()),
+			slog.Int("metric_group_count", len(renderableGroups)),
+		)
+
+		return err
+	}
+
 	return nil
 }
 
 func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(contentTypeOptionsHeader, "nosniff")
 
 	// If reload in progress or registry is nil (during hot reload/bind/unbind),
 	// still return 200 OK to prevent Kubernetes pod termination
@@ -360,7 +433,7 @@ func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Registry-Available", "true")
 	_, err := w.Write([]byte("OK"))
 	if err != nil {
-		slog.Error("Failed to write response.", slog.String(logging.ErrorKey, err.Error()))
+		slog.Error(failedWriteResponseError, slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
 		return
 	}

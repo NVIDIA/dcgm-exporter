@@ -49,7 +49,7 @@ func NewXIDCollector(
 
 	collector := xidCollector{}
 	var err error
-	deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 
 	collector.expCollector, err = newExpCollector(
 		counterList.LabelCounters(),
@@ -59,6 +59,9 @@ func NewXIDCollector(
 	)
 	if err != nil {
 		return nil, err
+	}
+	collector.sourceFields = map[dcgm.Short]string{
+		dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
 	}
 
 	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {

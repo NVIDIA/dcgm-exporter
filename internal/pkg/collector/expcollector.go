@@ -22,6 +22,8 @@ import (
 	"maps"
 	"time"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -34,6 +36,7 @@ type expCollector struct {
 	fieldValueParser func(val int64) []int64        // Function to parse the field value
 	labelFiller      func(map[string]string, int64) // Function to fill labels
 	windowSize       int                            // Window size
+	sourceFields     map[dcgm.Short]string          // Source DCGM fields backing this exporter counter
 }
 
 func (c *expCollector) getMetrics() (MetricsByCounter, error) {
@@ -42,36 +45,44 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		return nil, err
 	}
 
-	mapEntityIDToValues := map[uint]map[int64]int{}
+	mapEntityIDToValues := map[dcgm.GroupEntityPair]map[int64]int{}
 
 	window := time.Now().Add(-time.Duration(c.windowSize) * time.Millisecond)
 
-	for _, group := range c.deviceWatchList.DeviceGroups() {
-		values, _, err := dcgmprovider.Client().GetValuesSince(group, c.deviceWatchList.DeviceFieldGroup(), window)
-		if err != nil {
-			return nil, err
-		}
+	for _, fieldGroup := range c.deviceWatchList.DeviceFieldGroups() {
+		for _, group := range c.deviceWatchList.DeviceGroups() {
+			values, _, err := dcgmprovider.Client().GetValuesSince(group, fieldGroup, window)
+			if err != nil {
+				return nil, err
+			}
 
-		for _, val := range values {
-			if val.Status == 0 {
-				// Check if the value is a DCGM blank/sentinel value and skip it
-				if isBlankValue(val) {
-					continue
-				}
+			for _, val := range values {
+				if val.Status == 0 {
+					// Check if the value is a DCGM blank/sentinel value and skip it
+					if isBlankValue(val) {
+						if isDebugLoggingEnabled() {
+							logBlankValueSkipped(
+								val.FieldID,
+								c.sourceFieldName(val.FieldID),
+								val.EntityGroupId,
+								val.EntityID,
+							)
+						}
+						continue
+					}
 
-				if _, exists := mapEntityIDToValues[val.EntityID]; !exists {
-					mapEntityIDToValues[val.EntityID] = map[int64]int{}
-				}
+					key := dcgm.GroupEntityPair{EntityGroupId: val.EntityGroupId, EntityId: val.EntityID}
+					if _, exists := mapEntityIDToValues[key]; !exists {
+						mapEntityIDToValues[key] = map[int64]int{}
+					}
 
-				for _, v := range c.fieldValueParser(val.Int64()) {
-					mapEntityIDToValues[val.EntityID][v] += 1
+					for _, v := range c.fieldValueParser(val.Int64()) {
+						mapEntityIDToValues[key][v] += 1
+					}
 				}
 			}
 		}
 	}
-
-	labels := map[string]string{}
-	labels[windowSizeInMSLabel] = fmt.Sprint(c.windowSize)
 
 	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
 	metrics := make(MetricsByCounter)
@@ -81,13 +92,14 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		uuid = "uuid"
 	}
 	for _, mi := range monitoringInfo {
+		labels := map[string]string{windowSizeInMSLabel: fmt.Sprint(c.windowSize)}
 		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
 			err := c.getLabelsFromCounters(mi, labels)
 			if err != nil {
 				return nil, err
 			}
 		}
-		entityValues, exists := mapEntityIDToValues[mi.DeviceInfo.GPU]
+		entityValues, exists := mapEntityIDToValues[mi.Entity]
 		if exists {
 			for entityValue, val := range entityValues {
 
@@ -106,6 +118,14 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	}
 
 	return metrics, nil
+}
+
+func (c *expCollector) sourceFieldName(fieldID dcgm.Short) string {
+	if fieldName, ok := c.sourceFields[fieldID]; ok {
+		return fieldName
+	}
+
+	return counterFieldNameOrUnknown(c.labelsCounters, fieldID)
 }
 
 // newExpCollector is a constructor for the expCollector
