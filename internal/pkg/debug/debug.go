@@ -67,7 +67,7 @@ func (fd *FileDumper) DumpToFile(data any, prefix, suffix string) (string, error
 	fullPath := filepath.Join(fd.config.Directory, filename)
 
 	// Ensure directory exists
-	if err := os.MkdirAll(fd.config.Directory, 0o755); err != nil {
+	if err := os.MkdirAll(fd.config.Directory, 0o750); err != nil {
 		return "", fmt.Errorf("failed to create debug directory: %w", err)
 	}
 
