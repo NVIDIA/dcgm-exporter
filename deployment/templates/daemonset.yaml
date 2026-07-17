@@ -79,7 +79,7 @@ spec:
       - name: "pod-gpu-resources"
         hostPath:
           path: {{ .Values.kubeletPath }}
-      {{- if and .Values.tlsServerConfig.enabled }}
+      {{- if .Values.tlsServerConfig.enabled }}
       - name: "tls"
         secret:
           secretName: {{ include "dcgm-exporter.tlsCertsSecretName" . }}
@@ -188,7 +188,7 @@ spec:
         - name: "pod-gpu-resources"
           readOnly: true
           mountPath: "/var/lib/kubelet/pod-resources"
-        {{- if and .Values.tlsServerConfig.enabled }}
+        {{- if .Values.tlsServerConfig.enabled }}
         - name: "tls"
           mountPath: /etc/dcgm-exporter/tls
         {{- end }}

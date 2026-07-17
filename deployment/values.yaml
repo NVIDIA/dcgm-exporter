@@ -108,7 +108,7 @@ serviceAccount:
 rollingUpdate:
   # Specifies maximum number of DaemonSet pods that can be unavailable during the update
   maxUnavailable: 1
-  # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during during an update
+  # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during an update
   maxSurge: 0
 
 # Labels to be added to dcgm-exporter pods
@@ -139,7 +139,7 @@ securityContext:
 # Defines the dcgm-exporter service
 service:
   # When enabled, the helm chart will create service
-  enable: true
+  enabled: true
   type: ClusterIP
   # Accepts either "Cluster" or "Local", choose Local if you want to route internal traffic within the node only
   internalTrafficPolicy: Cluster
