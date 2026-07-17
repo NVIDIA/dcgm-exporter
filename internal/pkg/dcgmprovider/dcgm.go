@@ -74,8 +74,7 @@ func SetClient(d DCGM) {
 
 // dcgmProvider implements DCGM Interface
 type dcgmProvider struct {
-	shutdown      func()
-	moduleCleanup func()
+	shutdown func()
 }
 
 // newDCGMProvider initializes a new DCGM provider based on the provided configuration
