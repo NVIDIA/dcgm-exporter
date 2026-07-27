@@ -130,6 +130,9 @@ type Config struct {
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
 	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
 	EnablePprof                      bool          // Enable /debug/pprof/ HTTP endpoints
+	NVMLInitRetryAttempts            int           // Max attempts to initialize NVML before giving up
+	NVMLInitRetryBaseWait            time.Duration // Initial backoff wait between NVML init retries
+	NVMLInitRetryMaxWait             time.Duration // Cap on backoff wait between NVML init retries
 }
 
 // Clone returns a copy of Config with slices duplicated for reload snapshots.
