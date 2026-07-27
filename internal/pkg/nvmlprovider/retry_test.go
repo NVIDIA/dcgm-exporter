@@ -17,6 +17,7 @@
 package nvmlprovider
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestInitializeWithRetry_SucceedsAfterTransientFailures(t *testing.T) {
 		return nvml.SUCCESS
 	}
 
-	err := InitializeWithRetry(5, time.Millisecond, 5*time.Millisecond)
+	err := InitializeWithRetry(context.Background(), 5, time.Millisecond, 5*time.Millisecond)
 
 	require.NoError(t, err)
 	assert.Equal(t, 3, callCount, "expected exactly 3 calls: 2 failures + 1 success")
@@ -62,7 +63,7 @@ func TestInitializeWithRetry_GivesUpAfterExhaustingAttempts(t *testing.T) {
 		return nvml.ERROR_LIBRARY_NOT_FOUND
 	}
 
-	err := InitializeWithRetry(4, time.Millisecond, 5*time.Millisecond)
+	err := InitializeWithRetry(context.Background(), 4, time.Millisecond, 5*time.Millisecond)
 
 	require.Error(t, err)
 	assert.Equal(t, 4, callCount, "expected exactly 4 attempts")
@@ -83,11 +84,61 @@ func TestInitializeWithRetry_FailsFastOnNonTransientError(t *testing.T) {
 		return nvml.ERROR_INSUFFICIENT_POWER
 	}
 
-	err := InitializeWithRetry(5, time.Millisecond, 5*time.Millisecond)
+	err := InitializeWithRetry(context.Background(), 5, time.Millisecond, 5*time.Millisecond)
 
 	require.Error(t, err)
 	assert.Equal(t, 1, callCount, "non-transient error should fail after a single attempt")
 	assert.Contains(t, err.Error(), nvml.ErrorString(nvml.ERROR_INSUFFICIENT_POWER))
+}
+
+// TestInitializeWithRetry_ClampsNonPositiveAttemptsToOne verifies that a
+// misconfigured attempts value (e.g. from a bad env var) still performs
+// exactly one real init attempt instead of skipping initialization entirely.
+func TestInitializeWithRetry_ClampsNonPositiveAttemptsToOne(t *testing.T) {
+	defer func() { nvmlInitFunc = nvml.Init }()
+	defer reset()
+
+	for _, attempts := range []int{0, -1, -100} {
+		callCount := 0
+		nvmlInitFunc = func() nvml.Return {
+			callCount++
+			return nvml.ERROR_LIBRARY_NOT_FOUND
+		}
+
+		err := InitializeWithRetry(context.Background(), attempts, time.Millisecond, time.Millisecond)
+
+		require.Errorf(t, err, "attempts=%d", attempts)
+		assert.Equalf(t, 1, callCount, "attempts=%d should still perform exactly one init attempt", attempts)
+		assert.Containsf(t, err.Error(), "after 1 attempts", "attempts=%d", attempts)
+	}
+}
+
+// TestInitializeWithRetry_ContextCancellationInterruptsBackoff verifies that
+// cancelling ctx during the backoff wait returns promptly instead of sleeping
+// out the full remaining backoff, so a shutdown signal during a slow NVML
+// init retry isn't ignored until attempts are exhausted.
+func TestInitializeWithRetry_ContextCancellationInterruptsBackoff(t *testing.T) {
+	defer func() { nvmlInitFunc = nvml.Init }()
+	defer reset()
+
+	callCount := 0
+	nvmlInitFunc = func() nvml.Return {
+		callCount++
+		return nvml.ERROR_LIBRARY_NOT_FOUND
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := InitializeWithRetry(ctx, 5, 500*time.Millisecond, 500*time.Millisecond)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 200*time.Millisecond,
+		"cancellation should interrupt the backoff sleep instead of waiting it out")
+	assert.Less(t, callCount, 5, "should not have exhausted all attempts before the context was cancelled")
 }
 
 // TestBackoffDuration_RespectsMaxWaitCap verifies the exponential backoff is
@@ -138,5 +189,22 @@ func TestBackoffDuration_ExponentialGrowthBeforeCap(t *testing.T) {
 
 		assert.GreaterOrEqualf(t, d, scaled, "attempt %d: backoff should be at least the scaled base", attempt)
 		assert.LessOrEqualf(t, d, maxWithJitter, "attempt %d: backoff should not exceed scaled base plus max jitter", attempt)
+	}
+}
+
+// TestBackoffDuration_LargeAttemptDoesNotOverflowPastCap verifies that very
+// large, user-configurable attempt counts (attempts is an unbounded CLI int)
+// never wrap an overflowing multiplication into a bogus small duration that
+// would defeat the maxWait cap and cause a retry storm.
+func TestBackoffDuration_LargeAttemptDoesNotOverflowPastCap(t *testing.T) {
+	baseWait := 2 * time.Second
+	maxWait := 20 * time.Second
+
+	for _, attempt := range []int{40, 63, 64, 1000, 1_000_000} {
+		d := backoffDuration(attempt, baseWait, maxWait)
+
+		assert.GreaterOrEqualf(t, d, maxWait, "attempt %d: backoff must never fall below maxWait due to overflow", attempt)
+		assert.LessOrEqualf(t, d, maxWait+time.Duration(float64(maxWait)*maxJitterFraction),
+			"attempt %d: backoff must not exceed maxWait plus max jitter", attempt)
 	}
 }

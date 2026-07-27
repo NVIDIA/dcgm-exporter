@@ -17,6 +17,7 @@
 package nvmlprovider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -79,15 +80,23 @@ func isLibraryNotFoundErr(err error) bool {
 // Initialize sets up the Singleton NVML interface, retrying on the transient
 // ERROR_LIBRARY_NOT_FOUND error using sane default retry parameters.
 func Initialize() error {
-	return InitializeWithRetry(DefaultNVMLInitRetryAttempts, DefaultNVMLInitRetryBaseWait, DefaultNVMLInitRetryMaxWait)
+	return InitializeWithRetry(context.Background(), DefaultNVMLInitRetryAttempts, DefaultNVMLInitRetryBaseWait, DefaultNVMLInitRetryMaxWait)
 }
 
 // InitializeWithRetry sets up the Singleton NVML interface, retrying up to
 // attempts times with exponential backoff (base, 2x, 4x, ... capped at
 // maxWait, plus jitter) when nvml.Init fails with ERROR_LIBRARY_NOT_FOUND.
 // Any other error is returned immediately without retrying, since retrying a
-// permanent failure only delays an unavoidable error.
-func InitializeWithRetry(attempts int, baseWait, maxWait time.Duration) error {
+// permanent failure only delays an unavoidable error. attempts < 1 is treated
+// as 1, so at least one init attempt always happens. If ctx is cancelled
+// while waiting between attempts, InitializeWithRetry returns ctx.Err()
+// immediately instead of sleeping out the remaining backoff, so a shutdown
+// signal during startup isn't ignored until retries are exhausted.
+func InitializeWithRetry(ctx context.Context, attempts int, baseWait, maxWait time.Duration) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		var err error
@@ -107,7 +116,14 @@ func InitializeWithRetry(attempts int, baseWait, maxWait time.Duration) error {
 				slog.Int("attempt", attempt+1),
 				slog.Int("maxAttempts", attempts),
 				slog.Duration("wait", wait))
-			time.Sleep(wait)
+
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("NVML initialization cancelled after %d attempt(s): %w", attempt+1, ctx.Err())
+			}
 		}
 	}
 
@@ -116,13 +132,22 @@ func InitializeWithRetry(attempts int, baseWait, maxWait time.Duration) error {
 
 // backoffDuration computes the exponential backoff wait for the given attempt
 // (0-indexed): baseWait * 2^attempt, capped at maxWait, plus up to
-// maxJitterFraction of additional random jitter on top of the cap.
+// maxJitterFraction of additional random jitter on top of the cap. The
+// doubling is computed via repeated, overflow-checked multiplication rather
+// than a bit shift so an unbounded attempt count (attempts is a
+// user-configurable CLI value) can never wrap into a bogus small positive
+// duration that defeats the cap.
 func backoffDuration(attempt int, baseWait, maxWait time.Duration) time.Duration {
-	wait := maxWait
-	if attempt < 63 { // avoid overflow from the shift below
-		if scaled := baseWait * time.Duration(1<<uint(attempt)); scaled > 0 && scaled < maxWait {
-			wait = scaled
+	wait := baseWait
+	for i := 0; i < attempt; i++ {
+		if wait >= maxWait || wait > maxWait/2 {
+			wait = maxWait
+			break
 		}
+		wait *= 2
+	}
+	if wait > maxWait {
+		wait = maxWait
 	}
 
 	jitter := time.Duration(rand.Float64() * maxJitterFraction * float64(wait)) //nolint:gosec // #nosec G404 -- jitter only needs to desynchronize retries, not be cryptographically secure

@@ -549,7 +549,7 @@ func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequest
 	// Initialize NVML Provider Instance only if Kubernetes mode is enabled
 	// NVML is only needed for MIG device UUID parsing in Kubernetes environments
 	if config.Kubernetes {
-		err = initializeNVMLProviderFunc(config.NVMLInitRetryAttempts, config.NVMLInitRetryBaseWait, config.NVMLInitRetryMaxWait)
+		err = initializeNVMLProviderFunc(lifecycleCtx, config.NVMLInitRetryAttempts, config.NVMLInitRetryBaseWait, config.NVMLInitRetryMaxWait)
 		if err != nil && !config.DisableStartupValidate {
 			return err
 		}
@@ -1132,7 +1132,13 @@ func (r *reloadCoordinator) doTopologyChange(ctx context.Context, reloadID uint6
 		nvmlprovider.Client().Cleanup()
 
 		slog.InfoContext(ctx, "Reinitializing NVML", slog.Uint64("reload_id", reloadID))
-		if err := nvmlprovider.InitializeWithRetry(cfg.NVMLInitRetryAttempts, cfg.NVMLInitRetryBaseWait, cfg.NVMLInitRetryMaxWait); err != nil {
+		// A single attempt (no retry) is deliberate here: unlike pod startup, a GPU
+		// unbind event routinely leaves no NVML library to find until the GPU is
+		// rebound, at which point a fresh topology-change event drives another call
+		// to this same path. This is the serial reload coordinator's event loop, so
+		// retrying with the full startup backoff would block /metrics recovery and
+		// any queued reload for the length of that backoff.
+		if err := nvmlprovider.InitializeWithRetry(ctx, 1, cfg.NVMLInitRetryBaseWait, cfg.NVMLInitRetryMaxWait); err != nil {
 			slog.ErrorContext(ctx, "Failed to reinitialize NVML",
 				slog.Uint64("reload_id", reloadID),
 				slog.String("error", err.Error()))
