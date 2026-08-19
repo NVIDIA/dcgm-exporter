@@ -116,6 +116,10 @@ podLabels: {}
 
 # Annotations to be added to dcgm-exporter pods
 podAnnotations: {}
+
+# daemonSetAnnotations are applied to the DaemonSet object itself.
+# Use podAnnotations above to annotate the pods.
+daemonSetAnnotations: {}
 # Using this annotation which is required for prometheus scraping
   # prometheus.io/scrape: "true"
   # prometheus.io/port: "9400"
