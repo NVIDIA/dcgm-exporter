@@ -638,12 +638,17 @@ func toSwitchMetric(
 		if useOld {
 			uuid = "uuid"
 		}
+		// A switch entity is its own identity; only NvLink entities carry the switch as parent.
+		nvLink, nvSwitch := "", fmt.Sprintf("nvswitch%d", mi.Entity.EntityId)
+		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
+			nvLink, nvSwitch = fmt.Sprintf("%d", mi.Entity.EntityId), fmt.Sprintf("nvswitch%d", mi.ParentId)
+		}
 		m := Metric{
 			Counter:    counter,
 			Value:      v,
 			UUID:       uuid,
-			NvLink:     fmt.Sprintf("%d", mi.Entity.EntityId),
-			NvSwitch:   fmt.Sprintf("nvswitch%d", mi.ParentId),
+			NvLink:     nvLink,
+			NvSwitch:   nvSwitch,
 			Hostname:   hostname,
 			Labels:     labels,
 			Attributes: nil,

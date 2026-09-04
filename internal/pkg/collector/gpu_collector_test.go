@@ -1360,7 +1360,8 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got Metric) {
 				assert.Equal(t, "11", got.Value)
-				assert.Equal(t, "3", got.NvLink)
+				assert.Equal(t, "nvswitch3", got.NvSwitch)
+				assert.Empty(t, got.NvLink)
 			},
 		},
 		{
@@ -1508,6 +1509,27 @@ func TestToSwitchMetric(t *testing.T) {
 	assert.Equal(t, "nvswitch9", got.NvSwitch)
 	assert.Equal(t, "host-a", got.Hostname)
 	assert.Equal(t, map[string]string{"switch_label": "fabric-a"}, got.Labels)
+}
+
+func TestToSwitchMetric_SwitchEntityUsesOwnID(t *testing.T) {
+	valueCounter := counters.Counter{FieldID: 4, FieldName: "DCGM_FI_DEV_NVSWITCH_TEMPERATURE_CURRENT", PromType: "gauge"}
+	metrics := MetricsByCounter{}
+
+	for _, id := range []uint{0, 1, 2, 3} {
+		mi := devicemonitoring.Info{
+			Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_SWITCH, EntityId: id},
+			ParentId:   devicemonitoring.PARENT_ID_IGNORED,
+			ParentType: dcgm.FE_NONE,
+		}
+		toSwitchMetric(metrics, []dcgm.FieldValue_v1{int64FieldValue(valueCounter.FieldID, 40)},
+			[]counters.Counter{valueCounter}, mi, false, "host-a")
+	}
+
+	require.Len(t, metrics[valueCounter], 4)
+	for i, got := range metrics[valueCounter] {
+		assert.Equal(t, fmt.Sprintf("nvswitch%d", i), got.NvSwitch)
+		assert.Empty(t, got.NvLink)
+	}
 }
 
 func TestToCPUMetric(t *testing.T) {
