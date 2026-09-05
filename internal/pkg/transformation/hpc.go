@@ -149,8 +149,14 @@ func readFile(path string) ([]string, error) {
 	// job2
 	// job3
 	scanner := bufio.NewScanner(file)
+	seen := make(map[string]struct{})
 	for scanner.Scan() {
-		jobs = append(jobs, scanner.Text())
+		job := scanner.Text()
+		if _, exists := seen[job]; exists {
+			continue
+		}
+		seen[job] = struct{}{}
+		jobs = append(jobs, job)
 	}
 
 	if err := scanner.Err(); err != nil {

@@ -168,6 +168,7 @@ These mapping files follow a specific format:
 
 * Each file is named after either a unique GPU ID or a unique GPU ID and a GPU instance (MIG) ID separated with a "." (e.g., 0, 1, 2.0, 2.1, 3, etc.).
 * Each line in the file contains JOB IDs that run on the corresponding GPU/MIG instance.
+* Repeated job IDs within a file are included only once. The same job ID can still be mapped to multiple GPUs/MIG instances.
 
 #### Enabling HPC Job Mapping on DCGM-Exporter
 

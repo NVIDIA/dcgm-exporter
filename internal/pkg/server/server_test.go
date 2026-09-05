@@ -22,6 +22,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -569,4 +571,51 @@ func TestDumpMetricsToJSON(t *testing.T) {
 		assert.Contains(t, string(data), "TEST_METRIC")
 		assert.Contains(t, string(data), "testhost")
 	})
+}
+
+func TestMetricsWithRepeatedHPCJobIDs(t *testing.T) {
+	mappingDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(mappingDir, "0"), []byte("job1\njob2\njob1\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(mappingDir, "1"), []byte("job1\n"), 0o600))
+	ctrl := gomock.NewController(t)
+	mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
+	mockCollector.EXPECT().GetMetrics().DoAndReturn(func() (collector.MetricsByCounter, error) {
+		metrics := getMetricsByCounterWithTestMetric()
+		secondGPU := metrics[getTestMetric()][0]
+		secondGPU.GPU = "1"
+		secondGPU.GPUDevice = "nvidia1"
+		secondGPU.GPUUUID = "GPU-00000000-0000-0000-0000-000000000001"
+		metrics[getTestMetric()] = append(metrics[getTestMetric()], secondGPU)
+		return metrics, nil
+	}).Times(2)
+	reg := registry.NewRegistry()
+	tuple := collector.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	tuple.SetCollector(mockCollector)
+	reg.Register(tuple)
+	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
+	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
+	mockDeviceInfo.EXPECT().GPUCount().Return(uint(2)).AnyTimes()
+	watchList := *devicewatchlistmanager.NewWatchList(mockDeviceInfo, []dcgm.Short{42}, nil, deviceWatcher, 1)
+	watchManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	watchManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(watchList, true).Times(2)
+	metricServer := &MetricsServer{
+		deviceWatchListManager: watchManager,
+		transformations:        transformation.GetTransformations(&appconfig.Config{HPCJobMappingDir: mappingDir}),
+	}
+	metricServer.registry.Store(reg)
+	recorder := httptest.NewRecorder()
+	metricServer.Metrics(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, 2, strings.Count(recorder.Body.String(), `hpc_job="job1"`))
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `hpc_job="job2"`))
+
+	require.NoError(t, os.WriteFile(filepath.Join(mappingDir, "0"), []byte("job3\njob3\n"), 0o600))
+	recorder = httptest.NewRecorder()
+	metricServer.Metrics(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `hpc_job="job1"`))
+	require.NotContains(t, recorder.Body.String(), `hpc_job="job2"`)
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `hpc_job="job3"`))
 }
