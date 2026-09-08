@@ -70,6 +70,10 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
       volumes:
       - name: "pod-gpu-resources"
         hostPath:

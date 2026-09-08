@@ -580,6 +580,7 @@ type chartResource struct {
 				AutomountServiceAccountToken *bool             `yaml:"automountServiceAccountToken"`
 				Containers                   []container       `yaml:"containers"`
 				ImagePullSecrets             []imagePullSecret `yaml:"imagePullSecrets"`
+				Tolerations                  []toleration      `yaml:"tolerations"`
 				Volumes                      []volume          `yaml:"volumes"`
 			} `yaml:"spec"`
 		} `yaml:"template"`
@@ -605,6 +606,13 @@ type container struct {
 
 type imagePullSecret struct {
 	Name string `yaml:"name"`
+}
+
+// toleration captures the pod toleration fields needed by the scheduling contract.
+type toleration struct {
+	Key      string `yaml:"key"`
+	Operator string `yaml:"operator"`
+	Effect   string `yaml:"effect"`
 }
 
 type serviceMonitorEndpoint struct {

@@ -62,6 +62,8 @@ helm install \
     gpu-helm-charts/dcgm-exporter
 ```
 
+The chart's default `tolerations` allow the DaemonSet to schedule on nodes tainted with `nvidia.com/gpu` (the taint used by the NVIDIA device plugin and GPU Operator) and on control-plane nodes. If your GPU nodes carry a different taint, override `tolerations` in your values, otherwise the DaemonSet will not schedule any pods on them.
+
 Once the `dcgm-exporter` pod is deployed, you can use port forwarding to obtain metrics quickly:
 
 ```shell
