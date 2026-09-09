@@ -40,6 +40,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -267,15 +268,32 @@ func (p *PodMapper) createPerProcessMetrics(
 	}
 
 	devicePods := dataMap.deviceToPods[metricsKey]
-	if len(devicePods) == 0 {
-		return nil, nil
+	memory, direct := dataMap.podMemory[val.GPUUUID]
+	direct = direct && counter.FieldName == metricFBUsed && val.GPUInstanceID == "" && val.MigProfile == ""
+	var podValues map[string]string
+	if direct {
+		devicePods = make([]PodInfo, 0, len(memory))
+		podValues = make(map[string]string, len(memory))
+		for _, uid := range slices.Sorted(maps.Keys(memory)) {
+			podInfo := dataMap.podInfoByUID[uid]
+			podInfo.UID = uid
+			devicePods = append(devicePods, podInfo)
+			podValues[uid] = fmt.Sprintf("%d", memory[uid]/(1024*1024))
+		}
+	} else {
+		if len(devicePods) == 0 {
+			return nil, nil
+		}
+		data := dataMap.metrics[metricsKey]
+		podValues = buildPodValueMap(dataMap.pidToPod, data, counter.FieldName)
+		maps.Copy(podValues, buildIdlePodValues(podValues, devicePods))
 	}
 
-	data := dataMap.metrics[metricsKey]
-	podValues := buildPodValueMap(dataMap.pidToPod, data, counter.FieldName)
-	maps.Copy(podValues, buildIdlePodValues(podValues, devicePods))
-
 	var result []collector.Metric
+	if direct {
+		// A handled metric with no Pod processes must not fall back to logical slots.
+		result = make([]collector.Metric, 0, len(devicePods))
+	}
 	for _, podInfo := range devicePods {
 		value, ok := podValues[podInfo.UID]
 		if !ok {
@@ -288,14 +306,21 @@ func (p *PodMapper) createPerProcessMetrics(
 		}
 		metric.Value = value
 
-		if !p.Config.UseOldNamespace {
-			metric.Attributes[podAttribute] = podInfo.Name
-			metric.Attributes[namespaceAttribute] = podInfo.Namespace
-			metric.Attributes[containerAttribute] = podInfo.Container
-		} else {
-			metric.Attributes[oldPodAttribute] = podInfo.Name
-			metric.Attributes[oldNamespaceAttribute] = podInfo.Namespace
-			metric.Attributes[oldContainerAttribute] = podInfo.Container
+		if metric.Attributes == nil {
+			metric.Attributes = make(map[string]string)
+		}
+		podKey, namespaceKey, containerKey := podAttribute, namespaceAttribute, containerAttribute
+		if p.Config.UseOldNamespace {
+			podKey, namespaceKey, containerKey = oldPodAttribute, oldNamespaceAttribute, oldContainerAttribute
+		}
+		if !direct || podInfo.Name != "" {
+			metric.Attributes[podKey] = podInfo.Name
+		}
+		if !direct || podInfo.Namespace != "" {
+			metric.Attributes[namespaceKey] = podInfo.Namespace
+		}
+		if !direct {
+			metric.Attributes[containerKey] = podInfo.Container
 		}
 		metric.Attributes[uidAttribute] = podInfo.UID
 		if podInfo.VGPU != "" {
@@ -303,6 +328,12 @@ func (p *PodMapper) createPerProcessMetrics(
 		}
 		if len(podInfo.Labels) > 0 {
 			copyPodLabels(&metric, podInfo.Labels, getMetricGroup())
+		}
+		if direct {
+			for _, key := range []string{containerAttribute, oldContainerAttribute, vgpuAttribute} {
+				delete(metric.Attributes, key)
+				delete(metric.Labels, key)
+			}
 		}
 		for k := range metric.Attributes {
 			delete(metric.Labels, k)
@@ -394,6 +425,8 @@ func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]Po
 }
 
 func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+	cgroupDirect := p.Config.Kubernetes && p.Config.KubernetesVirtualGPUs && p.Config.KubernetesEnablePodUID &&
+		p.Config.KubernetesProcessMappingMode == appconfig.ProcessMappingCgroupDirect
 	deviceToPods, deviceToPod, deviceToPodsDRA, err := p.getMappings(deviceInfo)
 	if err != nil {
 		if status.Code(err) == codes.ResourceExhausted {
@@ -405,7 +438,9 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 		} else {
 			slog.Warn("Failed to get pod mappings", "error", err)
 		}
-		return nil // Don't fail the whole scrape, just skip enrichment
+		if !cgroupDirect {
+			return nil // Don't fail the whole scrape, just skip enrichment
+		}
 	}
 
 	metricGroup := dcgm.FE_NONE
@@ -419,24 +454,37 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 	}
 
 	if p.Config.KubernetesVirtualGPUs {
-		if deviceToPods == nil {
+		if deviceToPods == nil && !cgroupDirect {
 			return nil
 		}
 		slog.Debug(fmt.Sprintf("Device to sharing pods mapping: %+v", deviceToPods))
 
 		gpuUUIDToDeviceID := getGPUUUIDToDeviceID(deviceInfo, p.Config.KubernetesGPUIdType)
 		processCollector := &perProcessCollector{
-			client:    nvmlprovider.Client(),
-			pidMapper: newPIDToPodMapper(),
+			client:       nvmlprovider.Client(),
+			pidMapper:    newPIDToPodMapper(),
+			cgroupDirect: cgroupDirect,
 		}
 		perProcessData := processCollector.Collect(gpuUUIDToDeviceID, deviceToPods, deviceInfo)
+		if cgroupDirect {
+			perProcessData.podInfoByUID = p.getPodInfoByUID()
+		}
 
 		for counter := range metrics {
 			var newmetrics []collector.Metric
 			for j, val := range metrics[counter] {
-				deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
-				if err != nil {
-					return err
+				_, direct := perProcessData.podMemory[val.GPUUUID]
+				direct = direct && counter.FieldName == metricFBUsed && val.GPUInstanceID == "" && val.MigProfile == ""
+				if deviceToPods == nil && !direct {
+					newmetrics = append(newmetrics, val)
+					continue
+				}
+				var deviceID string
+				if !direct {
+					deviceID, err = val.GetIDOfType(p.Config.KubernetesGPUIdType)
+					if err != nil {
+						return err
+					}
 				}
 
 				podInfos := deviceToPods[deviceID]
@@ -1156,6 +1204,26 @@ func (p *PodMapper) toDeviceToPod(
 		"totalMappings", len(deviceToPodMap),
 		"deviceToPodMap", fmt.Sprintf("%+v", deviceToPodMap))
 	return deviceToPodMap
+}
+
+// getPodInfoByUID reads cached metadata independently of device assignments.
+func (p *PodMapper) getPodInfoByUID() map[string]PodInfo {
+	result := make(map[string]PodInfo)
+	if p.podLister == nil {
+		return result
+	}
+	pods, err := p.podLister.List(labels.Everything())
+	if err != nil {
+		slog.Warn("Failed to read pod metadata for cgroup memory", "error", err)
+		return result
+	}
+	for _, pod := range pods {
+		info := p.createPodInfo(&podresourcesapi.PodResources{Name: pod.Name, Namespace: pod.Namespace}, nil)
+		if info.UID != "" {
+			result[info.UID] = info
+		}
+	}
+	return result
 }
 
 // createPodInfo creates a PodInfo struct with metadata if enabled
