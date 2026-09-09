@@ -20,6 +20,9 @@ const (
 	GPUUID     KubernetesGPUIDType = "uid"
 	DeviceName KubernetesGPUIDType = "device-name"
 
+	ProcessMappingPodResources KubernetesProcessMappingMode = "pod-resources"
+	ProcessMappingCgroupDirect KubernetesProcessMappingMode = "cgroup-direct"
+
 	NvidiaResourceName      = "nvidia.com/gpu"
 	NvidiaMigResourcePrefix = "nvidia.com/mig-"
 	MIG_UUID_PREFIX         = "MIG-"
