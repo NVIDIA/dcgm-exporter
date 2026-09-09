@@ -896,6 +896,8 @@ type reloadCoordinator struct {
 	applyTopologyChange func(ctx context.Context, reloadID uint64)
 	buildRegistry       func(ctx context.Context, c *cli.Context, cfg *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error)
 	initializeDCGM      func(cfg *appconfig.Config)
+	cleanupNVML         func()
+	initializeNVML      func() error
 	gpuWatcher          gpuWatcherLifecycle
 }
 
@@ -912,6 +914,8 @@ func newReloadCoordinator(c *cli.Context, dcgmCleanup func()) *reloadCoordinator
 	r.applyTopologyChange = r.doTopologyChange
 	r.buildRegistry = buildRegistryFunc
 	r.initializeDCGM = initializeDCGMProviderFunc
+	r.cleanupNVML = func() { nvmlprovider.Client().Cleanup() }
+	r.initializeNVML = initializeNVMLProviderFunc
 	return r
 }
 
@@ -1095,9 +1099,26 @@ func (r *reloadCoordinator) doTopologyChange(ctx context.Context, reloadID uint6
 		oldRegistry.Cleanup()
 	}
 
+	// Release ALL GPU handles before reinitializing any of them. A GPU driver
+	// unbind — the common trigger for a topology change under DRA/VFIO — only
+	// completes once the GPU's kernel usage count reaches zero. Both DCGM (via
+	// the embedded hostengine) and, in Kubernetes mode, NVML hold open
+	// /dev/nvidia* handles. If DCGM reinitializes and reopens those handles
+	// before NVML has been released, the usage count never reaches zero, so the
+	// kernel logs "Attempting to remove device ... with non-zero usage count!"
+	// and the unbind hangs until the pod restarts. Draining both providers
+	// before either reinitializes gives the kernel the zero-usage window it
+	// needs to finish the unbind, after which reinitialization re-attaches to
+	// whatever GPUs remain. NVML cleanup/reinit is gated on cfg.Kubernetes to
+	// mirror the startup init condition exactly.
 	slog.InfoContext(ctx, "Cleaning up DCGM resources",
 		slog.Uint64("reload_id", reloadID))
 	r.dcgmCleanup()
+
+	if cfg.Kubernetes {
+		slog.InfoContext(ctx, "Cleaning up NVML resources", slog.Uint64("reload_id", reloadID))
+		r.cleanupNVML()
+	}
 
 	slog.InfoContext(ctx, "Reinitializing DCGM",
 		slog.Uint64("reload_id", reloadID))
@@ -1106,12 +1127,9 @@ func (r *reloadCoordinator) doTopologyChange(ctx context.Context, reloadID uint6
 		r.gpuWatcher.Start()
 	}
 
-	if cfg.Kubernetes && cfg.KubernetesVirtualGPUs {
-		slog.InfoContext(ctx, "Cleaning up NVML resources", slog.Uint64("reload_id", reloadID))
-		nvmlprovider.Client().Cleanup()
-
+	if cfg.Kubernetes {
 		slog.InfoContext(ctx, "Reinitializing NVML", slog.Uint64("reload_id", reloadID))
-		if err := nvmlprovider.Initialize(); err != nil {
+		if err := r.initializeNVML(); err != nil {
 			slog.ErrorContext(ctx, "Failed to reinitialize NVML",
 				slog.Uint64("reload_id", reloadID),
 				slog.String("error", err.Error()))

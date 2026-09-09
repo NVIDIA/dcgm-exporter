@@ -2772,6 +2772,100 @@ func TestDoTopologyChangeSuccessInstallsRegistry(t *testing.T) {
 	assert.False(t, coord.dcp.collectDCP)
 }
 
+// TestDoTopologyChange_ReleasesNVMLInKubernetesMode is the regression for
+// https://github.com/NVIDIA/dcgm-exporter/issues/706. NVML is initialized at
+// startup for every Kubernetes deployment, and it holds open file handles on
+// /dev/nvidia*. A GPU driver unbind that triggers a topology change stays
+// blocked ("non-zero usage count") until those handles are released. The reset
+// must therefore clean up and reinitialize NVML whenever Kubernetes mode is on,
+// even when virtual GPUs are NOT enabled — which was the buggy pre-condition.
+func TestDoTopologyChange_ReleasesNVMLInKubernetesMode(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
+
+	coord := newTestCoordinator(t)
+	coord.reloadConfig.Kubernetes = true
+	coord.reloadConfig.KubernetesVirtualGPUs = false // the config from issue #706
+
+	// Record the exact order of provider drain/reinit calls. The kernel only
+	// completes a GPU driver unbind once BOTH DCGM and NVML have released their
+	// /dev/nvidia* handles; if either reinitializes (reopening the handles)
+	// before the other has been drained, the usage count never reaches zero and
+	// the unbind hangs. This is the regression for issue #706: the sequence must
+	// be drain-all-then-reinit-all, not drain/reinit each provider in turn.
+	var mu sync.Mutex
+	var order []string
+	record := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+	coord.dcgmCleanup = func() { record("dcgm-cleanup") }
+	coord.initializeDCGM = func(*appconfig.Config) { record("dcgm-init") }
+	coord.cleanupNVML = func() { record("nvml-cleanup") }
+	coord.initializeNVML = func() error { record("nvml-init"); return nil }
+
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		return registry.NewRegistry(), topologyManager(), nil
+	}
+
+	coord.handle(context.Background(), evTopologyChanged)
+
+	require.Contains(t, order, "nvml-cleanup",
+		"NVML must be cleaned up during a topology change in Kubernetes mode to release /dev/nvidia* handles")
+	require.Contains(t, order, "nvml-init",
+		"NVML must be reinitialized after a topology change in Kubernetes mode")
+
+	idx := func(s string) int {
+		for i, v := range order {
+			if v == s {
+				return i
+			}
+		}
+		return -1
+	}
+	// Both providers must be drained before either is reinitialized, so the GPU
+	// usage count can reach zero and the pending unbind can complete.
+	assert.Less(t, idx("dcgm-cleanup"), idx("dcgm-init"), "DCGM must drain before it reinitializes")
+	assert.Less(t, idx("nvml-cleanup"), idx("nvml-init"), "NVML must drain before it reinitializes")
+	assert.Less(t, idx("nvml-cleanup"), idx("dcgm-init"),
+		"NVML must be drained BEFORE DCGM reinitializes, else DCGM reopens /dev/nvidia* and the unbind stays blocked")
+	assert.Less(t, idx("dcgm-cleanup"), idx("nvml-init"),
+		"DCGM must be drained BEFORE NVML reinitializes, so both handles are released simultaneously")
+}
+
+// TestDoTopologyChange_SkipsNVMLWhenNotKubernetes proves the NVML reset is
+// scoped to Kubernetes mode, mirroring the startup init condition: when NVML
+// was never initialized there is nothing to release.
+func TestDoTopologyChange_SkipsNVMLWhenNotKubernetes(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
+
+	coord := newTestCoordinator(t)
+	coord.reloadConfig.Kubernetes = false
+	coord.dcgmCleanup = func() {}
+	coord.initializeDCGM = func(*appconfig.Config) {}
+
+	var nvmlCleanups, nvmlInits atomic.Int32
+	coord.cleanupNVML = func() { nvmlCleanups.Add(1) }
+	coord.initializeNVML = func() error { nvmlInits.Add(1); return nil }
+
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		return registry.NewRegistry(), topologyManager(), nil
+	}
+
+	coord.handle(context.Background(), evTopologyChanged)
+
+	assert.Equal(t, int32(0), nvmlCleanups.Load(),
+		"NVML must not be touched during a topology change outside Kubernetes mode")
+	assert.Equal(t, int32(0), nvmlInits.Load(),
+		"NVML must not be reinitialized during a topology change outside Kubernetes mode")
+}
+
 // TestReloadCoordinator_RepublishedDCPReplacesPreviousSnapshot proves the
 // load-bearing refresh invariant for the topology-change path: once a later
 // query publishes a new DCP snapshot, the next config reload must use that
