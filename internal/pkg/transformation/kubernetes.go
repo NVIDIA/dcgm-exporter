@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -354,6 +355,37 @@ func (p *PodMapper) Run() {
 
 func (p *PodMapper) Stop() {
 	close(p.stopChan)
+	p.grpcConnMu.Lock()
+	defer p.grpcConnMu.Unlock()
+	if p.grpcConn != nil {
+		p.grpcConn.Close()
+		p.grpcConn = nil
+	}
+}
+
+// getGRPCConn returns the cached gRPC connection to the kubelet pod-resources socket,
+// creating a new one if the cached connection is absent or has shut down.
+// Reusing the connection across scrapes is the primary fix for the RSS growth in issue #702:
+// each grpc.NewClient call allocates HTTP/2 frame buffers and spawns goroutines whose
+// cleanup is asynchronous, so creating one per scrape causes steady heap growth.
+func (p *PodMapper) getGRPCConn(socketPath string) (*grpc.ClientConn, error) {
+	p.grpcConnMu.Lock()
+	defer p.grpcConnMu.Unlock()
+
+	if p.grpcConn != nil {
+		if state := p.grpcConn.GetState(); state != connectivity.Shutdown {
+			return p.grpcConn, nil
+		}
+		p.grpcConn.Close()
+		p.grpcConn = nil
+	}
+
+	conn, _, err := connectToServer(socketPath)
+	if err != nil {
+		return nil, err
+	}
+	p.grpcConn = conn
+	return conn, nil
 }
 
 func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]PodInfo, map[string]PodInfo, map[string][]PodInfo, error) {
@@ -365,14 +397,21 @@ func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]Po
 		return nil, nil, nil, err
 	}
 
-	c, cleanup, err := connectToServer(socketPath)
+	c, err := p.getGRPCConn(socketPath)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	defer cleanup()
 
 	pods, err := p.listPods(c)
 	if err != nil {
+		// Reset the cached connection on RPC failure so the next scrape
+		// establishes a fresh one (e.g., after kubelet restart).
+		p.grpcConnMu.Lock()
+		if p.grpcConn != nil {
+			p.grpcConn.Close()
+			p.grpcConn = nil
+		}
+		p.grpcConnMu.Unlock()
 		return nil, nil, nil, err
 	}
 

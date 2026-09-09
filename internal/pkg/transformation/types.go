@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"sync"
 
+	"google.golang.org/grpc"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -48,6 +49,11 @@ type PodMapper struct {
 	podLister            corev1listers.PodLister
 	podInformerSynced    cache.InformerSynced
 	stopChan             chan struct{}
+	// grpcConn is a persistent connection to the kubelet pod-resources endpoint,
+	// reused across scrapes to avoid the per-scrape allocation/goroutine overhead
+	// of grpc.NewClient that causes the slow RSS growth reported in issue #702.
+	grpcConn   *grpc.ClientConn
+	grpcConnMu sync.Mutex
 }
 
 // LabelFilterCache provides efficient caching for label filtering decisions

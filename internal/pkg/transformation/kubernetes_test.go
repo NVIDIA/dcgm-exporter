@@ -37,6 +37,7 @@ import (
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -2677,4 +2678,107 @@ func TestProcessKeepsGenericWarningOnNonResourceExhaustedPodResourcesError(t *te
 	gotLog := logBuffer.String()
 	require.Contains(t, gotLog, "Failed to get pod mappings")
 	require.NotContains(t, gotLog, "Kubelet pod-resources response exceeded gRPC receive limit")
+}
+
+// TestGetGRPCConn_ReusesConnection verifies that getGRPCConn returns the same
+// *grpc.ClientConn on successive calls, avoiding the per-scrape allocation
+// overhead that caused the RSS growth in issue #702.
+func TestGetGRPCConn_ReusesConnection(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	tmpDir, cleanupDir := testutils.CreateTmpDir(t)
+	defer cleanupDir()
+
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, []string{"gpu-0"}))
+	stopServer := testutils.StartMockServer(t, server, socketPath)
+	defer stopServer()
+
+	pm := &PodMapper{
+		Config:   &appconfig.Config{PodResourcesKubeletSocket: socketPath},
+		stopChan: make(chan struct{}),
+	}
+
+	conn1, err := pm.getGRPCConn(socketPath)
+	require.NoError(t, err)
+	require.NotNil(t, conn1)
+
+	conn2, err := pm.getGRPCConn(socketPath)
+	require.NoError(t, err)
+	require.NotNil(t, conn2)
+
+	assert.Same(t, conn1, conn2, "getGRPCConn must return the cached connection on repeated calls")
+}
+
+// TestGetGRPCConn_ReconnectsAfterShutdown verifies that getGRPCConn creates a
+// fresh connection when the cached one has been shut down (e.g., after a kubelet
+// restart that invalidates the Unix socket).
+func TestGetGRPCConn_ReconnectsAfterShutdown(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	tmpDir, cleanupDir := testutils.CreateTmpDir(t)
+	defer cleanupDir()
+
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, []string{"gpu-0"}))
+	stopServer := testutils.StartMockServer(t, server, socketPath)
+	defer stopServer()
+
+	pm := &PodMapper{
+		Config:   &appconfig.Config{PodResourcesKubeletSocket: socketPath},
+		stopChan: make(chan struct{}),
+	}
+
+	conn1, err := pm.getGRPCConn(socketPath)
+	require.NoError(t, err)
+	require.NotNil(t, conn1)
+
+	// Forcibly shut down the cached connection to simulate a broken link.
+	conn1.Close()
+	require.Eventually(t, func() bool {
+		return conn1.GetState() == connectivity.Shutdown
+	}, 2*time.Second, 10*time.Millisecond, "connection should reach Shutdown state after Close()")
+
+	conn2, err := pm.getGRPCConn(socketPath)
+	require.NoError(t, err)
+	require.NotNil(t, conn2)
+
+	assert.NotSame(t, conn1, conn2, "getGRPCConn should allocate a new connection after the cached one shuts down")
+}
+
+// TestPodMapper_Stop_ClosesGRPCConn verifies that Stop() closes the persistent
+// gRPC connection and clears the cached pointer.
+func TestPodMapper_Stop_ClosesGRPCConn(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	tmpDir, cleanupDir := testutils.CreateTmpDir(t)
+	defer cleanupDir()
+
+	socketPath := filepath.Join(tmpDir, "kubelet.sock")
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server,
+		testutils.NewMockPodResourcesServer(appconfig.NvidiaResourceName, []string{"gpu-0"}))
+	stopServer := testutils.StartMockServer(t, server, socketPath)
+	defer stopServer()
+
+	pm := &PodMapper{
+		Config:   &appconfig.Config{PodResourcesKubeletSocket: socketPath},
+		stopChan: make(chan struct{}),
+	}
+
+	conn, err := pm.getGRPCConn(socketPath)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+
+	pm.Stop()
+
+	assert.Eventually(t, func() bool {
+		return conn.GetState() == connectivity.Shutdown
+	}, 2*time.Second, 10*time.Millisecond, "gRPC connection should be shut down after Stop()")
+
+	assert.Nil(t, pm.grpcConn, "grpcConn field should be nil after Stop()")
 }
