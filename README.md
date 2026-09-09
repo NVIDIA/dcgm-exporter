@@ -91,6 +91,28 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 To integrate DCGM-Exporter with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/latest/).
 `dcgm-exporter` is deployed as part of the GPU Operator. To get started with integrating with Prometheus, check the Operator [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/getting-started.html#gpu-telemetry).
 
+### Direct cgroup attribution for shared GPU memory
+
+When shared-GPU logical assignments do not match actual GPU usage, enable:
+
+```shell
+dcgm-exporter --kubernetes --kubernetes-virtual-gpus --kubernetes-enable-pod-uid \
+  --kubernetes-process-mapping-mode=cgroup-direct
+```
+
+The default is `pod-resources`. Alternatively, set
+`DCGM_EXPORTER_KUBERNETES_PROCESS_MAPPING_MODE=cgroup-direct`.
+
+Direct mode aggregates non-MIG `DCGM_FI_DEV_FB_USED` in MiB by physical GPU UUID
+and cgroup Pod UID. Device totals, MIG, and other metrics retain their behavior.
+Pod samples omit `container` and `vgpu`; select `{pod_uid!=""}` to exclude device
+totals. Cached Pod metadata enriches labels; missing metadata leaves UID-only
+attribution. Unresolved processes are skipped; idle-Pod zeros are not inferred.
+
+Requires all three Kubernetes flags above, host process cgroup access (typically
+`hostPID: true`), and Pod list/watch permissions for metadata. NVML must expose
+workload Pod PIDs; an MPS server PID alone cannot identify client Pods.
+
 ### TLS and Basic Auth
 
 Exporter supports TLS and basic auth using [exporter-toolkit](https://github.com/prometheus/exporter-toolkit). To use TLS and/or basic auth, users need to use `--web-config-file` CLI flag as follows
