@@ -222,6 +222,24 @@ helm install dcgm-exporter ./deployment --set debugDump.enabled=true
 kubectl exec -n dcgm-exporter <pod-name> -- ls -la /tmp/dcgm-exporter-debug/
 ```
 
+### Scheduling on Tainted GPU Nodes
+
+The default `tolerations` only cover the control-plane taint. On clusters that taint GPU nodes with `nvidia.com/gpu` (the taint the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) chart tolerates by default), the DaemonSet schedules zero pods until the chart tolerates that taint too. A user-supplied `tolerations` list replaces the default rather than extending it, so keep the control-plane entry if you still need it:
+
+```yaml
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+```
+
+```bash
+helm install dcgm-exporter ./deployment -f my-values.yaml
+```
+
 ### Other Configuration Options
 
 See `values.yaml` for all available configuration options including:

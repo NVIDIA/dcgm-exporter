@@ -91,6 +91,20 @@ DCGM_FI_DEV_MEMORY_TEMP{gpu="0", UUID="GPU-604ac76c-d9cf-fef3-62e9-d92044ab6e52"
 To integrate DCGM-Exporter with Prometheus and Grafana, see the full instructions in the [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/latest/).
 `dcgm-exporter` is deployed as part of the GPU Operator. To get started with integrating with Prometheus, check the Operator [user guide](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/getting-started.html#gpu-telemetry).
 
+#### Scheduling on tainted GPU nodes
+
+The chart's default `tolerations` only cover the control-plane taint. On clusters that taint GPU nodes with `nvidia.com/gpu` (the taint the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin) chart tolerates by default), the DaemonSet schedules zero pods until the chart tolerates that taint too. Pass a values file (`helm install ... -f values.yaml`) that adds it; the list replaces the default, so keep the control-plane entry if you still need it:
+
+```yaml
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+```
+
 ### TLS and Basic Auth
 
 Exporter supports TLS and basic auth using [exporter-toolkit](https://github.com/prometheus/exporter-toolkit). To use TLS and/or basic auth, users need to use `--web-config-file` CLI flag as follows

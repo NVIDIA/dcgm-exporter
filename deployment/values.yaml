@@ -187,11 +187,24 @@ serviceMonitor:
 nodeSelector: {}
   #node: gpu
 
+# Tolerations for the dcgm-exporter pods. Setting this list replaces the
+# default below rather than extending it. Clusters that taint their GPU nodes
+# (for example nvidia.com/gpu=true:NoSchedule, which the NVIDIA device plugin
+# chart tolerates by default) must tolerate that taint here, otherwise the
+# DaemonSet schedules no pods on those nodes.
+# Example:
+#   tolerations:
+#     - key: node-role.kubernetes.io/control-plane
+#       operator: Exists
+#       effect: NoSchedule
+#     - key: nvidia.com/gpu
+#       operator: Exists
+#       effect: NoSchedule
+# A single "- operator: Exists" entry tolerates every taint.
 tolerations:
   - key: node-role.kubernetes.io/control-plane
     operator: Exists
     effect: NoSchedule
-#- operator: Exists
 
 affinity: {}
   #nodeAffinity:
