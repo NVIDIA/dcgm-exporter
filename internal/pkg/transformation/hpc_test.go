@@ -317,3 +317,15 @@ func TestGetGPUFiles(t *testing.T) {
 func TestHPCName(t *testing.T) {
 	assert.Equal(t, "hpcMapper", newHPCMapper(&appconfig.Config{}).Name())
 }
+
+func TestReadHPCMappingDeduplicatesJobsInOrder(t *testing.T) {
+	realOS := osinterface.RealOS{}
+	file, err := realOS.CreateTemp(t.TempDir(), "mapping")
+	require.NoError(t, err)
+	_, err = file.WriteString("job2\njob1\njob2\njob3\njob1\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	jobs, err := readFile(file.Name())
+	require.NoError(t, err)
+	require.Equal(t, []string{"job2", "job1", "job3"}, jobs)
+}
