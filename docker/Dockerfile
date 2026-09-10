@@ -316,6 +316,10 @@ COPY --from=runtime-distroless-helper --chown=root:root --chmod=755 /opt/distrol
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=644 /etc/passwd /etc/
 COPY --from=runtime-distroless-helper --chown=root:root --chmod=644 /etc/group /etc/
 
+# dcgmLibExistsRule resolves libdcgm.so.4 through `ldconfig -p`, which needs this
+# cache (#612). Tolerated as above: ldconfig can segfault under QEMU cross-builds.
+RUN /sbin/ldconfig || true
+
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32
 ENV NVIDIA_DISABLE_REQUIRE="true"
 ENV NVIDIA_VISIBLE_DEVICES=all
