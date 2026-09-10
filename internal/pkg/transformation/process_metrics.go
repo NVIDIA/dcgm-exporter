@@ -63,6 +63,9 @@ func (c *perProcessCollector) processRegularGPU(gpuUUID string, podInfos []PodIn
 	data.pidToMemory, err = c.client.GetDeviceProcessMemory(gpuUUID)
 	if err != nil {
 		slog.Debug("Failed to get process memory", "gpuUUID", gpuUUID, "error", err)
+		if c.cgroupDirect {
+			data.pidToMemory = nil
+		}
 	}
 
 	data.pidToSMUtil, err = c.client.GetDeviceProcessUtilization(gpuUUID)
@@ -102,16 +105,35 @@ func (m *perProcessMetrics) getValueForMetric(fieldName string, pid uint32) (uin
 type perProcessDataMap struct {
 	metrics      map[string]*perProcessMetrics // keyed by GPU UUID or "<parentUUID>/<gpuInstanceID>" for MIG
 	pidToPod     map[uint32]*PodInfo
-	deviceToPods map[string][]PodInfo // keyed by GPU UUID or "<parentUUID>/<gpuInstanceID>" for MIG
+	deviceToPods map[string][]PodInfo         // keyed by GPU UUID or "<parentUUID>/<gpuInstanceID>" for MIG
+	podMemory    map[string]map[string]uint64 // bytes keyed by physical GPU UUID and cgroup Pod UID
+	podInfoByUID map[string]PodInfo
 }
 
 type PIDMapper interface {
+	getPodUIDForPID(pid uint32) (string, error)
 	buildPIDToPodMap(pids []uint32, pods []PodInfo) map[uint32]*PodInfo
 }
 
 type perProcessCollector struct {
-	client    nvmlprovider.NVML
-	pidMapper PIDMapper
+	client       nvmlprovider.NVML
+	pidMapper    PIDMapper
+	cgroupDirect bool
+}
+
+func (c *perProcessCollector) aggregatePodMemory(memoryByPID map[uint32]uint64) map[string]uint64 {
+	result := make(map[string]uint64)
+	for pid, memory := range memoryByPID {
+		uid, err := c.pidMapper.getPodUIDForPID(pid)
+		if err != nil {
+			slog.Debug("Failed to map PID to pod for cgroup memory", "pid", pid, "error", err)
+			continue
+		}
+		if uid != "" {
+			result[uid] += memory
+		}
+	}
+	return result
 }
 
 func getMIGMetricsKey(parentUUID string, gpuInstanceID string) string {
@@ -159,15 +181,24 @@ func (c *perProcessCollector) Collect(gpuDeviceMap map[string]string, deviceToPo
 		metrics:      make(map[string]*perProcessMetrics),
 		pidToPod:     make(map[uint32]*PodInfo),
 		deviceToPods: make(map[string][]PodInfo),
+		podMemory:    make(map[string]map[string]uint64),
 	}
 
-	if devInfo == nil || c.client == nil {
+	if devInfo == nil || (c.client == nil && !c.cgroupDirect) {
 		return result
 	}
 
 	for i := uint(0); i < devInfo.GPUCount(); i++ {
 		gpu := devInfo.GPU(i)
 		gpuUUID := gpu.DeviceInfo.UUID
+		directMemory := c.cgroupDirect && !gpu.MigEnabled && len(gpu.GPUInstances) == 0
+		if directMemory {
+			// An empty entry keeps direct-mode failures from falling back to slot attribution.
+			result.podMemory[gpuUUID] = make(map[string]uint64)
+		}
+		if c.client == nil {
+			continue
+		}
 
 		if len(gpu.GPUInstances) > 0 {
 			metrics, pidToPod, keyToPods := c.processMIGEnabledGPU(gpu, deviceToPods)
@@ -177,10 +208,13 @@ func (c *perProcessCollector) Collect(gpuDeviceMap map[string]string, deviceToPo
 		} else {
 			deviceID := gpuDeviceMap[gpuUUID]
 			podInfos := deviceToPods[deviceID]
-			if len(podInfos) == 0 {
+			if len(podInfos) == 0 && !directMemory {
 				continue
 			}
 			data, pidToPod := c.processRegularGPU(gpuUUID, podInfos)
+			if directMemory {
+				result.podMemory[gpuUUID] = c.aggregatePodMemory(data.pidToMemory)
+			}
 			result.metrics[gpuUUID] = data
 			result.deviceToPods[gpuUUID] = podInfos
 			maps.Copy(result.pidToPod, pidToPod)

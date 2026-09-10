@@ -494,6 +494,7 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 		assert.Empty(t, defaults.NvidiaResourceNames)
 		assert.Empty(t, c.StringSlice(CLINvidiaResourceNames))
 		assert.Equal(t, defaults.KubernetesVirtualGPUs, c.Bool(CLIKubernetesVirtualGPUs))
+		assert.Equal(t, string(defaults.KubernetesProcessMappingMode), c.String(CLIKubernetesProcessMappingMode))
 		assert.Equal(t, defaults.DumpConfig.Enabled, c.Bool(CLIDumpEnabled))
 		assert.Equal(t, defaults.DumpConfig.Directory, c.String(CLIDumpDirectory))
 		assert.Equal(t, defaults.DumpConfig.Retention, c.Int(CLIDumpRetention))
@@ -515,6 +516,47 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 	defaults, err := defaultConfig()
 	require.NoError(t, err)
 	assert.Equal(t, defaults, cfg)
+}
+
+func TestContextToConfigProcessMappingMode(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		env     string
+		want    appconfig.KubernetesProcessMappingMode
+		wantErr string
+	}{
+		{name: "default", want: appconfig.ProcessMappingPodResources},
+		{name: "explicit default", args: []string{"--kubernetes-process-mapping-mode=pod-resources"}, want: appconfig.ProcessMappingPodResources},
+		{name: "direct", args: []string{"--kubernetes-process-mapping-mode=cgroup-direct", "--kubernetes", "--kubernetes-virtual-gpus", "--kubernetes-enable-pod-uid"}, want: appconfig.ProcessMappingCgroupDirect},
+		{name: "environment", env: "cgroup-direct", args: []string{"--kubernetes", "--kubernetes-virtual-gpus", "--kubernetes-enable-pod-uid"}, want: appconfig.ProcessMappingCgroupDirect},
+		{name: "CLI overrides environment", env: "cgroup-direct", args: []string{"--kubernetes-process-mapping-mode=pod-resources"}, want: appconfig.ProcessMappingPodResources},
+		{name: "invalid", args: []string{"--kubernetes-process-mapping-mode=unknown"}, wantErr: "invalid kubernetes-process-mapping-mode"},
+		{name: "missing Kubernetes", args: []string{"--kubernetes-process-mapping-mode=cgroup-direct", "--kubernetes-virtual-gpus", "--kubernetes-enable-pod-uid"}, wantErr: "requires"},
+		{name: "missing virtual GPUs", args: []string{"--kubernetes-process-mapping-mode=cgroup-direct", "--kubernetes", "--kubernetes-enable-pod-uid"}, wantErr: "requires"},
+		{name: "missing Pod UID", args: []string{"--kubernetes-process-mapping-mode=cgroup-direct", "--kubernetes", "--kubernetes-virtual-gpus"}, wantErr: "requires"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := NewApp("test-version")
+			unsetFlagEnvVars(t, app.Flags)
+			if tc.env != "" {
+				t.Setenv("DCGM_EXPORTER_KUBERNETES_PROCESS_MAPPING_MODE", tc.env)
+			}
+			var cfg *appconfig.Config
+			app.Action = func(c *cli.Context) error {
+				var err error
+				cfg, err = contextToConfig(c)
+				return err
+			}
+			err := app.Run(append([]string{"dcgm-exporter"}, tc.args...))
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.KubernetesProcessMappingMode)
+		})
+	}
 }
 
 func TestStartDCGMExporterWithSignalSource_RejectsInvalidConfigBeforeDCGM(t *testing.T) {

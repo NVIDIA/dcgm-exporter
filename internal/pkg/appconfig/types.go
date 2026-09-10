@@ -42,6 +42,8 @@ const (
 
 type KubernetesGPUIDType string
 
+type KubernetesProcessMappingMode string
+
 type DeviceOptions struct {
 	Flex       bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
 	MajorRange []int // The indices of each GPU/NvSwitch to monitor, or -1 to monitor all
@@ -124,6 +126,7 @@ type Config struct {
 	ContainerRuntimeSocket           string
 	NvidiaResourceNames              []string
 	KubernetesVirtualGPUs            bool
+	KubernetesProcessMappingMode     KubernetesProcessMappingMode
 	DumpConfig                       DumpConfig // Configuration for file-based dumps
 	KubernetesEnableDRA              bool
 	DisableStartupValidate           bool

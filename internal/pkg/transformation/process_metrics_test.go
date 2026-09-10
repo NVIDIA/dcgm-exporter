@@ -17,26 +17,211 @@
 package transformation
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
 type mockPIDMapper struct {
-	result map[uint32]*PodInfo
+	result   map[uint32]*PodInfo
+	errByPID map[uint32]error
+}
+
+func (m *mockPIDMapper) getPodUIDForPID(pid uint32) (string, error) {
+	if err := m.errByPID[pid]; err != nil {
+		return "", err
+	}
+	if pod := m.result[pid]; pod != nil {
+		return pod.UID, nil
+	}
+	return "", nil
 }
 
 func (m *mockPIDMapper) buildPIDToPodMap(pids []uint32, pods []PodInfo) map[uint32]*PodInfo {
 	return m.result
+}
+
+// TestPodResourcesMemoryAttributionLimitations covers issue #725 in both modes.
+func TestPodResourcesMemoryAttributionLimitations(t *testing.T) {
+	const (
+		gpuA   = "GPU-00000000-0000-0000-0000-000000000000"
+		gpuB   = "GPU-11111111-1111-1111-1111-111111111111"
+		podUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	)
+	pod := PodInfo{Name: "workload-1", Namespace: "default", UID: podUID, VGPU: "5"}
+	secondSlot := pod
+	secondSlot.VGPU = "19"
+
+	for _, tc := range []struct {
+		name         string
+		deviceToPods map[string][]PodInfo
+		direct       bool
+		wantSamples  int
+		wantQueries  int
+	}{
+		{
+			name:         "two logical slots must produce one Pod memory sample",
+			deviceToPods: map[string][]PodInfo{gpuB: {pod, secondSlot}},
+			direct:       true, wantSamples: 1, wantQueries: 1,
+		},
+		{
+			name:         "allocation on GPU A must not hide a process on GPU B",
+			deviceToPods: map[string][]PodInfo{gpuA: {pod}},
+			direct:       true, wantSamples: 1, wantQueries: 1,
+		},
+		{
+			name:         "default mode preserves logical slot samples",
+			deviceToPods: map[string][]PodInfo{gpuB: {pod, secondSlot}},
+			wantSamples:  2, wantQueries: 1,
+		},
+		{
+			name:         "default mode preserves candidate filtering",
+			deviceToPods: map[string][]PodInfo{gpuA: {pod}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mocknvmlprovider.NewMockNVML(ctrl)
+			client.EXPECT().GetDeviceProcessMemory(gpuB).Return(map[uint32]uint64{
+				101: 6 * 1024 * 1024,
+				102: 4 * 1024 * 1024,
+			}, nil).Times(tc.wantQueries)
+			client.EXPECT().GetDeviceProcessUtilization(gpuB).Return(map[uint32]uint32{101: 10, 102: 20}, nil).Times(tc.wantQueries)
+			devInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			devInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			devInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+				DeviceInfo: dcgm.Device{UUID: gpuB},
+			}).AnyTimes()
+
+			// Seed the cgroup cache so no host /proc files are required.
+			pidMapper := newPIDToPodMapper()
+			pidMapper.pidToUID[101] = podUID
+			pidMapper.pidToUID[102] = podUID
+			processCollector := &perProcessCollector{client: client, pidMapper: pidMapper, cgroupDirect: tc.direct}
+			data := processCollector.Collect(map[string]string{gpuB: gpuB}, tc.deviceToPods, devInfo)
+
+			mapper := &PodMapper{Config: &appconfig.Config{
+				Kubernetes: true, KubernetesVirtualGPUs: true, KubernetesEnablePodUID: true,
+			}}
+			counter := counters.Counter{FieldName: metricFBUsed}
+			original := collector.Metric{
+				Counter: counter, GPUUUID: gpuB, Value: "100",
+				Attributes: map[string]string{}, Labels: map[string]string{},
+			}
+			metrics, err := mapper.createPerProcessMetrics(original, counter, original, data,
+				func() dcgm.Field_Entity_Group { return dcgm.FE_GPU })
+			require.NoError(t, err)
+			require.Len(t, metrics, tc.wantSamples)
+			for _, metric := range metrics {
+				assert.Equal(t, gpuB, metric.GPUUUID)
+				assert.Equal(t, podUID, metric.Attributes[uidAttribute])
+				assert.Equal(t, "10", metric.Value)
+				if tc.direct {
+					assert.NotContains(t, metric.Attributes, vgpuAttribute)
+					assert.NotContains(t, metric.Labels, vgpuAttribute)
+					assert.NotContains(t, metric.Attributes, containerAttribute)
+				} else {
+					assert.Contains(t, metric.Attributes, vgpuAttribute)
+				}
+			}
+
+			// GPU_UTIL must continue to use the original candidate and slot mapping.
+			util, err := mapper.createPerProcessMetrics(original, counters.Counter{FieldName: metricGPUUtil}, original, data,
+				func() dcgm.Field_Entity_Group { return dcgm.FE_GPU })
+			require.NoError(t, err)
+			require.Len(t, util, len(tc.deviceToPods[gpuB]))
+			for _, metric := range util {
+				assert.Equal(t, "30", metric.Value)
+				assert.Contains(t, metric.Attributes, vgpuAttribute)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryAggregation(t *testing.T) {
+	mapper := &mockPIDMapper{
+		result:   map[uint32]*PodInfo{1: {UID: "pod-1"}, 2: {UID: "pod-1"}, 3: {UID: "pod-2"}},
+		errByPID: map[uint32]error{3: errors.New("process exited")},
+	}
+	c := &perProcessCollector{pidMapper: mapper}
+	memory := c.aggregatePodMemory(map[uint32]uint64{
+		1: 1536 * 1024, 2: 1536 * 1024, 3: 5 * 1024 * 1024, 4: 6 * 1024 * 1024,
+	})
+	assert.Equal(t, map[string]uint64{"pod-1": 3 * 1024 * 1024}, memory)
+}
+
+func TestCgroupMemoryEmptyCollectionDoesNotFallBackToSlots(t *testing.T) {
+	for _, name := range []string{"no processes", "NVML error", "nil client"} {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			devInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			devInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			devInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{DeviceInfo: dcgm.Device{UUID: "GPU-1"}}).AnyTimes()
+			pod := PodInfo{UID: "pod-1", VGPU: "5"}
+			c := &perProcessCollector{cgroupDirect: true, pidMapper: &mockPIDMapper{result: map[uint32]*PodInfo{1: &pod}}}
+			if name != "nil client" {
+				client := mocknvmlprovider.NewMockNVML(ctrl)
+				var memory map[uint32]uint64
+				var err error
+				if name == "NVML error" {
+					memory, err = map[uint32]uint64{1: 10 * 1024 * 1024}, errors.New("NVML unavailable")
+				}
+				client.EXPECT().GetDeviceProcessMemory("GPU-1").Return(memory, err)
+				client.EXPECT().GetDeviceProcessUtilization("GPU-1").Return(nil, nil)
+				c.client = client
+			}
+			data := c.Collect(map[string]string{"GPU-1": "GPU-1"}, map[string][]PodInfo{"GPU-1": {pod}}, devInfo)
+			mapper := &PodMapper{Config: &appconfig.Config{}}
+			original := collector.Metric{GPUUUID: "GPU-1", Value: "100"}
+			metrics, err := mapper.createPerProcessMetrics(original, counters.Counter{FieldName: metricFBUsed}, original, data,
+				func() dcgm.Field_Entity_Group { return dcgm.FE_GPU })
+			require.NoError(t, err)
+			assert.NotNil(t, metrics, "an empty but handled result prevents logical-slot fallback")
+			assert.Empty(t, metrics)
+		})
+	}
+}
+
+func TestCgroupMemoryPreservesMIGCollection(t *testing.T) {
+	for _, withInstances := range []bool{false, true} {
+		t.Run(fmt.Sprintf("instances=%t", withInstances), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mocknvmlprovider.NewMockNVML(ctrl)
+			gpu := deviceinfo.GPUInfo{DeviceInfo: dcgm.Device{UUID: "GPU-1"}, MigEnabled: true}
+			if withInstances {
+				gpu.GPUInstances = []deviceinfo.GPUInstanceInfo{{Info: dcgm.MigEntityInfo{NvmlInstanceId: 7}}}
+				client.EXPECT().GetAllMIGDevicesProcessMemory("GPU-1").Return(map[uint]map[uint32]uint64{7: {1: 1024 * 1024}}, nil).Times(2)
+			} else {
+				client.EXPECT().GetDeviceProcessMemory("GPU-1").Return(map[uint32]uint64{1: 1024 * 1024}, nil).Times(2)
+				client.EXPECT().GetDeviceProcessUtilization("GPU-1").Return(nil, nil).Times(2)
+			}
+			devInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			devInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			devInfo.EXPECT().GPU(uint(0)).Return(gpu).AnyTimes()
+			pod := PodInfo{UID: "pod-1", VGPU: "5"}
+			c := &perProcessCollector{client: client, pidMapper: &mockPIDMapper{result: map[uint32]*PodInfo{1: &pod}}}
+			deviceMap := map[string]string{"GPU-1": "GPU-1"}
+			pods := map[string][]PodInfo{"GPU-1": {pod}, "0-7": {pod}}
+			before := c.Collect(deviceMap, pods, devInfo)
+			c.cgroupDirect = true
+			after := c.Collect(deviceMap, pods, devInfo)
+			assert.Equal(t, before, after)
+			assert.Empty(t, after.podMemory)
+		})
+	}
 }
 
 func TestGetGPUUUIDToDeviceID(t *testing.T) {

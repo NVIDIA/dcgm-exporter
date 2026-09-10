@@ -243,6 +243,82 @@ func TestPodMapperProcessMissingPodResourcesSocketIsNoop(t *testing.T) {
 	assert.Empty(t, metrics[counter][0].Attributes)
 }
 
+func TestCgroupMemoryPreservesDeviceMetricsWithoutPodResources(t *testing.T) {
+	for _, socket := range []string{"missing", "not a socket"} {
+		t.Run(socket, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "kubelet.sock")
+			if socket == "not a socket" {
+				require.NoError(t, stdos.WriteFile(path, []byte("not a socket"), 0o600))
+			}
+			ctrl := gomock.NewController(t)
+			client := mocknvmlprovider.NewMockNVML(ctrl)
+			client.EXPECT().GetDeviceProcessMemory("GPU-1").Return(nil, errors.New("NVML unavailable"))
+			client.EXPECT().GetDeviceProcessUtilization("GPU-1").Return(nil, nil)
+			previous := nvmlprovider.Client()
+			nvmlprovider.SetClient(client)
+			t.Cleanup(func() { nvmlprovider.SetClient(previous) })
+			devInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			devInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			devInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{DeviceInfo: dcgm.Device{UUID: "GPU-1"}}).AnyTimes()
+			mapper := &PodMapper{Config: &appconfig.Config{
+				Kubernetes: true, KubernetesVirtualGPUs: true, KubernetesEnablePodUID: true,
+				KubernetesProcessMappingMode: appconfig.ProcessMappingCgroupDirect,
+				KubernetesGPUIdType:          appconfig.GPUUID, PodResourcesKubeletSocket: path,
+			}}
+			metrics := make(collector.MetricsByCounter)
+			for _, name := range []string{metricFBUsed, metricGPUUtil, "DCGM_FI_DEV_POWER_USAGE"} {
+				counter := counters.Counter{FieldName: name}
+				metrics[counter] = []collector.Metric{{Counter: counter, GPUUUID: "GPU-1", Value: "100"}}
+			}
+			require.NoError(t, mapper.Process(metrics, devInfo))
+			for _, samples := range metrics {
+				require.Len(t, samples, 1)
+				assert.Equal(t, "100", samples[0].Value)
+				assert.Empty(t, samples[0].Attributes)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryPodMetadataAndLabels(t *testing.T) {
+	for _, oldNames := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy labels=%t", oldNames), func(t *testing.T) {
+			mapper := &PodMapper{
+				Config:           &appconfig.Config{KubernetesEnablePodUID: true, KubernetesEnablePodLabels: true, UseOldNamespace: oldNames},
+				labelFilterCache: newLabelFilterCache([]string{"^app$"}, 10),
+			}
+			setupMockInformer(t, mapper, fake.NewSimpleClientset(&v1.Pod{ObjectMeta: metav1.ObjectMeta{
+				UID: "pod-1", Name: "workload-1", Namespace: "default",
+				Labels: map[string]string{"app": "training", "ignored": "value"},
+			}}))
+			data := &perProcessDataMap{
+				podMemory:    map[string]map[string]uint64{"GPU-1": {"pod-1": 3 * 1024 * 1024, "pod-2": 4 * 1024 * 1024}},
+				podInfoByUID: mapper.getPodInfoByUID(),
+			}
+			counter := counters.Counter{FieldName: metricFBUsed}
+			original := collector.Metric{
+				Counter: counter, GPUUUID: "GPU-1", Value: "100",
+				Attributes: map[string]string{vgpuAttribute: "5", containerAttribute: "app", oldContainerAttribute: "app"},
+			}
+			metrics, err := mapper.createPerProcessMetrics(original, counter, original, data,
+				func() dcgm.Field_Entity_Group { return dcgm.FE_GPU })
+			require.NoError(t, err)
+			require.Len(t, metrics, 2)
+			podKey, namespaceKey := podAttribute, namespaceAttribute
+			if oldNames {
+				podKey, namespaceKey = oldPodAttribute, oldNamespaceAttribute
+			}
+			assert.Equal(t, map[string]string{uidAttribute: "pod-1", podKey: "workload-1", namespaceKey: "default"}, metrics[0].Attributes)
+			assert.Equal(t, map[string]string{"app": "training"}, metrics[0].Labels)
+			assert.Equal(t, "3", metrics[0].Value)
+			assert.Equal(t, map[string]string{uidAttribute: "pod-2"}, metrics[1].Attributes)
+			assert.Equal(t, "4", metrics[1].Value)
+			assert.Equal(t, "5", original.Attributes[vgpuAttribute])
+			assert.Equal(t, "100", original.Value)
+		})
+	}
+}
+
 func TestPodMapperGetMappingsValidatesPodResourcesSocketPath(t *testing.T) {
 	regularFilePath := filepath.Join(t.TempDir(), "regular-file")
 	require.NoError(t, stdos.WriteFile(regularFilePath, []byte("not a socket"), 0o600))

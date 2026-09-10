@@ -102,6 +102,7 @@ const (
 	CLIContainerRuntimeSocket           = "container-runtime-socket"
 	CLINvidiaResourceNames              = "nvidia-resource-names"
 	CLIKubernetesVirtualGPUs            = "kubernetes-virtual-gpus"
+	CLIKubernetesProcessMappingMode     = "kubernetes-process-mapping-mode"
 	CLIDumpEnabled                      = "dump-enabled"
 	CLIDumpDirectory                    = "dump-directory"
 	CLIDumpRetention                    = "dump-retention"
@@ -354,6 +355,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins when using GPU sharing strategies, e.g. time-sharing or MPS.",
 			EnvVars: []string{"KUBERNETES_VIRTUAL_GPUS"},
+		},
+		&cli.StringFlag{
+			Name:    CLIKubernetesProcessMappingMode,
+			Value:   string(appconfig.ProcessMappingPodResources),
+			Usage:   "Choose Pod memory attribution: pod-resources or cgroup-direct. cgroup-direct applies only to non-MIG FB_USED and requires Kubernetes, virtual GPUs, and Pod UID labels.",
+			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_PROCESS_MAPPING_MODE"},
 		},
 		&cli.BoolFlag{
 			Name:    CLIDumpEnabled,
@@ -1439,6 +1446,7 @@ func defaultConfig() (*appconfig.Config, error) {
 		Kubernetes:                       false,
 		KubernetesEnablePodLabels:        false,
 		KubernetesEnablePodUID:           false,
+		KubernetesProcessMappingMode:     appconfig.ProcessMappingPodResources,
 		KubernetesGPUIdType:              appconfig.GPUUID,
 		KubernetesPodLabelAllowlistRegex: nil,
 		CollectDCP:                       true,
@@ -1598,6 +1606,9 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 	if c.IsSet(CLIKubernetesVirtualGPUs) {
 		config.KubernetesVirtualGPUs = c.Bool(CLIKubernetesVirtualGPUs)
 	}
+	if c.IsSet(CLIKubernetesProcessMappingMode) {
+		config.KubernetesProcessMappingMode = appconfig.KubernetesProcessMappingMode(c.String(CLIKubernetesProcessMappingMode))
+	}
 	if c.IsSet(CLIDumpEnabled) {
 		config.DumpConfig.Enabled = c.Bool(CLIDumpEnabled)
 	}
@@ -1663,6 +1674,16 @@ func applyConfigMapDataSource(config *appconfig.Config, configMapData string) er
 
 // validateConfig checks cross-field runtime requirements after all config sources are applied.
 func validateConfig(config *appconfig.Config) error {
+	switch config.KubernetesProcessMappingMode {
+	case appconfig.ProcessMappingPodResources:
+	case appconfig.ProcessMappingCgroupDirect:
+		if !config.Kubernetes || !config.KubernetesVirtualGPUs || !config.KubernetesEnablePodUID {
+			return fmt.Errorf("%s=cgroup-direct requires %s, %s, and %s", CLIKubernetesProcessMappingMode,
+				CLIKubernetes, CLIKubernetesVirtualGPUs, CLIKubernetesEnablePodUID)
+		}
+	default:
+		return fmt.Errorf("invalid %s parameter value: %q", CLIKubernetesProcessMappingMode, config.KubernetesProcessMappingMode)
+	}
 	if !slices.Contains(DCGMDbgLvlValues, config.DCGMLogLevel) {
 		return fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, config.DCGMLogLevel)
 	}
