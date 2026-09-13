@@ -17,11 +17,14 @@
 package nvmlprovider
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
@@ -32,16 +35,123 @@ type MIGDeviceInfo struct {
 	ComputeInstanceID int
 }
 
+// Default retry parameters for Initialize. The GPU driver installer on GKE
+// (and similar node-bootstrap setups) can still be running when the exporter
+// pod starts, so nvml.Init briefly returns ERROR_LIBRARY_NOT_FOUND. These
+// defaults give the driver installer up to ~1 minute to finish before giving up.
+const (
+	DefaultNVMLInitRetryAttempts = 5
+	DefaultNVMLInitRetryBaseWait = 2 * time.Second
+	DefaultNVMLInitRetryMaxWait  = 20 * time.Second
+)
+
+// maxJitterFraction is the maximum fraction of the backoff duration added as
+// random jitter, so pods restarting together (e.g. after a node reboot) don't
+// retry in lockstep against the same node.
+const maxJitterFraction = 0.30
+
 var nvmlInterface NVML
 
-// Initialize sets up the Singleton NVML interface.
-func Initialize() error {
-	var err error
-	nvmlInterface, err = newNVMLProvider()
-	if err != nil {
-		return err
+// nvmlInitFunc is a package-level indirection over nvml.Init so tests can
+// substitute a fake without requiring real GPU hardware.
+var nvmlInitFunc = nvml.Init
+
+// nvmlInitError wraps the raw NVML return code from nvmlInitFunc so callers
+// can distinguish transient failures (e.g. ERROR_LIBRARY_NOT_FOUND) from
+// permanent ones without resorting to string matching.
+type nvmlInitError struct {
+	ret nvml.Return
+}
+
+func (e *nvmlInitError) Error() string {
+	return nvml.ErrorString(e.ret)
+}
+
+// isLibraryNotFoundErr reports whether err represents nvml.ERROR_LIBRARY_NOT_FOUND,
+// the transient error returned while the GPU driver installer hasn't finished yet.
+func isLibraryNotFoundErr(err error) bool {
+	var initErr *nvmlInitError
+	if errors.As(err, &initErr) {
+		return initErr.ret == nvml.ERROR_LIBRARY_NOT_FOUND
 	}
-	return nil
+	return false
+}
+
+// Initialize sets up the Singleton NVML interface, retrying on the transient
+// ERROR_LIBRARY_NOT_FOUND error using sane default retry parameters.
+func Initialize() error {
+	return InitializeWithRetry(context.Background(), DefaultNVMLInitRetryAttempts, DefaultNVMLInitRetryBaseWait, DefaultNVMLInitRetryMaxWait)
+}
+
+// InitializeWithRetry sets up the Singleton NVML interface, retrying up to
+// attempts times with exponential backoff (base, 2x, 4x, ... capped at
+// maxWait, plus jitter) when nvml.Init fails with ERROR_LIBRARY_NOT_FOUND.
+// Any other error is returned immediately without retrying, since retrying a
+// permanent failure only delays an unavoidable error. attempts < 1 is treated
+// as 1, so at least one init attempt always happens. If ctx is cancelled
+// while waiting between attempts, InitializeWithRetry returns ctx.Err()
+// immediately instead of sleeping out the remaining backoff, so a shutdown
+// signal during startup isn't ignored until retries are exhausted.
+func InitializeWithRetry(ctx context.Context, attempts int, baseWait, maxWait time.Duration) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		var err error
+		nvmlInterface, err = newNVMLProvider()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+
+		if !isLibraryNotFoundErr(err) {
+			return fmt.Errorf("failed to initialize NVML library: %w", err)
+		}
+
+		if attempt < attempts-1 {
+			wait := backoffDuration(attempt, baseWait, maxWait)
+			slog.Warn("NVML library not found yet (GPU driver may still be installing); retrying",
+				slog.Int("attempt", attempt+1),
+				slog.Int("maxAttempts", attempts),
+				slog.Duration("wait", wait))
+
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("NVML initialization cancelled after %d attempt(s): %w", attempt+1, ctx.Err())
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to initialize NVML library after %d attempts, last error: %w", attempts, lastErr)
+}
+
+// backoffDuration computes the exponential backoff wait for the given attempt
+// (0-indexed): baseWait * 2^attempt, capped at maxWait, plus up to
+// maxJitterFraction of additional random jitter on top of the cap. The
+// doubling is computed via repeated, overflow-checked multiplication rather
+// than a bit shift so an unbounded attempt count (attempts is a
+// user-configurable CLI value) can never wrap into a bogus small positive
+// duration that defeats the cap.
+func backoffDuration(attempt int, baseWait, maxWait time.Duration) time.Duration {
+	wait := baseWait
+	for i := 0; i < attempt; i++ {
+		if wait >= maxWait || wait > maxWait/2 {
+			wait = maxWait
+			break
+		}
+		wait *= 2
+	}
+	if wait > maxWait {
+		wait = maxWait
+	}
+
+	jitter := time.Duration(rand.Float64() * maxJitterFraction * float64(wait)) //nolint:gosec // #nosec G404 -- jitter only needs to desynchronize retries, not be cryptographically secure
+	return wait + jitter
 }
 
 // reset clears the current NVML interface instance.
@@ -77,9 +187,9 @@ func newNVMLProvider() (NVML, error) {
 	}
 
 	slog.Info("Attempting to initialize NVML library.")
-	ret := nvml.Init()
+	ret := nvmlInitFunc()
 	if ret != nvml.SUCCESS {
-		err := errors.New(nvml.ErrorString(ret))
+		err := &nvmlInitError{ret: ret}
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
 		return nvmlProvider{initialized: false}, err
 	}

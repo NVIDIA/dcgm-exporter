@@ -111,12 +111,15 @@ const (
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
 	CLIEnablePprof                      = "enable-pprof"
+	CLINVMLInitRetryAttempts            = "nvml-init-retry-attempts"
+	CLINVMLInitRetryBaseWait            = "nvml-init-retry-base-wait"
+	CLINVMLInitRetryMaxWait             = "nvml-init-retry-max-wait"
 )
 
 var (
 	validatePrerequisitesFunc   = prerequisites.Validate
 	initializeDCGMProviderFunc  = dcgmprovider.Initialize
-	initializeNVMLProviderFunc  = nvmlprovider.Initialize
+	initializeNVMLProviderFunc  = nvmlprovider.InitializeWithRetry
 	buildRegistryFunc           = buildRegistry
 	getCountersFunc             = getCounters
 	startWatchListManagerFunc   = startDeviceWatchListManager
@@ -391,6 +394,24 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Disable validation checks during startup. Can be useful for running in minimal environments or testing",
 			EnvVars: []string{"DISABLE_STARTUP_VALIDATE"},
 		},
+		&cli.IntFlag{
+			Name:    CLINVMLInitRetryAttempts,
+			Value:   nvmlprovider.DefaultNVMLInitRetryAttempts,
+			Usage:   "Max attempts to initialize NVML before giving up. Only retried on ERROR_LIBRARY_NOT_FOUND (e.g. the GPU driver installer hasn't finished yet), such as at pod startup on GKE.",
+			EnvVars: []string{"DCGM_EXPORTER_NVML_INIT_RETRY_ATTEMPTS"},
+		},
+		&cli.StringFlag{
+			Name:    CLINVMLInitRetryBaseWait,
+			Value:   nvmlprovider.DefaultNVMLInitRetryBaseWait.String(),
+			Usage:   "Initial backoff wait between NVML init retries, doubling each attempt up to nvml-init-retry-max-wait.",
+			EnvVars: []string{"DCGM_EXPORTER_NVML_INIT_RETRY_BASE_WAIT"},
+		},
+		&cli.StringFlag{
+			Name:    CLINVMLInitRetryMaxWait,
+			Value:   nvmlprovider.DefaultNVMLInitRetryMaxWait.String(),
+			Usage:   "Cap on backoff wait between NVML init retries.",
+			EnvVars: []string{"DCGM_EXPORTER_NVML_INIT_RETRY_MAX_WAIT"},
+		},
 		&cli.BoolFlag{
 			Name:    CLIEnableGPUBindUnbindWatch,
 			Value:   false,
@@ -528,7 +549,7 @@ func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequest
 	// Initialize NVML Provider Instance only if Kubernetes mode is enabled
 	// NVML is only needed for MIG device UUID parsing in Kubernetes environments
 	if config.Kubernetes {
-		err = initializeNVMLProviderFunc()
+		err = initializeNVMLProviderFunc(lifecycleCtx, config.NVMLInitRetryAttempts, config.NVMLInitRetryBaseWait, config.NVMLInitRetryMaxWait)
 		if err != nil && !config.DisableStartupValidate {
 			return err
 		}
@@ -1111,7 +1132,13 @@ func (r *reloadCoordinator) doTopologyChange(ctx context.Context, reloadID uint6
 		nvmlprovider.Client().Cleanup()
 
 		slog.InfoContext(ctx, "Reinitializing NVML", slog.Uint64("reload_id", reloadID))
-		if err := nvmlprovider.Initialize(); err != nil {
+		// A single attempt (no retry) is deliberate here: unlike pod startup, a GPU
+		// unbind event routinely leaves no NVML library to find until the GPU is
+		// rebound, at which point a fresh topology-change event drives another call
+		// to this same path. This is the serial reload coordinator's event loop, so
+		// retrying with the full startup backoff would block /metrics recovery and
+		// any queued reload for the length of that backoff.
+		if err := nvmlprovider.InitializeWithRetry(ctx, 1, cfg.NVMLInitRetryBaseWait, cfg.NVMLInitRetryMaxWait); err != nil {
 			slog.ErrorContext(ctx, "Failed to reinitialize NVML",
 				slog.Uint64("reload_id", reloadID),
 				slog.String("error", err.Error()))
@@ -1482,6 +1509,9 @@ func defaultConfig() (*appconfig.Config, error) {
 		EnableGPUBindUnbindWatch:  false,
 		GPUBindUnbindPollInterval: time.Second,
 		EnablePprof:               false,
+		NVMLInitRetryAttempts:     nvmlprovider.DefaultNVMLInitRetryAttempts,
+		NVMLInitRetryBaseWait:     nvmlprovider.DefaultNVMLInitRetryBaseWait,
+		NVMLInitRetryMaxWait:      nvmlprovider.DefaultNVMLInitRetryMaxWait,
 	}, nil
 }
 
@@ -1615,6 +1645,15 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 	}
 	if c.IsSet(CLIDisableStartupValidate) {
 		config.DisableStartupValidate = c.Bool(CLIDisableStartupValidate)
+	}
+	if c.IsSet(CLINVMLInitRetryAttempts) {
+		config.NVMLInitRetryAttempts = c.Int(CLINVMLInitRetryAttempts)
+	}
+	if c.IsSet(CLINVMLInitRetryBaseWait) {
+		config.NVMLInitRetryBaseWait = parseDuration(c.String(CLINVMLInitRetryBaseWait), nvmlprovider.DefaultNVMLInitRetryBaseWait)
+	}
+	if c.IsSet(CLINVMLInitRetryMaxWait) {
+		config.NVMLInitRetryMaxWait = parseDuration(c.String(CLINVMLInitRetryMaxWait), nvmlprovider.DefaultNVMLInitRetryMaxWait)
 	}
 	if c.IsSet(CLIEnableGPUBindUnbindWatch) {
 		config.EnableGPUBindUnbindWatch = c.Bool(CLIEnableGPUBindUnbindWatch)
