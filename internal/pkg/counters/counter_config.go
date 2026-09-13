@@ -191,7 +191,7 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 }
 
 func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {
-	if fieldID < dcpFieldsStart || fieldID >= cpuFieldsStart {
+	if !IsDCPField(fieldID) {
 		return true
 	}
 
