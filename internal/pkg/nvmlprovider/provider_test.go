@@ -19,9 +19,21 @@ package nvmlprovider
 import (
 	"testing"
 
+	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
+
+// mockSuccessfulInit stubs nvmlInitFunc to succeed without a real NVML
+// library, and returns a restore func the caller should defer. Only safe for
+// tests that don't go on to call any other real nvml.* function: those
+// still need the actual library loaded to resolve, and will crash the test
+// binary with a symbol lookup error rather than return a Go error if it
+// isn't. Use the Initialize()-then-t.Skip pattern elsewhere in this file for
+// tests that do.
+func mockSuccessfulInit() func() {
+	nvmlInitFunc = func() nvml.Return { return nvml.SUCCESS }
+	return func() { nvmlInitFunc = nvml.Init }
+}
 
 func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 	validMIGUUID := "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5"
@@ -56,7 +68,14 @@ func TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 }
 
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
-	_ = Initialize()
+	// This exercises nvml.DeviceGetHandleByUUID beyond just Initialize, so a
+	// stubbed nvmlInitFunc isn't enough: the real NVML library still needs to
+	// be loaded for that symbol to resolve, or the test binary crashes
+	// outright instead of returning a Go error. Skip like its sibling tests
+	// when no real NVML is present.
+	if err := Initialize(); err != nil {
+		t.Skip("NVML not available, skipping test")
+	}
 	assert.NotNil(t, Client(), "expected NVML Client to be not nil")
 	assert.True(t, Client().(nvmlProvider).initialized, "expected Client to be initialized")
 	defer Client().Cleanup()
@@ -112,6 +131,8 @@ func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 }
 
 func Test_newNVMLProvider(t *testing.T) {
+	defer mockSuccessfulInit()()
+
 	tests := []struct {
 		name       string
 		preRunFunc func() NVML
@@ -195,9 +216,13 @@ func TestCleanup_WhenNotInitialized(t *testing.T) {
 
 // TestCleanup_WhenInitialized tests cleanup when NVML is initialized
 func TestCleanup_WhenInitialized(t *testing.T) {
-	// Initialize NVML
+	// Cleanup calls the real nvml.Shutdown, which needs the real library
+	// loaded to resolve, so this can't be satisfied by stubbing
+	// nvmlInitFunc alone. Skip like its sibling tests when unavailable.
 	err := Initialize()
-	assert.NoError(t, err)
+	if err != nil {
+		t.Skip("NVML not available, skipping test")
+	}
 
 	provider := Client()
 	assert.NotNil(t, provider)
@@ -239,9 +264,16 @@ func TestPreCheck(t *testing.T) {
 		errorContains string
 	}{
 		{
+			// This subtest's assertion below only cares that GetMIGDeviceInfoByID
+			// doesn't fail with "NVML not initialized" - it tolerates any other
+			// error - but reaching that call still needs Initialize to have
+			// actually succeeded, which needs the real NVML library. Skip like
+			// the other hardware-dependent tests in this file when unavailable.
 			name: "Initialized provider",
 			setupFunc: func(t *testing.T) {
-				require.NoError(t, Initialize())
+				if err := Initialize(); err != nil {
+					t.Skip("NVML not available, skipping test")
+				}
 			},
 			expectError: false,
 		},
