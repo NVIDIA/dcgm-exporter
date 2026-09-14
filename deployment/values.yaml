@@ -215,8 +215,8 @@ extraConfigMapVolumes:
 
 extraVolumeMounts:
   - name: exporter-metrics-volume
-    mountPath: /etc/dcgm-exporter/default-counters.csv
-    subPath: default-counters.csv
+    mountPath: /etc/dcgm-exporter
+    readOnly: true
 
 extraEnv: []
 

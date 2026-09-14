@@ -52,6 +52,10 @@ YAML `metrics.file` at the mounted CSV path. The chart defaults mount the
 `/etc/dcgm-exporter/default-counters.csv`; set `customMetrics` to replace that
 CSV content.
 
+The default metrics ConfigMap is mounted as the `/etc/dcgm-exporter` directory
+instead of overlaying the CSV file with a `subPath` mount, which avoids file
+mount failures on SELinux-enforcing nodes.
+
 ```yaml
 customMetrics: |
   DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
