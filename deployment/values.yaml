@@ -403,3 +403,11 @@ livenessProbe:
 
 readinessProbe:
   initialDelaySeconds: 45
+
+networkPolicy:
+  enabled: false
+  ingress:
+    from: []
+    ports:
+      - port: 9400
+        protocol: TCP

@@ -1,0 +1,28 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dcgm-exporter.fullname" . }}
+  namespace: {{ include "dcgm-exporter.namespace" . }}
+  labels:
+    {{- include "dcgm-exporter.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {{- if eq (len .Values.networkPolicy.ingress.from) 0 }}
+      from: []
+      {{- else }}
+      from:
+        {{- toYaml .Values.networkPolicy.ingress.from | nindent 8 }}
+      {{- end }}
+      {{- if eq (len .Values.networkPolicy.ingress.ports) 0 }}
+      ports: []
+      {{- else }}
+      ports:
+        {{- toYaml .Values.networkPolicy.ingress.ports | nindent 8 }}
+      {{- end }}
+{{- end }}
