@@ -1,0 +1,25 @@
+# Configuration for the `typos` spell-checker.
+# See https://github.com/crate-ci/typos for the schema.
+
+[default]
+# These are not typos — they are domain vocabulary and proper nouns
+# that the default `typos` dictionary mistakes for misspellings.
+extend-ignore-identifiers-re = [
+    # NVIDIA / DCGM hardware vernacular: "DBE" = "Double-Bit Error".
+    # Appears in DCGM SDK identifiers like DCGM_FR_DBE_VIOLATION.
+    "(?i)dbe",
+]
+
+[default.extend-words]
+# Hashicorp (company name) appears in third-party licence attributions.
+Hashi = "Hashi"
+
+[files]
+# Module pseudo-versions in go.mod embed git short-hashes that look
+# like misspellings (e.g. "lann/ps v0.0.0-20150810152359-62de8c46ede0"
+# triggers `ede` → `edge`). The hashes are content addresses and
+# cannot be edited.
+extend-exclude = [
+    "go.mod",
+    "go.sum",
+]
