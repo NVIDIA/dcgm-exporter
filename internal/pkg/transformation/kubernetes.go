@@ -568,6 +568,9 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 								metric.Attributes[oldNamespaceAttribute] = pi.Namespace
 								metric.Attributes[oldContainerAttribute] = pi.Container
 							}
+							if p.Config.KubernetesEnablePodUID {
+								metric.Attributes[uidAttribute] = pi.UID
+							}
 							if dr := pi.DynamicResources; dr != nil {
 								metric.Attributes[draClaimName] = dr.ClaimName
 								metric.Attributes[draClaimNamespace] = dr.ClaimNamespace

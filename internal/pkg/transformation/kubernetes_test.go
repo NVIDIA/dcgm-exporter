@@ -1394,6 +1394,7 @@ func TestPodMapperProcessAddsDRAAttributesForMIGMetric(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pod1",
 			Namespace: "default",
+			UID:       "pod1-uid",
 			Labels: map[string]string{
 				"app":            "demo",
 				"dra_claim_name": "pod-claim-label",
@@ -1417,6 +1418,7 @@ func TestPodMapperProcessAddsDRAAttributesForMIGMetric(t *testing.T) {
 		Config: &appconfig.Config{
 			KubernetesEnableDRA:       true,
 			KubernetesEnablePodLabels: true,
+			KubernetesEnablePodUID:    true,
 			KubernetesGPUIdType:       appconfig.GPUUID,
 			PodResourcesKubeletSocket: socketPath,
 			NvidiaResourceNames:       []string{appconfig.NvidiaResourceName},
@@ -1464,6 +1466,7 @@ func TestPodMapperProcessAddsDRAAttributesForMIGMetric(t *testing.T) {
 	assert.Equal(t, "pod1", got.Attributes[podAttribute])
 	assert.Equal(t, "default", got.Attributes[namespaceAttribute])
 	assert.Equal(t, "ctr1", got.Attributes[containerAttribute])
+	assert.Equal(t, "pod1-uid", got.Attributes[uidAttribute])
 	assert.Equal(t, "claim1", got.Attributes[draClaimName])
 	assert.Equal(t, "ns1", got.Attributes[draClaimNamespace])
 	assert.Equal(t, DRAGPUDriverName, got.Attributes[draDriverName])
