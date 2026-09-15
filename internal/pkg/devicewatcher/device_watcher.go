@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -358,6 +359,65 @@ func supportedDCPFields(gpuID uint) (map[dcgm.Short]bool, error) {
 	}
 
 	return supported, nil
+}
+
+var (
+	dcpCapabilityCacheMu sync.RWMutex
+	dcpCapabilityCache   = map[string]map[dcgm.Short]bool{} // GPU model -> supported DCP fields
+)
+
+// ModelSupportsDCPField reports whether the GPU model identified by
+// representativeGPUID supports the given field, so callers can avoid asking
+// DCGM for a value that was never watched. Watch registration is already
+// scoped per GPU model (see watchFieldGroupsPartitionedByModel), but a
+// scrape reads every entity with the same configured field list regardless
+// of model. For an ordinary field that's harmless - DCGM reports an
+// unsupported field as a per-entity blank value - but for a DCP field it
+// isn't: asking for a DCP field's value on an entity whose model was never
+// watched for it returns DCGM_ST_NOT_WATCHED, and the exporter's stale-watch
+// repair logic then retries forever trying to fix a watch that was
+// deliberately never created. Filtering the scrape-time field list with this
+// avoids ever asking. The answer is cached per model, since it can't change
+// for a fixed physical GPU model within one DCGM session; ResetDCPCapabilityCache
+// clears it across a reinit. Non-DCP fields always report supported without
+// touching the cache or DCGM. See NVIDIA/dcgm-exporter#736.
+func ModelSupportsDCPField(model string, representativeGPUID uint, fieldID dcgm.Short) bool {
+	if !counters.IsDCPField(uint(fieldID)) {
+		return true
+	}
+
+	dcpCapabilityCacheMu.RLock()
+	supported, cached := dcpCapabilityCache[model]
+	dcpCapabilityCacheMu.RUnlock()
+	if cached {
+		return supported[fieldID]
+	}
+
+	supported, err := supportedDCPFields(representativeGPUID)
+	if err != nil {
+		// Can't determine support one way or the other. Fail open (treat it
+		// as supported) rather than silently dropping a field that might be
+		// fine - the watch-registration path already handles the real
+		// unsupported case; this is scrape-time filtering only.
+		slog.Warn("Could not query DCP metric group support while filtering scrape fields; leaving field in scrape list",
+			slog.String("gpu_model", model), slog.String(ErrorKey, err.Error()))
+		return true
+	}
+
+	dcpCapabilityCacheMu.Lock()
+	dcpCapabilityCache[model] = supported
+	dcpCapabilityCacheMu.Unlock()
+
+	return supported[fieldID]
+}
+
+// ResetDCPCapabilityCache clears the cached per-model DCP support answers.
+// Called on DCGM reinit, since profiling capability is queried through the
+// DCGM connection and could read differently on a fresh session.
+func ResetDCPCapabilityCache() {
+	dcpCapabilityCacheMu.Lock()
+	defer dcpCapabilityCacheMu.Unlock()
+	dcpCapabilityCache = map[string]map[dcgm.Short]bool{}
 }
 
 // filterFieldsForModel drops DCP fields a model's profiling query didn't

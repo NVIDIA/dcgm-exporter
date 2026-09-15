@@ -1251,6 +1251,12 @@ func getCounters(ctx context.Context, config *appconfig.Config) (*counters.Count
 func (r *reloadCoordinator) queryDCPMetrics(cfg *appconfig.Config, reloadID uint64) {
 	slog.Debug("Querying DCGM profiling metric groups", slog.Uint64("reload_id", reloadID))
 
+	// This runs on startup and after every DCGM reinit, the same cadence the
+	// per-model DCP capability cache needs to stay valid on: capability is
+	// queried through the DCGM connection, so a fresh session could in
+	// principle answer differently than the last one.
+	devicewatcher.ResetDCPCapabilityCache()
+
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Warn("Profiling API panic - DCP metrics disabled",

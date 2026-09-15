@@ -24,6 +24,7 @@ package devicewatcher
 // that shared group for exactly this situation.
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -139,6 +140,96 @@ func TestSupportedDCPFields(t *testing.T) {
 	supported, err := supportedDCPFields(0)
 	require.NoError(t, err)
 	assert.Equal(t, map[dcgm.Short]bool{fp64Active: true}, supported)
+}
+
+// TestModelSupportsDCPField_NonDCPFieldNeverQueriesDCGM covers the cheap
+// path: a non-DCP field is always reported supported without touching DCGM
+// or the cache at all.
+func TestModelSupportsDCPField_NonDCPFieldNeverQueriesDCGM(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGM)
+	defer ResetDCPCapabilityCache()
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+	// No GetSupportedMetricGroups expectation set at all: any call would
+	// fail the test via gomock's unexpected-call panic.
+
+	assert.True(t, ModelSupportsDCPField("NVIDIA RTX2000", 1, fbUsed))
+}
+
+// TestModelSupportsDCPField_QueriesOncePerModelThenCaches is the regression
+// test for the actual bug report on NVIDIA/dcgm-exporter#736: a scrape used
+// to ask DCGM for a DCP field's value on every entity regardless of model,
+// which DCGM answers with DCGM_ST_NOT_WATCHED for a model that was never
+// watched for it, triggering an unrecoverable "repairing stale watch" loop.
+// This proves the model-aware answer, and that repeated scrapes (the normal
+// case - this gets called every scrape interval) don't requery DCGM each time.
+func TestModelSupportsDCPField_QueriesOncePerModelThenCaches(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGM)
+	defer ResetDCPCapabilityCache()
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	// Exactly one query expected for the A30 despite three lookups below -
+	// the second and third must come from the cache.
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return([]dcgm.MetricGroup{
+		{FieldIds: []uint{uint(fp64Active)}},
+	}, nil).Times(1)
+	// The RTX2000 is never queried with GPU ID 0: it must be looked up
+	// under its own representative GPU ID, and it supports nothing.
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(1)).Return([]dcgm.MetricGroup{}, nil).Times(1)
+
+	assert.True(t, ModelSupportsDCPField("NVIDIA A30", 0, fp64Active), "A30 supports fp64Active")
+	assert.True(t, ModelSupportsDCPField("NVIDIA A30", 0, fp64Active), "second call for the same model must hit the cache, not DCGM again")
+	assert.False(t, ModelSupportsDCPField("NVIDIA RTX2000", 1, fp64Active), "RTX2000 does not support fp64Active")
+}
+
+// TestModelSupportsDCPField_ResetClearsCache proves ResetDCPCapabilityCache
+// actually forces a fresh query instead of serving a stale cached answer -
+// this is what queryDCPMetrics calls on every DCGM reinit.
+func TestModelSupportsDCPField_ResetClearsCache(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGM)
+	defer ResetDCPCapabilityCache()
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	gomock.InOrder(
+		mockDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return([]dcgm.MetricGroup{}, nil),
+		mockDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return([]dcgm.MetricGroup{
+			{FieldIds: []uint{uint(fp64Active)}},
+		}, nil),
+	)
+
+	assert.False(t, ModelSupportsDCPField("NVIDIA A30", 0, fp64Active), "first query reports unsupported")
+	ResetDCPCapabilityCache()
+	assert.True(t, ModelSupportsDCPField("NVIDIA A30", 0, fp64Active), "after reset, the second query's answer must be used, not the cached first one")
+}
+
+// TestModelSupportsDCPField_QueryErrorFailsOpen covers the case where DCGM
+// can't answer the capability query at scrape time: filtering must not
+// silently drop a field that might genuinely be fine, since the
+// watch-registration path (not this one) is what actually decides whether a
+// field gets watched at all.
+func TestModelSupportsDCPField_QueryErrorFailsOpen(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	defer dcgmprovider.SetClient(realDCGM)
+	defer ResetDCPCapabilityCache()
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("dcgm connection error"))
+
+	assert.True(t, ModelSupportsDCPField("NVIDIA A30", 0, fp64Active))
 }
 
 // TestWatchDeviceFieldGroups_PartitionsMixedGPUModels reproduces issue #657
