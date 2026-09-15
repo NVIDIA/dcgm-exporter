@@ -167,6 +167,11 @@ serviceMonitor:
   interval: 30s
   scrapeTimeout: 25s
   honorLabels: false
+  # Additional Kubernetes metadata to expose during target discovery.
+  # Requires Prometheus >= 2.37.0. Enabling node metadata also requires the
+  # Prometheus service account to list and watch Node objects.
+  attachMetadata: {}
+    # node: true
   additionalLabels: {}
     #monitoring: prometheus
   relabelings: []
