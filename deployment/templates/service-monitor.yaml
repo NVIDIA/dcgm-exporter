@@ -30,6 +30,10 @@ spec:
   namespaceSelector:
     matchNames:
     - "{{ include "dcgm-exporter.namespace" . }}"
+  {{- with .Values.serviceMonitor.attachMetadata }}
+  attachMetadata:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   endpoints:
   - port: "metrics"
     path: "/metrics"
