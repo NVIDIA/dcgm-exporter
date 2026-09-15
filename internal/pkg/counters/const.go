@@ -27,3 +27,12 @@ const (
 	DCGMExpXIDErrorsTotal   = "DCGM_EXP_XID_ERRORS_TOTAL"
 	DCGMExpClockEventsTotal = "DCGM_EXP_CLOCK_EVENTS_TOTAL"
 )
+
+// IsDCPField reports whether fieldID falls in the DCP/profiling field ID range
+// (DCGM_FI_PROF_*). These fields are validated for the whole DCGM watch group
+// at registration time, unlike ordinary fields which degrade to a per-entity
+// NOT_SUPPORTED value at scrape time - see devicewatcher's model-partitioned
+// watch path for why that distinction matters.
+func IsDCPField(fieldID uint) bool {
+	return fieldID >= dcpFieldsStart && fieldID < cpuFieldsStart
+}

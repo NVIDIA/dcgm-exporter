@@ -260,11 +260,38 @@ func (c *DCGMCollector) latestValues(mi devicemonitoring.Info) ([]dcgm.FieldValu
 		)
 	}
 
+	// Watch registration is scoped per GPU model (see the devicewatcher
+	// package), but the field list above isn't - it's every counter
+	// configured for this entity type, regardless of which model actually
+	// had it watched. For an ordinary field that's fine: DCGM reports one
+	// it doesn't support as a per-entity blank value. For a DCP field it
+	// isn't: asking for a value that was never watched returns
+	// DCGM_ST_NOT_WATCHED, and the stale-watch repair path then retries
+	// forever trying to fix a watch that was deliberately never created.
+	// Filter to what this entity's model actually has watched.
+	fields = filterDCPFieldsForModel(fields, mi.DeviceInfo)
+
 	return dcgmprovider.Client().EntityGetLatestValues(
 		mi.Entity.EntityGroupId,
 		mi.Entity.EntityId,
 		fields,
 	)
+}
+
+// filterDCPFieldsForModel drops DCP fields the entity's GPU model doesn't
+// support, leaving non-DCP fields untouched. See NVIDIA/dcgm-exporter#736.
+func filterDCPFieldsForModel(fields []dcgm.Short, device dcgm.Device) []dcgm.Short {
+	if device.Identifiers.Model == "" {
+		return fields
+	}
+
+	filtered := make([]dcgm.Short, 0, len(fields))
+	for _, fieldID := range fields {
+		if devicewatcher.ModelSupportsDCPField(device.Identifiers.Model, device.GPU, fieldID) {
+			filtered = append(filtered, fieldID)
+		}
+	}
+	return filtered
 }
 
 // addMetrics renders values with the labels and identity fields for their entity type.

@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -166,6 +168,24 @@ func (d *DeviceWatcher) WatchDeviceFields(
 func (d *DeviceWatcher) WatchDeviceFieldGroups(
 	fieldWatchGroups []FieldWatchGroup, deviceInfo deviceinfo.Provider,
 ) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
+	// DCP/profiling fields (DCGM_FI_PROF_*) are validated for an entire DCGM
+	// watch group at registration time: if any GPU model in the group lacks
+	// a requested profiling field, the whole watch call fails. Ordinary
+	// fields don't have this problem - unsupported ones just come back as a
+	// per-entity NOT_SUPPORTED value at scrape time (see isBlankValue in the
+	// collector package). So the single-shared-group path below is fine for
+	// almost every field on almost every node; it only breaks on a node
+	// mixing GPU models where at least one profiling field isn't supported
+	// everywhere. Route that specific case through a per-model partition
+	// instead of touching the common path.
+	if deviceInfo.InfoType() == dcgm.FE_GPU && anyDCPField(fieldWatchGroups) {
+		if handled, groups, fieldGroups, cleanups, err := d.watchFieldGroupsPartitionedByModel(
+			fieldWatchGroups, deviceInfo,
+		); handled {
+			return groups, fieldGroups, cleanups, err
+		}
+	}
+
 	resources := &WatchResources{}
 
 	// Create groups based on device type
@@ -216,10 +236,219 @@ func (d *DeviceWatcher) WatchDeviceFieldGroups(
 	return resources.groups, resources.fieldGroups, []func(){cleanup}, nil
 }
 
+// anyDCPField reports whether any field across the given watch groups is a
+// DCP/profiling field (DCGM_FI_PROF_*).
+func anyDCPField(fieldWatchGroups []FieldWatchGroup) bool {
+	for _, fieldWatchGroup := range fieldWatchGroups {
+		for _, fieldID := range fieldWatchGroup.Fields {
+			if counters.IsDCPField(uint(fieldID)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// watchFieldGroupsPartitionedByModel watches GPU fields one DCGM group per
+// GPU model instead of one shared group for the whole node. handled is false
+// when the node only has one GPU model present, so the caller should fall
+// back to its normal single-group path unchanged.
+//
+// This exists because DCP/profiling fields fail the entire group's watch
+// registration if any member GPU doesn't support them (unlike ordinary
+// fields, which just report a per-entity NOT_SUPPORTED value). On a node
+// mixing GPU models, that turns "one model doesn't support this profiling
+// field" into "the exporter won't start at all". Partitioning by model and
+// asking DCGM what each model actually supports keeps a field enabled
+// wherever it works instead of dropping it - or crashing - node-wide.
+func (d *DeviceWatcher) watchFieldGroupsPartitionedByModel(
+	fieldWatchGroups []FieldWatchGroup, deviceInfo deviceinfo.Provider,
+) (handled bool, groups []dcgm.GroupHandle, fieldGroups []dcgm.FieldHandle, cleanups []func(), err error) {
+	monitoringInfo := devicemonitoring.GetMonitoredEntities(deviceInfo)
+	models, byModel := partitionMonitoredEntitiesByModel(monitoringInfo)
+	if len(models) < 2 {
+		return false, nil, nil, nil, nil
+	}
+
+	resources := &WatchResources{}
+	for _, model := range models {
+		entities := byModel[model]
+
+		groupID, _, gerr := createGroupFromEntities(entities)
+		if gerr != nil {
+			resources.Cleanup()
+			return true, nil, nil, nil, gerr
+		}
+		resources.groups = append(resources.groups, *groupID)
+
+		supported, serr := supportedDCPFields(entities[0].DeviceInfo.GPU)
+		if serr != nil {
+			// Can't determine this model's profiling capability. Fall back
+			// to watching only what we know is safe for every model rather
+			// than risk the same all-or-nothing failure this path exists
+			// to avoid.
+			slog.Warn("Could not query DCP metric group support for GPU model; "+
+				"watching non-profiling fields only for it",
+				slog.String("gpu_model", model), slog.String(ErrorKey, serr.Error()))
+			supported = map[dcgm.Short]bool{}
+		}
+
+		for _, fieldWatchGroup := range fieldWatchGroups {
+			fields := filterFieldsForModel(dedupeFields(fieldWatchGroup.Fields), supported)
+			if len(fields) == 0 {
+				continue
+			}
+
+			fieldGroup, ferr := newFieldGroupSimple(fields)
+			if ferr != nil {
+				resources.Cleanup()
+				return true, nil, nil, nil, ferr
+			}
+			resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
+
+			logWatchFieldsCall(deviceInfo, *groupID, fieldGroup, fields)
+			if werr := watchFieldGroupSimple(*groupID, fieldGroup, fieldWatchGroup.IntervalMSec*1000); werr != nil {
+				logWatchFieldsFailure(deviceInfo, *groupID, fieldGroup, fields, werr)
+				resources.Cleanup()
+				return true, nil, nil, nil, werr
+			}
+			resources.hasWatch = true
+		}
+	}
+
+	cleanup := func() { resources.Cleanup() }
+	return true, resources.groups, resources.fieldGroups, []func(){cleanup}, nil
+}
+
+// partitionMonitoredEntitiesByModel groups monitored entities by their
+// parent GPU's model name. models is sorted for deterministic group
+// creation order (matters for tests, harmless in production).
+func partitionMonitoredEntitiesByModel(
+	monitoringInfo []devicemonitoring.Info,
+) ([]string, map[string][]devicemonitoring.Info) {
+	byModel := make(map[string][]devicemonitoring.Info)
+	for _, mi := range monitoringInfo {
+		model := mi.DeviceInfo.Identifiers.Model
+		byModel[model] = append(byModel[model], mi)
+	}
+
+	models := make([]string, 0, len(byModel))
+	for model := range byModel {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+
+	return models, byModel
+}
+
+// supportedDCPFields returns the DCP/profiling field IDs DCGM reports as
+// supported for the GPU model represented by gpuID. Every GPU of the same
+// model supports the same profiling fields, so one representative GPU per
+// model is enough - no need to query every GPU individually.
+func supportedDCPFields(gpuID uint) (map[dcgm.Short]bool, error) {
+	metricGroups, err := dcgmprovider.Client().GetSupportedMetricGroups(gpuID)
+	if err != nil {
+		return nil, err
+	}
+
+	supported := make(map[dcgm.Short]bool)
+	for _, metricGroup := range metricGroups {
+		for _, fieldID := range metricGroup.FieldIds {
+			supported[dcgm.Short(fieldID)] = true
+		}
+	}
+
+	return supported, nil
+}
+
+var (
+	dcpCapabilityCacheMu sync.RWMutex
+	dcpCapabilityCache   = map[string]map[dcgm.Short]bool{} // GPU model -> supported DCP fields
+)
+
+// ModelSupportsDCPField reports whether the GPU model identified by
+// representativeGPUID supports the given field, so callers can avoid asking
+// DCGM for a value that was never watched. Watch registration is already
+// scoped per GPU model (see watchFieldGroupsPartitionedByModel), but a
+// scrape reads every entity with the same configured field list regardless
+// of model. For an ordinary field that's harmless - DCGM reports an
+// unsupported field as a per-entity blank value - but for a DCP field it
+// isn't: asking for a DCP field's value on an entity whose model was never
+// watched for it returns DCGM_ST_NOT_WATCHED, and the exporter's stale-watch
+// repair logic then retries forever trying to fix a watch that was
+// deliberately never created. Filtering the scrape-time field list with this
+// avoids ever asking. The answer is cached per model, since it can't change
+// for a fixed physical GPU model within one DCGM session; ResetDCPCapabilityCache
+// clears it across a reinit. Non-DCP fields always report supported without
+// touching the cache or DCGM. See NVIDIA/dcgm-exporter#736.
+func ModelSupportsDCPField(model string, representativeGPUID uint, fieldID dcgm.Short) bool {
+	if !counters.IsDCPField(uint(fieldID)) {
+		return true
+	}
+
+	dcpCapabilityCacheMu.RLock()
+	supported, cached := dcpCapabilityCache[model]
+	dcpCapabilityCacheMu.RUnlock()
+	if cached {
+		return supported[fieldID]
+	}
+
+	supported, err := supportedDCPFields(representativeGPUID)
+	if err != nil {
+		// Can't determine support one way or the other. Fail open (treat it
+		// as supported) rather than silently dropping a field that might be
+		// fine - the watch-registration path already handles the real
+		// unsupported case; this is scrape-time filtering only.
+		slog.Warn("Could not query DCP metric group support while filtering scrape fields; leaving field in scrape list",
+			slog.String("gpu_model", model), slog.String(ErrorKey, err.Error()))
+		return true
+	}
+
+	dcpCapabilityCacheMu.Lock()
+	dcpCapabilityCache[model] = supported
+	dcpCapabilityCacheMu.Unlock()
+
+	return supported[fieldID]
+}
+
+// ResetDCPCapabilityCache clears the cached per-model DCP support answers.
+// Called on DCGM reinit, since profiling capability is queried through the
+// DCGM connection and could read differently on a fresh session.
+func ResetDCPCapabilityCache() {
+	dcpCapabilityCacheMu.Lock()
+	defer dcpCapabilityCacheMu.Unlock()
+	dcpCapabilityCache = map[string]map[dcgm.Short]bool{}
+}
+
+// filterFieldsForModel drops DCP fields a model's profiling query didn't
+// report as supported. Non-DCP fields always pass through unfiltered: DCGM
+// already reports those as a per-entity NOT_SUPPORTED value at scrape time
+// instead of failing the watch, so there's nothing to filter for them.
+func filterFieldsForModel(fields []dcgm.Short, supported map[dcgm.Short]bool) []dcgm.Short {
+	filtered := make([]dcgm.Short, 0, len(fields))
+	for _, fieldID := range fields {
+		if !counters.IsDCPField(uint(fieldID)) || supported[fieldID] {
+			filtered = append(filtered, fieldID)
+		}
+	}
+	return filtered
+}
+
 func (d *DeviceWatcher) createGenericGroup(deviceInfo deviceinfo.Provider) (*dcgm.GroupHandle, func(),
 	error,
 ) {
 	monitoringInfo := devicemonitoring.GetMonitoredEntities(deviceInfo)
+	if len(monitoringInfo) == 0 {
+		return nil, doNothing, nil
+	}
+
+	return createGroupFromEntities(monitoringInfo)
+}
+
+// createGroupFromEntities creates one DCGM group containing exactly the given
+// entities. Used both for the single-group path (all monitored entities) and
+// for the per-model partitioned path (one model's entities at a time).
+func createGroupFromEntities(monitoringInfo []devicemonitoring.Info) (*dcgm.GroupHandle, func(), error) {
 	if len(monitoringInfo) == 0 {
 		return nil, doNothing, nil
 	}
