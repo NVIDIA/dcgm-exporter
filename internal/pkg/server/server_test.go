@@ -425,6 +425,26 @@ func TestHealthReturnsUnavailableWhenGPUCollectorsRequiredButAbsent(t *testing.T
 	assert.Contains(t, recorder.Body.String(), "no GPU collector registered")
 }
 
+func TestHealthReturnsUnavailableWhenOnlyNonGPUCollectorsRegistered(t *testing.T) {
+	// The incident shape: the registry is not empty, it holds a single non-GPU
+	// collector (collector_count=1). A predicate that counted collectors rather
+	// than keying on FE_GPU would report healthy here and be a no-op in exactly
+	// the scenario this flag exists for.
+	ctrl := gomock.NewController(t)
+	reg := registry.NewRegistry()
+	tuple := collector.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_CPU)
+	tuple.SetCollector(mockcollectorpkg.NewMockCollector(ctrl))
+	reg.Register(tuple)
+
+	metricServer := &MetricsServer{config: &appconfig.Config{HealthRequireGPUs: true}}
+	metricServer.registry.Store(reg)
+	recorder := httptest.NewRecorder()
+	metricServer.Health(recorder, nil)
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Equal(t, "0", recorder.Header().Get("X-GPU-Collectors"))
+}
+
 func TestHealthReturnsOKWhenGPUCollectorsRequiredAndPresent(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	reg := registry.NewRegistry()

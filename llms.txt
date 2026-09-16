@@ -91,6 +91,13 @@ CLI and environment behavior comes from `pkg/cmd/app.go`.
 Important contracts:
 
 - The default listen address is `:9400`.
+- `--health-require-gpus` / `DCGM_EXPORTER_HEALTH_REQUIRE_GPUS` should stay
+  opt-in (default off). When on, `/health` returns 503 while no collector is
+  registered under `FE_GPU`, so a liveness probe on `/health` restarts an
+  exporter that came up against a hostengine with no GPUs visible. A reload in
+  progress takes precedence and still returns 200. Note the predicate counts
+  FE_GPU collectors, so a counters file contributing no FE_GPU fields also
+  reads as zero.
 - The default collectors file is `/etc/dcgm-exporter/default-counters.csv`.
 - Remote hostengine values support `<HOST>:<PORT>`,
   `tcp://<HOST>:<PORT>`, `unix:///<SOCKET_PATH>`,

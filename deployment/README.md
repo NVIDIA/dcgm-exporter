@@ -243,6 +243,26 @@ exporter-toolkit web config and set
 file, because `/debug/pprof/` can expose runtime profiling details and must be
 protected by exporter-toolkit authentication or TLS.
 
+### Restarting a blind exporter
+
+A DCGM hostengine that starts before the NVIDIA driver is ready comes up
+without NVML and reports no GPUs. An exporter that connects to it in that state
+registers no GPU collector and serves an empty metrics page for the life of the
+process, while `/health` still returns 200.
+
+Adding `--health-require-gpus` to `arguments` makes `/health` return 503 in that
+state, so the liveness probe restarts the pod and it re-enumerates. It is off by
+default because the exporter cannot distinguish a node with no GPUs from a
+hostengine reporting none.
+
+Two caveats:
+
+- When `basicAuth.users` is set, the chart degrades both probes to `tcpSocket`,
+  which cannot observe the 503. The flag then has no effect on restarts.
+- The check counts collectors registered under `FE_GPU`. A counters file that
+  contributes no `FE_GPU` fields also reads as zero, so do not enable this with
+  a switch- or CPU-only counter set.
+
 ## Troubleshooting
 
 ### Debug Dump Files

@@ -1459,6 +1459,7 @@ func defaultConfig() (*appconfig.Config, error) {
 		GPUDeviceOptions:                 gOpt,
 		SwitchDeviceOptions:              sOpt,
 		CPUDeviceOptions:                 cOpt,
+		HealthRequireGPUs:                false,
 		NoHostname:                       false,
 		UseFakeGPUs:                      false,
 		ConfigMapData:                    undefinedConfigMapData,
@@ -1553,7 +1554,6 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 	if c.IsSet(CLIHealthRequireGPUs) {
 		config.HealthRequireGPUs = c.Bool(CLIHealthRequireGPUs)
 	}
-
 	if c.IsSet(CLINoHostname) {
 		config.NoHostname = c.Bool(CLINoHostname)
 	}
