@@ -153,10 +153,13 @@ service:
   # Annotations to add to the service
   annotations: {}
 
-# Allows to control pod resources
+# Allows to control pod resources.
+# No CPU limit is set by default: dcgm-exporter serves the Prometheus scrape path,
+# and CFS throttling turns a busy node into scrape timeouts and gaps in GPU telemetry.
+# The memory limit is a starting point - the footprint scales with GPUs per node,
+# the size of the metric list and the scrape interval.
 resources:
   limits:
-    cpu: 200m
     memory: 512Mi
   requests:
     cpu: 100m
