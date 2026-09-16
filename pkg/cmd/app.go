@@ -82,6 +82,7 @@ const (
 	CLIGPUDevices                       = "devices"
 	CLISwitchDevices                    = "switch-devices"
 	CLICPUDevices                       = "cpu-devices"
+	CLIHealthRequireGPUs                = "health-require-gpus"
 	CLINoHostname                       = "no-hostname"
 	CLIUseFakeGPUs                      = "fake-gpus"
 	CLIConfigMapData                    = "configmap-data"
@@ -255,6 +256,16 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Omit the hostname information from the output, matching older versions.",
 			EnvVars: []string{"DCGM_EXPORTER_NO_HOSTNAME"},
+		},
+		&cli.BoolFlag{
+			Name:  CLIHealthRequireGPUs,
+			Value: false,
+			Usage: "Report /health as unhealthy when no GPU collector is registered. " +
+				"Off by default so nodes that legitimately expose no GPUs keep passing. " +
+				"Enable where every instance is expected to see at least one GPU, so that " +
+				"a liveness probe on /health restarts an exporter that came up against a " +
+				"hostengine with no GPUs visible.",
+			EnvVars: []string{"DCGM_EXPORTER_HEALTH_REQUIRE_GPUS"},
 		},
 		&cli.StringFlag{
 			Name:    CLISwitchDevices,
@@ -1539,6 +1550,10 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 		}
 		config.CPUDeviceOptions = opt
 	}
+	if c.IsSet(CLIHealthRequireGPUs) {
+		config.HealthRequireGPUs = c.Bool(CLIHealthRequireGPUs)
+	}
+
 	if c.IsSet(CLINoHostname) {
 		config.NoHostname = c.Bool(CLINoHostname)
 	}

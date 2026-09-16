@@ -67,6 +67,18 @@ func (r *Registry) Register(entityCollectorTuples collector.EntityCollectorTuple
 	r.collectorGroupsSeen[entityCollectorTuples] = struct{}{}
 }
 
+// CollectorCount returns the number of collectors registered for an entity
+// group. Zero for dcgm.FE_GPU means the exporter built its registry without
+// any GPU collector, which happens when the hostengine it connected to had no
+// GPUs visible at startup. The registry is built once, so that state is
+// permanent for the life of the process.
+func (r *Registry) CollectorCount(entityGroup dcgm.Field_Entity_Group) int {
+	r.mtx.RLock()
+	defer r.mtx.RUnlock()
+
+	return len(r.collectorGroups[entityGroup])
+}
+
 // Gather gathers metrics from all registered collectors.
 func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 	// Check if registry is shutting down

@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/exporter-toolkit/web"
 
@@ -431,6 +432,21 @@ func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	w.Header().Set("X-Registry-Available", "true")
+
+	// A registry built while the hostengine had no GPUs visible carries no GPU
+	// collector. The registry is only rebuilt on reload or a bind event, so on
+	// its own the exporter serves an empty metrics page for the life of the
+	// process while still reporting healthy. Reporting that as unhealthy lets a
+	// liveness probe already pointed at /health restart the pod, which is what
+	// recovers it.
+	if s.config != nil && s.config.HealthRequireGPUs && !s.IsReloadInProgress() {
+		if reg := s.registry.Load(); reg != nil && reg.CollectorCount(dcgm.FE_GPU) == 0 {
+			w.Header().Set("X-GPU-Collectors", "0")
+			http.Error(w, "KO - no GPU collector registered", http.StatusServiceUnavailable)
+			return
+		}
+	}
+
 	_, err := w.Write([]byte("OK"))
 	if err != nil {
 		slog.Error(failedWriteResponseError, slog.String(logging.ErrorKey, err.Error()))
