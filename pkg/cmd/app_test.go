@@ -1352,12 +1352,16 @@ func TestContextToConfigHonorsHealthRequireGPUs(t *testing.T) {
 		{name: "env off", args: []string{"dcgm-exporter"}, env: "false", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var cfg *appconfig.Config
+			app := NewApp("test-version")
+			// Neutralise ambient flag env vars first, so an exported
+			// DCGM_EXPORTER_HEALTH_REQUIRE_GPUS cannot make the "off" cases
+			// pass or fail for the wrong reason. t.Setenv below still wins.
+			unsetFlagEnvVars(t, app.Flags)
 			if tc.env != "" {
 				t.Setenv("DCGM_EXPORTER_HEALTH_REQUIRE_GPUS", tc.env)
 			}
 
-			var cfg *appconfig.Config
-			app := NewApp("test-version")
 			app.Action = func(c *cli.Context) error {
 				var err error
 				cfg, err = contextToConfig(c)
