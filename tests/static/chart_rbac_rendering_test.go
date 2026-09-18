@@ -263,8 +263,9 @@ collections:
 			metricsVolume := requireVolume(t, daemonSet, "exporter-metrics-volume")
 			assert.Equal(t, "exporter-metrics-config-map", metricsVolume.ConfigMap.Name)
 			metricsMount := requireVolumeMount(t, container, "exporter-metrics-volume")
-			assert.Equal(t, "/etc/dcgm-exporter/default-counters.csv", metricsMount.MountPath)
-			assert.Equal(t, "default-counters.csv", metricsMount.SubPath)
+			assert.Equal(t, "/etc/dcgm-exporter", metricsMount.MountPath)
+			assert.Empty(t, metricsMount.SubPath)
+			assert.True(t, metricsMount.ReadOnly)
 
 			envValues := containerEnvValues(container)
 			assert.Equal(t, "/etc/dcgm-exporter/config.yaml", envValues[envConfigFile])
@@ -417,6 +418,20 @@ func TestChartYAMLConfigExistingConfigMapRequiresName(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "config.name must be set when config.create is false")
+}
+
+func TestChartDefaultMetricsMountAvoidsSubPathFileOverlay(t *testing.T) {
+	resources := renderChart(t, nil)
+
+	daemonSet := requireResourceKind(t, resources, "DaemonSet")
+	container := requireContainer(t, daemonSet, "exporter")
+	metricsVolume := requireVolume(t, daemonSet, "exporter-metrics-volume")
+	assert.Equal(t, "exporter-metrics-config-map", metricsVolume.ConfigMap.Name)
+
+	metricsMount := requireVolumeMount(t, container, "exporter-metrics-volume")
+	assert.Equal(t, "/etc/dcgm-exporter", metricsMount.MountPath)
+	assert.Empty(t, metricsMount.SubPath)
+	assert.True(t, metricsMount.ReadOnly)
 }
 
 func TestChartImageRenderingContract(t *testing.T) {
@@ -918,6 +933,7 @@ type volumeMount struct {
 	Name      string `yaml:"name"`
 	MountPath string `yaml:"mountPath"`
 	SubPath   string `yaml:"subPath"`
+	ReadOnly  bool   `yaml:"readOnly"`
 }
 
 // rbacRule captures the policy rule fields needed by the pod informer assertion.
