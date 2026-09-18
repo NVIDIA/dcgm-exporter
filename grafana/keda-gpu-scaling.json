@@ -1,0 +1,275 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "KEDA Autoscaling \u2014 Prefill vs Decode Scaling Behavior",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "title": "Prefill Replicas (KEDA Scaled)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "kube_deployment_spec_replicas{deployment=~\".*prefill.*\",namespace=\"dynamo-system\"}",
+          "legendFormat": "desired replicas"
+        },
+        {
+          "expr": "kube_deployment_status_replicas_available{deployment=~\".*prefill.*\",namespace=\"dynamo-system\"}",
+          "legendFormat": "available replicas"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "title": "Decode Replicas (KEDA Scaled)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "kube_deployment_spec_replicas{deployment=~\".*decode.*\",namespace=\"dynamo-system\"}",
+          "legendFormat": "desired replicas"
+        },
+        {
+          "expr": "kube_deployment_status_replicas_available{deployment=~\".*decode.*\",namespace=\"dynamo-system\"}",
+          "legendFormat": "available replicas"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "title": "Prefill Scaling Signal \u2014 GPU Utilization (threshold: 70%)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(DCGM_FI_PROF_GR_ENGINE_ACTIVE{pod=~\".*prefill.*\",namespace=\"dynamo-system\"})",
+          "legendFormat": "total prefill GPU util"
+        },
+        {
+          "expr": "0.7",
+          "legendFormat": "scale-up threshold"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "title": "Decode Scaling Signal \u2014 GPU Memory Pressure (threshold: 80%)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "avg(DCGM_FI_DEV_FB_USED{pod=~\".*decode.*\",namespace=\"dynamo-system\"} / (DCGM_FI_DEV_FB_USED{pod=~\".*decode.*\",namespace=\"dynamo-system\"} + DCGM_FI_DEV_FB_FREE{pod=~\".*decode.*\",namespace=\"dynamo-system\"}))",
+          "legendFormat": "decode memory usage %"
+        },
+        {
+          "expr": "0.8",
+          "legendFormat": "scale-up threshold"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "title": "Total GPU Capacity (cluster)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(kube_node_status_capacity{resource=~\"nvidia_com.*\",resource!=\"nvidia_com_gpu\"}) OR sum(kube_node_status_capacity{resource=\"nvidia_com_gpu\"})",
+          "legendFormat": "total GPU/MIG slices"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "title": "GPU Allocatable per Node",
+      "type": "table",
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "kube_node_status_allocatable{resource=~\"nvidia_com.*\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{node}} \u2014 {{resource}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "KEDA Scaler Metrics (raw values driving scaling decisions)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "keda_metrics_adapter_scaler_metrics_value{scaledObject=~\"prefill.*\"}",
+          "legendFormat": "prefill scaler value"
+        },
+        {
+          "expr": "keda_metrics_adapter_scaler_metrics_value{scaledObject=~\"decode.*\"}",
+          "legendFormat": "decode scaler value"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Scale Events Timeline",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "changes(kube_deployment_spec_replicas{deployment=~\".*prefill.*\",namespace=\"dynamo-system\"}[5m])",
+          "legendFormat": "prefill scale events (5m)"
+        },
+        {
+          "expr": "changes(kube_deployment_spec_replicas{deployment=~\".*decode.*\",namespace=\"dynamo-system\"}[5m])",
+          "legendFormat": "decode scale events (5m)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 0
+      }
+    ]
+  },
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "gpu",
+    "keda",
+    "scaling",
+    "mig"
+  ],
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "title": "KEDA GPU Autoscaling \u2014 Prefill vs Decode",
+  "uid": null,
+  "id": null
+}
