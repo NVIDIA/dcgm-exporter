@@ -65,17 +65,11 @@ func runSystemdSocketActivation(t testing.TB) {
 			return
 		}
 		fmt.Fprintln(os.Stdout)
-		_ = helper.Process.Signal(syscall.SIGTERM)
 		done := make(chan error, 1)
 		go func() {
 			done <- helper.Wait()
 		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			_ = helper.Process.Kill()
-			<-done
-		}
+		require.NoError(t, terminateRunningHostProcess("systemd socket exporter", helper.Process, done, exporterTerminationPolicy))
 		fmt.Fprintln(os.Stdout)
 	}()
 

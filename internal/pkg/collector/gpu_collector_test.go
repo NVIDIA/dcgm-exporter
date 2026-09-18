@@ -1321,6 +1321,372 @@ func TestDCGMCollectorGetMetricsFetchesLabelFieldsForMetricLabels(t *testing.T) 
 	assert.Equal(t, map[string]string{"DCGM_FI_DRIVER_VERSION": "555.55"}, got[metricCounter][0].Labels)
 }
 
+func TestDCGMCollectorGetMetricsReadsComputeInstanceFieldsAtSupportedScopes(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	counter := counters.Counter{
+		FieldID:   dcgm.DCGM_FI_DEV_FB_USED,
+		FieldName: "DCGM_FI_DEV_FB_USED",
+		PromType:  "gauge",
+	}
+	labelCounter := counters.Counter{
+		FieldID:   dcgm.DCGM_FI_DRIVER_VERSION,
+		FieldName: "DCGM_FI_DRIVER_VERSION",
+		PromType:  "label",
+	}
+	instance := deviceinfo.GPUInstanceInfo{
+		Info:        dcgm.MigEntityInfo{NvmlInstanceId: 3},
+		ProfileName: "1g.10gb",
+		EntityId:    7,
+		ComputeInstances: []deviceinfo.ComputeInstanceInfo{
+			{InstanceInfo: dcgm.MigEntityInfo{NvmlComputeInstanceId: 0}, EntityId: 21},
+			{InstanceInfo: dcgm.MigEntityInfo{NvmlComputeInstanceId: 1}, EntityId: 22},
+		},
+	}
+	deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	deviceInfo.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+	deviceInfo.EXPECT().GPUCount().Return(uint(2)).AnyTimes()
+	deviceInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			GPU:         0,
+			UUID:        "GPU-0",
+			Identifiers: dcgm.DeviceIdentifiers{Model: "NVIDIA B200"},
+		},
+		GPUInstances: []deviceinfo.GPUInstanceInfo{instance},
+	}).AnyTimes()
+	deviceInfo.EXPECT().GPU(uint(1)).Return(deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			GPU:         1,
+			UUID:        "GPU-1",
+			Identifiers: dcgm.DeviceIdentifiers{Model: "NVIDIA B200"},
+		},
+	}).AnyTimes()
+	watchList := *devicewatchlistmanager.NewWatchList(
+		deviceInfo,
+		[]dcgm.Short{counter.FieldID},
+		[]dcgm.Short{labelCounter.FieldID},
+		devicewatcher.NewDeviceWatcher(),
+		1,
+	)
+
+	// The GPU-instance query must not include the compute-instance field.
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU_I, uint(7), []dcgm.Short{labelCounter.FieldID}).
+		Return([]dcgm.FieldValue_v1{stringFieldValue(labelCounter.FieldID, "555.55")}, nil)
+	// A whole GPU keeps the complete pre-4.8.4 field set even though DCGM
+	// classifies framebuffer fields at compute-instance scope.
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{counter.FieldID, labelCounter.FieldID}).
+		Return([]dcgm.FieldValue_v1{
+			int64FieldValue(counter.FieldID, 230),
+			stringFieldValue(labelCounter.FieldID, "555.55"),
+		}, nil)
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU_CI, uint(21), []dcgm.Short{counter.FieldID, labelCounter.FieldID}).
+		Return([]dcgm.FieldValue_v1{
+			int64FieldValue(counter.FieldID, 100),
+			stringFieldValue(labelCounter.FieldID, "555.55"),
+		}, nil)
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU_CI, uint(22), []dcgm.Short{counter.FieldID, labelCounter.FieldID}).
+		Return([]dcgm.FieldValue_v1{
+			int64FieldValue(counter.FieldID, 200),
+			stringFieldValue(labelCounter.FieldID, "555.55"),
+		}, nil)
+
+	collector := &DCGMCollector{
+		counters:                    []counters.Counter{counter, labelCounter},
+		deviceWatchList:             watchList,
+		scrapeFields:                []dcgm.Short{counter.FieldID, labelCounter.FieldID},
+		nonComputeInstanceFields:    []dcgm.Short{labelCounter.FieldID},
+		computeInstanceScrapeFields: []dcgm.Short{counter.FieldID, labelCounter.FieldID},
+		hostname:                    "host-a",
+	}
+
+	got, err := collector.GetMetrics()
+
+	require.NoError(t, err)
+	require.Len(t, got[counter], 3)
+	assert.Equal(t, "230", got[counter][0].Value)
+	assert.Empty(t, got[counter][0].GPUComputeInstanceID)
+	assert.Empty(t, got[counter][0].GPUInstanceID)
+	assert.Equal(t, map[string]string{"DCGM_FI_DRIVER_VERSION": "555.55"}, got[counter][0].Labels)
+	assert.Equal(t, "100", got[counter][1].Value)
+	assert.Equal(t, "0", got[counter][1].GPUComputeInstanceID)
+	assert.Equal(t, "3", got[counter][1].GPUInstanceID)
+	assert.Equal(t, "1g.10gb", got[counter][1].MigProfile)
+	assert.Equal(t, "200", got[counter][2].Value)
+	assert.Equal(t, "1", got[counter][2].GPUComputeInstanceID)
+}
+
+func TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	counter := counters.Counter{
+		FieldID:   dcgm.DCGM_FI_DEV_XID_ERRORS,
+		FieldName: "DCGM_FI_DEV_XID_ERRORS",
+		PromType:  "gauge",
+	}
+	instance := deviceinfo.GPUInstanceInfo{
+		Info:        dcgm.MigEntityInfo{NvmlInstanceId: 3},
+		ProfileName: "1g.10gb",
+		EntityId:    7,
+		ComputeInstances: []deviceinfo.ComputeInstanceInfo{
+			{InstanceInfo: dcgm.MigEntityInfo{NvmlComputeInstanceId: 0}, EntityId: 21},
+		},
+	}
+	deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	deviceInfo.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+	deviceInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+	deviceInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{
+		DeviceInfo: dcgm.Device{
+			GPU:         0,
+			UUID:        "GPU-0",
+			Identifiers: dcgm.DeviceIdentifiers{Model: "NVIDIA B200"},
+		},
+		GPUInstances: []deviceinfo.GPUInstanceInfo{instance},
+	}).AnyTimes()
+	watchList := *devicewatchlistmanager.NewWatchList(
+		deviceInfo,
+		[]dcgm.Short{counter.FieldID},
+		nil,
+		devicewatcher.NewDeviceWatcher(),
+		1,
+	)
+
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{counter.FieldID}).
+		Return([]dcgm.FieldValue_v1{int64FieldValue(counter.FieldID, 79)}, nil)
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU_I, uint(7), []dcgm.Short{counter.FieldID}).
+		Return([]dcgm.FieldValue_v1{int64FieldValue(counter.FieldID, 31)}, nil)
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU_CI, uint(21), []dcgm.Short{counter.FieldID}).
+		Return([]dcgm.FieldValue_v1{int64FieldValue(counter.FieldID, 48)}, nil)
+
+	collector := &DCGMCollector{
+		counters:                    []counters.Counter{counter},
+		deviceWatchList:             watchList,
+		scrapeFields:                []dcgm.Short{counter.FieldID},
+		nonComputeInstanceFields:    []dcgm.Short{counter.FieldID},
+		computeInstanceScrapeFields: []dcgm.Short{counter.FieldID},
+		parentGPUScrapeFields:       []dcgm.Short{counter.FieldID},
+		hostname:                    "host-a",
+	}
+
+	got, err := collector.GetMetrics()
+
+	require.NoError(t, err)
+	require.Len(t, got[counter], 3)
+	valuesByScope := make(map[string]string)
+	for _, metric := range got[counter] {
+		valuesByScope[metric.GPUInstanceID+":"+metric.GPUComputeInstanceID] = metric.Value
+	}
+	assert.Equal(t, map[string]string{
+		":":   "79",
+		"3:":  "31",
+		"3:0": "48",
+	}, valuesByScope)
+}
+
+func TestSplitComputeInstanceFieldsKeepsLabelsWithComputeInstanceMetrics(t *testing.T) {
+	metricField := dcgm.DCGM_FI_DEV_GPU_TEMP
+	computeInstanceField := dcgm.DCGM_FI_DEV_FB_USED
+	multiScopeField := dcgm.DCGM_FI_DEV_XID_ERRORS
+	labelField := dcgm.DCGM_FI_DRIVER_VERSION
+
+	nonComputeInstanceFields, computeInstanceFields := splitComputeInstanceFields(
+		[]dcgm.Short{metricField, computeInstanceField, multiScopeField, labelField},
+		[]dcgm.Short{computeInstanceField, multiScopeField},
+		[]dcgm.Short{multiScopeField},
+		[]dcgm.Short{labelField},
+	)
+
+	assert.Equal(t, []dcgm.Short{metricField, multiScopeField, labelField}, nonComputeInstanceFields)
+	assert.Equal(t, []dcgm.Short{computeInstanceField, multiScopeField, labelField}, computeInstanceFields)
+}
+
+func TestFieldsForScrapeKeepsComputeInstanceFieldsOnSelectedFullGPU(t *testing.T) {
+	metricField := dcgm.DCGM_FI_DEV_GPU_TEMP
+	computeInstanceField := dcgm.DCGM_FI_DEV_FB_USED
+	collector := &DCGMCollector{
+		scrapeFields:                []dcgm.Short{metricField, computeInstanceField},
+		nonComputeInstanceFields:    []dcgm.Short{metricField},
+		computeInstanceScrapeFields: []dcgm.Short{computeInstanceField},
+	}
+
+	tests := []struct {
+		name        string
+		entityGroup dcgm.Field_Entity_Group
+		want        []dcgm.Short
+	}{
+		{
+			name:        "selected full GPU",
+			entityGroup: dcgm.FE_GPU,
+			want:        []dcgm.Short{metricField, computeInstanceField},
+		},
+		{
+			name:        "GPU instance",
+			entityGroup: dcgm.FE_GPU_I,
+			want:        []dcgm.Short{metricField},
+		},
+		{
+			name:        "compute instance",
+			entityGroup: dcgm.FE_GPU_CI,
+			want:        []dcgm.Short{computeInstanceField},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, collector.fieldsForScrape(devicemonitoring.Info{
+				Entity: dcgm.GroupEntityPair{EntityGroupId: tt.entityGroup},
+			}))
+		})
+	}
+}
+
+// TestDCGMCollectorLatestValuesBatchesLargeFieldSets verifies collectors can
+// scrape field sets at, just above, and several times the DCGM request limit.
+func TestDCGMCollectorLatestValuesBatchesLargeFieldSets(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	for _, tt := range []struct {
+		name       string
+		fieldCount int
+	}{
+		{name: "exactly one batch", fieldCount: maxLatestValueFieldBatch},
+		{name: "one field over", fieldCount: maxLatestValueFieldBatch + 1},
+		{name: "multiple batches", fieldCount: 300},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+			dcgmprovider.SetClient(mockDCGM)
+
+			fields := make([]dcgm.Short, tt.fieldCount)
+			for index := range fields {
+				fields[index] = dcgm.Short(index + 1)
+			}
+			values := make([]dcgm.FieldValue_v1, len(fields))
+			for index, fieldID := range fields {
+				values[index] = dcgm.FieldValue_v1{FieldID: fieldID}
+			}
+			watchList := *devicewatchlistmanager.NewWatchList(nil, fields, nil, nil, 1)
+			collector := &DCGMCollector{deviceWatchList: watchList}
+
+			for start := 0; start < len(fields); start += maxLatestValueFieldBatch {
+				end := min(start+maxLatestValueFieldBatch, len(fields))
+				mockDCGM.EXPECT().
+					EntityGetLatestValues(dcgm.FE_GPU, uint(0), fields[start:end]).
+					Return(values[start:end], nil)
+			}
+
+			got, err := collector.latestValues(devicemonitoring.Info{
+				Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0},
+			})
+
+			require.NoError(t, err)
+			gotFieldIDs := make([]dcgm.Short, len(got))
+			for index, value := range got {
+				gotFieldIDs[index] = value.FieldID
+			}
+			assert.Equal(t, fields, gotFieldIDs)
+		})
+	}
+}
+
+// TestDCGMCollectorLatestValuesBatchesLargeLinkFieldSets verifies the link API
+// receives the same bounded batches while preserving parent-entity identity.
+func TestDCGMCollectorLatestValuesBatchesLargeLinkFieldSets(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	fields := make([]dcgm.Short, 200)
+	for index := range fields {
+		fields[index] = dcgm.Short(index + 1)
+	}
+	values := make([]dcgm.FieldValue_v1, len(fields))
+	for index, fieldID := range fields {
+		values[index] = dcgm.FieldValue_v1{FieldID: fieldID}
+	}
+	watchList := *devicewatchlistmanager.NewWatchList(nil, fields, nil, nil, 1)
+	collector := &DCGMCollector{deviceWatchList: watchList}
+
+	mockDCGM.EXPECT().
+		LinkGetLatestValues(uint(4), dcgm.FE_GPU, uint(0), fields[:maxLatestValueFieldBatch]).
+		Return(values[:maxLatestValueFieldBatch], nil)
+	mockDCGM.EXPECT().
+		LinkGetLatestValues(uint(4), dcgm.FE_GPU, uint(0), fields[maxLatestValueFieldBatch:]).
+		Return(values[maxLatestValueFieldBatch:], nil)
+
+	got, err := collector.latestValues(devicemonitoring.Info{
+		Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: 4},
+		ParentType: dcgm.FE_GPU,
+		ParentId:   0,
+	})
+
+	require.NoError(t, err)
+	gotFieldIDs := make([]dcgm.Short, len(got))
+	for index, value := range got {
+		gotFieldIDs[index] = value.FieldID
+	}
+	assert.Equal(t, fields, gotFieldIDs)
+}
+
+// TestDCGMCollectorLatestValuesAddsBatchFailureContext verifies scrape errors
+// identify the failed entity and field slice while preserving the DCGM cause.
+func TestDCGMCollectorLatestValuesAddsBatchFailureContext(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	fields := make([]dcgm.Short, maxLatestValueFieldBatch+1)
+	for index := range fields {
+		fields[index] = dcgm.Short(index + 1)
+	}
+	watchList := *devicewatchlistmanager.NewWatchList(nil, fields, nil, nil, 1)
+	collector := &DCGMCollector{deviceWatchList: watchList}
+	batchErr := fmt.Errorf("DCGM batch failed")
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU, uint(7), fields[:maxLatestValueFieldBatch]).
+		Return(make([]dcgm.FieldValue_v1, maxLatestValueFieldBatch), nil)
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU, uint(7), fields[maxLatestValueFieldBatch:]).
+		Return(nil, batchErr)
+
+	_, err := collector.latestValues(devicemonitoring.Info{
+		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 7},
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, batchErr)
+	assert.Contains(t, err.Error(), fmt.Sprintf(
+		"entity group %d entity 7 field batch [128:129]",
+		dcgm.FE_GPU,
+	))
+}
+
 func TestNewDCGMCollectorValidationAndNilConfig(t *testing.T) {
 	_, err := NewDCGMCollector(nil, "host-a", &appconfig.Config{}, devicewatchlistmanager.WatchList{})
 	require.Error(t, err)
@@ -1336,6 +1702,70 @@ func TestNewDCGMCollectorValidationAndNilConfig(t *testing.T) {
 	got, err := NewDCGMCollector([]counters.Counter{{FieldID: 150}}, "host-a", nil, watchList)
 	require.NoError(t, err)
 	assert.Equal(t, "host-a", got.hostname)
+}
+
+func TestNewDCGMCollectorCachesScrapeFields(t *testing.T) {
+	tests := []struct {
+		name         string
+		deviceFields []dcgm.Short
+		labelFields  []dcgm.Short
+		config       *appconfig.Config
+		want         []dcgm.Short
+	}{
+		{
+			name:         "device fields only",
+			deviceFields: []dcgm.Short{1, 2},
+			config:       &appconfig.Config{},
+			want:         []dcgm.Short{1, 2},
+		},
+		{
+			name:         "device plus label fields",
+			deviceFields: []dcgm.Short{1, 2},
+			labelFields:  []dcgm.Short{3, 4},
+			config:       &appconfig.Config{},
+			want:         []dcgm.Short{1, 2, 3, 4},
+		},
+		{
+			name:         "duplicate fields",
+			deviceFields: []dcgm.Short{1, 2, 1},
+			labelFields:  []dcgm.Short{2, 3, 1},
+			config:       &appconfig.Config{},
+			want:         []dcgm.Short{1, 2, 3},
+		},
+		{
+			name:         "nil config",
+			deviceFields: []dcgm.Short{1},
+			labelFields:  []dcgm.Short{2},
+			want:         []dcgm.Short{1, 2},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			watcher := mockdevicewatcher.NewMockWatcher(gomock.NewController(t))
+			if test.config != nil {
+				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil, nil, nil, nil)
+			}
+			watchList := *devicewatchlistmanager.NewWatchList(
+				nil,
+				test.deviceFields,
+				test.labelFields,
+				watcher,
+				1,
+			)
+
+			got, err := NewDCGMCollector(nil, "host-a", test.config, watchList)
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got.scrapeFields)
+			assert.Empty(t, got.parentGPUScrapeFields)
+
+			test.deviceFields[0] = 99
+			if len(test.labelFields) > 0 {
+				test.labelFields[0] = 98
+			}
+			assert.Equal(t, test.want, got.scrapeFields)
+		})
+	}
 }
 
 func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
@@ -1360,7 +1790,8 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got Metric) {
 				assert.Equal(t, "11", got.Value)
-				assert.Equal(t, "3", got.NvLink)
+				assert.Equal(t, "nvswitch3", got.NvSwitch)
+				assert.Empty(t, got.NvLink)
 			},
 		},
 		{
@@ -1510,6 +1941,30 @@ func TestToSwitchMetric(t *testing.T) {
 	assert.Equal(t, map[string]string{"switch_label": "fabric-a"}, got.Labels)
 }
 
+// TestToSwitchMetricUsesEntityIDForEachSwitch verifies that FE_SWITCH metrics
+// retain distinct switch identities instead of their shared parent ID.
+func TestToSwitchMetricUsesEntityIDForEachSwitch(t *testing.T) {
+	valueCounter := counters.Counter{FieldID: 2, FieldName: "switch_temp", PromType: "gauge"}
+	metrics := MetricsByCounter{}
+
+	for _, sample := range []struct {
+		entityID uint
+		value    byte
+	}{{entityID: 0, value: 40}, {entityID: 3, value: 43}} {
+		toSwitchMetric(metrics, []dcgm.FieldValue_v1{
+			int64FieldValue(valueCounter.FieldID, sample.value),
+		}, []counters.Counter{valueCounter}, devicemonitoring.Info{
+			Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_SWITCH, EntityId: sample.entityID},
+		}, false, "host-a")
+	}
+
+	require.Len(t, metrics[valueCounter], 2)
+	assert.Equal(t, "nvswitch0", metrics[valueCounter][0].NvSwitch)
+	assert.Equal(t, "nvswitch3", metrics[valueCounter][1].NvSwitch)
+	assert.Empty(t, metrics[valueCounter][0].NvLink)
+	assert.Empty(t, metrics[valueCounter][1].NvLink)
+}
+
 func TestToCPUMetric(t *testing.T) {
 	labelCounter := counters.Counter{FieldID: 1, FieldName: "cpu_label", PromType: "label"}
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "cpu_util", PromType: "gauge"}
@@ -1638,6 +2093,62 @@ func TestToMetricSuppressesCollectedHostnameLabelsWhenNoHostnameIsEnabled(t *tes
 	})
 }
 
-func TestToStringUnsupportedFieldType(t *testing.T) {
-	assert.Equal(t, skipDCGMValue, toString(dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_BINARY}))
+func TestToString(t *testing.T) {
+	tests := []struct {
+		name  string
+		value dcgm.FieldValue_v1
+		want  string
+	}{
+		{
+			name:  "positive integer",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_INT64, Value: createInt64ByteArray(42)},
+			want:  "42",
+		},
+		{
+			name:  "negative integer",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_INT64, Value: createInt64ByteArray(-42)},
+			want:  "-42",
+		},
+		{
+			name:  "double",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_DOUBLE, Value: createFloat64ByteArray(-3.5)},
+			want:  "-3.500000",
+		},
+		{
+			name:  "string",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_STRING, Value: createStringByteArray("value")},
+			want:  "value",
+		},
+		{
+			name:  "non-OK status",
+			value: dcgm.FieldValue_v1{Status: dcgm.DCGM_ST_NOT_WATCHED, FieldType: dcgm.DCGM_FT_INT64},
+			want:  skipDCGMValue,
+		},
+		{
+			name:  "blank integer",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_INT64, Value: createInt64ByteArray(dcgm.DCGM_FT_INT64_BLANK)},
+			want:  skipDCGMValue,
+		},
+		{
+			name:  "blank double",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_DOUBLE, Value: createFloat64ByteArray(dcgm.DCGM_FT_FP64_BLANK)},
+			want:  skipDCGMValue,
+		},
+		{
+			name:  "blank string",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_STRING, Value: createStringByteArray(dcgm.DCGM_FT_STR_BLANK)},
+			want:  skipDCGMValue,
+		},
+		{
+			name:  "unsupported field type",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_BINARY},
+			want:  skipDCGMValue,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, toString(test.value))
+		})
+	}
 }

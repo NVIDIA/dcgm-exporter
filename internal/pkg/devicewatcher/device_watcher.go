@@ -96,8 +96,10 @@ func NewDeviceWatcher() *DeviceWatcher {
 	return &DeviceWatcher{}
 }
 
-func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType dcgm.Field_Entity_Group) []dcgm.Short {
-	var deviceFields []dcgm.Short
+// GetDeviceFields resolves configured counters supported by entityType and
+// groups the accepted fields by the extra scopes callers must watch and scrape.
+func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType dcgm.Field_Entity_Group) ResolvedFields {
+	var fields ResolvedFields
 	var failedCount int
 	for _, counter := range counters {
 		fieldMeta, err := dcgmprovider.Client().FieldGetByID(counter.FieldID)
@@ -112,7 +114,13 @@ func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType 
 		}
 
 		if shouldIncludeField(entityType, fieldMeta.EntityLevel) {
-			deviceFields = append(deviceFields, counter.FieldID)
+			fields.Fields = append(fields.Fields, counter.FieldID)
+			if fieldMeta.EntityLevel == dcgm.FE_GPU_CI {
+				fields.ComputeInstanceFields = append(fields.ComputeInstanceFields, counter.FieldID)
+				if usesMultipleEntityScopes(counter.FieldID) {
+					fields.FieldsAtMultipleScopes = append(fields.FieldsAtMultipleScopes, counter.FieldID)
+				}
+			}
 		}
 	}
 
@@ -125,7 +133,13 @@ func (d *DeviceWatcher) GetDeviceFields(counters []counters.Counter, entityType 
 		)
 	}
 
-	return deviceFields
+	return fields
+}
+
+// usesMultipleEntityScopes identifies fields whose values DCGM stores at more
+// than the field metadata's entity level.
+func usesMultipleEntityScopes(fieldID dcgm.Short) bool {
+	return fieldID == dcgm.DCGM_FI_DEV_XID_ERRORS
 }
 
 func shouldIncludeField(entityType, fieldLevel dcgm.Field_Entity_Group) bool {
@@ -138,33 +152,86 @@ func shouldIncludeField(entityType, fieldLevel dcgm.Field_Entity_Group) bool {
 		return fieldLevel == dcgm.FE_GPU_CI || fieldLevel == dcgm.FE_GPU_I || fieldLevel == dcgm.FE_VGPU
 	case dcgm.FE_CPU:
 		return fieldLevel == dcgm.FE_CPU_CORE
-	case dcgm.FE_SWITCH:
-		return fieldLevel == dcgm.FE_LINK
 	default:
 		return false
 	}
 }
 
+// WatchDeviceFields preserves the legacy 10-minute age and unlimited-sample retention policy.
+// It returns a single field-group handle, so callers with more than maxFieldIDsPerFieldGroup
+// fields must use WatchDeviceFieldGroups instead of this compatibility wrapper.
 func (d *DeviceWatcher) WatchDeviceFields(
 	deviceFields []dcgm.Short, deviceInfo deviceinfo.Provider, updateFreqInUsec int64,
 ) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
 	fieldWatchGroups := []FieldWatchGroup{
 		{
-			Name:         "default",
-			Fields:       deviceFields,
-			IntervalMSec: updateFreqInUsec / 1000,
+			Name:           "default",
+			Fields:         deviceFields,
+			IntervalMSec:   updateFreqInUsec / 1000,
+			MaxKeepAge:     maxKeepAge,
+			MaxKeepSamples: maxKeepSamples,
 		},
 	}
-	groups, fieldGroups, cleanups, err := d.WatchDeviceFieldGroups(fieldWatchGroups, deviceInfo)
-	if len(fieldGroups) == 0 {
+	groups, fieldGroups, cleanups, err := d.watchDeviceFieldGroups(
+		fieldWatchGroups,
+		deviceInfo,
+		&updateFreqInUsec,
+		false,
+		false,
+	)
+	if err != nil {
 		return groups, dcgm.FieldHandle{}, cleanups, err
 	}
-	return groups, fieldGroups[0], cleanups, err
+	if len(fieldGroups) == 0 {
+		return groups, dcgm.FieldHandle{}, cleanups, nil
+	}
+	if len(fieldGroups) > 1 {
+		for _, cleanup := range cleanups {
+			cleanup()
+		}
+		return nil, dcgm.FieldHandle{}, nil, fmt.Errorf(
+			"WatchDeviceFields cannot expose %d physical field groups created for %d fields (capacity %d); use WatchDeviceFieldGroups",
+			len(fieldGroups),
+			len(deviceFields),
+			maxFieldIDsPerFieldGroup,
+		)
+	}
+	return groups, fieldGroups[0], cleanups, nil
 }
 
-// WatchDeviceFieldGroups creates one DCGM field group per configured watch interval.
+// WatchDeviceFieldGroups registers DCGM watches for each logical field watch group.
+// Oversized logical groups are split into multiple internal field groups at the
+// verified DCGM FieldGroupCreate capacity before watches are installed.
 func (d *DeviceWatcher) WatchDeviceFieldGroups(
 	fieldWatchGroups []FieldWatchGroup, deviceInfo deviceinfo.Provider,
+) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, false)
+}
+
+// WatchDeviceFieldGroupsForComputeInstanceFields watches compute-instance
+// fields on selected whole GPUs and compute instances, but not GPU instances.
+func (d *DeviceWatcher) WatchDeviceFieldGroupsForComputeInstanceFields(
+	fieldWatchGroups []FieldWatchGroup,
+	deviceInfo deviceinfo.Provider,
+) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, true, false)
+}
+
+// WatchDeviceFieldGroupsForParentGPUs watches fields only on parent GPUs that
+// were not already selected by the device options.
+func (d *DeviceWatcher) WatchDeviceFieldGroupsForParentGPUs(
+	fieldWatchGroups []FieldWatchGroup,
+	deviceInfo deviceinfo.Provider,
+) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, true)
+}
+
+func (d *DeviceWatcher) watchDeviceFieldGroups(
+	fieldWatchGroups []FieldWatchGroup,
+	deviceInfo deviceinfo.Provider,
+	updateFreqInUsecOverride *int64,
+	computeInstanceFieldEntities bool,
+	parentGPUsOnly bool,
 ) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
 	resources := &WatchResources{}
 
@@ -176,7 +243,7 @@ func (d *DeviceWatcher) WatchDeviceFieldGroups(
 	case dcgm.FE_CPU_CORE:
 		resources.groups, err = d.createCPUCoreGroupsSimple(deviceInfo)
 	default:
-		resources.groups, err = d.createGroupsSimple(deviceInfo)
+		resources.groups, err = d.createGroupsSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
 	}
 	if err != nil {
 		resources.Cleanup()
@@ -191,23 +258,60 @@ func (d *DeviceWatcher) WatchDeviceFieldGroups(
 			continue
 		}
 
-		fieldGroup, err := newFieldGroupSimple(fields)
-		if err != nil {
-			resources.Cleanup()
-			return nil, nil, nil, err
+		keepAge, keepSamples := retentionWithCompatibilityDefault(
+			fieldWatchGroup.MaxKeepAge,
+			fieldWatchGroup.MaxKeepSamples,
+		)
+		updateFreqInUsec := fieldWatchGroup.IntervalMSec * 1000
+		if updateFreqInUsecOverride != nil {
+			updateFreqInUsec = *updateFreqInUsecOverride
 		}
-		resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
 
-		// Watch fields for all groups
-		for _, group := range resources.groups {
-			logWatchFieldsCall(deviceInfo, group, fieldGroup, fields)
-			err = watchFieldGroupSimple(group, fieldGroup, fieldWatchGroup.IntervalMSec*1000)
+		fieldChunks := chunkFields(fields, maxFieldIDsPerFieldGroup)
+		chunkCount := len(fieldChunks)
+		fieldOffset := 0
+		for chunkIndex, chunk := range fieldChunks {
+			logSplitFieldWatchGroup(fieldWatchGroup.Name, len(fields), chunkIndex+1, chunkCount, len(chunk))
+
+			fieldGroup, err := newFieldGroupSimple(chunk)
 			if err != nil {
-				logWatchFieldsFailure(deviceInfo, group, fieldGroup, fields, err)
 				resources.Cleanup()
-				return nil, nil, nil, err
+				return nil, nil, nil, fieldGroupCreateError(
+					fieldWatchGroup.Name,
+					chunkIndex+1,
+					chunkCount,
+					fieldOffset+1,
+					fieldOffset+len(chunk),
+					err,
+				)
 			}
-			resources.hasWatch = true
+			resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
+			fieldOffset += len(chunk)
+
+			for _, group := range resources.groups {
+				logWatchFieldsCall(deviceInfo, group, fieldGroup, chunk)
+				err = watchFieldGroupSimple(
+					group,
+					fieldGroup,
+					updateFreqInUsec,
+					keepAge,
+					keepSamples,
+				)
+				if err != nil {
+					logWatchFieldsFailure(deviceInfo, group, fieldGroup, chunk, err)
+					resources.Cleanup()
+					return nil, nil, nil, fmt.Errorf(
+						"watch fields for logical group %q chunk %d/%d (group_handle=%d, field_group_handle=%d): %w",
+						fieldWatchGroup.Name,
+						chunkIndex+1,
+						chunkCount,
+						group.GetHandle(),
+						fieldGroup.GetHandle(),
+						err,
+					)
+				}
+				resources.hasWatch = true
+			}
 		}
 	}
 
@@ -216,10 +320,20 @@ func (d *DeviceWatcher) WatchDeviceFieldGroups(
 	return resources.groups, resources.fieldGroups, []func(){cleanup}, nil
 }
 
-func (d *DeviceWatcher) createGenericGroup(deviceInfo deviceinfo.Provider) (*dcgm.GroupHandle, func(),
-	error,
-) {
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(deviceInfo)
+func (d *DeviceWatcher) createGenericGroup(
+	deviceInfo deviceinfo.Provider,
+	computeInstanceFieldEntities bool,
+	parentGPUsOnly bool,
+) (*dcgm.GroupHandle, func(), error) {
+	var monitoringInfo []devicemonitoring.Info
+	switch {
+	case parentGPUsOnly:
+		monitoringInfo = devicemonitoring.GetParentGPUsForMonitoredGPUInstances(deviceInfo)
+	case computeInstanceFieldEntities:
+		monitoringInfo = devicemonitoring.GetMonitoredEntitiesForComputeInstanceFields(deviceInfo)
+	default:
+		monitoringInfo = devicemonitoring.GetMonitoredEntities(deviceInfo)
+	}
 	if len(monitoringInfo) == 0 {
 		return nil, doNothing, nil
 	}
@@ -374,8 +488,12 @@ func (d *DeviceWatcher) createNVLinkGroups(deviceInfo deviceinfo.Provider) ([]dc
 
 // Simplified create functions that don't return cleanup callbacks
 
-func (d *DeviceWatcher) createGroupsSimple(deviceInfo deviceinfo.Provider) ([]dcgm.GroupHandle, error) {
-	group, err := d.createGenericGroupSimple(deviceInfo)
+func (d *DeviceWatcher) createGroupsSimple(
+	deviceInfo deviceinfo.Provider,
+	computeInstanceFieldEntities bool,
+	parentGPUsOnly bool,
+) ([]dcgm.GroupHandle, error) {
+	group, err := d.createGenericGroupSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -395,8 +513,12 @@ func (d *DeviceWatcher) createCPUCoreGroupsSimple(deviceInfo deviceinfo.Provider
 	return groups, err
 }
 
-func (d *DeviceWatcher) createGenericGroupSimple(deviceInfo deviceinfo.Provider) (*dcgm.GroupHandle, error) {
-	group, _, err := d.createGenericGroup(deviceInfo)
+func (d *DeviceWatcher) createGenericGroupSimple(
+	deviceInfo deviceinfo.Provider,
+	computeInstanceFieldEntities bool,
+	parentGPUsOnly bool,
+) (*dcgm.GroupHandle, error) {
+	group, _, err := d.createGenericGroup(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
 	return group, err
 }
 
@@ -524,8 +646,25 @@ func deviceOptionMode(options appconfig.DeviceOptions) string {
 	}
 }
 
-func watchFieldGroupSimple(group dcgm.GroupHandle, field dcgm.FieldHandle, updateFreq int64) error {
-	return dcgmprovider.Client().WatchFieldsWithGroupEx(field, group, updateFreq, maxKeepAge, maxKeepSamples)
+// watchFieldGroupSimple registers one resolved field-group policy with DCGM.
+// WatchDeviceFieldGroups calls it for each entity group after deduplicating the configured fields.
+func watchFieldGroupSimple(
+	group dcgm.GroupHandle,
+	field dcgm.FieldHandle,
+	updateFreq int64,
+	keepAge float64,
+	keepSamples int32,
+) error {
+	return dcgmprovider.Client().WatchFieldsWithGroupEx(field, group, updateFreq, keepAge, keepSamples)
+}
+
+// retentionWithCompatibilityDefault preserves the policy used before FieldWatchGroup carried retention fields.
+// Runtime configuration rejects an explicit 0/0 policy before watch groups reach this package.
+func retentionWithCompatibilityDefault(keepAge float64, keepSamples int32) (float64, int32) {
+	if keepAge == 0 && keepSamples == 0 {
+		return maxKeepAge, maxKeepSamples
+	}
+	return keepAge, keepSamples
 }
 
 // Legacy functions kept for backward compatibility

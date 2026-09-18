@@ -723,6 +723,32 @@ func TestApplyGPUHealthIncidents_WatchAllAndSubsystemIndependent(t *testing.T) {
 	}
 }
 
+func TestApplyGPUHealthIncidents_NVLinkIncident(t *testing.T) {
+	key := dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0}
+	byEntity := map[dcgm.GroupEntityPair]map[dcgm.HealthSystem]dcgm.Incident{}
+	initGPUHealthEntityIncidentDefaults(byEntity, key)
+
+	applyGPUHealthIncidents(byEntity, []dcgm.Incident{{
+		System:     dcgm.DCGM_HEALTH_WATCH_NVLINK,
+		Health:     dcgm.DCGM_HEALTH_RESULT_FAIL,
+		EntityInfo: key,
+	}})
+
+	assert.Equal(t, dcgm.DCGM_HEALTH_RESULT_FAIL, byEntity[key][dcgm.DCGM_HEALTH_WATCH_NVLINK].Health)
+	for _, healthSystem := range gpuHealthChecks {
+		if healthSystem == dcgm.DCGM_HEALTH_WATCH_NVLINK {
+			continue
+		}
+		assert.Equalf(
+			t,
+			dcgm.DCGM_HEALTH_RESULT_PASS,
+			byEntity[key][healthSystem].Health,
+			"health system %v should remain PASS",
+			healthSystemWatchToString(healthSystem),
+		)
+	}
+}
+
 // TestGPUHealthStatusCollector_GetMetrics_WatchAllIncident exercises the full scrape path with an
 // injected DCGM_HEALTH_WATCH_ALL incident (representing a devastating XID such as GPU fallen off
 // bus). It asserts the emitted row shape: one row per entry in gpuHealthChecks, with the ALL row

@@ -106,6 +106,7 @@ func TestProcessPodMapper(t *testing.T) {
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
 	})
+	defer podMapper.Stop()
 
 	// Create deviceInfo provider restricted to our fake GPU
 	deviceInfo, err := deviceinfo.Initialize(

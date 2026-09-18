@@ -48,8 +48,27 @@ import (
 
 // metricFamilyBuilder keeps one Prometheus family plus the sample signatures already added to it.
 type metricFamilyBuilder struct {
-	family *dto.MetricFamily
-	seen   map[string]struct{}
+	family     *dto.MetricFamily
+	signatures []string
+	seen       map[string]struct{}
+}
+
+type metricFamilySamples struct {
+	metrics    []*dto.Metric
+	signatures []string
+}
+
+func (s metricFamilySamples) Len() int {
+	return len(s.metrics)
+}
+
+func (s metricFamilySamples) Less(i, j int) bool {
+	return s.signatures[i] < s.signatures[j]
+}
+
+func (s metricFamilySamples) Swap(i, j int) {
+	s.metrics[i], s.metrics[j] = s.metrics[j], s.metrics[i]
+	s.signatures[i], s.signatures[j] = s.signatures[j], s.signatures[i]
 }
 
 // Render writes all metric groups as Prometheus text exposition.
@@ -90,11 +109,9 @@ func Render(
 
 	for _, name := range names {
 		builder := builders[name]
-		sort.SliceStable(builder.family.Metric, func(i, j int) bool {
-			left := labelSignature(builder.family.Metric[i].Label)
-			right := labelSignature(builder.family.Metric[j].Label)
-
-			return left < right
+		sort.Stable(metricFamilySamples{
+			metrics:    builder.family.Metric,
+			signatures: builder.signatures,
 		})
 
 		if _, err := expfmt.MetricFamilyToText(w, builder.family); err != nil {
@@ -166,7 +183,7 @@ func addCounterMetrics(
 		return fmt.Errorf("invalid Prometheus metric name %q", counter.FieldName)
 	}
 
-	builder, err := metricFamilyBuilderFor(builders, counter, metricType)
+	builder, err := metricFamilyBuilderFor(builders, counter, metricType, len(metrics))
 	if err != nil {
 		return err
 	}
@@ -184,6 +201,7 @@ func addCounterMetrics(
 
 		builder.seen[signature] = struct{}{}
 		builder.family.Metric = append(builder.family.Metric, dtoMetric)
+		builder.signatures = append(builder.signatures, signature)
 	}
 
 	return nil
@@ -194,6 +212,7 @@ func metricFamilyBuilderFor(
 	builders map[string]*metricFamilyBuilder,
 	counter counters.Counter,
 	metricType dto.MetricType,
+	metricCount int,
 ) (*metricFamilyBuilder, error) {
 	if !utf8.ValidString(counter.Help) {
 		return nil, fmt.Errorf("metric family %q has invalid UTF-8 HELP text", counter.FieldName)
@@ -215,13 +234,15 @@ func metricFamilyBuilderFor(
 	}
 
 	family := &dto.MetricFamily{
-		Name: stringPtr(counter.FieldName),
-		Help: stringPtr(counter.Help),
-		Type: metricTypePtr(metricType),
+		Name:   stringPtr(counter.FieldName),
+		Help:   stringPtr(counter.Help),
+		Type:   metricTypePtr(metricType),
+		Metric: make([]*dto.Metric, 0, metricCount),
 	}
 	builders[counter.FieldName] = &metricFamilyBuilder{
-		family: family,
-		seen:   map[string]struct{}{},
+		family:     family,
+		signatures: make([]string, 0, metricCount),
+		seen:       make(map[string]struct{}, metricCount),
 	}
 
 	return builders[counter.FieldName], nil
@@ -341,6 +362,12 @@ func metricLabels(
 			}
 
 			if err := builder.add("GPU_I_ID", metric.GPUInstanceID); err != nil {
+				return nil, err
+			}
+		}
+
+		if metric.GPUComputeInstanceID != "" {
+			if err := builder.add("GPU_CI_ID", metric.GPUComputeInstanceID); err != nil {
 				return nil, err
 			}
 		}

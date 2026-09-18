@@ -29,572 +29,194 @@ import (
 	"go.uber.org/mock/gomock"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
-	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
-// Helper function to create a FieldValue_v1 with an int64 value
-func makeFieldValueInt64(value int64, ts int64) dcgm.FieldValue_v1 {
-	fv := dcgm.FieldValue_v1{
-		FieldID:   dcgm.DCGM_FI_BIND_UNBIND_EVENT,
+func makeBindUnbindFieldValue(state dcgm.BindUnbindEventState, ts int64) dcgm.FieldValue_v1 {
+	value := dcgm.FieldValue_v1{
+		FieldID:   dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
 		FieldType: uint(dcgm.DCGM_FT_INT64),
 		Status:    0,
 		TS:        ts,
 	}
-	// Write int64 value to the byte array
-	*(*int64)(unsafe.Pointer(&fv.Value[0])) = value
-	return fv
+	*(*int64)(unsafe.Pointer(&value.Value[0])) = int64(state)
+	return value
+}
+
+func useMockDCGM(t *testing.T, mockDCGM *mockdcgm.MockDCGM) {
+	t.Helper()
+	previous := dcgmprovider.Client()
+	dcgmprovider.SetClient(mockDCGM)
+	t.Cleanup(func() { dcgmprovider.SetClient(previous) })
 }
 
 func TestNewGPUBindUnbindWatcher(t *testing.T) {
-	tests := []struct {
-		name     string
-		opts     []GPUBindUnbindWatcherOption
-		expected time.Duration
-	}{
-		{
-			name:     "default interval",
-			opts:     nil,
-			expected: 1 * time.Second,
-		},
-		{
-			name:     "custom interval",
-			opts:     []GPUBindUnbindWatcherOption{WithPollInterval(2 * time.Second)},
-			expected: 2 * time.Second,
-		},
-		{
-			name:     "custom interval 500ms",
-			opts:     []GPUBindUnbindWatcherOption{WithPollInterval(500 * time.Millisecond)},
-			expected: 500 * time.Millisecond,
-		},
-	}
+	w := NewGPUBindUnbindWatcher()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			w := NewGPUBindUnbindWatcher(tt.opts...)
-			require.NotNil(t, w)
-			assert.Equal(t, tt.expected, w.pollInterval)
+	require.NotNil(t, w)
+	assert.Equal(t, time.Second, w.pollInterval)
+}
+
+func TestGPUBindUnbindWatcher_WatchUsesDirectGlobalFieldHistory(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	useMockDCGM(t, mockDCGM)
+
+	w := &GPUBindUnbindWatcher{pollInterval: time.Millisecond}
+	watch := mockDCGM.EXPECT().
+		WatchFieldValue(
+			uint(0),
+			dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+			time.Millisecond,
+			time.Duration(0),
+			bindUnbindHistorySamples,
+		).
+		Return(nil)
+
+	mockDCGM.EXPECT().
+		GetMultipleValuesForField(
+			uint(0),
+			dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+			bindUnbindHistorySamples,
+			gomock.Any(),
+			time.Time{},
+		).
+		After(watch).
+		DoAndReturn(func(_ uint, _ dcgm.Short, _ int, cursor, _ time.Time) ([]dcgm.FieldValue_v1, error) {
+			assert.False(t, cursor.IsZero())
+			now := time.Now().UnixMicro()
+			return []dcgm.FieldValue_v1{
+				makeBindUnbindFieldValue(dcgm.DcgmBUEventStateSystemReinitializing, now),
+				makeBindUnbindFieldValue(dcgm.DcgmBUEventStateSystemReinitializationCompleted, now+1),
+			}, nil
 		})
-	}
-}
 
-func TestGPUBindUnbindWatcher_Watch_FieldGroupCreateError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	// Expect FieldGroupCreate to fail
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(dcgm.FieldHandle{}, errors.New("field group creation failed"))
-
-	w := NewGPUBindUnbindWatcher()
-	ctx := context.Background()
-	onChange := func() {}
-
-	err := w.Watch(ctx, onChange)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create bind/unbind field group")
-}
-
-func TestGPUBindUnbindWatcher_Watch_NVMLNotAvailable(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	// Expect FieldGroupCreate to fail with NVML not available error
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(dcgm.FieldHandle{}, errors.New("Cannot perform the requested operation because NVML doesn't exist on this system."))
-
-	w := NewGPUBindUnbindWatcher()
-	ctx := context.Background()
-	onChange := func() {}
-
-	err := w.Watch(ctx, onChange)
-	// Should return nil immediately (graceful degradation - watcher exits cleanly)
-	require.NoError(t, err)
-}
-
-func TestGPUBindUnbindWatcher_Watch_WatchFieldsError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	mockFieldGroup := dcgm.FieldHandle{}
-	mockFieldGroup.SetHandle(uintptr(123))
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(uintptr(456))
-
-	// Expect successful field group creation
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(mockFieldGroup, nil)
-
-	// Expect GroupAllGPUs
-	mockDCGM.EXPECT().
-		GroupAllGPUs().
-		Return(mockGroupHandle)
-
-	// Expect WatchFieldsWithGroupEx to fail
-	mockDCGM.EXPECT().
-		WatchFieldsWithGroupEx(mockFieldGroup, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(errors.New("watch failed"))
-
-	// Expect cleanup
-	mockDCGM.EXPECT().
-		FieldGroupDestroy(mockFieldGroup).
-		Return(nil)
-
-	w := NewGPUBindUnbindWatcher()
-	ctx := context.Background()
-	onChange := func() {}
-
-	err := w.Watch(ctx, onChange)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to watch bind/unbind events")
-}
-
-func TestGPUBindUnbindWatcher_Watch_ContextCancellation(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	mockFieldGroup := dcgm.FieldHandle{}
-	mockFieldGroup.SetHandle(uintptr(123))
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(uintptr(456))
-
-	// Setup successful initialization
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(mockFieldGroup, nil)
-
-	mockDCGM.EXPECT().
-		GroupAllGPUs().
-		Return(mockGroupHandle)
-
-	mockDCGM.EXPECT().
-		WatchFieldsWithGroupEx(mockFieldGroup, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
-
-	// Initialization phase: read current state
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{}, nil) // No events initially
-
-	// Expect cleanup when context is cancelled
-	mockDCGM.EXPECT().
-		UnwatchFields(mockFieldGroup, mockGroupHandle).
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		FieldGroupDestroy(mockFieldGroup).
-		Return(nil)
-
-	w := NewGPUBindUnbindWatcher(WithPollInterval(100 * time.Millisecond))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var got []dcgm.BindUnbindEventState
+	err := w.Watch(ctx, func(state dcgm.BindUnbindEventState) {
+		got = append(got, state)
+		cancel()
+	})
 
-	// Cancel immediately
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, []dcgm.BindUnbindEventState{
+		dcgm.DcgmBUEventStateSystemReinitializationCompleted,
+	}, got)
+}
+
+func TestGPUBindUnbindWatcher_WatchRetriesSameCursorAfterReadError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	useMockDCGM(t, mockDCGM)
+
+	w := &GPUBindUnbindWatcher{pollInterval: time.Millisecond}
+	watch := mockDCGM.EXPECT().
+		WatchFieldValue(uint(0), dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT, time.Millisecond, time.Duration(0), bindUnbindHistorySamples).
+		Return(nil)
+
+	var cursor time.Time
+	firstRead := mockDCGM.EXPECT().
+		GetMultipleValuesForField(uint(0), dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT, bindUnbindHistorySamples, gomock.Any(), time.Time{}).
+		After(watch).
+		DoAndReturn(func(_ uint, _ dcgm.Short, _ int, gotCursor, _ time.Time) ([]dcgm.FieldValue_v1, error) {
+			cursor = gotCursor
+			return nil, errors.New("temporary DCGM read failure")
+		})
+	mockDCGM.EXPECT().
+		GetMultipleValuesForField(uint(0), dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT, bindUnbindHistorySamples, gomock.Any(), time.Time{}).
+		After(firstRead).
+		DoAndReturn(func(_ uint, _ dcgm.Short, _ int, gotCursor, _ time.Time) ([]dcgm.FieldValue_v1, error) {
+			assert.Equal(t, cursor, gotCursor)
+			return []dcgm.FieldValue_v1{
+				makeBindUnbindFieldValue(dcgm.DcgmBUEventStateSystemReinitializationCompleted, time.Now().UnixMicro()),
+			}, nil
+		})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := w.Watch(ctx, func(dcgm.BindUnbindEventState) { cancel() })
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestGPUBindUnbindWatcher_WatchReportsUnsupportedSetup(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	useMockDCGM(t, mockDCGM)
+
+	setupErr := errors.New("field not supported")
+	mockDCGM.EXPECT().
+		WatchFieldValue(uint(0), dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT, time.Second, time.Duration(0), bindUnbindHistorySamples).
+		Return(setupErr)
+
+	err := NewGPUBindUnbindWatcher().Watch(context.Background(), func(dcgm.BindUnbindEventState) {})
+
+	require.ErrorIs(t, err, setupErr)
+	assert.Contains(t, err.Error(), "requires DCGM detached-GPU support and NVIDIA driver 590+")
+}
+
+func TestGPUBindUnbindWatcher_WatchDoesNotStartAfterCancellation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	useMockDCGM(t, mockDCGM)
+
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	onChange := func() {}
-	err := w.Watch(ctx, onChange)
+	err := NewGPUBindUnbindWatcher().Watch(ctx, func(dcgm.BindUnbindEventState) {})
 
-	// Should return context.Canceled error
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestGPUBindUnbindWatcher_Watch_UnbindEventDetected(t *testing.T) {
+func TestGPUBindUnbindWatcher_DoesNotDeliverEventAfterCancellationDuringRead(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
+	useMockDCGM(t, mockDCGM)
 
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	mockFieldGroup := dcgm.FieldHandle{}
-	mockFieldGroup.SetHandle(uintptr(123))
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(uintptr(456))
-
-	// Setup successful initialization
+	w := &GPUBindUnbindWatcher{pollInterval: time.Millisecond}
 	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(mockFieldGroup, nil)
-
-	mockDCGM.EXPECT().
-		GroupAllGPUs().
-		Return(mockGroupHandle)
-
-	mockDCGM.EXPECT().
-		WatchFieldsWithGroupEx(mockFieldGroup, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
+		WatchFieldValue(uint(0), dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT, time.Millisecond, time.Duration(0), bindUnbindHistorySamples).
 		Return(nil)
-
-	// Initialization phase: read current state (no events)
-	initialTimestamp := time.Now().UnixNano()
-	noEventValue := makeFieldValueInt64(0, initialTimestamp)
-
+	readStarted := make(chan struct{})
+	allowRead := make(chan struct{})
 	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil)
+		GetMultipleValuesForField(
+			uint(0),
+			dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+			bindUnbindHistorySamples,
+			gomock.Any(),
+			time.Time{},
+		).
+		DoAndReturn(func(uint, dcgm.Short, int, time.Time, time.Time) ([]dcgm.FieldValue_v1, error) {
+			close(readStarted)
+			<-allowRead
+			return []dcgm.FieldValue_v1{
+				makeBindUnbindFieldValue(
+					dcgm.DcgmBUEventStateSystemReinitializationCompleted,
+					time.Now().UnixMicro(),
+				),
+			}, nil
+		})
 
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{noEventValue}, nil)
-
-	// First poll after initialization: unbind event with new timestamp
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil)
-
-	// Create a field value with unbind event (newer timestamp)
-	eventValue := makeFieldValueInt64(
-		int64(dcgm.DcgmBUEventStateSystemReinitializing),
-		initialTimestamp+1000000, // 1ms later
-	)
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{eventValue}, nil)
-
-	// After event detection, watcher continues polling until context cancelled
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil).
-		AnyTimes()
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{}, nil).
-		AnyTimes()
-
-	// Expect cleanup when context is cancelled
-	mockDCGM.EXPECT().
-		UnwatchFields(mockFieldGroup, mockGroupHandle).
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		FieldGroupDestroy(mockFieldGroup).
-		Return(nil)
-
-	w := NewGPUBindUnbindWatcher(WithPollInterval(10 * time.Millisecond))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	onChangeCalled := false
-	onChange := func() {
-		onChangeCalled = true
+	ctx, cancel := context.WithCancel(context.Background())
+	callbackCalled := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- w.Watch(ctx, func(dcgm.BindUnbindEventState) { callbackCalled <- struct{}{} })
+	}()
+	select {
+	case <-readStarted:
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not begin its DCGM read")
 	}
+	cancel()
+	close(allowRead)
 
-	err := w.Watch(ctx, onChange)
-
-	// Should return context error after timeout, but onChange should have been called
-	require.Error(t, err)
-	assert.True(t, onChangeCalled, "onChange should have been called")
-}
-
-func TestGPUBindUnbindWatcher_Watch_BindEventDetected(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	mockFieldGroup := dcgm.FieldHandle{}
-	mockFieldGroup.SetHandle(uintptr(123))
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(uintptr(456))
-
-	// Setup successful initialization
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(mockFieldGroup, nil)
-
-	mockDCGM.EXPECT().
-		GroupAllGPUs().
-		Return(mockGroupHandle)
-
-	mockDCGM.EXPECT().
-		WatchFieldsWithGroupEx(mockFieldGroup, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
-
-	// Initialization phase: read current state (no events)
-	initialTimestamp := time.Now().UnixNano()
-	noEventValue := makeFieldValueInt64(0, initialTimestamp)
-
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{noEventValue}, nil)
-
-	// First poll after initialization: bind event with new timestamp
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil)
-
-	// Create a field value with bind event (newer timestamp)
-	eventValue := makeFieldValueInt64(
-		int64(dcgm.DcgmBUEventStateSystemReinitializationCompleted),
-		initialTimestamp+1000000, // 1ms later
-	)
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{eventValue}, nil)
-
-	// After event detection, watcher continues polling until context cancelled
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil).
-		AnyTimes()
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{}, nil).
-		AnyTimes()
-
-	// Expect cleanup when context is cancelled
-	mockDCGM.EXPECT().
-		UnwatchFields(mockFieldGroup, mockGroupHandle).
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		FieldGroupDestroy(mockFieldGroup).
-		Return(nil)
-
-	w := NewGPUBindUnbindWatcher(WithPollInterval(10 * time.Millisecond))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	onChangeCalled := false
-	onChange := func() {
-		onChangeCalled = true
+	require.ErrorIs(t, <-done, context.Canceled)
+	select {
+	case <-callbackCalled:
+		t.Fatal("watcher delivered an event after cancellation")
+	default:
 	}
-
-	err := w.Watch(ctx, onChange)
-
-	// Should return context error after timeout, but onChange should have been called
-	require.Error(t, err)
-	assert.True(t, onChangeCalled, "onChange should have been called")
-}
-
-func TestGPUBindUnbindWatcher_Watch_UpdateFieldsError(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	mockFieldGroup := dcgm.FieldHandle{}
-	mockFieldGroup.SetHandle(uintptr(123))
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(uintptr(456))
-
-	// Setup successful initialization
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(mockFieldGroup, nil)
-
-	mockDCGM.EXPECT().
-		GroupAllGPUs().
-		Return(mockGroupHandle)
-
-	mockDCGM.EXPECT().
-		WatchFieldsWithGroupEx(mockFieldGroup, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
-
-	// First update fails, second succeeds with event
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(errors.New("update failed"))
-
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil)
-
-	// Create event value
-	eventValue := makeFieldValueInt64(
-		int64(dcgm.DcgmBUEventStateSystemReinitializing),
-		time.Now().UnixNano(),
-	)
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{eventValue}, nil)
-
-	// After event detection, watcher continues polling until context cancelled
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil).
-		AnyTimes()
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{}, nil).
-		AnyTimes()
-
-	// Expect cleanup
-	mockDCGM.EXPECT().
-		UnwatchFields(mockFieldGroup, mockGroupHandle).
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		FieldGroupDestroy(mockFieldGroup).
-		Return(nil)
-
-	w := NewGPUBindUnbindWatcher(WithPollInterval(10 * time.Millisecond))
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	onChangeCalled := false
-	onChange := func() {
-		onChangeCalled = true
-	}
-
-	err := w.Watch(ctx, onChange)
-
-	require.Error(t, err)
-	assert.True(t, onChangeCalled)
-}
-
-func TestGPUBindUnbindWatcher_Watch_NoEventsAvailable(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
-	realDCGM := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(realDCGM)
-	dcgmprovider.SetClient(mockDCGM)
-
-	mockNVML := mocknvmlprovider.NewMockNVML(ctrl)
-	mockNVML.EXPECT().Cleanup().AnyTimes()
-	realNVML := nvmlprovider.Client()
-	defer nvmlprovider.SetClient(realNVML)
-	nvmlprovider.SetClient(mockNVML)
-
-	mockFieldGroup := dcgm.FieldHandle{}
-	mockFieldGroup.SetHandle(uintptr(123))
-
-	mockGroupHandle := dcgm.GroupHandle{}
-	mockGroupHandle.SetHandle(uintptr(456))
-
-	// Setup
-	mockDCGM.EXPECT().
-		FieldGroupCreate("dcgm_exporter_bind_unbind_watch", []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return(mockFieldGroup, nil)
-
-	mockDCGM.EXPECT().
-		GroupAllGPUs().
-		Return(mockGroupHandle)
-
-	mockDCGM.EXPECT().
-		WatchFieldsWithGroupEx(mockFieldGroup, mockGroupHandle, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil)
-
-	// Multiple polls until context cancelled
-	mockDCGM.EXPECT().
-		UpdateAllFields().
-		Return(nil).
-		AnyTimes()
-
-	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT}).
-		Return([]dcgm.FieldValue_v1{}, nil).
-		AnyTimes()
-
-	mockDCGM.EXPECT().
-		UnwatchFields(mockFieldGroup, mockGroupHandle).
-		Return(nil)
-
-	mockDCGM.EXPECT().
-		FieldGroupDestroy(mockFieldGroup).
-		Return(nil)
-
-	w := NewGPUBindUnbindWatcher(WithPollInterval(50 * time.Millisecond))
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	onChange := func() {}
-	err := w.Watch(ctx, onChange)
-
-	// Should return context error (deadline exceeded or canceled)
-	require.Error(t, err)
 }

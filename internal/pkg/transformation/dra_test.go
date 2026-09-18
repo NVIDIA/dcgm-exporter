@@ -17,6 +17,7 @@
 package transformation
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -41,6 +42,12 @@ var resourceSlicesAPIResource = metav1.APIResource{
 	Namespaced: false,
 	Kind:       "ResourceSlice",
 }
+
+const (
+	resourceSliceInformerTimeout      = time.Second
+	resourceSliceInformerPollInterval = 10 * time.Millisecond
+	resourceSliceNoChangeWindow       = 100 * time.Millisecond
+)
 
 type testDRADeviceMapping struct {
 	uuid string
@@ -83,13 +90,13 @@ func testResourceSlice(driver, pool string, devices ...resourcev1beta1.Device) *
 
 func testResourceSliceWithName(name, driver, pool string, devices ...resourcev1beta1.Device) *resourcev1beta1.ResourceSlice {
 	slice := testResourceSlice(driver, pool, devices...)
-	slice.ObjectMeta = metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name)}
+	slice.ObjectMeta = metav1.ObjectMeta{Name: name, UID: types.UID(name)}
 	return slice
 }
 
 func testResourceSliceV1WithName(name, driver, pool string, generation int64, devices ...resourcev1.Device) *resourcev1.ResourceSlice {
 	return &resourcev1.ResourceSlice{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name)},
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID(name)},
 		Spec: resourcev1.ResourceSliceSpec{
 			Driver:  driver,
 			Pool:    resourcev1.ResourcePool{Name: pool, Generation: generation, ResourceSliceCount: 1},
@@ -379,6 +386,7 @@ func TestNewDRAResourceSliceManager_UsesInformerCacheLookup(t *testing.T) {
 func TestBuildDeviceMapping(t *testing.T) {
 	tests := []struct {
 		name        string
+		deviceName  string
 		deviceType  string
 		uuid        string
 		parentUUID  string
@@ -388,12 +396,14 @@ func TestBuildDeviceMapping(t *testing.T) {
 	}{
 		{
 			name:       "full-gpu",
+			deviceName: "gpu-0",
 			deviceType: "gpu",
 			uuid:       "GPU-abcd",
 			wantUUID:   "GPU-abcd",
 		},
 		{
 			name:       "mig-with-parent",
+			deviceName: "gpu-0-mig-1g6gb-14-0",
 			deviceType: "mig",
 			uuid:       "MIG-1234",
 			parentUUID: "GPU-parent",
@@ -406,26 +416,139 @@ func TestBuildDeviceMapping(t *testing.T) {
 			},
 		},
 		{
+			name:       "dynamic-mig-with-canonical-name",
+			deviceName: "gpu-0-mig-1g12gb-19-0",
+			deviceType: "mig",
+			parentUUID: "GPU-parent",
+			profile:    "1g.12gb",
+			wantUUID:   "GPU-parent",
+			wantMIGInfo: &DRAMigDeviceInfo{
+				Profile:    "1g.12gb",
+				ParentUUID: "GPU-parent",
+				spec: &draMIGSpec{
+					ParentMinor:    0,
+					ProfileID:      19,
+					PlacementStart: 0,
+				},
+			},
+		},
+		{
+			name:       "dynamic-mig-with-noncanonical-name",
+			deviceName: "mig-0",
+			deviceType: "mig",
+			parentUUID: "GPU-parent",
+			profile:    "1g.12gb",
+			wantUUID:   "GPU-parent",
+			wantMIGInfo: &DRAMigDeviceInfo{
+				Profile:    "1g.12gb",
+				ParentUUID: "GPU-parent",
+			},
+		},
+		{
 			name:       "mig-missing-parent",
+			deviceName: "gpu-0-mig-1g6gb-14-0",
 			deviceType: "mig",
 			uuid:       "MIG-orphan",
 		},
 		{
 			name:       "unknown-type",
+			deviceName: "tpu-0",
 			deviceType: "tpu",
 			uuid:       "TPU-xyz",
 		},
 		{
-			name: "empty-type",
-			uuid: "GPU-abcd",
+			name:       "empty-type",
+			deviceName: "gpu-0",
+			uuid:       "GPU-abcd",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gotUUID, gotMIG := buildDeviceMapping(tc.deviceType, tc.uuid, tc.parentUUID, tc.profile)
+			gotUUID, gotMIG := buildDeviceMapping(tc.deviceName, tc.deviceType, tc.uuid, tc.parentUUID, tc.profile)
 			assert.Equal(t, tc.wantUUID, gotUUID)
 			assert.Equal(t, tc.wantMIGInfo, gotMIG)
+		})
+	}
+}
+
+// TestParseDRAMigSpec verifies canonical dynamic MIG names and malformed input handling.
+func TestParseDRAMigSpec(t *testing.T) {
+	tests := []struct {
+		name       string
+		deviceName string
+		want       *draMIGSpec
+	}{
+		{
+			name:       "dynamic-mig-example",
+			deviceName: "gpu-0-mig-1g12gb-19-0",
+			want: &draMIGSpec{
+				ParentMinor:    0,
+				ProfileID:      19,
+				PlacementStart: 0,
+			},
+		},
+		{
+			name:       "canonical 1g5gb placement",
+			deviceName: "gpu-0-mig-1g5gb-19-0",
+			want: &draMIGSpec{
+				ParentMinor:    0,
+				ProfileID:      19,
+				PlacementStart: 0,
+			},
+		},
+		{
+			name:       "canonical 2g10gb placement",
+			deviceName: "gpu-3-mig-2g10gb-14-2",
+			want: &draMIGSpec{
+				ParentMinor:    3,
+				ProfileID:      14,
+				PlacementStart: 2,
+			},
+		},
+		{
+			name:       "canonical 3g20gb placement",
+			deviceName: "gpu-7-mig-3g20gb-9-4",
+			want: &draMIGSpec{
+				ParentMinor:    7,
+				ProfileID:      9,
+				PlacementStart: 4,
+			},
+		},
+		{
+			name:       "profile-name-with-hyphens",
+			deviceName: "gpu-12-mig-custom-profile-name-23-7",
+			want: &draMIGSpec{
+				ParentMinor:    12,
+				ProfileID:      23,
+				PlacementStart: 7,
+			},
+		},
+		{name: "full-gpu-name", deviceName: "gpu-0"},
+		{name: "vfio-name", deviceName: "gpu-vfio-0"},
+		{name: "empty-name"},
+		{name: "missing-fields", deviceName: "gpu-0-mig-1g12gb"},
+		{name: "non-numeric-parent-minor", deviceName: "gpu-x-mig-1g5gb-19-0"},
+		{name: "non-numeric-profile-id", deviceName: "gpu-0-mig-1g5gb-x-0"},
+		{name: "non-numeric-placement", deviceName: "gpu-0-mig-1g5gb-19-x"},
+		{name: "trailing-component", deviceName: "gpu-0-mig-1g5gb-19-0-x"},
+		{name: "negative-parent-minor", deviceName: "gpu--1-mig-1g12gb-19-0"},
+		{name: "empty-profile-name", deviceName: "gpu-0-mig--19-0"},
+		{name: "parent-minor-overflow", deviceName: "gpu-4294967296-mig-1g12gb-19-0"},
+		{name: "profile-id-overflow", deviceName: "gpu-0-mig-1g12gb-4294967296-0"},
+		{name: "placement-overflow", deviceName: "gpu-0-mig-1g12gb-19-4294967296"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseDRAMigSpec(tc.deviceName)
+			if tc.want == nil {
+				require.Error(t, err)
+				assert.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }
@@ -440,6 +563,7 @@ func TestMakeV1Lookup(t *testing.T) {
 			1,
 			testGPUDeviceV1("gpu-0", "GPU-aaaa"),
 			testMigDeviceV1("gpu-1-mig-0", "MIG-bbbb", "GPU-aaaa", "1g.6gb"),
+			testMigDeviceV1("gpu-0-mig-1g12gb-19-0", "", "GPU-aaaa", "1g.12gb"),
 			resourcev1.Device{Name: "gpu-no-attrs"},
 		),
 		testResourceSliceV1WithName(
@@ -474,6 +598,21 @@ func TestMakeV1Lookup(t *testing.T) {
 				MIGDeviceUUID: "MIG-bbbb",
 				Profile:       "1g.6gb",
 				ParentUUID:    "GPU-aaaa",
+			},
+		},
+		{
+			name:     "dynamic-mig-device-carries-canonical-spec",
+			pool:     "node-a",
+			device:   "gpu-0-mig-1g12gb-19-0",
+			wantUUID: "GPU-aaaa",
+			wantMIGInfo: &DRAMigDeviceInfo{
+				Profile:    "1g.12gb",
+				ParentUUID: "GPU-aaaa",
+				spec: &draMIGSpec{
+					ParentMinor:    0,
+					ProfileID:      19,
+					PlacementStart: 0,
+				},
 			},
 		},
 		{
@@ -517,6 +656,7 @@ func TestMakeV1beta1Lookup(t *testing.T) {
 			1,
 			testGPUDevice("gpu-0", "GPU-aaaa"),
 			testMigDevice("gpu-1-mig-0", "MIG-bbbb", "GPU-aaaa", "1g.6gb"),
+			testMigDevice("gpu-0-mig-1g12gb-19-0", "", "GPU-aaaa", "1g.12gb"),
 			resourcev1beta1.Device{Name: "gpu-no-basic"},
 		),
 	)
@@ -544,6 +684,21 @@ func TestMakeV1beta1Lookup(t *testing.T) {
 				MIGDeviceUUID: "MIG-bbbb",
 				Profile:       "1g.6gb",
 				ParentUUID:    "GPU-aaaa",
+			},
+		},
+		{
+			name:     "dynamic-mig-device-carries-canonical-spec",
+			pool:     "node-a",
+			device:   "gpu-0-mig-1g12gb-19-0",
+			wantUUID: "GPU-aaaa",
+			wantMIGInfo: &DRAMigDeviceInfo{
+				Profile:    "1g.12gb",
+				ParentUUID: "GPU-aaaa",
+				spec: &draMIGSpec{
+					ParentMinor:    0,
+					ProfileID:      19,
+					PlacementStart: 0,
+				},
 			},
 		},
 		{
@@ -919,6 +1074,253 @@ func TestDRAResourceSliceManager_StopIsIdempotent(t *testing.T) {
 	manager := newTestDRAManager()
 	manager.Stop()
 	manager.Stop()
+}
+
+func TestDRAResourceSliceManagerGenerationNotifications(t *testing.T) {
+	var notifications int
+	initialSlice := testResourceSliceV1WithName(
+		"slice-a",
+		DRAGPUDriverName,
+		"pool-a",
+		1,
+		testGPUDeviceV1("gpu-0", "GPU-a"),
+	)
+	indexer := newV1Indexer(t, initialSlice)
+	manager := &DRAResourceSliceManager{
+		indexer:             indexer,
+		poolName:            v1ResourceSlicePoolName,
+		generationBaselines: make(map[string]int64),
+		poolGeneration: func(pool string) (int64, bool) {
+			return latestV1PoolGeneration(indexer, pool)
+		},
+		onGenerationChange: func() { notifications++ },
+	}
+
+	manager.establishGenerationBaseline()
+	assert.True(t, manager.generationTrackingReady)
+	assert.Equal(t, int64(1), manager.generationBaselines["pool-a"])
+	assert.Zero(t, notifications, "the initial synchronized generation is a baseline")
+
+	manager.observePoolGeneration("pool-a", 1, true)
+	manager.observePoolGeneration("pool-a", 2, false)
+	assert.Zero(t, notifications, "duplicate and partial generations must not refresh the registry")
+
+	manager.observePoolGeneration("pool-a", 2, true)
+	assert.Equal(t, 1, notifications, "a complete changed generation refreshes once")
+
+	manager.observePoolGeneration("pool-a", 2, true)
+	assert.Equal(t, 1, notifications, "a resync of the same generation must not refresh again")
+}
+
+func TestDRAResourceSliceManagerNotifiesAfterCompleteChangedGeneration(t *testing.T) {
+	prevGetKubeClient := getKubeClientFunc
+	t.Cleanup(func() { getKubeClientFunc = prevGetKubeClient })
+
+	resources := &metav1.APIResourceList{
+		GroupVersion: resourcev1.SchemeGroupVersion.String(),
+		APIResources: []metav1.APIResource{resourceSlicesAPIResource},
+	}
+	firstSlice := testResourceSliceV1WithName("slice-a", DRAGPUDriverName, "pool-a", 1, testGPUDeviceV1("gpu-0", "GPU-a"))
+	secondSlice := testResourceSliceV1WithName("slice-b", DRAGPUDriverName, "pool-a", 1, testGPUDeviceV1("gpu-1", "GPU-b"))
+	firstSlice.Spec.Pool.ResourceSliceCount = 2
+	secondSlice.Spec.Pool.ResourceSliceCount = 2
+	client := fakeClientWithResourcesAndObjects([]*metav1.APIResourceList{resources}, firstSlice, secondSlice)
+	getKubeClientFunc = func() (kubernetes.Interface, error) { return client, nil }
+
+	changes := make(chan struct{}, 2)
+	manager, err := newDRAResourceSliceManager(func() { changes <- struct{}{} })
+	require.NoError(t, err)
+	t.Cleanup(manager.Stop)
+
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "initial synchronized ResourceSlice generation triggered a refresh")
+
+	firstChanged := firstSlice.DeepCopy()
+	firstChanged.Spec.Pool.Generation = 2
+	_, err = client.ResourceV1().ResourceSlices().Update(context.Background(), firstChanged, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, complete := manager.poolGeneration("pool-a")
+		return !complete
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "partial ResourceSlice generation did not reach the informer cache")
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "partial generations must not refresh the registry")
+
+	secondChanged := secondSlice.DeepCopy()
+	secondChanged.Spec.Pool.Generation = 2
+	_, err = client.ResourceV1().ResourceSlices().Update(context.Background(), secondChanged, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "complete changed generation did not trigger a refresh")
+
+	secondResync := secondChanged.DeepCopy()
+	secondResync.Labels = map[string]string{"resync": "true"}
+	_, err = client.ResourceV1().ResourceSlices().Update(context.Background(), secondResync, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		obj, exists, err := manager.indexer.GetByKey(secondResync.Name)
+		slice, ok := obj.(*resourcev1.ResourceSlice)
+		return err == nil && exists && ok && slice.Labels["resync"] == "true"
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "resync did not reach the informer cache")
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "duplicate generations must not refresh again")
+
+	err = client.ResourceV1().ResourceSlices().Delete(context.Background(), firstChanged.Name, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, complete := manager.poolGeneration("pool-a")
+		return !complete
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "partial deletion did not reach the informer cache")
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "deleting part of a pool must not refresh the registry")
+
+	err = client.ResourceV1().ResourceSlices().Delete(context.Background(), secondChanged.Name, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "deleting the last ResourceSlice did not refresh the registry")
+}
+
+// TestDRAResourceSliceManagerNotifiesAfterCompleteChangedV1beta1Generation
+// verifies the same baseline, generation, and removal contract for clusters
+// that still serve resource/v1beta1.
+func TestDRAResourceSliceManagerNotifiesAfterCompleteChangedV1beta1Generation(t *testing.T) {
+	prevGetKubeClient := getKubeClientFunc
+	t.Cleanup(func() { getKubeClientFunc = prevGetKubeClient })
+
+	resources := &metav1.APIResourceList{
+		GroupVersion: resourcev1beta1.SchemeGroupVersion.String(),
+		APIResources: []metav1.APIResource{resourceSlicesAPIResource},
+	}
+	firstSlice := testResourceSliceV1beta1WithName("slice-a", DRAGPUDriverName, "pool-a", 1, testGPUDevice("gpu-0", "GPU-a"))
+	secondSlice := testResourceSliceV1beta1WithName("slice-b", DRAGPUDriverName, "pool-a", 1, testGPUDevice("gpu-1", "GPU-b"))
+	firstSlice.Spec.Pool.ResourceSliceCount = 2
+	secondSlice.Spec.Pool.ResourceSliceCount = 2
+	client := fakeClientWithResourcesAndObjects([]*metav1.APIResourceList{resources}, firstSlice, secondSlice)
+	getKubeClientFunc = func() (kubernetes.Interface, error) { return client, nil }
+
+	changes := make(chan struct{}, 2)
+	manager, err := newDRAResourceSliceManager(func() { changes <- struct{}{} })
+	require.NoError(t, err)
+	t.Cleanup(manager.Stop)
+
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "initial synchronized ResourceSlice generation triggered a refresh")
+
+	firstChanged := firstSlice.DeepCopy()
+	firstChanged.Spec.Pool.Generation = 2
+	_, err = client.ResourceV1beta1().ResourceSlices().Update(context.Background(), firstChanged, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, complete := manager.poolGeneration("pool-a")
+		return !complete
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "partial ResourceSlice generation did not reach the informer cache")
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "partial generations must not refresh the registry")
+
+	secondChanged := secondSlice.DeepCopy()
+	secondChanged.Spec.Pool.Generation = 2
+	_, err = client.ResourceV1beta1().ResourceSlices().Update(context.Background(), secondChanged, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "complete changed generation did not trigger a refresh")
+
+	secondResync := secondChanged.DeepCopy()
+	secondResync.Labels = map[string]string{"resync": "true"}
+	_, err = client.ResourceV1beta1().ResourceSlices().Update(context.Background(), secondResync, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		obj, exists, err := manager.indexer.GetByKey(secondResync.Name)
+		slice, ok := obj.(*resourcev1beta1.ResourceSlice)
+		return err == nil && exists && ok && slice.Labels["resync"] == "true"
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "resync did not reach the informer cache")
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "duplicate generations must not refresh again")
+
+	err = client.ResourceV1beta1().ResourceSlices().Delete(context.Background(), firstChanged.Name, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, complete := manager.poolGeneration("pool-a")
+		return !complete
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "partial deletion did not reach the informer cache")
+	assert.Never(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceNoChangeWindow, resourceSliceInformerPollInterval, "deleting part of a pool must not refresh the registry")
+
+	err = client.ResourceV1beta1().ResourceSlices().Delete(context.Background(), secondChanged.Name, metav1.DeleteOptions{})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		select {
+		case <-changes:
+			return true
+		default:
+			return false
+		}
+	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "deleting the last ResourceSlice did not refresh the registry")
 }
 
 func TestNewDRAResourceSliceManager(t *testing.T) {

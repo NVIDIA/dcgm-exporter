@@ -66,6 +66,7 @@ EOF
 main() {
     local payload_root="${PACKAGE_PAYLOAD_ROOT:-}"
     local component_root
+    local metric_preset
 
     case "$#" in
         0)
@@ -91,6 +92,7 @@ main() {
     [[ -n "${payload_root}" ]] || die "PAYLOAD_ROOT is required"
     [[ -n "${PACKAGE_COMPONENT_DIR}" ]] || die "PACKAGE_COMPONENT_DIR is required"
     [[ "${PACKAGE_COMPONENT_DIR}" != */* ]] || die "PACKAGE_COMPONENT_DIR must not contain slashes"
+    [[ "${EUID}" -eq 0 ]] || die "Package payload staging requires root-owned output"
 
     payload_root="${payload_root%/}"
     component_root="${payload_root}/${PACKAGE_COMPONENT_DIR}"
@@ -100,24 +102,36 @@ main() {
 
     log_info "Staging package payload under ${component_root}"
     "${MAKE:-make}" -C "${ROOT_DIR}" install DESTDIR="${component_root}"
-    install -m 644 -D \
-        "${ROOT_DIR}/etc/dcp-metrics-included.csv" \
-        "${component_root}/etc/dcgm-exporter/dcp-metrics-included.csv"
-    install -m 644 -D \
-        "${ROOT_DIR}/etc/1.x-compatibility-metrics.csv" \
-        "${component_root}/etc/dcgm-exporter/1.x-compatibility-metrics.csv"
+    for metric_preset in \
+        default-counters.csv \
+        dcp-metrics-included.csv \
+        1.x-compatibility-metrics.csv; do
+        install -o root -g root -m 0644 -D \
+            "${ROOT_DIR}/etc/${metric_preset}" \
+            "${component_root}/etc/dcgm-exporter/${metric_preset}"
+    done
     install -m 644 -D \
         "${ROOT_DIR}/LICENSE" \
         "${component_root}/LICENSE"
+    install -m 644 -D \
+        "${ROOT_DIR}/THIRD_PARTY_NOTICES" \
+        "${component_root}/THIRD_PARTY_NOTICES"
     install -m 644 -D \
         "${ROOT_DIR}/packaging/config-files/systemd/nvidia-dcgm-exporter.service" \
         "${component_root}/lib/systemd/system/nvidia-dcgm-exporter.service"
 
     test -x "${component_root}/usr/bin/dcgm-exporter"
-    test -f "${component_root}/etc/dcgm-exporter/default-counters.csv"
-    test -f "${component_root}/etc/dcgm-exporter/dcp-metrics-included.csv"
-    test -f "${component_root}/etc/dcgm-exporter/1.x-compatibility-metrics.csv"
+    for metric_preset in \
+        default-counters.csv \
+        dcp-metrics-included.csv \
+        1.x-compatibility-metrics.csv; do
+        test -f "${component_root}/etc/dcgm-exporter/${metric_preset}"
+        test "$(stat -c '%a:%u:%g' "${component_root}/etc/dcgm-exporter/${metric_preset}")" = \
+            "644:0:0"
+    done
     test -f "${component_root}/lib/systemd/system/nvidia-dcgm-exporter.service"
+    test -s "${component_root}/LICENSE"
+    test -s "${component_root}/THIRD_PARTY_NOTICES"
     log_info "Package payload staged"
 }
 

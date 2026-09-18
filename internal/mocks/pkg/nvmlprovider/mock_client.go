@@ -111,6 +111,36 @@ func (mr *MockNVMLMockRecorder) GetDeviceProcessUtilization(gpuUUID any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeviceProcessUtilization", reflect.TypeOf((*MockNVML)(nil).GetDeviceProcessUtilization), gpuUUID)
 }
 
+// GetGPUInstanceIDByProfileAndPlacement mocks base method.
+func (m *MockNVML) GetGPUInstanceIDByProfileAndPlacement(parentUUID string, parentMinor, profileID, placementStart uint32) (uint, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetGPUInstanceIDByProfileAndPlacement", parentUUID, parentMinor, profileID, placementStart)
+	ret0, _ := ret[0].(uint)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetGPUInstanceIDByProfileAndPlacement indicates an expected call of GetGPUInstanceIDByProfileAndPlacement.
+func (mr *MockNVMLMockRecorder) GetGPUInstanceIDByProfileAndPlacement(parentUUID, parentMinor, profileID, placementStart any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGPUInstanceIDByProfileAndPlacement", reflect.TypeOf((*MockNVML)(nil).GetGPUInstanceIDByProfileAndPlacement), parentUUID, parentMinor, profileID, placementStart)
+}
+
+// GetGPUInstanceProfileName mocks base method.
+func (m *MockNVML) GetGPUInstanceProfileName(parentGPUUUID string, profileID uint) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetGPUInstanceProfileName", parentGPUUUID, profileID)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetGPUInstanceProfileName indicates an expected call of GetGPUInstanceProfileName.
+func (mr *MockNVMLMockRecorder) GetGPUInstanceProfileName(parentGPUUUID, profileID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGPUInstanceProfileName", reflect.TypeOf((*MockNVML)(nil).GetGPUInstanceProfileName), parentGPUUUID, profileID)
+}
+
 // GetMIGDeviceInfoByID mocks base method.
 func (m *MockNVML) GetMIGDeviceInfoByID(arg0 string) (*nvmlprovider.MIGDeviceInfo, error) {
 	m.ctrl.T.Helper()

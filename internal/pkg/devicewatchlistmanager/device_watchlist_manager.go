@@ -39,15 +39,19 @@ var DeviceTypesToWatch = []dcgm.Field_Entity_Group{
 }
 
 type WatchList struct {
-	deviceInfo        deviceinfo.Provider
-	deviceFields      []dcgm.Short
-	watchFields       []dcgm.Short
-	fieldWatchGroups  []devicewatcher.FieldWatchGroup
-	deviceGroups      []dcgm.GroupHandle
-	deviceFieldGroups []dcgm.FieldHandle
-	labelDeviceFields []dcgm.Short
-	watcher           devicewatcher.Watcher
-	collectInterval   int64
+	deviceInfo             deviceinfo.Provider
+	deviceFields           []dcgm.Short
+	watchFields            []dcgm.Short
+	computeInstanceFields  []dcgm.Short
+	fieldsAtMultipleScopes []dcgm.Short
+	fieldWatchGroups       []devicewatcher.FieldWatchGroup
+	deviceGroups           []dcgm.GroupHandle
+	deviceFieldGroups      []dcgm.FieldHandle
+	labelDeviceFields      []dcgm.Short
+	watcher                devicewatcher.Watcher
+	collectInterval        int64
+	maxKeepAge             float64
+	maxKeepSamples         int32
 }
 
 func NewWatchList(
@@ -55,13 +59,17 @@ func NewWatchList(
 	watcher devicewatcher.Watcher, collectInterval int64,
 ) *WatchList {
 	watchFields := buildWatchFields(deviceFields, labelDeviceFields)
-	return NewWatchListWithGroups(
+	return newWatchListWithGroups(
 		deviceInfo,
 		deviceFields,
 		labelDeviceFields,
+		nil,
+		nil,
 		defaultFieldWatchGroups(watchFields, collectInterval),
 		watcher,
 		collectInterval,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
 	)
 }
 
@@ -73,14 +81,45 @@ func NewWatchListWithGroups(
 	watcher devicewatcher.Watcher,
 	collectInterval int64,
 ) *WatchList {
+	return newWatchListWithGroups(
+		deviceInfo,
+		deviceFields,
+		labelDeviceFields,
+		nil,
+		nil,
+		fieldWatchGroups,
+		watcher,
+		collectInterval,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+}
+
+// newWatchListWithGroups builds a watch list with explicit default retention for unmatched and label fields.
+// The public compatibility constructors and WatchListManager call it after choosing the appropriate policy.
+func newWatchListWithGroups(
+	deviceInfo deviceinfo.Provider,
+	deviceFields, labelDeviceFields []dcgm.Short,
+	computeInstanceFields []dcgm.Short,
+	fieldsAtMultipleScopes []dcgm.Short,
+	fieldWatchGroups []devicewatcher.FieldWatchGroup,
+	watcher devicewatcher.Watcher,
+	collectInterval int64,
+	maxKeepAge float64,
+	maxKeepSamples int32,
+) *WatchList {
 	watchList := &WatchList{
-		deviceInfo:        deviceInfo,
-		deviceFields:      deviceFields,
-		watchFields:       buildWatchFields(deviceFields, labelDeviceFields),
-		fieldWatchGroups:  fieldWatchGroups,
-		labelDeviceFields: labelDeviceFields,
-		watcher:           watcher,
-		collectInterval:   collectInterval,
+		deviceInfo:             deviceInfo,
+		deviceFields:           deviceFields,
+		watchFields:            buildWatchFields(deviceFields, labelDeviceFields),
+		computeInstanceFields:  append([]dcgm.Short(nil), computeInstanceFields...),
+		fieldsAtMultipleScopes: append([]dcgm.Short(nil), fieldsAtMultipleScopes...),
+		fieldWatchGroups:       fieldWatchGroups,
+		labelDeviceFields:      labelDeviceFields,
+		watcher:                watcher,
+		collectInterval:        collectInterval,
+		maxKeepAge:             maxKeepAge,
+		maxKeepSamples:         maxKeepSamples,
 	}
 	watchList.fieldWatchGroups = watchList.fieldWatchGroupsForFields(watchList.watchFields)
 	return watchList
@@ -96,12 +135,16 @@ func (d *WatchList) DeviceFields() []dcgm.Short {
 
 func (d *WatchList) SetDeviceFields(deviceFields []dcgm.Short) {
 	d.deviceFields = deviceFields
+	d.computeInstanceFields = nil
+	d.fieldsAtMultipleScopes = nil
 	d.watchFields = buildWatchFields(d.deviceFields, d.labelDeviceFields)
 	d.fieldWatchGroups = d.fieldWatchGroupsForFields(d.watchFields)
 }
 
 func (d *WatchList) SetDeviceFieldsWithoutLabelWatches(deviceFields []dcgm.Short) {
 	d.deviceFields = deviceFields
+	d.computeInstanceFields = nil
+	d.fieldsAtMultipleScopes = nil
 	d.watchFields = dedupeFields(d.deviceFields)
 	d.fieldWatchGroups = d.fieldWatchGroupsForFields(d.watchFields)
 }
@@ -110,35 +153,112 @@ func (d *WatchList) LabelDeviceFields() []dcgm.Short {
 	return d.labelDeviceFields
 }
 
+// ComputeInstanceFields returns fields that must be collected from a GPU
+// compute-instance entity.
+func (d *WatchList) ComputeInstanceFields() []dcgm.Short {
+	return append([]dcgm.Short(nil), d.computeInstanceFields...)
+}
+
+// FieldsAtMultipleScopes returns fields that DCGM stores on more than one GPU
+// entity scope.
+func (d *WatchList) FieldsAtMultipleScopes() []dcgm.Short {
+	return append([]dcgm.Short(nil), d.fieldsAtMultipleScopes...)
+}
+
 func (d *WatchList) IsEmpty() bool {
 	return len(d.deviceFields) == 0
 }
 
 func (d *WatchList) Watch() ([]func(), error) {
-	var cleanups []func()
-	var err error
+	if len(d.computeInstanceFields) == 0 {
+		groups, fieldGroups, cleanups, err := d.watcher.WatchDeviceFieldGroups(
+			d.fieldWatchGroups,
+			d.deviceInfo,
+		)
+		d.deviceGroups = groups
+		d.deviceFieldGroups = fieldGroups
+		return cleanups, err
+	}
 
-	d.deviceGroups, d.deviceFieldGroups, cleanups, err = d.watcher.WatchDeviceFieldGroups(
-		d.fieldWatchGroups,
+	return d.watchComputeInstanceFields()
+}
+
+// watchComputeInstanceFields keeps fields and entities at matching scopes so
+// DCGM does not create an unnecessary entity-by-field Cartesian product.
+func (d *WatchList) watchComputeInstanceFields() ([]func(), error) {
+	baseFields := fieldsOutsideScope(d.deviceFields, d.computeInstanceFields)
+	baseFields = buildWatchFields(append(baseFields, d.fieldsAtMultipleScopes...), d.labelDeviceFields)
+	var baseGroups []dcgm.GroupHandle
+	var baseFieldGroups []dcgm.FieldHandle
+	var cleanups []func()
+	if len(baseFields) > 0 {
+		var err error
+		baseGroups, baseFieldGroups, cleanups, err = d.watcher.WatchDeviceFieldGroups(
+			d.fieldWatchGroupsForFields(baseFields),
+			d.deviceInfo,
+		)
+		if err != nil {
+			return cleanups, err
+		}
+	}
+
+	computeInstanceFields := buildWatchFields(d.computeInstanceFields, d.labelDeviceFields)
+	computeGroups, computeFieldGroups, computeCleanups, err := d.watcher.WatchDeviceFieldGroupsForComputeInstanceFields(
+		d.fieldWatchGroupsForFields(computeInstanceFields),
 		d.deviceInfo,
 	)
-	return cleanups, err
+	cleanups = append(cleanups, computeCleanups...)
+	if err != nil {
+		return cleanups, err
+	}
+
+	d.deviceGroups = baseGroups
+	d.deviceGroups = append(d.deviceGroups, computeGroups...)
+	d.deviceFieldGroups = baseFieldGroups
+	d.deviceFieldGroups = append(d.deviceFieldGroups, computeFieldGroups...)
+	if len(d.fieldsAtMultipleScopes) == 0 {
+		return cleanups, nil
+	}
+
+	parentFields := buildWatchFields(d.fieldsAtMultipleScopes, d.labelDeviceFields)
+	parentWatchGroups := d.fieldWatchGroupsForFields(parentFields)
+	parentGroups, parentFieldGroups, parentCleanups, err := d.watcher.WatchDeviceFieldGroupsForParentGPUs(
+		parentWatchGroups,
+		d.deviceInfo,
+	)
+	if err != nil {
+		return append(cleanups, parentCleanups...), err
+	}
+
+	d.deviceGroups = append(d.deviceGroups, parentGroups...)
+	d.deviceFieldGroups = append(d.deviceFieldGroups, parentFieldGroups...)
+	return append(cleanups, parentCleanups...), nil
+}
+
+func fieldsOutsideScope(fields, scopedFields []dcgm.Short) []dcgm.Short {
+	scoped := make(map[dcgm.Short]struct{}, len(scopedFields))
+	for _, field := range scopedFields {
+		scoped[field] = struct{}{}
+	}
+
+	result := make([]dcgm.Short, 0, len(fields))
+	for _, field := range fields {
+		if _, ok := scoped[field]; !ok {
+			result = append(result, field)
+		}
+	}
+	return result
 }
 
 func (d *WatchList) DeviceGroups() []dcgm.GroupHandle {
 	return d.deviceGroups
 }
 
-func (d *WatchList) DeviceFieldGroup() dcgm.FieldHandle {
-	if len(d.deviceFieldGroups) == 0 {
-		return dcgm.FieldHandle{}
-	}
-	return d.deviceFieldGroups[0]
-}
-
-// DeviceFieldGroups returns every field group watched for this entity.
+// DeviceFieldGroups returns every field group watched for this entity. A single
+// logical watch group can map to several field groups after an oversized group
+// is split at the DCGM FieldGroupCreate capacity.
 func (d *WatchList) DeviceFieldGroups() []dcgm.FieldHandle {
-	return d.deviceFieldGroups
+	return append([]dcgm.FieldHandle(nil), d.deviceFieldGroups...)
 }
 
 // FieldWatchGroups returns the resolved watch intervals for this entity.
@@ -171,9 +291,11 @@ func (d *WatchList) fieldWatchGroupsForFields(deviceFields []dcgm.Short) []devic
 			continue
 		}
 		result = append(result, devicewatcher.FieldWatchGroup{
-			Name:         watchGroup.Name,
-			Fields:       fields,
-			IntervalMSec: watchGroup.IntervalMSec,
+			Name:           watchGroup.Name,
+			Fields:         fields,
+			IntervalMSec:   watchGroup.IntervalMSec,
+			MaxKeepAge:     watchGroup.MaxKeepAge,
+			MaxKeepSamples: watchGroup.MaxKeepSamples,
 		})
 	}
 
@@ -188,9 +310,11 @@ func (d *WatchList) fieldWatchGroupsForFields(deviceFields []dcgm.Short) []devic
 		}
 	}
 	result = append(result, devicewatcher.FieldWatchGroup{
-		Name:         "default",
-		Fields:       defaultFields,
-		IntervalMSec: d.collectInterval,
+		Name:           "default",
+		Fields:         defaultFields,
+		IntervalMSec:   d.collectInterval,
+		MaxKeepAge:     d.maxKeepAge,
+		MaxKeepSamples: d.maxKeepSamples,
 	})
 	return result
 }
@@ -234,6 +358,7 @@ type WatchListManager struct {
 	cOpts            appconfig.DeviceOptions
 	useFakeGPUs      bool
 	watchGroups      []appconfig.WatchGroup
+	watchRetention   appconfig.WatchRetention
 }
 
 // NewWatchListManager creates a new instance of the WatchListManager
@@ -248,7 +373,17 @@ func NewWatchListManager(
 		cOpts:            config.CPUDeviceOptions,
 		useFakeGPUs:      config.UseFakeGPUs,
 		watchGroups:      config.WatchGroups,
+		watchRetention:   config.WatchRetention,
 	}
+}
+
+// effectiveWatchRetention returns the configured global policy or the compatibility default for a zero-value Config.
+// Watch-list creation uses it before resolving per-group overrides and converting values for DCGM.
+func (e *WatchListManager) effectiveWatchRetention() appconfig.WatchRetention {
+	if e.watchRetention.MaxAge == 0 && e.watchRetention.MaxSamples == 0 {
+		return appconfig.DefaultWatchRetention()
+	}
+	return e.watchRetention
 }
 
 // CreateEntityWatchList identifies an entity's device fields, label field to monitor
@@ -257,7 +392,6 @@ func (e *WatchListManager) CreateEntityWatchList(
 	entityType dcgm.Field_Entity_Group, watcher devicewatcher.Watcher, collectInterval int64,
 ) error {
 	deviceFields := watcher.GetDeviceFields(e.counters.NonLabelCounters(), entityType)
-
 	labelDeviceFields := watcher.GetDeviceFields(e.counters.LabelCounters(), entityType)
 
 	deviceInfo, err := deviceinfo.Initialize(e.gOpts, e.sOpts, e.cOpts, e.useFakeGPUs, entityType)
@@ -269,19 +403,40 @@ func (e *WatchListManager) CreateEntityWatchList(
 		deviceInfo.WarnMIGInstancesWithoutComputeInstances()
 	}
 
-	watchFields := buildWatchFields(deviceFields, labelDeviceFields)
+	watchFields := buildWatchFields(deviceFields.Fields, labelDeviceFields.Fields)
+	computeInstanceFields := []dcgm.Short(nil)
+	fieldsAtMultipleScopes := []dcgm.Short(nil)
+	if entityType == dcgm.FE_GPU {
+		computeInstanceFields = buildWatchFields(
+			deviceFields.ComputeInstanceFields,
+			labelDeviceFields.ComputeInstanceFields,
+		)
+		fieldsAtMultipleScopes = buildWatchFields(
+			deviceFields.FieldsAtMultipleScopes,
+			labelDeviceFields.FieldsAtMultipleScopes,
+		)
+	}
 	fieldWatchGroups, err := e.partitionFieldWatchGroups(watchFields, collectInterval)
 	if err != nil {
 		return err
 	}
 
-	e.entityWatchLists[entityType] = *NewWatchListWithGroups(
+	watchRetention := e.effectiveWatchRetention()
+	maxKeepSamples, err := watchRetention.DCGMMaxKeepSamples()
+	if err != nil {
+		return fmt.Errorf("invalid default field watch retention: %w", err)
+	}
+	e.entityWatchLists[entityType] = *newWatchListWithGroups(
 		deviceInfo,
-		deviceFields,
-		labelDeviceFields,
+		deviceFields.Fields,
+		labelDeviceFields.Fields,
+		computeInstanceFields,
+		fieldsAtMultipleScopes,
 		fieldWatchGroups,
 		watcher,
 		collectInterval,
+		watchRetention.MaxAge.Seconds(),
+		maxKeepSamples,
 	)
 
 	return err
@@ -296,14 +451,32 @@ func (e *WatchListManager) EntityWatchList(deviceType dcgm.Field_Entity_Group) (
 
 // defaultFieldWatchGroups assigns all fields to the base collection interval.
 func defaultFieldWatchGroups(deviceFields []dcgm.Short, collectInterval int64) []devicewatcher.FieldWatchGroup {
+	return defaultFieldWatchGroupsWithRetention(
+		deviceFields,
+		collectInterval,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+}
+
+// defaultFieldWatchGroupsWithRetention assigns fields to one base-interval group with the supplied retention policy.
+// Partitioning uses it when no YAML watch groups exist, while compatibility callers supply the legacy policy.
+func defaultFieldWatchGroupsWithRetention(
+	deviceFields []dcgm.Short,
+	collectInterval int64,
+	maxKeepAge float64,
+	maxKeepSamples int32,
+) []devicewatcher.FieldWatchGroup {
 	if len(deviceFields) == 0 {
 		return nil
 	}
 	return []devicewatcher.FieldWatchGroup{
 		{
-			Name:         "default",
-			Fields:       append([]dcgm.Short(nil), deviceFields...),
-			IntervalMSec: collectInterval,
+			Name:           "default",
+			Fields:         append([]dcgm.Short(nil), deviceFields...),
+			IntervalMSec:   collectInterval,
+			MaxKeepAge:     maxKeepAge,
+			MaxKeepSamples: maxKeepSamples,
 		},
 	}
 }
@@ -312,8 +485,18 @@ func defaultFieldWatchGroups(deviceFields []dcgm.Short, collectInterval int64) [
 func (e *WatchListManager) partitionFieldWatchGroups(
 	deviceFields []dcgm.Short, collectInterval int64,
 ) ([]devicewatcher.FieldWatchGroup, error) {
+	watchRetention := e.effectiveWatchRetention()
+	defaultMaxKeepSamples, err := watchRetention.DCGMMaxKeepSamples()
+	if err != nil {
+		return nil, fmt.Errorf("invalid default field watch retention: %w", err)
+	}
 	if len(e.watchGroups) == 0 {
-		return defaultFieldWatchGroups(deviceFields, collectInterval), nil
+		return defaultFieldWatchGroupsWithRetention(
+			deviceFields,
+			collectInterval,
+			watchRetention.MaxAge.Seconds(),
+			defaultMaxKeepSamples,
+		), nil
 	}
 
 	fieldNames := counterNamesByFieldID(e.counters)
@@ -337,10 +520,17 @@ func (e *WatchListManager) partitionFieldWatchGroups(
 			}
 		}
 		if len(fields) > 0 {
+			retention := watchGroup.Retention.Resolve(watchRetention)
+			maxKeepSamples, err := retention.DCGMMaxKeepSamples()
+			if err != nil {
+				return nil, fmt.Errorf("invalid watch group %q retention: %w", watchGroup.Name, err)
+			}
 			result = append(result, devicewatcher.FieldWatchGroup{
-				Name:         watchGroup.Name,
-				Fields:       fields,
-				IntervalMSec: int64(watchGroup.Interval),
+				Name:           watchGroup.Name,
+				Fields:         fields,
+				IntervalMSec:   int64(watchGroup.Interval),
+				MaxKeepAge:     retention.MaxAge.Seconds(),
+				MaxKeepSamples: maxKeepSamples,
 			})
 		}
 	}
@@ -353,9 +543,11 @@ func (e *WatchListManager) partitionFieldWatchGroups(
 	}
 	if len(defaultFields) > 0 {
 		result = append(result, devicewatcher.FieldWatchGroup{
-			Name:         "default",
-			Fields:       defaultFields,
-			IntervalMSec: collectInterval,
+			Name:           "default",
+			Fields:         defaultFields,
+			IntervalMSec:   collectInterval,
+			MaxKeepAge:     watchRetention.MaxAge.Seconds(),
+			MaxKeepSamples: defaultMaxKeepSamples,
 		})
 	}
 

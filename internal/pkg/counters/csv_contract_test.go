@@ -45,6 +45,7 @@ func TestShippedMetricSourcesLoadThroughCounterExtraction(t *testing.T) {
 		"etc/1.x-compatibility-metrics.csv",
 		"tests/host/testdata/default-counters.csv",
 		"tests/host/testdata/dcp-counters.csv",
+		"tests/host/testdata/latest-value-batching-counters.csv",
 		"deployment/templates/metrics-configmap.yaml",
 	}
 

@@ -35,6 +35,7 @@ type expCollector struct {
 	baseExpCollector
 	fieldValueParser func(val int64) []int64        // Function to parse the field value
 	labelFiller      func(map[string]string, int64) // Function to fill labels
+	now              func() time.Time               // Current time, injectable for deterministic tests.
 	windowSize       int                            // Window size
 	sourceFields     map[dcgm.Short]string          // Source DCGM fields backing this exporter counter
 }
@@ -47,7 +48,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 
 	mapEntityIDToValues := map[dcgm.GroupEntityPair]map[int64]int{}
 
-	window := time.Now().Add(-time.Duration(c.windowSize) * time.Millisecond)
+	window := c.windowStart()
 
 	for _, fieldGroup := range c.deviceWatchList.DeviceFieldGroups() {
 		for _, group := range c.deviceWatchList.DeviceGroups() {
@@ -120,6 +121,15 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
+func (c *expCollector) windowStart() time.Time {
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+
+	return now().Add(-time.Duration(c.windowSize) * time.Millisecond)
+}
+
 func (c *expCollector) sourceFieldName(fieldID dcgm.Short) string {
 	if fieldName, ok := c.sourceFields[fieldID]; ok {
 		return fieldName
@@ -149,6 +159,7 @@ func newExpCollector(
 		labelFiller: func(metricValueLabels map[string]string, entityValue int64) {
 			// This function is intentionally left blank
 		},
+		now: time.Now,
 	}
 
 	var err error

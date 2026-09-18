@@ -19,6 +19,10 @@ metadata:
   namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
+  {{- with .Values.daemonSetAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   updateStrategy:
     type: RollingUpdate
@@ -127,6 +131,16 @@ spec:
         image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
         {{- end }}
         imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+        {{- if .Values.debugDump.enabled }}
+        {{- if not (kindIs "bool" .Values.debugDump.compression) }}
+        {{- fail "debugDump.compression must be a Boolean when debugDump.enabled is true" }}
+        {{- end }}
+        {{- range $.Values.arguments }}
+        {{- if or (eq . "--dump-compression") (hasPrefix "--dump-compression=" .) }}
+        {{- fail "arguments must not set --dump-compression when debugDump.enabled is true" }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
         {{- if or .Values.arguments .Values.debugDump.enabled }}
         args:
         {{- range $.Values.arguments }}
@@ -136,9 +150,7 @@ spec:
         - "--dump-enabled"
         - "--dump-directory={{ .Values.debugDump.directory }}"
         - "--dump-retention={{ .Values.debugDump.retention }}"
-        {{- if .Values.debugDump.compression }}
-        - "--dump-compression"
-        {{- end }}
+        - "--dump-compression={{ .Values.debugDump.compression }}"
         {{- end }}
         {{- end }}
         env:
@@ -221,6 +233,12 @@ spec:
           {{- end }}
           initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
           periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+          {{- if hasKey .Values.livenessProbe "timeoutSeconds" }}
+          timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.livenessProbe "failureThreshold" }}
+          failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          {{- end }}
         readinessProbe:
           {{- if not $.Values.basicAuth.users }}
           httpGet:
@@ -232,6 +250,15 @@ spec:
               port: {{ .Values.service.port }}
           {{- end }}
           initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+          {{- if hasKey .Values.readinessProbe "periodSeconds" }}
+          periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.readinessProbe "timeoutSeconds" }}
+          timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.readinessProbe "failureThreshold" }}
+          failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          {{- end }}
         {{- if .Values.resources }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}

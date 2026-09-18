@@ -14,7 +14,9 @@ DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
 
 # Power
 DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
-DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
+# DCGM_FI_DEV_POWER_MGMT_LIMIT,         gauge, Configured power management limit (in W).
+# DCGM_FI_DEV_ENFORCED_POWER_LIMIT,     gauge, Effective power limit enforced by the driver after all limiters (in W).
+DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since the driver was last reloaded (in mJ).
 
 # PCIE
 # DCGM_FI_PROF_PCIE_TX_BYTES,  counter, Total number of bytes transmitted through PCIe TX via NVML.
@@ -40,6 +42,10 @@ DCGM_FI_DEV_XID_ERRORS,              gauge,   Value of the last XID error encoun
 # DCGM_EXP_GPU_HEALTH_STATUS,        gauge,   Current DCGM-reported GPU health status.
 # DCGM_EXP_P2P_STATUS,               gauge,   Current NVLink P2P status per peer link.
 
+# Fabric health
+# DCGM_FI_DEV_FABRIC_HEALTH_SUMMARY, gauge, Overall health of the GPU fabric.
+# DCGM_FI_DEV_FABRIC_HEALTH_MASK,    gauge, GPU fabric health status mask.
+
 # Memory usage
 DCGM_FI_DEV_FB_FREE, gauge, Frame buffer memory free (in MB).
 DCGM_FI_DEV_FB_USED, gauge, Frame buffer memory used (in MB).
@@ -53,14 +59,23 @@ DCGM_FI_DEV_FB_USED, gauge, Frame buffer memory used (in MB).
 # Retired pages
 # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
 # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
-# DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
+# DCGM_FI_DEV_RETIRED_PENDING, gauge, Whether pages are pending retirement (1 means pending and 0 means not pending).
 
 # NVLink
-# DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
-# DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
-# DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
-# DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
-DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            gauge,   Total number of NVLink bandwidth counters for all lanes
+# NVLink error counters for pre-Hopper GPUs
+# DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_TOTAL, counter, Total number of NVLink flow-control CRC errors across all lanes.
+# DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_TOTAL, counter, Total number of NVLink data CRC errors across all lanes.
+# DCGM_FI_DEV_NVLINK_REPLAY_ERROR_TOTAL,   counter, Total number of NVLink replay errors across all lanes.
+# DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_TOTAL, counter, Total number of NVLink recovery errors across all lanes.
+# NVLink data-link error counters for Hopper GPUs
+# DCGM_FI_DEV_NVLINK_CRC_ERROR_TOTAL, counter, Total number of NVLink data-link CRC errors.
+# DCGM_FI_DEV_NVLINK_RECOVERY_TOTAL,  counter, Total number of NVLink data-link recovery errors.
+# DCGM_FI_DEV_NVLINK_REPLAY_TOTAL,    counter, Total number of NVLink data-link replay errors.
+# NVLink recovery counters for Blackwell and newer GPUs
+# DCGM_FI_DEV_NVLINK_RECOVERY_SUCCESSFUL_TOTAL, counter, Total number of successful NVLink recovery events across all links.
+# DCGM_FI_DEV_NVLINK_RECOVERY_FAILED_TOTAL,     counter, Total number of failed NVLink recovery events across all links.
+# DCGM_FI_DEV_NVLINK_RECOVERY_EVENT_TOTAL,      counter, Total number of NVLink recovery events across all links.
+DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, Aggregate NVLink throughput across all lanes (in MB/s).
 
 # VGPU License status
 DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status

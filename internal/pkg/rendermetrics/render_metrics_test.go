@@ -193,6 +193,54 @@ func TestRenderContainerLabel(t *testing.T) {
 	assert.Contains(t, w.String(), `container="trainer\"quoted"`)
 }
 
+// TestRenderDynamicDRAMIGOmitsUnknownUUIDLabel verifies unresolved dynamic MIG devices do not emit an empty UUID label.
+func TestRenderDynamicDRAMIGOmitsUnknownUUIDLabel(t *testing.T) {
+	counter := counters.Counter{FieldName: "TEST_METRIC", PromType: "gauge"}
+	baseMetric := collector.Metric{
+		GPU:           "0",
+		GPUDevice:     "nvidia0",
+		GPUModelName:  "Test GPU Model",
+		Hostname:      "testhost",
+		UUID:          "UUID",
+		GPUUUID:       "MIG-test-uuid",
+		GPUInstanceID: "3",
+		MigProfile:    "1g.12gb",
+		Counter:       counter,
+		Value:         "42",
+	}
+	staticMetric := baseMetric
+	staticMetric.Attributes = map[string]string{
+		"dra_device_name":     "static-mig",
+		"dra_mig_device_uuid": "MIG-test-uuid",
+		"dra_mig_profile":     "1g.12gb",
+	}
+	dynamicMetric := baseMetric
+	dynamicMetric.Attributes = map[string]string{
+		"dra_device_name": "gpu-0-mig-1g12gb-19-0",
+		"dra_mig_profile": "1g.12gb",
+	}
+	metrics := collector.MetricsByCounter{
+		counter: {staticMetric, dynamicMetric},
+	}
+
+	var rendered bytes.Buffer
+	require.NoError(t, RenderGroup(&rendered, dcgm.FE_GPU, metrics))
+
+	var staticLine, dynamicLine string
+	for line := range strings.SplitSeq(rendered.String(), "\n") {
+		switch {
+		case strings.Contains(line, `dra_device_name="static-mig"`):
+			staticLine = line
+		case strings.Contains(line, `dra_device_name="gpu-0-mig-1g12gb-19-0"`):
+			dynamicLine = line
+		}
+	}
+	require.NotEmpty(t, staticLine)
+	require.NotEmpty(t, dynamicLine)
+	assert.Contains(t, staticLine, `dra_mig_device_uuid="MIG-test-uuid"`)
+	assert.NotContains(t, dynamicLine, "dra_mig_device_uuid")
+}
+
 func TestRenderRejectsDuplicateContainerLabelSeries(t *testing.T) {
 	counter := counters.Counter{FieldName: "TEST_METRIC", PromType: "gauge"}
 	metric := collector.Metric{
@@ -605,6 +653,39 @@ func TestRenderAllowsParentGPUAndMIGInstanceSamples(t *testing.T) {
 	assert.Equal(t, 2, strings.Count(got, "TEST_METRIC{"))
 	assert.Contains(t, got, parentSample)
 	assert.Contains(t, got, migSample)
+}
+
+func TestRenderDistinguishesComputeInstances(t *testing.T) {
+	counter := counters.Counter{FieldName: "TEST_METRIC", PromType: "gauge"}
+	baseMetric := collector.Metric{
+		GPU:           "0",
+		GPUDevice:     "nvidia0",
+		GPUModelName:  "Test GPU Model",
+		Hostname:      "testhost",
+		UUID:          "UUID",
+		GPUUUID:       "GPU-test-uuid",
+		GPUInstanceID: "3",
+		MigProfile:    "1g.10gb",
+		Counter:       counter,
+		Attributes:    map[string]string{},
+	}
+	first := baseMetric
+	first.GPUComputeInstanceID = "0"
+	first.Value = "100"
+	second := baseMetric
+	second.GPUComputeInstanceID = "1"
+	second.Value = "200"
+	metrics := map[dcgm.Field_Entity_Group]collector.MetricsByCounter{
+		dcgm.FE_GPU: {counter: {first, second}},
+	}
+
+	var rendered bytes.Buffer
+	require.NoError(t, Render(&rendered, metrics))
+
+	got := rendered.String()
+	assert.Equal(t, 2, strings.Count(got, "TEST_METRIC{"))
+	assert.Contains(t, got, `GPU_I_ID="3",GPU_CI_ID="0",hostname="testhost"} 100`)
+	assert.Contains(t, got, `GPU_I_ID="3",GPU_CI_ID="1",hostname="testhost"} 200`)
 }
 
 // TestRenderOmitsEmptyMetricFamilies verifies empty counter slices do not emit metadata.

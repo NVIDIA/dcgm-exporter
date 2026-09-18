@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
   # Image tag defaults to AppVersion, but you can use the tag key
   # for the image tag, e.g:
-  tag: 4.6.0-4.8.3-distroless
+  tag: 4.6.1-4.8.4-distroless
   # Optional digest pin. When set, the chart renders repository@digest and
   # ignores tag for the image reference.
   digest: ""
@@ -27,7 +27,7 @@ image:
 arguments: []
 # NOTE: in general, add any command line arguments to arguments above and they
 # will be passed through.
-# Use "-r", "<HOST>:<PORT>" or a DCGM connection string to connect to an already running hostengine.
+# Use "-r", "<HOST>:<PORT>" or a DCGM connection string to connect to an already running DCGM host engine.
 # Connection string formats: "tcp://<HOST>:<PORT>", "unix:///<SOCKET_PATH>", or "vsock://<CID>:<PORT>".
 # Example arguments: ["-r", "host123:5555"]
 # Example VSOCK arguments: ["-r", "vsock://3:5555"]
@@ -59,11 +59,21 @@ config:
   key: config.yaml
   mountPath: /etc/dcgm-exporter/config.yaml
   data: |
-    version: 1
+    version: 2
+    # Detached-GPU support requires DCGM 4.5+ and an NVIDIA 590+ driver.
+    sources:
+      dcgm:
+        detectBindUnbind:
+          enabled: false
+          pollInterval: 1s
     metrics:
       file: /etc/dcgm-exporter/default-counters.csv
-    collection:
-      interval: 30s
+      enableExporterMetrics: false
+    collections:
+      - name: scrape
+        every: 30s
+        metrics:
+          include: ["*"]
 
 # Image pull secrets for container images
 imagePullSecrets: []
@@ -113,6 +123,9 @@ rollingUpdate:
 
 # Labels to be added to dcgm-exporter pods
 podLabels: {}
+
+# Annotations to be added to the dcgm-exporter DaemonSet
+daemonSetAnnotations: {}
 
 # Annotations to be added to dcgm-exporter pods
 podAnnotations: {}
@@ -317,11 +330,12 @@ kubernetesDRA:
   
   # Power
   # DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
-  # DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
+  # DCGM_FI_DEV_POWER_MGMT_LIMIT,         gauge, Configured power management limit (in W).
+  # DCGM_FI_DEV_ENFORCED_POWER_LIMIT,     gauge, Effective power limit enforced by the driver after all limiters (in W).
+  # DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since the driver was last reloaded (in mJ).
   
   # PCIE
-  # DCGM_FI_DEV_PCIE_TX_THROUGHPUT,  counter, Total number of bytes transmitted through PCIe TX (in KB) via NVML.
-  # DCGM_FI_DEV_PCIE_RX_THROUGHPUT,  counter, Total number of bytes received through PCIe RX (in KB) via NVML.
+  # PCIe throughput profiling metrics are documented in the DCP metrics section below.
   # DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
   
   # Utilization (the sample period varies depending on the product)
@@ -341,6 +355,10 @@ kubernetesDRA:
   # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in ns).
   # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in ns).
   
+  # Fabric health
+  # DCGM_FI_DEV_FABRIC_HEALTH_SUMMARY, gauge, Overall health of the GPU fabric.
+  # DCGM_FI_DEV_FABRIC_HEALTH_MASK,    gauge, GPU fabric health status mask.
+
   # Memory usage
   # DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
   # DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
@@ -354,15 +372,24 @@ kubernetesDRA:
   # Retired pages
   # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
   # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
-  # DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
+  # DCGM_FI_DEV_RETIRED_PENDING, gauge, Whether pages are pending retirement (1 means pending and 0 means not pending).
   
   # NVLink
-  # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
-  # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
-  # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
-  # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
-  # DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            gauge,   Total number of NVLink bandwidth counters for all lanes.
-  # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
+  # NVLink error counters for pre-Hopper GPUs
+  # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_TOTAL, counter, Total number of NVLink flow-control CRC errors across all lanes.
+  # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_TOTAL, counter, Total number of NVLink data CRC errors across all lanes.
+  # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_TOTAL,   counter, Total number of NVLink replay errors across all lanes.
+  # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_TOTAL, counter, Total number of NVLink recovery errors across all lanes.
+  # NVLink data-link error counters for Hopper GPUs
+  # DCGM_FI_DEV_NVLINK_CRC_ERROR_TOTAL, counter, Total number of NVLink data-link CRC errors.
+  # DCGM_FI_DEV_NVLINK_RECOVERY_TOTAL,  counter, Total number of NVLink data-link recovery errors.
+  # DCGM_FI_DEV_NVLINK_REPLAY_TOTAL,    counter, Total number of NVLink data-link replay errors.
+  # NVLink recovery counters for Blackwell and newer GPUs
+  # DCGM_FI_DEV_NVLINK_RECOVERY_SUCCESSFUL_TOTAL, counter, Total number of successful NVLink recovery events across all links.
+  # DCGM_FI_DEV_NVLINK_RECOVERY_FAILED_TOTAL,     counter, Total number of failed NVLink recovery events across all links.
+  # DCGM_FI_DEV_NVLINK_RECOVERY_EVENT_TOTAL,      counter, Total number of NVLink recovery events across all links.
+  # DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, Aggregate NVLink throughput across all lanes (in MB/s).
+  # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0, gauge, NVLink lane 0 throughput (in MB/s).
   
   # VGPU License status
   # DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
@@ -400,6 +427,13 @@ kubernetesDRA:
 livenessProbe:
   initialDelaySeconds: 45
   periodSeconds: 5
+  # timeoutSeconds and failureThreshold use the Kubernetes defaults when omitted.
+  # timeoutSeconds: 1
+  # failureThreshold: 3
 
 readinessProbe:
   initialDelaySeconds: 45
+  # periodSeconds, timeoutSeconds, and failureThreshold use Kubernetes defaults when omitted.
+  # periodSeconds: 10
+  # timeoutSeconds: 1
+  # failureThreshold: 3

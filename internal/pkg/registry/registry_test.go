@@ -128,25 +128,23 @@ func TestRegistry_GatherMergesMetricsFromCollectorsForSameCounter(t *testing.T) 
 		FieldName: "DCGM_FI_DEV_POWER_USAGE",
 		PromType:  "gauge",
 	}
+	metricA := collectorpkg.Metric{
+		GPU:        "0",
+		Counter:    counter,
+		Value:      "10",
+		Attributes: map[string]string{},
+	}
+	metricB := collectorpkg.Metric{
+		GPU:        "1",
+		Counter:    counter,
+		Value:      "20",
+		Attributes: map[string]string{},
+	}
 	metricsA := collectorpkg.MetricsByCounter{
-		counter: {
-			{
-				GPU:        "0",
-				Counter:    counter,
-				Value:      "10",
-				Attributes: map[string]string{},
-			},
-		},
+		counter: {metricA},
 	}
 	metricsB := collectorpkg.MetricsByCounter{
-		counter: {
-			{
-				GPU:        "1",
-				Counter:    counter,
-				Value:      "20",
-				Attributes: map[string]string{},
-			},
-		},
+		counter: {metricB},
 	}
 
 	collectorA := new(mockCollector)
@@ -173,7 +171,61 @@ func TestRegistry_GatherMergesMetricsFromCollectorsForSameCounter(t *testing.T) 
 	require.NoError(t, err)
 	require.Contains(t, got, dcgm.FE_GPU)
 	require.Contains(t, got[dcgm.FE_GPU], counter)
-	assert.ElementsMatch(t, append(metricsA[counter], metricsB[counter]...), got[dcgm.FE_GPU][counter])
+
+	metricsA[counter][0].Value = "changed"
+	metricsB[counter][0].Value = "changed"
+	assert.ElementsMatch(t, []collectorpkg.Metric{metricA, metricB}, got[dcgm.FE_GPU][counter])
+}
+
+func TestRegistryGatherDetachesCollectorSlices(t *testing.T) {
+	counter := counters.Counter{
+		FieldID:   155,
+		FieldName: "DCGM_FI_DEV_POWER_USAGE",
+		PromType:  "gauge",
+	}
+	tests := []struct {
+		name   string
+		source []collectorpkg.Metric
+	}{
+		{
+			name: "one metric",
+			source: []collectorpkg.Metric{
+				{GPU: "0", Value: "10"},
+			},
+		},
+		{
+			name: "multiple metrics",
+			source: []collectorpkg.Metric{
+				{GPU: "0", Value: "10"},
+				{GPU: "1", Value: "20"},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := test.source
+			collector := new(mockCollector)
+			collector.On("GetMetrics").Return(collectorpkg.MetricsByCounter{counter: source}, nil).Once()
+			collector.On("Cleanup").Return().Once()
+
+			reg := NewRegistry()
+			entityCollector := collectorpkg.EntityCollectorTuple{}
+			entityCollector.SetEntity(dcgm.FE_GPU)
+			entityCollector.SetCollector(collector)
+			reg.Register(entityCollector)
+			t.Cleanup(func() {
+				reg.Cleanup()
+				collector.AssertExpectations(t)
+			})
+
+			got, err := reg.Gather()
+			require.NoError(t, err)
+
+			source[0].Value = "changed"
+			assert.Equal(t, "10", got[dcgm.FE_GPU][counter][0].Value)
+		})
+	}
 }
 
 func TestRegistry_Register_Accepts_Duplicates_(t *testing.T) {

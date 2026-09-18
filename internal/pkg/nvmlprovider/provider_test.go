@@ -17,11 +17,100 @@
 package nvmlprovider
 
 import (
+	"math"
 	"testing"
 
+	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeGPUInstanceAPI provides configurable NVML behavior for placement-resolution tests.
+type fakeGPUInstanceAPI struct {
+	deviceHandleByUUIDFunc         func(string) (nvml.Device, nvml.Return)
+	deviceMinorNumberFunc          func(nvml.Device) (int, nvml.Return)
+	gpuInstanceProfileInfoByIDFunc func(nvml.Device, int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return)
+	gpuInstancesFunc               func(nvml.Device, *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return)
+	gpuInstanceInfoFunc            func(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return)
+}
+
+// deviceHandleByUUID delegates UUID lookup to the configured test function.
+func (f *fakeGPUInstanceAPI) deviceHandleByUUID(uuid string) (nvml.Device, nvml.Return) {
+	return f.deviceHandleByUUIDFunc(uuid)
+}
+
+// deviceMinorNumber delegates minor-number lookup to the configured test function.
+func (f *fakeGPUInstanceAPI) deviceMinorNumber(device nvml.Device) (int, nvml.Return) {
+	return f.deviceMinorNumberFunc(device)
+}
+
+// gpuInstanceProfileInfoByID delegates profile lookup to the configured test function.
+func (f *fakeGPUInstanceAPI) gpuInstanceProfileInfoByID(
+	device nvml.Device,
+	profileID int,
+) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+	return f.gpuInstanceProfileInfoByIDFunc(device, profileID)
+}
+
+// gpuInstances delegates instance enumeration to the configured test function.
+func (f *fakeGPUInstanceAPI) gpuInstances(
+	device nvml.Device,
+	profile *nvml.GpuInstanceProfileInfo,
+) ([]nvml.GpuInstance, nvml.Return) {
+	return f.gpuInstancesFunc(device, profile)
+}
+
+// gpuInstanceInfo delegates instance inspection to the configured test function.
+func (f *fakeGPUInstanceAPI) gpuInstanceInfo(instance nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return) {
+	return f.gpuInstanceInfoFunc(instance)
+}
+
+// newFakeGPUInstanceAPI returns a successful fake that enumerates the supplied instance metadata.
+func newFakeGPUInstanceAPI(infos ...nvml.GpuInstanceInfo) *fakeGPUInstanceAPI {
+	infoIndex := 0
+	return &fakeGPUInstanceAPI{
+		deviceHandleByUUIDFunc: func(string) (nvml.Device, nvml.Return) {
+			return nil, nvml.SUCCESS
+		},
+		deviceMinorNumberFunc: func(nvml.Device) (int, nvml.Return) {
+			return 0, nvml.SUCCESS
+		},
+		gpuInstanceProfileInfoByIDFunc: func(_ nvml.Device, profileID int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+			return nvml.GpuInstanceProfileInfo_v2{
+				Id:            uint32(profileID),  //nolint:gosec // test profile IDs are non-negative
+				InstanceCount: uint32(len(infos)), //nolint:gosec // test fixtures cannot exceed uint32 capacity
+			}, nvml.SUCCESS
+		},
+		gpuInstancesFunc: func(_ nvml.Device, _ *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return) {
+			return make([]nvml.GpuInstance, len(infos)), nvml.SUCCESS
+		},
+		gpuInstanceInfoFunc: func(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return) {
+			info := infos[infoIndex]
+			infoIndex++
+			return info, nvml.SUCCESS
+		},
+	}
+}
+
+func TestNewGPUInstanceAPIUsesPackageNVMLLifecycle(t *testing.T) {
+	originalDeviceGetHandleByUUID := nvml.DeviceGetHandleByUUID
+	t.Cleanup(func() {
+		nvml.DeviceGetHandleByUUID = originalDeviceGetHandleByUUID
+	})
+
+	const parentUUID = "GPU-parent"
+	called := false
+	nvml.DeviceGetHandleByUUID = func(uuid string) (nvml.Device, nvml.Return) {
+		called = true
+		assert.Equal(t, parentUUID, uuid)
+		return nil, nvml.SUCCESS
+	}
+
+	_, ret := newGPUInstanceAPI().deviceHandleByUUID(parentUUID)
+
+	assert.Equal(t, nvml.SUCCESS, ret)
+	assert.True(t, called, "GPU instance API did not use the initialized package-level NVML library")
+}
 
 func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 	validMIGUUID := "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5"
@@ -29,6 +118,172 @@ func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 
 	deviceInfo, err := newNvmlProvider.GetMIGDeviceInfoByID(validMIGUUID)
 	assert.Error(t, err, "uuid: %v, Device Info: %+v", validMIGUUID, deviceInfo)
+}
+
+// TestGetGPUInstanceIDByProfileAndPlacement covers placement resolution and NVML failure modes.
+func TestGetGPUInstanceIDByProfileAndPlacement(t *testing.T) {
+	t.Run("resolves profile ID 19 and placement", func(t *testing.T) {
+		api := newFakeGPUInstanceAPI(
+			nvml.GpuInstanceInfo{
+				Id:        2,
+				ProfileId: 19,
+				Placement: nvml.GpuInstancePlacement{Start: 0},
+			},
+			nvml.GpuInstanceInfo{
+				Id:        7,
+				ProfileId: 19,
+				Placement: nvml.GpuInstancePlacement{Start: 4},
+			},
+		)
+		api.gpuInstanceProfileInfoByIDFunc = func(_ nvml.Device, profileID int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+			assert.Equal(t, 19, profileID)
+			return nvml.GpuInstanceProfileInfo_v2{
+				Id:                  19,
+				IsP2pSupported:      1,
+				SliceCount:          1,
+				InstanceCount:       2,
+				MultiprocessorCount: 14,
+				MemorySizeMB:        12288,
+			}, nvml.SUCCESS
+		}
+		api.gpuInstancesFunc = func(_ nvml.Device, profile *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return) {
+			assert.Equal(t, uint32(19), profile.Id)
+			assert.Equal(t, uint32(2), profile.InstanceCount)
+			assert.Equal(t, uint32(14), profile.MultiprocessorCount)
+			assert.Equal(t, uint64(12288), profile.MemorySizeMB)
+			return make([]nvml.GpuInstance, 2), nvml.SUCCESS
+		}
+		provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+
+		id, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 4)
+
+		require.NoError(t, err)
+		assert.Equal(t, uint(7), id)
+	})
+
+	t.Run("requires canonical parent minor", func(t *testing.T) {
+		api := newFakeGPUInstanceAPI()
+		api.deviceMinorNumberFunc = func(nvml.Device) (int, nvml.Return) {
+			return 1, nvml.SUCCESS
+		}
+		provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+
+		_, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "minor number 1, expected 0")
+	})
+
+	tests := []struct {
+		name    string
+		setup   func(*fakeGPUInstanceAPI)
+		infos   []nvml.GpuInstanceInfo
+		wantErr string
+	}{
+		{
+			name: "parent lookup failure",
+			setup: func(api *fakeGPUInstanceAPI) {
+				api.deviceHandleByUUIDFunc = func(string) (nvml.Device, nvml.Return) {
+					return nil, nvml.ERROR_NOT_FOUND
+				}
+			},
+			wantErr: "failed to get parent device handle",
+		},
+		{
+			name: "minor lookup failure",
+			setup: func(api *fakeGPUInstanceAPI) {
+				api.deviceMinorNumberFunc = func(nvml.Device) (int, nvml.Return) {
+					return 0, nvml.ERROR_UNKNOWN
+				}
+			},
+			wantErr: "failed to get minor number",
+		},
+		{
+			name: "profile lookup failure",
+			setup: func(api *fakeGPUInstanceAPI) {
+				api.gpuInstanceProfileInfoByIDFunc = func(nvml.Device, int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+					return nvml.GpuInstanceProfileInfo_v2{}, nvml.ERROR_INVALID_ARGUMENT
+				}
+			},
+			wantErr: "failed to get GPU instance profile ID",
+		},
+		{
+			name: "profile lookup returns a different ID",
+			setup: func(api *fakeGPUInstanceAPI) {
+				api.gpuInstanceProfileInfoByIDFunc = func(nvml.Device, int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+					return nvml.GpuInstanceProfileInfo_v2{Id: 18}, nvml.SUCCESS
+				}
+			},
+			wantErr: "returned GPU instance profile ID 18 for requested ID 19",
+		},
+		{
+			name: "enumeration failure",
+			setup: func(api *fakeGPUInstanceAPI) {
+				api.gpuInstancesFunc = func(nvml.Device, *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return) {
+					return nil, nvml.ERROR_UNKNOWN
+				}
+			},
+			wantErr: "failed to enumerate GPU instances",
+		},
+		{
+			name:  "instance info failure",
+			infos: []nvml.GpuInstanceInfo{{}},
+			setup: func(api *fakeGPUInstanceAPI) {
+				api.gpuInstanceInfoFunc = func(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return) {
+					return nvml.GpuInstanceInfo{}, nvml.ERROR_UNKNOWN
+				}
+			},
+			wantErr: "failed to inspect GPU instance",
+		},
+		{
+			name:    "no matching placement",
+			infos:   []nvml.GpuInstanceInfo{{Id: 2, ProfileId: 19, Placement: nvml.GpuInstancePlacement{Start: 1}}},
+			wantErr: "no GPU instance matches",
+		},
+		{
+			name: "ambiguous placement",
+			infos: []nvml.GpuInstanceInfo{
+				{Id: 2, ProfileId: 19, Placement: nvml.GpuInstancePlacement{Start: 0}},
+				{Id: 3, ProfileId: 19, Placement: nvml.GpuInstancePlacement{Start: 0}},
+			},
+			wantErr: "multiple GPU instances match",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newFakeGPUInstanceAPI(tc.infos...)
+			if tc.setup != nil {
+				tc.setup(api)
+			}
+			provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+
+			_, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
+// TestGetGPUInstanceIDByProfileAndPlacementRequiresInitializedProvider verifies the initialization guard.
+func TestGetGPUInstanceIDByProfileAndPlacementRequiresInitializedProvider(t *testing.T) {
+	provider := nvmlProvider{}
+
+	_, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "NVML library not initialized")
+}
+
+// TestGetGPUInstanceIDByProfileAndPlacementRequiresGPUInstanceAPI verifies the API availability guard.
+func TestGetGPUInstanceIDByProfileAndPlacementRequiresGPUInstanceAPI(t *testing.T) {
+	provider := nvmlProvider{initialized: true}
+
+	_, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GPU instance API is unavailable")
 }
 
 func TestGetDeviceProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
@@ -53,6 +308,32 @@ func TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to get MIG device process memory")
+}
+
+func TestGetGPUInstanceProfileName_When_NVML_Not_Initialized(t *testing.T) {
+	provider := nvmlProvider{}
+	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", 9)
+	assert.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), "failed to get GPU instance profile name")
+}
+
+func TestMigProfileNameFromBytes(t *testing.T) {
+	profileName, err := migProfileNameFromBytes([]int8{'7', 'g', '.', '8', '0', 'g', 'b', 0, 'x'})
+	require.NoError(t, err)
+	assert.Equal(t, "7g.80gb", profileName)
+
+	profileName, err = migProfileNameFromBytes([]int8{0})
+	assert.Error(t, err)
+	assert.Empty(t, profileName)
+}
+
+func TestGetGPUInstanceProfileName_When_ProfileID_Exceeds_MaxInt(t *testing.T) {
+	provider := nvmlProvider{initialized: true}
+	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", uint(math.MaxInt)+1)
+	assert.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), "exceeds maximum int value")
 }
 
 func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
@@ -112,36 +393,35 @@ func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 }
 
 func Test_newNVMLProvider(t *testing.T) {
-	tests := []struct {
-		name       string
-		preRunFunc func() NVML
-	}{
-		{
-			name: "NVML not initialized",
-			preRunFunc: func() NVML {
-				reset()
-				return nvmlProvider{initialized: true}
-			},
-		},
-		{
-			name: "NVML already initialized",
-			preRunFunc: func() NVML {
-				_ = Initialize()
-				return Client()
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			want := tt.preRunFunc()
-			defer reset()
-			var nvmlProvider NVML
-			var err error
-			nvmlProvider, err = newNVMLProvider()
-			assert.Nil(t, err)
-			assert.Equalf(t, want, nvmlProvider, "Unexpected Output")
-		})
-	}
+	t.Run("initializes a new provider with the GPU instance API", func(t *testing.T) {
+		reset()
+		t.Cleanup(reset)
+		provider, err := newNVMLProvider()
+		if err != nil {
+			t.Skipf("NVML not available: %v", err)
+		}
+		t.Cleanup(provider.Cleanup)
+
+		concrete, ok := provider.(nvmlProvider)
+		require.True(t, ok)
+		assert.True(t, concrete.initialized)
+		assert.NotNil(t, concrete.gpuInstanceAPI)
+	})
+
+	t.Run("returns the existing initialized provider", func(t *testing.T) {
+		reset()
+		t.Cleanup(reset)
+		if err := Initialize(); err != nil {
+			t.Skipf("NVML not available: %v", err)
+		}
+		existing := Client()
+		t.Cleanup(existing.Cleanup)
+
+		provider, err := newNVMLProvider()
+
+		require.NoError(t, err)
+		assert.Equal(t, existing, provider)
+	})
 }
 
 // TestClient_WhenNil tests that Client() returns a safe non-nil provider when not initialized

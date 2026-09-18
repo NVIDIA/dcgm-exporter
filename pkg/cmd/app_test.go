@@ -39,6 +39,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	mockdcgmprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
+	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
@@ -46,10 +47,10 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/watcher"
 )
 
 // TestMain uses goleak to catch goroutines that outlive their test. The
@@ -309,42 +310,6 @@ func TestStartDeviceWatchListManagerRejectsInvalidWatchGroups(t *testing.T) {
 	}
 }
 
-// TestDCGMCleanupClosureBehavior verifies that the dcgmCleanup closure
-// calls the CURRENT provider's Cleanup method, not a captured instance.
-// This prevents memory leaks during GPU bind/unbind cycles.
-func TestDCGMCleanupClosureBehavior(t *testing.T) {
-	// Save original client
-	originalClient := dcgmprovider.Client()
-	defer dcgmprovider.SetClient(originalClient)
-
-	// Create first mock provider
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockProvider1 := mockdcgmprovider.NewMockDCGM(ctrl)
-	mockProvider1.EXPECT().Cleanup().Times(0) // Should NOT be called
-
-	mockProvider2 := mockdcgmprovider.NewMockDCGM(ctrl)
-	mockProvider2.EXPECT().Cleanup().Times(1) // Should be called
-
-	// Set first provider
-	dcgmprovider.SetClient(mockProvider1)
-
-	// Create cleanup closure (simulates line 461-463 in app.go)
-	dcgmCleanup := func() {
-		dcgmprovider.Client().Cleanup()
-	}
-
-	// Simulate DCGM reinitialization (like in handleGPUTopologyChange)
-	dcgmprovider.SetClient(mockProvider2)
-
-	// Call cleanup - should call mockProvider2.Cleanup(), NOT mockProvider1.Cleanup()
-	dcgmCleanup()
-
-	// Test passes if mockProvider2.Cleanup() was called and mockProvider1.Cleanup() was NOT called
-	// (gomock verifies this automatically via EXPECT())
-}
-
 func Test_contextToConfig_DumpConfig(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -432,15 +397,20 @@ func TestNewApp_ConfiguresVersionFlagsAndAction(t *testing.T) {
 		CLIFieldsFile,
 		CLIAddress,
 		CLICollectInterval,
+		CLIWatchMaxKeepAge,
+		CLIWatchMaxKeepSamples,
 		CLIGPUDevices,
 		CLISwitchDevices,
 		CLICPUDevices,
 		CLIDumpEnabled,
-		CLIEnableGPUBindUnbindWatch,
 		CLIEnablePprof,
 		CLIWebSystemdSocket,
 		CLIWebReadTimeout,
 		CLIWebWriteTimeout,
+		CLIMaxConcurrentScrapes,
+		CLIEnableExporterMetrics,
+		CLIEnableGPUBindUnbindWatch,
+		CLIGPUBindUnbindPollInterval,
 	} {
 		assert.Truef(t, names[name], "expected flag %q to be registered", name)
 	}
@@ -459,6 +429,8 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 		assert.Equal(t, defaults.CollectorsFile, c.String(CLIFieldsFile))
 		assert.Equal(t, defaults.Address, c.String(CLIAddress))
 		assert.Equal(t, defaults.CollectInterval, c.Int(CLICollectInterval))
+		assert.Equal(t, defaults.WatchRetention.MaxAge, c.Duration(CLIWatchMaxKeepAge))
+		assert.Equal(t, defaults.WatchRetention.MaxSamples, c.Int64(CLIWatchMaxKeepSamples))
 		assert.Equal(t, defaults.Kubernetes, c.Bool(CLIKubernetes))
 		assert.Equal(t, defaults.KubernetesEnablePodLabels, c.Bool(CLIKubernetesEnablePodLabels))
 		assert.Equal(t, defaults.KubernetesEnablePodUID, c.Bool(CLIKubernetesEnablePodUID))
@@ -483,6 +455,8 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 		assert.Equal(t, defaults.WebConfigFile, c.String(CLIWebConfigFile))
 		assert.Equal(t, defaults.WebReadTimeout.String(), c.String(CLIWebReadTimeout))
 		assert.Equal(t, defaults.WebWriteTimeout.String(), c.String(CLIWebWriteTimeout))
+		assert.Equal(t, defaults.MaxConcurrentScrapes, c.Int(CLIMaxConcurrentScrapes))
+		assert.Equal(t, defaults.EnableExporterMetrics, c.Bool(CLIEnableExporterMetrics))
 		assert.Equal(t, defaults.XIDCountWindowSize, c.Int(CLIXIDCountWindowSize))
 		assert.Equal(t, defaults.ReplaceBlanksInModelName, c.Bool(CLIReplaceBlanksInModelName))
 		assert.Equal(t, defaults.Debug, c.Bool(CLIDebugMode))
@@ -515,6 +489,14 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 	defaults, err := defaultConfig()
 	require.NoError(t, err)
 	assert.Equal(t, defaults, cfg)
+}
+
+func TestGPUBindUnbindDefaults(t *testing.T) {
+	config, err := defaultConfig()
+
+	require.NoError(t, err)
+	assert.False(t, config.EnableGPUBindUnbindWatch)
+	assert.Equal(t, time.Second, config.GPUBindUnbindPollInterval)
 }
 
 func TestStartDCGMExporterWithSignalSource_RejectsInvalidConfigBeforeDCGM(t *testing.T) {
@@ -567,6 +549,7 @@ func TestContextToConfigNoYAMLUsesLegacyDefaultMetricSource(t *testing.T) {
 	assert.Equal(t, appconfig.DefaultCollectorsFile, cfg.CollectorsFile)
 	assert.Equal(t, undefinedConfigMapData, cfg.ConfigMapData)
 	assert.Equal(t, 30000, cfg.CollectInterval)
+	assert.Equal(t, appconfig.DefaultWatchRetention(), cfg.WatchRetention)
 	assert.Equal(t, appconfig.MetricSourceFile, cfg.MetricSource.Kind)
 	assert.Equal(t, appconfig.DefaultCollectorsFile, cfg.MetricSource.File)
 	watchFile, ok := cfg.MetricFileWatcherPath()
@@ -574,17 +557,159 @@ func TestContextToConfigNoYAMLUsesLegacyDefaultMetricSource(t *testing.T) {
 	assert.Equal(t, appconfig.DefaultCollectorsFile, watchFile)
 }
 
+// TestContextToConfigAppliesFieldWatchRetentionOverrides verifies explicit CLI values replace YAML global bounds.
+func TestContextToConfigAppliesFieldWatchRetentionOverrides(t *testing.T) {
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIWatchMaxKeepAge, "2m"))
+	require.NoError(t, ctx.Set(CLIWatchMaxKeepSamples, "4"))
+
+	cfg, err := contextToConfig(ctx)
+
+	require.NoError(t, err)
+	assert.Equal(t, appconfig.WatchRetention{
+		MaxAge:     2 * time.Minute,
+		MaxSamples: 4,
+	}, cfg.WatchRetention)
+}
+
+// TestContextToConfigResolvesWatchGroupRetentionAfterCLIOverrides guards late property-level group inheritance.
+func TestContextToConfigResolvesWatchGroupRetentionAfterCLIOverrides(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: 5m
+      maxKeepSamples: 0
+collections:
+  - name: latest-values
+    every: 1s
+    sources:
+      dcgm:
+        watch:
+          maxKeepAge: 0s
+    metrics:
+      include:
+        - DCGM_FI_DEV_GPU_TEMP
+`), 0o600))
+
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIConfigFile, configFile))
+	require.NoError(t, ctx.Set(CLIWatchMaxKeepSamples, "7"))
+
+	cfg, err := contextToConfig(ctx)
+
+	require.NoError(t, err)
+	assert.Equal(t, appconfig.WatchRetention{
+		MaxAge:     5 * time.Minute,
+		MaxSamples: 7,
+	}, cfg.WatchRetention)
+	require.Len(t, cfg.WatchGroups, 1)
+	assert.Equal(t, appconfig.WatchRetention{
+		MaxAge:     0,
+		MaxSamples: 7,
+	}, cfg.WatchGroups[0].Retention.Resolve(cfg.WatchRetention))
+}
+
+// TestContextToConfigRejectsUnboundedYAMLFieldWatchRetention verifies final startup validation rejects zero bounds.
+func TestContextToConfigRejectsUnboundedYAMLFieldWatchRetention(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: 0s
+      maxKeepSamples: 0
+`), 0o600))
+
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIConfigFile, configFile))
+
+	cfg, err := contextToConfig(ctx)
+
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "cannot both be zero")
+}
+
+// TestContextToConfigRejectsInvalidFieldWatchRetention covers CLI range failures before exporter startup.
+func TestContextToConfigRejectsInvalidFieldWatchRetention(t *testing.T) {
+	tests := []struct {
+		name    string
+		flag    string
+		value   string
+		wantErr string
+	}{
+		{name: "negative age", flag: CLIWatchMaxKeepAge, value: "-1s", wantErr: "maxAge must not be negative"},
+		{name: "negative samples", flag: CLIWatchMaxKeepSamples, value: "-1", wantErr: "maxSamples must not be negative"},
+		{name: "samples exceed DCGM range", flag: CLIWatchMaxKeepSamples, value: "2147483648", wantErr: "must not exceed 2147483647"},
+		{name: "both bounds disabled", flag: CLIWatchMaxKeepAge, value: "0s", wantErr: "cannot both be zero"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newTestCLIContext(t)
+			require.NoError(t, ctx.Set(tt.flag, tt.value))
+
+			cfg, err := contextToConfig(ctx)
+
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// TestNewAppRejectsMalformedFieldWatchMaxAge verifies the CLI duration parser reports malformed user input.
+func TestNewAppRejectsMalformedFieldWatchMaxAge(t *testing.T) {
+	app := NewApp("test-version")
+	app.Action = func(*cli.Context) error { return nil }
+
+	err := app.Run([]string{"dcgm-exporter", "--watch-max-keep-age=not-a-duration"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid value")
+}
+
+// TestContextToConfigLoadsFieldWatchRetentionFromEnvironment verifies environment values use CLI override precedence.
+func TestContextToConfigLoadsFieldWatchRetentionFromEnvironment(t *testing.T) {
+	app := NewApp("test-version")
+	unsetFlagEnvVars(t, app.Flags)
+	t.Setenv("DCGM_EXPORTER_WATCH_MAX_KEEP_AGE", "90s")
+	t.Setenv("DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES", "8")
+
+	var cfg *appconfig.Config
+	app.Action = func(c *cli.Context) error {
+		var err error
+		cfg, err = contextToConfig(c)
+		return err
+	}
+
+	require.NoError(t, app.Run([]string{"dcgm-exporter"}))
+	require.NotNil(t, cfg)
+	assert.Equal(t, appconfig.WatchRetention{
+		MaxAge:     90 * time.Second,
+		MaxSamples: 8,
+	}, cfg.WatchRetention)
+}
+
 func TestContextToConfigYAMLConfig(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
+version: 2
 metrics:
+  enableExporterMetrics: true
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
       prometheusType: gauge
       help: GPU temperature.
-collection:
-  interval: 10s
+collections:
+  - name: scrape
+    every: 10s
+    metrics:
+      include: ["*"]
 `), 0o600))
 
 	ctx := newTestCLIContext(t)
@@ -596,6 +721,7 @@ collection:
 	assert.Equal(t, configFile, cfg.ConfigFile)
 	assert.Equal(t, 10000, cfg.CollectInterval)
 	assert.Equal(t, appconfig.MetricSourceInline, cfg.MetricSource.Kind)
+	assert.True(t, cfg.EnableExporterMetrics)
 	require.Len(t, cfg.MetricSource.Fields, 1)
 	assert.Equal(t, "DCGM_FI_DEV_GPU_TEMP", cfg.MetricSource.Fields[0].Name)
 	_, watchFile := cfg.MetricFileWatcherPath()
@@ -605,9 +731,12 @@ collection:
 func TestContextToConfigYAMLOmittedMetricsUsesDefaultMetricSource(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
-collection:
-  interval: 10s
+version: 2
+collections:
+  - name: scrape
+    every: 10s
+    metrics:
+      include: ["*"]
 `), 0o600))
 
 	ctx := newTestCLIContext(t)
@@ -629,7 +758,7 @@ func TestContextToConfigYAMLFileSourceIsWatched(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	countersFile := filepath.Join(t.TempDir(), "yaml-counters.csv")
 	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`
-version: 1
+version: 2
 metrics:
   file: %s
 `, countersFile)), 0o600))
@@ -651,14 +780,18 @@ metrics:
 func TestContextToConfigLegacyFlagsOverrideYAML(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
+version: 2
 metrics:
+  enableExporterMetrics: true
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
       prometheusType: gauge
       help: GPU temperature.
-collection:
-  interval: 10s
+collections:
+  - name: scrape
+    every: 10s
+    metrics:
+      include: ["*"]
 `), 0o600))
 	countersFile := filepath.Join(t.TempDir(), "override.csv")
 
@@ -666,6 +799,7 @@ collection:
 	require.NoError(t, ctx.Set(CLIConfigFile, configFile))
 	require.NoError(t, ctx.Set(CLIFieldsFile, countersFile))
 	require.NoError(t, ctx.Set(CLICollectInterval, "45000"))
+	require.NoError(t, ctx.Set(CLIEnableExporterMetrics, "false"))
 
 	cfg, err := contextToConfig(ctx)
 
@@ -673,6 +807,7 @@ collection:
 	assert.Equal(t, 45000, cfg.CollectInterval)
 	assert.Equal(t, countersFile, cfg.CollectorsFile)
 	assert.Equal(t, appconfig.MetricSourceFile, cfg.MetricSource.Kind)
+	assert.False(t, cfg.EnableExporterMetrics)
 	assert.Equal(t, countersFile, cfg.MetricSource.File)
 	watchFile, ok := cfg.MetricFileWatcherPath()
 	assert.True(t, ok)
@@ -682,7 +817,7 @@ collection:
 func TestContextToConfigLegacyConfigMapDataOverridesYAML(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
@@ -708,7 +843,7 @@ metrics:
 func TestContextToConfigRejectsYAMLConfigMapSource(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
+version: 2
 metrics:
   configMap:
     namespace: monitoring
@@ -726,15 +861,15 @@ metrics:
 	assert.Contains(t, err.Error(), "field configMap not found")
 }
 
-func TestContextToConfigLoadsWatchGroups(t *testing.T) {
+func TestContextToConfigLoadsCollections(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
-collection:
-  watchGroups:
-    - name: slow
-      interval: 10m
-      fields:
+version: 2
+collections:
+  - name: slow
+    every: 10m
+    metrics:
+      include:
         - DCGM_FI_DEV_NVLINK_PPCNT_*
 `), 0o600))
 
@@ -753,9 +888,12 @@ collection:
 func TestReloadConfigDoesNotRereadYAML(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
-collection:
-  interval: 10s
+version: 2
+collections:
+  - name: scrape
+    every: 10s
+    metrics:
+      include: ["*"]
 `), 0o600))
 
 	ctx := newTestCLIContext(t)
@@ -765,11 +903,14 @@ collection:
 	require.Equal(t, 10000, cfg.CollectInterval)
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
-collection:
-  interval: 1m
+version: 2
+collections:
+  - name: scrape
+    every: 1m
+    metrics:
+      include: ["*"]
 `), 0o600))
-	coord := newReloadCoordinator(ctx, func() {})
+	coord := newReloadCoordinator(ctx)
 	coord.reloadConfig = cfg.Clone()
 
 	reloadCfg, err := coord.buildReloadConfig()
@@ -821,32 +962,6 @@ func TestContextToConfigRejectsInvalidOptions(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, cfg)
 			assert.Contains(t, err.Error(), tt.wantErr)
-		})
-	}
-}
-
-func TestContextToConfigRejectsInvalidGPUBindUnbindPollInterval(t *testing.T) {
-	tests := []struct {
-		name  string
-		value string
-	}{
-		{name: "zero", value: "0s"},
-		{name: "negative", value: "-1s"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := newTestCLIContext(t)
-			require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "true"))
-			require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, tt.value))
-
-			cfg, err := contextToConfig(ctx)
-
-			require.Error(t, err)
-			assert.Nil(t, cfg)
-			assert.Contains(t, err.Error(), "invalid gpu-bind-unbind-poll-interval")
-			assert.Contains(t, err.Error(), tt.value)
-			assert.Contains(t, err.Error(), "must be greater than 0")
 		})
 	}
 }
@@ -938,69 +1053,110 @@ func TestContextToConfigAllowsPprofWithWebConfigFile(t *testing.T) {
 	assert.Equal(t, ctx.String(CLIWebConfigFile), cfg.WebConfigFile)
 }
 
-func TestContextToConfigGPUBindUnbindPollInterval(t *testing.T) {
-	tests := []struct {
-		name  string
-		value string
-		want  time.Duration
-	}{
-		{name: "valid custom interval", value: "250ms", want: 250 * time.Millisecond},
-		{name: "fractional interval", value: "0.5s", want: 500 * time.Millisecond},
-		{name: "minimum positive interval", value: "1ns", want: time.Nanosecond},
-		{name: "large positive interval", value: "24h", want: 24 * time.Hour},
-		{name: "empty falls back to default", value: "", want: time.Second},
-		{name: "malformed falls back to default", value: "not-a-duration", want: time.Second},
-		{name: "whitespace falls back to default", value: " 1s ", want: time.Second},
-	}
+func TestContextToConfigEnablesGPUBindUnbindDetectionFromYAML(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 2
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: true
+      pollInterval: 250ms
+`), 0o600))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := newTestCLIContext(t)
-			require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "true"))
-			require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, tt.value))
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIConfigFile, configFile))
 
-			cfg, err := contextToConfig(ctx)
+	cfg, err := contextToConfig(ctx)
 
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, cfg.GPUBindUnbindPollInterval)
-		})
-	}
+	require.NoError(t, err)
+	assert.True(t, cfg.EnableGPUBindUnbindWatch)
+	assert.Equal(t, 250*time.Millisecond, cfg.GPUBindUnbindPollInterval)
 }
 
-func TestContextToConfigAllowsNonPositiveGPUBindUnbindPollIntervalWhenWatchDisabled(t *testing.T) {
-	tests := []struct {
-		name  string
-		value string
-		want  time.Duration
-	}{
-		{name: "zero", value: "0s", want: 0},
-		{name: "negative", value: "-1s", want: -1 * time.Second},
-	}
+func TestContextToConfigGPUBindUnbindCLIOverridesYAML(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 1
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: false
+      pollInterval: 250ms
+`), 0o600))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := newTestCLIContext(t)
-			require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "false"))
-			require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, tt.value))
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIConfigFile, configFile))
+	require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "true"))
+	require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, "2s"))
 
-			cfg, err := contextToConfig(ctx)
+	cfg, err := contextToConfig(ctx)
 
-			require.NoError(t, err)
-			assert.False(t, cfg.EnableGPUBindUnbindWatch)
-			assert.Equal(t, tt.want, cfg.GPUBindUnbindPollInterval)
-		})
-	}
+	require.NoError(t, err)
+	assert.True(t, cfg.EnableGPUBindUnbindWatch)
+	assert.Equal(t, 2*time.Second, cfg.GPUBindUnbindPollInterval)
 }
 
-func TestContextToConfigRejectsInvalidGPUBindUnbindPollIntervalFromEnv(t *testing.T) {
+func TestContextToConfigGPUBindUnbindEnvironmentOverridesYAML(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 1
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: true
+      pollInterval: 250ms
+`), 0o600))
+	t.Setenv("DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH", "false")
+	t.Setenv("DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL", "2s")
+
+	var cfg *appconfig.Config
+	app := NewApp()
+	app.Action = func(ctx *cli.Context) error {
+		var err error
+		cfg, err = contextToConfig(ctx)
+		return err
+	}
+
+	require.NoError(t, app.Run([]string{"dcgm-exporter", "--config-file", configFile}))
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.EnableGPUBindUnbindWatch)
+	assert.Equal(t, 2*time.Second, cfg.GPUBindUnbindPollInterval)
+}
+
+func TestContextToConfigRejectsNonPositiveCompatibilityPollIntervalWhenEnabled(t *testing.T) {
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "true"))
+	require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, "0s"))
+
+	cfg, err := contextToConfig(ctx)
+
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), CLIGPUBindUnbindPollInterval)
+}
+
+func TestContextToConfigAllowsNonPositiveCompatibilityPollIntervalWhenDisabled(t *testing.T) {
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "false"))
+	require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, "0s"))
+
+	cfg, err := contextToConfig(ctx)
+
+	require.NoError(t, err)
+	assert.False(t, cfg.EnableGPUBindUnbindWatch)
+	assert.Zero(t, cfg.GPUBindUnbindPollInterval)
+}
+
+func TestContextToConfigRejectsNonPositiveCompatibilityPollIntervalFromEnvironment(t *testing.T) {
 	t.Setenv("DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH", "true")
 	t.Setenv("DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL", "0s")
 
 	var cfg *appconfig.Config
 	app := NewApp()
-	app.Action = func(c *cli.Context) error {
+	app.Action = func(ctx *cli.Context) error {
 		var err error
-		cfg, err = contextToConfig(c)
+		cfg, err = contextToConfig(ctx)
 		return err
 	}
 
@@ -1008,9 +1164,118 @@ func TestContextToConfigRejectsInvalidGPUBindUnbindPollIntervalFromEnv(t *testin
 
 	require.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "invalid gpu-bind-unbind-poll-interval")
-	assert.Contains(t, err.Error(), "0s")
-	assert.Contains(t, err.Error(), "must be greater than 0")
+	assert.Contains(t, err.Error(), CLIGPUBindUnbindPollInterval)
+}
+
+func TestContextToConfigRejectsNonPositiveGPUBindUnbindPollIntervalWhenEnabled(t *testing.T) {
+	for _, interval := range []string{"0s", "-1s"} {
+		t.Run(interval, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+			require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`
+version: 1
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: true
+      pollInterval: %s
+`, interval)), 0o600))
+			ctx := newTestCLIContext(t)
+			require.NoError(t, ctx.Set(CLIConfigFile, configFile))
+
+			cfg, err := contextToConfig(ctx)
+
+			require.Error(t, err)
+			assert.Nil(t, cfg)
+			assert.Contains(t, err.Error(), "sources.dcgm.detectBindUnbind.pollInterval")
+		})
+	}
+}
+
+func TestRunDCGMExporter_RegistersGPULifecycleWatchBeforeInitialRegistry(t *testing.T) {
+	restoreStartupSeams(t)
+	mock := withMockDCGMClient(t)
+	watchRegistered := false
+	mock.EXPECT().GetSupportedMetricGroups(uint(0)).DoAndReturn(func(uint) ([]dcgm.MetricGroup, error) {
+		assert.True(t, watchRegistered, "lifecycle watch must be registered before DCP discovery")
+		return nil, errors.New("profiling unavailable")
+	})
+	mock.EXPECT().
+		WatchFieldValue(
+			uint(0),
+			dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+			time.Second,
+			time.Duration(0),
+			2,
+		).
+		DoAndReturn(func(uint, dcgm.Short, time.Duration, time.Duration, int) error {
+			watchRegistered = true
+			return nil
+		})
+	mock.EXPECT().Cleanup()
+
+	stopAfterBuild := errors.New("stop after initial registry build")
+	initializeDCGMProviderFunc = func(*appconfig.Config) {}
+	initializeNVMLProviderFunc = func() error {
+		assert.True(t, watchRegistered, "lifecycle watch must be registered before NVML discovery")
+		return nil
+	}
+	cleanupNVMLProviderFunc = func() {}
+	buildRegistryFunc = func(context.Context, *cli.Context, *appconfig.Config) (
+		*registry.Registry,
+		devicewatchlistmanager.Manager,
+		error,
+	) {
+		assert.True(t, watchRegistered, "lifecycle watch must be registered before topology discovery")
+		return nil, nil, stopAfterBuild
+	}
+
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIDisableStartupValidate, "true"))
+	setGPUBindUnbindTestConfig(t, ctx)
+
+	err := runDCGMExporter(context.Background(), ctx, nil)
+
+	require.ErrorIs(t, err, stopAfterBuild)
+}
+
+func TestRunDCGMExporter_FailsBeforeRegistryBuildWhenGPULifecycleWatchCannotStart(t *testing.T) {
+	restoreStartupSeams(t)
+	mock := withMockDCGMClient(t)
+	setupErr := errors.New("bind/unbind field unsupported")
+	mock.EXPECT().
+		WatchFieldValue(
+			uint(0),
+			dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+			time.Second,
+			time.Duration(0),
+			2,
+		).
+		Return(setupErr)
+	mock.EXPECT().Cleanup()
+
+	initializeDCGMProviderFunc = func(*appconfig.Config) {}
+	initializeNVMLProviderFunc = func() error {
+		t.Fatal("NVML must not initialize after the explicitly enabled lifecycle watch fails")
+		return nil
+	}
+	cleanupNVMLProviderFunc = func() {}
+	buildRegistryFunc = func(context.Context, *cli.Context, *appconfig.Config) (
+		*registry.Registry,
+		devicewatchlistmanager.Manager,
+		error,
+	) {
+		t.Fatal("registry must not build without the explicitly enabled lifecycle watch")
+		return nil, nil, nil
+	}
+
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIDisableStartupValidate, "true"))
+	setGPUBindUnbindTestConfig(t, ctx)
+
+	err := runDCGMExporter(context.Background(), ctx, nil)
+
+	require.ErrorIs(t, err, setupErr)
+	assert.Contains(t, err.Error(), "start GPU bind/unbind watcher")
 }
 
 func TestRunDCGMExporter_RejectsPprofWithoutWebConfigFileBeforeStartup(t *testing.T) {
@@ -1018,10 +1283,6 @@ func TestRunDCGMExporter_RejectsPprofWithoutWebConfigFileBeforeStartup(t *testin
 	ctx := newTestCLIContext(t)
 	require.NoError(t, ctx.Set(CLIEnablePprof, "true"))
 
-	validatePrerequisitesFunc = func() error {
-		t.Fatal("prerequisite validation must not run after pprof config validation fails")
-		return nil
-	}
 	initializeDCGMProviderFunc = func(*appconfig.Config) {
 		t.Fatal("DCGM must not initialize after pprof config validation fails")
 	}
@@ -1033,41 +1294,105 @@ func TestRunDCGMExporter_RejectsPprofWithoutWebConfigFileBeforeStartup(t *testin
 	assert.Contains(t, err.Error(), CLIWebConfigFile)
 }
 
-func TestRunDCGMExporter_PrerequisiteFailureStopsStartup(t *testing.T) {
-	restoreStartupSeams(t)
-	validatePrerequisitesFunc = func() error {
-		return errors.New("missing runtime capability")
+func TestRunDCGMExporter_NVMLStartupPolicy(t *testing.T) {
+	buildStop := errors.New("stop after initial registry build")
+	tests := []struct {
+		name                   string
+		kubernetes             bool
+		disableStartupValidate bool
+		useFakeGPUs            bool
+		initializeError        error
+		wantContinue           bool
+		wantInitializeCalls    int32
+		wantCleanupCalls       int32
+	}{
+		{
+			name:                "non-Kubernetes success",
+			wantContinue:        true,
+			wantInitializeCalls: 1,
+			wantCleanupCalls:    1,
+		},
+		{
+			name:                "non-Kubernetes failure falls back",
+			initializeError:     errors.New("NVML unavailable"),
+			wantContinue:        true,
+			wantInitializeCalls: 1,
+			wantCleanupCalls:    1,
+		},
+		{
+			name:                "Kubernetes validated failure remains fatal",
+			kubernetes:          true,
+			initializeError:     errors.New("NVML unavailable"),
+			wantInitializeCalls: 1,
+		},
+		{
+			name:                   "Kubernetes failure with validation disabled falls back",
+			kubernetes:             true,
+			disableStartupValidate: true,
+			initializeError:        errors.New("NVML unavailable"),
+			wantContinue:           true,
+			wantInitializeCalls:    1,
+			wantCleanupCalls:       1,
+		},
+		{
+			name:                "fake-GPU mode uses the optional NVML lifecycle",
+			useFakeGPUs:         true,
+			wantContinue:        true,
+			wantInitializeCalls: 1,
+			wantCleanupCalls:    1,
+		},
 	}
-	initializeDCGMProviderFunc = func(*appconfig.Config) {
-		t.Fatal("DCGM must not initialize after prerequisite validation fails")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restoreStartupSeams(t)
+			mock := withMockDCGMClient(t)
+			mock.EXPECT().
+				GetSupportedMetricGroups(uint(0)).
+				Return(nil, errors.New("profiling unsupported")).
+				AnyTimes()
+			mock.EXPECT().Cleanup()
+
+			initializeDCGMProviderFunc = func(*appconfig.Config) {}
+
+			var initializeCalls atomic.Int32
+			initializeNVMLProviderFunc = func() error {
+				initializeCalls.Add(1)
+				return tt.initializeError
+			}
+			var cleanupCalls atomic.Int32
+			cleanupNVMLProviderFunc = func() {
+				cleanupCalls.Add(1)
+			}
+
+			var buildCalls atomic.Int32
+			buildRegistryFunc = func(
+				context.Context,
+				*cli.Context,
+				*appconfig.Config,
+			) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+				buildCalls.Add(1)
+				return nil, nil, buildStop
+			}
+
+			ctx := newTestCLIContext(t)
+			require.NoError(t, ctx.Set(CLIKubernetes, fmt.Sprintf("%t", tt.kubernetes)))
+			require.NoError(t, ctx.Set(CLIDisableStartupValidate, fmt.Sprintf("%t", tt.disableStartupValidate)))
+			require.NoError(t, ctx.Set(CLIUseFakeGPUs, fmt.Sprintf("%t", tt.useFakeGPUs)))
+
+			err := runDCGMExporter(context.Background(), ctx, nil)
+
+			if tt.wantContinue {
+				require.ErrorIs(t, err, buildStop)
+				assert.Equal(t, int32(1), buildCalls.Load())
+			} else {
+				require.ErrorIs(t, err, tt.initializeError)
+				assert.Zero(t, buildCalls.Load())
+			}
+			assert.Equal(t, tt.wantInitializeCalls, initializeCalls.Load())
+			assert.Equal(t, tt.wantCleanupCalls, cleanupCalls.Load())
+		})
 	}
-
-	err := runDCGMExporter(context.Background(), newTestCLIContext(t), nil)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "missing runtime capability")
-}
-
-func TestRunDCGMExporter_RejectsInvalidGPUBindUnbindPollIntervalBeforeStartup(t *testing.T) {
-	restoreStartupSeams(t)
-	ctx := newTestCLIContext(t)
-	require.NoError(t, ctx.Set(CLIEnableGPUBindUnbindWatch, "true"))
-	require.NoError(t, ctx.Set(CLIGPUBindUnbindPollInterval, "0s"))
-
-	validatePrerequisitesFunc = func() error {
-		t.Fatal("prerequisite validation must not run after config validation fails")
-		return nil
-	}
-	initializeDCGMProviderFunc = func(*appconfig.Config) {
-		t.Fatal("DCGM must not initialize after config validation fails")
-	}
-
-	err := runDCGMExporter(context.Background(), ctx, nil)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid gpu-bind-unbind-poll-interval")
-	assert.Contains(t, err.Error(), "0s")
-	assert.Contains(t, err.Error(), "must be greater than 0")
 }
 
 func TestRunDCGMExporter_InitialRegistryBuildFailure(t *testing.T) {
@@ -1076,8 +1401,9 @@ func TestRunDCGMExporter_InitialRegistryBuildFailure(t *testing.T) {
 	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
 	mock.EXPECT().Cleanup()
 
-	validatePrerequisitesFunc = func() error { return nil }
 	initializeDCGMProviderFunc = func(*appconfig.Config) {}
+	initializeNVMLProviderFunc = func() error { return nil }
+	cleanupNVMLProviderFunc = func() {}
 	buildRegistryFunc = func(context.Context, *cli.Context, *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error) {
 		return nil, nil, errors.New("registry build failed")
 	}
@@ -1098,8 +1424,9 @@ func TestRunDCGMExporter_MetricsServerFailureCleansRegistry(t *testing.T) {
 	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
 	mock.EXPECT().Cleanup()
 
-	validatePrerequisitesFunc = func() error { return nil }
 	initializeDCGMProviderFunc = func(*appconfig.Config) {}
+	initializeNVMLProviderFunc = func() error { return nil }
+	cleanupNVMLProviderFunc = func() {}
 	reg := registry.NewRegistry()
 	buildRegistryFunc = func(context.Context, *cli.Context, *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error) {
 		return reg, topologyManager(), nil
@@ -1361,6 +1688,133 @@ func TestContextToConfigHonorsConfigurationEnvironment(t *testing.T) {
 	assert.Equal(t, appconfig.DeviceOptions{MinorRange: []int{9}}, cfg.GPUDeviceOptions)
 }
 
+func TestContextToConfigMaxConcurrentScrapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		cli     string
+		want    int
+		wantErr string
+	}{
+		{
+			name: "default",
+			want: appconfig.DefaultMaxConcurrentScrapes,
+		},
+		{
+			name: "environment",
+			env:  "32",
+			want: 32,
+		},
+		{
+			name: "CLI",
+			cli:  "24",
+			want: 24,
+		},
+		{
+			name: "CLI overrides environment",
+			env:  "32",
+			cli:  "8",
+			want: 8,
+		},
+		{
+			name: "value above default",
+			cli:  "64",
+			want: 64,
+		},
+		{
+			name:    "zero",
+			cli:     "0",
+			wantErr: CLIMaxConcurrentScrapes,
+		},
+		{
+			name:    "negative",
+			cli:     "-1",
+			wantErr: CLIMaxConcurrentScrapes,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := NewApp("test-version")
+			unsetFlagEnvVars(t, app.Flags)
+			if tt.env != "" {
+				t.Setenv("DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES", tt.env)
+			}
+
+			var cfg *appconfig.Config
+			app.Action = func(c *cli.Context) error {
+				var err error
+				cfg, err = contextToConfig(c)
+				return err
+			}
+
+			args := []string{"dcgm-exporter"}
+			if tt.cli != "" {
+				args = append(args, "--"+CLIMaxConcurrentScrapes+"="+tt.cli)
+			}
+			err := app.Run(args)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, cfg)
+			assert.Equal(t, tt.want, cfg.MaxConcurrentScrapes)
+		})
+	}
+}
+
+// TestContextToConfigEnableExporterMetrics verifies the default, environment, and CLI opt-in contract.
+func TestContextToConfigEnableExporterMetrics(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		cli     string
+		want    bool
+		wantErr bool
+	}{
+		{name: "disabled by default"},
+		{name: "enabled by environment", env: "true", want: true},
+		{name: "enabled by CLI", cli: "true", want: true},
+		{name: "CLI disables over environment", env: "true", cli: "false"},
+		{name: "rejects invalid environment", env: "invalid", wantErr: true},
+		{name: "rejects invalid CLI", cli: "invalid", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := NewApp("test-version")
+			unsetFlagEnvVars(t, app.Flags)
+			if tt.env != "" {
+				t.Setenv("DCGM_EXPORTER_ENABLE_EXPORTER_METRICS", tt.env)
+			}
+
+			var cfg *appconfig.Config
+			app.Action = func(c *cli.Context) error {
+				var err error
+				cfg, err = contextToConfig(c)
+				return err
+			}
+
+			args := []string{"dcgm-exporter"}
+			if tt.cli != "" {
+				args = append(args, "--"+CLIEnableExporterMetrics+"="+tt.cli)
+			}
+			err := app.Run(args)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, cfg)
+			assert.Equal(t, tt.want, cfg.EnableExporterMetrics)
+		})
+	}
+}
+
 func TestParseDuration(t *testing.T) {
 	assert.Equal(t, 3*time.Second, parseDuration("", 3*time.Second))
 	assert.Equal(t, 250*time.Millisecond, parseDuration("250ms", time.Second))
@@ -1490,9 +1944,9 @@ func TestNewOSWatcher(t *testing.T) {
 
 func restoreStartupSeams(t *testing.T) {
 	t.Helper()
-	prevValidatePrerequisites := validatePrerequisitesFunc
 	prevInitializeDCGMProvider := initializeDCGMProviderFunc
 	prevInitializeNVMLProvider := initializeNVMLProviderFunc
+	prevCleanupNVMLProvider := cleanupNVMLProviderFunc
 	prevBuildRegistry := buildRegistryFunc
 	prevGetCounters := getCountersFunc
 	prevStartWatchListManager := startWatchListManagerFunc
@@ -1502,9 +1956,9 @@ func restoreStartupSeams(t *testing.T) {
 	prevNewFileWatcher := newFileWatcherFunc
 	prevNewGPUBindUnbindWatcher := newGPUBindUnbindWatcherFunc
 	t.Cleanup(func() {
-		validatePrerequisitesFunc = prevValidatePrerequisites
 		initializeDCGMProviderFunc = prevInitializeDCGMProvider
 		initializeNVMLProviderFunc = prevInitializeNVMLProvider
+		cleanupNVMLProviderFunc = prevCleanupNVMLProvider
 		buildRegistryFunc = prevBuildRegistry
 		getCountersFunc = prevGetCounters
 		startWatchListManagerFunc = prevStartWatchListManager
@@ -1616,11 +2070,8 @@ func TestRunDCGMExporter_HotReloadAndShutdown(t *testing.T) {
 		return registry.NewRegistry(), topologyManager(), nil
 	}
 	initializeDCGMProviderFunc = func(*appconfig.Config) {}
-	validatePrerequisitesFunc = func() error {
-		t.Fatal("startup validation should be disabled for this lifecycle test")
-		return nil
-	}
-
+	initializeNVMLProviderFunc = func() error { return nil }
+	cleanupNVMLProviderFunc = func() {}
 	ctx := newTestCLIContext(t)
 	require.NoError(t, ctx.Set(CLIFieldsFile, countersFile))
 	require.NoError(t, ctx.Set(CLIDisableStartupValidate, "true"))
@@ -1643,6 +2094,123 @@ func TestRunDCGMExporter_HotReloadAndShutdown(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("exporter did not shut down after SIGTERM")
+	}
+}
+
+func TestRunDCGMExporter_ShutdownCleansCurrentNVMLClient(t *testing.T) {
+	tests := []struct {
+		name       string
+		kubernetes bool
+	}{
+		{name: "non-Kubernetes"},
+		{name: "Kubernetes", kubernetes: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restoreStartupSeams(t)
+			ctrl := gomock.NewController(t)
+
+			originalNVML := nvmlprovider.Client()
+			t.Cleanup(func() { nvmlprovider.SetClient(originalNVML) })
+			initialNVML := mocknvmlprovider.NewMockNVML(ctrl)
+			currentNVML := mocknvmlprovider.NewMockNVML(ctrl)
+			initialNVML.EXPECT().Cleanup().Times(0)
+			currentNVML.EXPECT().Cleanup().Times(1)
+			nvmlprovider.SetClient(initialNVML)
+
+			mock := withMockDCGMClient(t)
+			mock.EXPECT().
+				GetSupportedMetricGroups(uint(0)).
+				Return(nil, errors.New("profiling unsupported"))
+			mock.EXPECT().Cleanup()
+
+			var buildCalls atomic.Int32
+			buildRegistryFunc = func(
+				context.Context,
+				*cli.Context,
+				*appconfig.Config,
+			) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+				buildCalls.Add(1)
+				return registry.NewRegistry(), topologyManager(), nil
+			}
+			initializeDCGMProviderFunc = func(*appconfig.Config) {}
+			initializeNVMLProviderFunc = func() error { return nil }
+
+			ctx := newTestCLIContext(t)
+			require.NoError(t, ctx.Set(CLIDisableStartupValidate, "true"))
+			require.NoError(t, ctx.Set(CLIKubernetes, fmt.Sprintf("%t", tt.kubernetes)))
+			require.NoError(t, ctx.Set(CLIAddress, "127.0.0.1:0"))
+
+			lifecycleCtx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() {
+				done <- runDCGMExporter(lifecycleCtx, ctx, nil)
+			}()
+
+			require.Eventually(t, func() bool {
+				return buildCalls.Load() == 1
+			}, 2*time.Second, 10*time.Millisecond)
+			nvmlprovider.SetClient(currentNVML)
+			cancel()
+
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(3 * time.Second):
+				t.Fatal("exporter did not shut down")
+			}
+		})
+	}
+}
+
+func TestRunDCGMExporter_ShutdownCleansCurrentDCGMClient(t *testing.T) {
+	restoreStartupSeams(t)
+	ctrl := gomock.NewController(t)
+
+	originalDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(originalDCGM) })
+	initialDCGM := mockdcgmprovider.NewMockDCGM(ctrl)
+	currentDCGM := mockdcgmprovider.NewMockDCGM(ctrl)
+	initialDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
+	initialDCGM.EXPECT().Cleanup().Times(0)
+	currentDCGM.EXPECT().Cleanup().Times(1)
+	dcgmprovider.SetClient(initialDCGM)
+
+	var buildCalls atomic.Int32
+	buildRegistryFunc = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		buildCalls.Add(1)
+		return registry.NewRegistry(), topologyManager(), nil
+	}
+	initializeDCGMProviderFunc = func(*appconfig.Config) {}
+	initializeNVMLProviderFunc = func() error { return nil }
+	cleanupNVMLProviderFunc = func() {}
+
+	ctx := newTestCLIContext(t)
+	require.NoError(t, ctx.Set(CLIDisableStartupValidate, "true"))
+	require.NoError(t, ctx.Set(CLIAddress, "127.0.0.1:0"))
+
+	lifecycleCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runDCGMExporter(lifecycleCtx, ctx, nil)
+	}()
+
+	require.Eventually(t, func() bool {
+		return buildCalls.Load() == 1
+	}, 2*time.Second, 10*time.Millisecond)
+	dcgmprovider.SetClient(currentDCGM)
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("exporter did not shut down")
 	}
 }
 
@@ -1701,43 +2269,22 @@ func TestGetCountersCopiesLabelCounters(t *testing.T) {
 	assert.Equal(t, "DCGM_FI_DRIVER_VERSION", got.ExporterCounters[0].FieldName)
 }
 
-func TestGPUWatcherLifecycle(t *testing.T) {
-	mock := withMockDCGMClient(t)
-	mock.EXPECT().
-		FieldGroupCreate(gomock.Any(), gomock.Any()).
-		Return(dcgm.FieldHandle{}, errors.New("NVML doesn't exist")).
-		AnyTimes()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	controller := newGPUWatcherLifecycle(ctx, func() *watcher.GPUBindUnbindWatcher {
-		return watcher.NewGPUBindUnbindWatcher(watcher.WithPollInterval(time.Millisecond))
-	}, func() {
-		t.Fatal("NVML unavailable path should not report topology changes")
-	})
-
-	var wg sync.WaitGroup
-	runGPUWatcher(controller, &wg)
-	require.Eventually(t, func() bool {
-		controller.mu.Lock()
-		defer controller.mu.Unlock()
-		return controller.cancel != nil
-	}, time.Second, 10*time.Millisecond)
-
-	controller.Start()
-	cancel()
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("GPU watcher lifecycle did not stop after context cancel")
+func TestReloadEventForGPUState(t *testing.T) {
+	tests := []struct {
+		state dcgm.BindUnbindEventState
+		want  reloadEvent
+		ok    bool
+	}{
+		{state: dcgm.DcgmBUEventStateSystemReinitializing, want: evNone, ok: false},
+		{state: dcgm.DcgmBUEventStateSystemReinitializationCompleted, want: evGPUReinitialized, ok: true},
+		{state: dcgm.BindUnbindEventState(99), want: evNone, ok: false},
 	}
 
-	controller.Stop()
-	controller.Start()
+	for _, tt := range tests {
+		got, ok := reloadEventForGPUState(tt.state)
+		assert.Equal(t, tt.want, got)
+		assert.Equal(t, tt.ok, ok)
+	}
 }
 
 func sampleMetricGroups() []dcgm.MetricGroup {
@@ -1749,13 +2296,17 @@ func sampleMetricGroups() []dcgm.MetricGroup {
 
 // newTestCoordinator builds a coordinator backed by a zero-value
 // *server.MetricsServer (sufficient for SetReloadInProgress/IsReloadInProgress)
-// and a minimal cli.Context that contextToConfig accepts. Real apply functions
-// would need fuller DCGM/NVML state; tests that drive handle() through the
-// coordinator therefore inject their own applyConfigReload / applyTopologyChange
-// stubs.
+// and a minimal cli.Context. Tests replace only the dependency seam relevant to the behavior under test.
 func newTestCoordinator(t *testing.T) *reloadCoordinator {
 	t.Helper()
-	coord := newReloadCoordinator(newTestCLIContext(t), func() {})
+	coord := newReloadCoordinator(newTestCLIContext(t))
+	coord.cleanupDCGM = func() {}
+	coord.initializeDCGM = func(*appconfig.Config) {}
+	coord.cleanupNVML = func() {}
+	coord.initializeNVML = func() error { return nil }
+	coord.scheduleRetry = func(context.Context, time.Duration, func()) context.CancelFunc {
+		return func() {}
+	}
 	cfg, err := defaultConfig()
 	require.NoError(t, err)
 	coord.reloadConfig = cfg.Clone()
@@ -1774,6 +2325,8 @@ func newTestCLIContext(t *testing.T) *cli.Context {
 		&cli.StringFlag{Name: CLIFieldsFile},
 		&cli.StringFlag{Name: CLIAddress},
 		&cli.IntFlag{Name: CLICollectInterval},
+		&cli.DurationFlag{Name: CLIWatchMaxKeepAge},
+		&cli.Int64Flag{Name: CLIWatchMaxKeepSamples},
 		&cli.StringFlag{Name: CLIConfigMapData},
 		&cli.StringFlag{Name: CLIGPUDevices},
 		&cli.StringFlag{Name: CLISwitchDevices},
@@ -1784,17 +2337,19 @@ func newTestCLIContext(t *testing.T) *cli.Context {
 		&cli.BoolFlag{Name: CLIDisableStartupValidate},
 		&cli.BoolFlag{Name: CLIKubernetes},
 		&cli.BoolFlag{Name: CLIKubernetesVirtualGPUs},
+		&cli.BoolFlag{Name: CLIUseFakeGPUs},
 		&cli.BoolFlag{Name: CLIContainerLabels},
 		&cli.StringFlag{Name: CLIContainerRuntimeSocket},
 		&cli.BoolFlag{Name: CLIDumpEnabled},
 		&cli.StringFlag{Name: CLIDumpDirectory},
 		&cli.IntFlag{Name: CLIDumpRetention},
 		&cli.BoolFlag{Name: CLIDumpCompression},
-		&cli.BoolFlag{Name: CLIEnableGPUBindUnbindWatch},
-		&cli.StringFlag{Name: CLIGPUBindUnbindPollInterval},
 		&cli.StringFlag{Name: CLIWebReadTimeout},
 		&cli.StringFlag{Name: CLIWebWriteTimeout},
+		&cli.BoolFlag{Name: CLIEnableExporterMetrics},
 		&cli.StringFlag{Name: CLIWebConfigFile},
+		&cli.BoolFlag{Name: CLIEnableGPUBindUnbindWatch},
+		&cli.StringFlag{Name: CLIGPUBindUnbindPollInterval},
 		&cli.BoolFlag{Name: CLIEnablePprof},
 	}
 	set := flag.NewFlagSet("test", 0)
@@ -1802,6 +2357,8 @@ func newTestCLIContext(t *testing.T) *cli.Context {
 	set.String(CLIConfigFile, "", "")
 	set.String(CLIAddress, "127.0.0.1:0", "")
 	set.Int(CLICollectInterval, 1, "")
+	set.Duration(CLIWatchMaxKeepAge, appconfig.DefaultWatchMaxKeepAge, "")
+	set.Int64(CLIWatchMaxKeepSamples, appconfig.DefaultWatchMaxSamples, "")
 	set.String(CLIConfigMapData, undefinedConfigMapData, "")
 	set.String(CLIGPUDevices, "f", "")
 	set.String(CLISwitchDevices, "f", "")
@@ -1812,19 +2369,35 @@ func newTestCLIContext(t *testing.T) *cli.Context {
 	set.Bool(CLIDisableStartupValidate, false, "")
 	set.Bool(CLIKubernetes, false, "")
 	set.Bool(CLIKubernetesVirtualGPUs, false, "")
+	set.Bool(CLIUseFakeGPUs, false, "")
 	set.Bool(CLIContainerLabels, false, "")
 	set.String(CLIContainerRuntimeSocket, "", "")
 	set.Bool(CLIDumpEnabled, false, "")
 	set.String(CLIDumpDirectory, "/tmp/dcgm-exporter-debug", "")
 	set.Int(CLIDumpRetention, 24, "")
 	set.Bool(CLIDumpCompression, true, "")
-	set.Bool(CLIEnableGPUBindUnbindWatch, false, "")
-	set.String(CLIGPUBindUnbindPollInterval, "1s", "")
 	set.String(CLIWebReadTimeout, appconfig.DefaultWebReadTimeout.String(), "")
 	set.String(CLIWebWriteTimeout, appconfig.DefaultWebWriteTimeout.String(), "")
+	set.Int(CLIMaxConcurrentScrapes, appconfig.DefaultMaxConcurrentScrapes, "")
+	set.Bool(CLIEnableExporterMetrics, false, "")
 	set.String(CLIWebConfigFile, "", "")
+	set.Bool(CLIEnableGPUBindUnbindWatch, false, "")
+	set.String(CLIGPUBindUnbindPollInterval, time.Second.String(), "")
 	set.Bool(CLIEnablePprof, false, "")
 	return cli.NewContext(app, set, nil)
+}
+
+func setGPUBindUnbindTestConfig(t *testing.T, ctx *cli.Context) {
+	t.Helper()
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 1
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: true
+`), 0o600))
+	require.NoError(t, ctx.Set(CLIConfigFile, configFile))
 }
 
 func unsetFlagEnvVars(t *testing.T, flags []cli.Flag) {
@@ -1878,7 +2451,7 @@ func newInvalidTestCLIContext(t *testing.T) *cli.Context {
 }
 
 func TestBuildReloadConfigRequiresStartupSnapshot(t *testing.T) {
-	coord := newReloadCoordinator(newTestCLIContext(t), func() {})
+	coord := newReloadCoordinator(newTestCLIContext(t))
 
 	cfg, err := coord.buildReloadConfig()
 
@@ -2027,22 +2600,6 @@ func (fakeMetricCollector) GetMetrics() (collector.MetricsByCounter, error) {
 }
 
 func (fakeMetricCollector) Cleanup() {}
-
-type fakeGPUWatcherLifecycle struct {
-	startCalls atomic.Int32
-	stopCalls  atomic.Int32
-	running    atomic.Bool
-}
-
-func (f *fakeGPUWatcherLifecycle) Start() {
-	f.startCalls.Add(1)
-	f.running.Store(true)
-}
-
-func (f *fakeGPUWatcherLifecycle) Stop() {
-	f.stopCalls.Add(1)
-	f.running.Store(false)
-}
 
 // TestPopulateRegistry_CallsNewCollectorsOnce ensures each registry calls
 // NewCollectors once. Extra calls install field watches on collectors that are
@@ -2202,10 +2759,7 @@ func TestBuildRegistryReturnsWatchListManagerError(t *testing.T) {
 
 // ---- Reload coordinator tests ----
 
-// runCoordinator starts coord.Run in a goroutine and returns a cleanup func
-// that cancels it and waits for exit. Test-body code Triggers events on coord
-// and the coordinator drains them in Run.
-func runCoordinator(t *testing.T, coord *reloadCoordinator) context.CancelFunc {
+func runCoordinator(t *testing.T, coord *reloadCoordinator) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -2218,196 +2772,756 @@ func runCoordinator(t *testing.T, coord *reloadCoordinator) context.CancelFunc {
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
-			t.Fatal("coordinator did not exit after context cancel")
+			t.Fatal("coordinator did not exit after context cancellation")
 		}
 	})
-	return cancel
 }
 
-// TestReloadCoordinator_CoalescesBurstOfSameEvent verifies that a burst of
-// identical events enqueued before Run drains yields a single apply call.
-func TestReloadCoordinator_CoalescesBurstOfSameEvent(t *testing.T) {
-	coord := newTestCoordinator(t)
-
-	var configCalls atomic.Int32
-	done := make(chan struct{})
-	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
-		if configCalls.Add(1) == 1 {
-			close(done)
-		}
-	}
-	coord.applyTopologyChange = func(context.Context, uint64) {
-		t.Fatal("topology apply must not run for a config-only burst")
-	}
-
-	// Trigger several events before starting Run — all should collapse into
-	// one mailbox value.
-	for i := 0; i < 10; i++ {
-		coord.Trigger(evConfigChanged)
-	}
-
-	runCoordinator(t, coord)
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("coordinator did not process the coalesced event")
-	}
-
-	// Give the coordinator a moment to race into a second call if it were going to.
-	time.Sleep(20 * time.Millisecond)
-	assert.Equal(t, int32(1), configCalls.Load(),
-		"identical events must coalesce into exactly one apply")
+type cleanupTrackingCollector struct {
+	cleanup func()
 }
 
-// TestReloadCoordinator_TopologyDominatesConfigBurst pins the explicit
-// regression for the reviewer's "stronger event lost behind weaker burst"
-// concern: Triggering N config events followed by one topology event must
-// yield exactly one topology apply and zero config applies.
-func TestReloadCoordinator_TopologyDominatesConfigBurst(t *testing.T) {
-	coord := newTestCoordinator(t)
-
-	var topoCalls atomic.Int32
-	done := make(chan struct{})
-	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
-		t.Fatal("config apply must not run when topology dominates the burst")
-	}
-	coord.applyTopologyChange = func(context.Context, uint64) {
-		if topoCalls.Add(1) == 1 {
-			close(done)
-		}
-	}
-
-	// Fire a bunch of config events, then upgrade to topology. All this
-	// happens before Run starts — so the mailbox sees the CAS-upgrade
-	// sequence and ends holding evTopologyChanged.
-	for i := 0; i < 50; i++ {
-		coord.Trigger(evConfigChanged)
-	}
-	coord.Trigger(evTopologyChanged)
-
-	runCoordinator(t, coord)
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("coordinator did not process the dominating topology event")
-	}
-	time.Sleep(20 * time.Millisecond)
-	assert.Equal(t, int32(1), topoCalls.Load())
+// trackingGPUWatcherLifecycle records lifecycle calls made by the coordinator.
+type trackingGPUWatcherLifecycle struct {
+	start func()
+	stop  func()
 }
 
-// TestReloadCoordinator_TopologyDuringActiveHandlerIsNotDropped is the load-
-// bearing behaviour from the pre-refactor design: a topology event arriving
-// while a config reload is running must be processed afterward. With the
-// mailbox coordinator this happens without a rate limiter to defeat.
-func TestReloadCoordinator_TopologyDuringActiveHandlerIsNotDropped(t *testing.T) {
+// Start records a watcher start when the test configured one.
+func (w trackingGPUWatcherLifecycle) Start(context.Context) error {
+	if w.start != nil {
+		w.start()
+	}
+	return nil
+}
+
+// Stop records a watcher stop when the test configured one.
+func (w trackingGPUWatcherLifecycle) Stop() {
+	if w.stop != nil {
+		w.stop()
+	}
+}
+
+type scriptedGPUWatcherLifecycle struct {
+	startErrors []error
+	starts      int
+	stops       int
+}
+
+func (w *scriptedGPUWatcherLifecycle) Start(context.Context) error {
+	w.starts++
+	if w.starts <= len(w.startErrors) {
+		return w.startErrors[w.starts-1]
+	}
+	return nil
+}
+
+func (w *scriptedGPUWatcherLifecycle) Stop() {
+	w.stops++
+}
+
+func (*cleanupTrackingCollector) GetMetrics() (collector.MetricsByCounter, error) {
+	return collector.MetricsByCounter{}, nil
+}
+
+func (c *cleanupTrackingCollector) Cleanup() {
+	c.cleanup()
+}
+
+func registryWithCleanup(cleanup func()) *registry.Registry {
+	tuple := collector.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	tuple.SetCollector(&cleanupTrackingCollector{cleanup: cleanup})
+	r := registry.NewRegistry()
+	r.Register(tuple)
+	return r
+}
+
+func TestReloadCoordinator_PendingReloadPreservesLatestGPUState(t *testing.T) {
 	coord := newTestCoordinator(t)
-
-	configStarted := make(chan struct{})
-	configBlock := make(chan struct{})
-	topoDone := make(chan struct{})
-
-	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
-		close(configStarted)
-		<-configBlock // block until the test releases us
-	}
-	coord.applyTopologyChange = func(context.Context, uint64) {
-		close(topoDone)
-	}
-
-	runCoordinator(t, coord)
 
 	coord.Trigger(evConfigChanged)
+	coord.Trigger(evGPUReinitialized)
 
-	// Wait until the config apply is mid-flight.
-	select {
-	case <-configStarted:
-	case <-time.After(2 * time.Second):
-		t.Fatal("config apply did not start")
-	}
-
-	// Topology event arrives while the config handler is running.
-	coord.Trigger(evTopologyChanged)
-
-	// Release the config handler. Coordinator should now pick up the queued
-	// topology event from the mailbox.
-	close(configBlock)
-
-	select {
-	case <-topoDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("topology event queued during active handler was never processed")
-	}
+	pending := coord.takePending()
+	assert.True(t, pending.configChanged)
+	assert.Equal(t, evGPUReinitialized, pending.latestGPUEvent)
+	assert.True(t, coord.takePending().empty())
 }
 
-// TestReloadCoordinator_StartupSeedsDCPForFirstHotReload pins the startup-
-// seeding invariant: queryDCPMetrics called before any reload populates
-// coord.dcp so the first buildReloadConfig produces a cfg with the seeded
-// MetricGroups.
-func TestReloadCoordinator_StartupSeedsDCPForFirstHotReload(t *testing.T) {
-	mock := withMockDCGMClient(t)
-	groups := sampleMetricGroups()
-	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groups, nil)
-	mock.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no gpus")).AnyTimes()
-
+func TestReloadCoordinator_CoalescesBurstOfConfigChanged(t *testing.T) {
 	coord := newTestCoordinator(t)
-	// Seed exactly as runDCGMExporter does at startup.
-	coord.queryDCPMetrics(&appconfig.Config{CollectDCP: true}, 0)
-
-	cfg, err := coord.buildReloadConfig()
-	require.NoError(t, err)
-
-	assert.True(t, cfg.CollectDCP,
-		"first reload after startup sees CollectDCP=true from the seeded snapshot")
-	assert.Equal(t, groups, cfg.MetricGroups,
-		"first reload after startup sees the seeded MetricGroups")
-}
-
-// TestReloadCoordinator_SurvivesHandlerPanic verifies that a panic in an
-// apply handler is recovered inside handle() and the coordinator processes
-// the next event normally.
-func TestReloadCoordinator_SurvivesHandlerPanic(t *testing.T) {
-	coord := newTestCoordinator(t)
-
-	var topoCalls atomic.Int32
-	okDone := make(chan struct{})
-	coord.applyTopologyChange = func(context.Context, uint64) {
-		n := topoCalls.Add(1)
-		if n == 1 {
-			panic("synthetic handler panic")
+	var calls atomic.Int32
+	applied := make(chan struct{})
+	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
+		if calls.Add(1) == 1 {
+			close(applied)
 		}
-		close(okDone)
 	}
 
+	for range 50 {
+		coord.Trigger(evConfigChanged)
+	}
 	runCoordinator(t, coord)
 
-	// First event: panics, is recovered.
-	coord.Trigger(evTopologyChanged)
-
-	// Wait until the first handler call has actually happened — otherwise
-	// the second Trigger could coalesce with the first.
-	require.Eventually(t, func() bool { return topoCalls.Load() >= 1 },
-		2*time.Second, 5*time.Millisecond, "first handler did not run")
-
-	// Second event: should be processed normally, proving the coordinator
-	// outlived the panic.
-	coord.Trigger(evTopologyChanged)
-
 	select {
-	case <-okDone:
+	case <-applied:
 	case <-time.After(2 * time.Second):
-		t.Fatal("coordinator did not process a second event after a handler panic")
+		t.Fatal("coalesced config event was not delivered")
 	}
-	assert.Equal(t, int32(2), topoCalls.Load())
+	assert.Equal(t, int32(1), calls.Load())
 }
 
-// TestReloadCoordinator_ShutsDownOnContextCancel verifies that Run returns
-// promptly when its context is cancelled. runCoordinator's cleanup asserts
-// this directly; this test makes the contract explicit.
+func TestReloadCoordinator_DRAResourceSliceChangeUsesRegistryReload(t *testing.T) {
+	coord := newTestCoordinator(t)
+	initialRegistry := registry.NewRegistry()
+	coord.server.SetRegistry(initialRegistry)
+
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		builds.Add(1)
+		return registry.NewRegistry(), topologyManager(), nil
+	}
+	coord.cleanupDCGM = func() { t.Fatal("DRA topology reload must not reset DCGM") }
+	coord.cleanupNVML = func() { t.Fatal("DRA topology reload must not reset NVML") }
+
+	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
+		t.Fatal("a coalesced DRA event must use the outcome-aware registry reload path")
+	}
+	coord.Trigger(evConfigChanged)
+	coord.Trigger(evDRAResourceSliceChanged)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, int32(1), builds.Load())
+	assert.NotSame(t, initialRegistry, coord.server.GetRegistry())
+}
+
+func TestReloadCoordinator_DRAResourceSliceChangeRetriesFailedRegistryBuild(t *testing.T) {
+	coord := newTestCoordinator(t)
+	initialRegistry := registry.NewRegistry()
+	refreshedRegistry := registry.NewRegistry()
+	coord.server.SetRegistry(initialRegistry)
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		if builds.Add(1) == 1 {
+			return nil, nil, errors.New("registry build failed")
+		}
+		return refreshedRegistry, topologyManager(), nil
+	}
+	coord.cleanupDCGM = func() { t.Fatal("DRA topology reload must not reset DCGM") }
+	coord.cleanupNVML = func() { t.Fatal("DRA topology reload must not reset NVML") }
+
+	coord.Trigger(evConfigChanged)
+	coord.Trigger(evDRAResourceSliceChanged)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Same(t, initialRegistry, coord.server.GetRegistry())
+	pending := coord.takePending()
+	assert.Equal(t, evDRAResourceSliceRetry, pending.draResourceSliceEvent)
+
+	coord.handlePending(context.Background(), pending)
+
+	assert.Equal(t, int32(2), builds.Load(), "the failed DRA reload must be replayed once")
+	assert.Same(t, refreshedRegistry, coord.server.GetRegistry())
+	assert.True(t, coord.takePending().empty(), "a successful retry must not leave more DRA work pending")
+}
+
+func TestReloadCoordinator_DRAResourceSliceChangeRetryIsBounded(t *testing.T) {
+	coord := newTestCoordinator(t)
+	initialRegistry := registry.NewRegistry()
+	coord.server.SetRegistry(initialRegistry)
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		builds.Add(1)
+		return nil, nil, errors.New("registry build failed")
+	}
+
+	coord.Trigger(evDRAResourceSliceChanged)
+	coord.handlePending(context.Background(), coord.takePending())
+	pending := coord.takePending()
+	require.Equal(t, evDRAResourceSliceRetry, pending.draResourceSliceEvent)
+
+	coord.handlePending(context.Background(), pending)
+
+	assert.Equal(t, int32(2), builds.Load(), "one notification permits one retry")
+	assert.Same(t, initialRegistry, coord.server.GetRegistry(), "both failed builds must preserve the last-good registry")
+	assert.True(t, coord.takePending().empty(), "a failed retry must not schedule another retry")
+}
+
+func TestReloadCoordinator_DRAResourceSliceChangeRetriesAfterPanic(t *testing.T) {
+	coord := newTestCoordinator(t)
+	initialRegistry := registry.NewRegistry()
+	refreshedRegistry := registry.NewRegistry()
+	coord.server.SetRegistry(initialRegistry)
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		if builds.Add(1) == 1 {
+			panic("synthetic DRA registry build panic")
+		}
+		return refreshedRegistry, topologyManager(), nil
+	}
+
+	coord.Trigger(evDRAResourceSliceChanged)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Same(t, initialRegistry, coord.server.GetRegistry())
+	pending := coord.takePending()
+	require.Equal(t, evDRAResourceSliceRetry, pending.draResourceSliceEvent)
+
+	coord.handlePending(context.Background(), pending)
+
+	assert.Equal(t, int32(2), builds.Load())
+	assert.Same(t, refreshedRegistry, coord.server.GetRegistry())
+	assert.False(t, coord.server.IsReloadInProgress())
+	assert.True(t, coord.takePending().empty(), "a successful panic retry must not leave more DRA work pending")
+}
+
+// TestReloadCoordinator_CoalescedLifecycleResetsProvidersOnce checks the full reset order.
+func TestReloadCoordinator_CoalescedLifecycleResetsProvidersOnce(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	var order []string
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		DoAndReturn(func(uint) ([]dcgm.MetricGroup, error) {
+			order = append(order, "dcp")
+			return nil, errors.New("profiling unavailable")
+		})
+
+	coord := newTestCoordinator(t)
+	coord.server.SetRegistry(registryWithCleanup(func() {
+		order = append(order, "registry-cleanup")
+	}))
+	coord.gpuWatcher = trackingGPUWatcherLifecycle{
+		stop:  func() { order = append(order, "watcher-stop") },
+		start: func() { order = append(order, "watcher-start") },
+	}
+	coord.cleanupNVML = func() { order = append(order, "nvml-cleanup") }
+	coord.cleanupDCGM = func() { order = append(order, "dcgm-cleanup") }
+	coord.initializeDCGM = func(*appconfig.Config) { order = append(order, "dcgm-init") }
+	coord.initializeNVML = func() error {
+		order = append(order, "nvml-init")
+		return nil
+	}
+	newRegistry := registry.NewRegistry()
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		order = append(order, "build")
+		return newRegistry, topologyManager(), nil
+	}
+	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
+		t.Fatal("lifecycle reset must consume a coalesced config reload")
+	}
+
+	coord.Trigger(evConfigChanged)
+	coord.Trigger(evDRAResourceSliceChanged)
+	coord.Trigger(evGPUReinitialized)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, []string{
+		"watcher-stop",
+		"registry-cleanup",
+		"nvml-cleanup",
+		"dcgm-cleanup",
+		"dcgm-init",
+		"watcher-start",
+		"nvml-init",
+		"dcp",
+		"build",
+	}, order)
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+}
+
+// TestReloadCoordinator_RetriesFailedRegistryBuildWithoutAnotherEvent checks self-recovery.
+func TestReloadCoordinator_RetriesFailedRegistryBuildWithoutAnotherEvent(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable"))
+
+	coord := newTestCoordinator(t)
+	var retry func()
+	var retryDelays []time.Duration
+	coord.scheduleRetry = func(_ context.Context, delay time.Duration, callback func()) context.CancelFunc {
+		retryDelays = append(retryDelays, delay)
+		retry = callback
+		return func() {}
+	}
+	coord.server.SetRegistry(registry.NewRegistry())
+	newRegistry := registry.NewRegistry()
+	var builds atomic.Int32
+	var cleanups atomic.Int32
+	coord.cleanupNVML = func() { cleanups.Add(1) }
+	coord.cleanupDCGM = func() { cleanups.Add(1) }
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		if builds.Add(1) <= 2 {
+			return nil, nil, errors.New("registry build failed")
+		}
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.Trigger(evGPUReinitialized)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, int32(1), builds.Load())
+	assert.Equal(t, gpuRecoveryBuildRegistry, coord.gpuRecoveryStage)
+	assert.True(t, coord.server.IsReloadInProgress())
+	require.NotNil(t, retry)
+	retry()
+	coord.handlePending(context.Background(), coord.takePending())
+	assert.Equal(t, int32(2), builds.Load())
+	require.NotNil(t, retry)
+	retry()
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, int32(3), builds.Load())
+	assert.Equal(t, int32(2), cleanups.Load(), "a registry retry must not repeat provider teardown")
+	assert.Equal(t, []time.Duration{time.Second, 2 * time.Second}, retryDelays)
+	assert.Equal(t, gpuRecoveryIdle, coord.gpuRecoveryStage)
+	assert.False(t, coord.server.IsReloadInProgress())
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+}
+
+func TestReloadCoordinator_RetriesRegistryBuildAfterPanic(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable"))
+
+	coord := newTestCoordinator(t)
+	coord.server.SetRegistry(registry.NewRegistry())
+	var retry func()
+	var retryDelays []time.Duration
+	coord.scheduleRetry = func(_ context.Context, delay time.Duration, callback func()) context.CancelFunc {
+		retryDelays = append(retryDelays, delay)
+		retry = callback
+		return func() {}
+	}
+	var providerCleanups atomic.Int32
+	coord.cleanupNVML = func() { providerCleanups.Add(1) }
+	coord.cleanupDCGM = func() { providerCleanups.Add(1) }
+	newRegistry := registry.NewRegistry()
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		if builds.Add(1) == 1 {
+			panic("synthetic registry build panic")
+		}
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.handle(context.Background(), evGPUReinitialized)
+
+	assert.Equal(t, gpuRecoveryBuildRegistry, coord.gpuRecoveryStage)
+	assert.True(t, coord.server.IsReloadInProgress())
+	require.NotNil(t, retry, "a recovered panic must leave one retry pending")
+	retry()
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, int32(2), builds.Load())
+	assert.Equal(t, int32(2), providerCleanups.Load(), "a panic retry must not repeat provider teardown")
+	assert.Equal(t, []time.Duration{time.Second}, retryDelays)
+	assert.Equal(t, gpuRecoveryIdle, coord.gpuRecoveryStage)
+	assert.False(t, coord.server.IsReloadInProgress())
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+}
+
+func TestReloadCoordinator_RetriesWatcherStartAfterPanic(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable"))
+
+	coord := newTestCoordinator(t)
+	coord.server.SetRegistry(registry.NewRegistry())
+	var retry func()
+	coord.scheduleRetry = func(_ context.Context, delay time.Duration, callback func()) context.CancelFunc {
+		assert.Equal(t, time.Second, delay)
+		retry = callback
+		return func() {}
+	}
+	var watcherStarts atomic.Int32
+	coord.gpuWatcher = trackingGPUWatcherLifecycle{
+		start: func() {
+			if watcherStarts.Add(1) == 1 {
+				panic("synthetic watcher start panic")
+			}
+		},
+	}
+	var providerCleanups atomic.Int32
+	coord.cleanupNVML = func() { providerCleanups.Add(1) }
+	coord.cleanupDCGM = func() { providerCleanups.Add(1) }
+	newRegistry := registry.NewRegistry()
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.handle(context.Background(), evGPUReinitialized)
+
+	assert.Equal(t, gpuRecoveryRestartWatcher, coord.gpuRecoveryStage)
+	assert.True(t, coord.server.IsReloadInProgress())
+	require.NotNil(t, retry, "a watcher panic must leave one retry pending")
+	retry()
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, int32(2), watcherStarts.Load())
+	assert.Equal(t, int32(2), providerCleanups.Load(), "a watcher panic retry must not repeat provider teardown")
+	assert.Equal(t, gpuRecoveryIdle, coord.gpuRecoveryStage)
+	assert.False(t, coord.server.IsReloadInProgress())
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+}
+
+func TestReloadCoordinator_RetriesGPUWatcherRegistrationAfterProviderReset(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable"))
+
+	coord := newTestCoordinator(t)
+	coord.server.SetRegistry(registry.NewRegistry())
+	gpuWatcher := &scriptedGPUWatcherLifecycle{startErrors: []error{context.DeadlineExceeded}}
+	coord.gpuWatcher = gpuWatcher
+	var providerCleanups atomic.Int32
+	coord.cleanupNVML = func() { providerCleanups.Add(1) }
+	coord.cleanupDCGM = func() { providerCleanups.Add(1) }
+	var retry func()
+	var retryDelays []time.Duration
+	coord.scheduleRetry = func(_ context.Context, delay time.Duration, callback func()) context.CancelFunc {
+		retryDelays = append(retryDelays, delay)
+		retry = callback
+		return func() {}
+	}
+	newRegistry := registry.NewRegistry()
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.doGPULifecycleReset(context.Background(), 1)
+
+	assert.Equal(t, 1, gpuWatcher.stops)
+	assert.Equal(t, 1, gpuWatcher.starts)
+	assert.Equal(t, gpuRecoveryRestartWatcher, coord.gpuRecoveryStage)
+	require.NotNil(t, retry)
+	retry()
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, 2, gpuWatcher.starts)
+	assert.Equal(t, int32(2), providerCleanups.Load(), "a watcher retry must not repeat provider teardown")
+	assert.Equal(t, []time.Duration{time.Second}, retryDelays)
+	assert.Equal(t, gpuRecoveryIdle, coord.gpuRecoveryStage)
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+}
+
+func TestReloadCoordinator_NewLifecycleSupersedesQueuedRecoveryRetry(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable")).
+		Times(2)
+
+	coord := newTestCoordinator(t)
+	var retry func()
+	var retryCanceled atomic.Int32
+	coord.scheduleRetry = func(_ context.Context, _ time.Duration, callback func()) context.CancelFunc {
+		retry = callback
+		return func() { retryCanceled.Add(1) }
+	}
+	newRegistry := registry.NewRegistry()
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		if builds.Add(1) == 1 {
+			return nil, nil, errors.New("registry build failed")
+		}
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.Trigger(evGPUReinitialized)
+	coord.handlePending(context.Background(), coord.takePending())
+	require.NotNil(t, retry)
+	retry()
+	coord.Trigger(evGPUReinitialized)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	assert.Equal(t, int32(2), builds.Load())
+	assert.Positive(t, retryCanceled.Load())
+	assert.Equal(t, gpuRecoveryIdle, coord.gpuRecoveryStage)
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+}
+
+func TestNextLifecycleRetryDelayCapsAtThirtySeconds(t *testing.T) {
+	assert.Equal(t, 2*time.Second, nextLifecycleRetryDelay(time.Second))
+	assert.Equal(t, 30*time.Second, nextLifecycleRetryDelay(16*time.Second))
+	assert.Equal(t, 30*time.Second, nextLifecycleRetryDelay(30*time.Second))
+}
+
+// TestReloadCoordinator_CleanupPanicDoesNotBlockLaterLifecycleReset checks recovery after a panic.
+func TestReloadCoordinator_CleanupPanicDoesNotBlockLaterLifecycleReset(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable"))
+
+	coord := newTestCoordinator(t)
+	coord.reloadConfig.Kubernetes = true
+	coord.server.SetRegistry(registryWithCleanup(func() {
+		panic("synthetic collector cleanup failure")
+	}))
+
+	var nvmlCleanups atomic.Int32
+	var watcherStarts atomic.Int32
+	var watcherStops atomic.Int32
+	coord.gpuWatcher = trackingGPUWatcherLifecycle{
+		start: func() { watcherStarts.Add(1) },
+		stop:  func() { watcherStops.Add(1) },
+	}
+	coord.cleanupNVML = func() { nvmlCleanups.Add(1) }
+	newRegistry := registry.NewRegistry()
+	coord.buildRegistry = func(
+		context.Context,
+		*cli.Context,
+		*appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.Trigger(evGPUReinitialized)
+	coord.handlePending(context.Background(), coord.takePending())
+	coord.Trigger(evGPUReinitialized)
+	coord.handlePending(context.Background(), coord.takePending())
+
+	// The later lifecycle reset retries after the first reset panics.
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+	assert.Equal(t, int32(1), nvmlCleanups.Load())
+	assert.Equal(t, int32(2), watcherStarts.Load())
+	assert.Equal(t, int32(2), watcherStops.Load())
+}
+
+// TestDoGPULifecycleReset_ProviderOrder checks provider order and NVML failure policy.
+func TestDoGPULifecycleReset_ProviderOrder(t *testing.T) {
+	wantOrder := []string{
+		"stale-cleanup",
+		"nvml-cleanup",
+		"dcgm-cleanup",
+		"dcgm-init",
+		"nvml",
+		"dcp",
+		"build",
+	}
+	tests := []struct {
+		name                   string
+		kubernetes             bool
+		virtualGPUs            bool
+		disableStartupValidate bool
+		useFakeGPUs            bool
+		initializeError        error
+		wantFailureLogLevel    string
+	}{
+		{
+			name: "non-Kubernetes real GPUs",
+		},
+		{
+			name:                "Kubernetes validated failure logs error and still rebuilds",
+			kubernetes:          true,
+			initializeError:     errors.New("NVML unavailable"),
+			wantFailureLogLevel: "ERROR",
+		},
+		{
+			name:                "non-Kubernetes failure warns and still rebuilds",
+			initializeError:     errors.New("NVML unavailable"),
+			wantFailureLogLevel: "WARN",
+		},
+		{
+			name:                   "Kubernetes validation-disabled failure warns and still rebuilds",
+			kubernetes:             true,
+			disableStartupValidate: true,
+			initializeError:        errors.New("NVML unavailable"),
+			wantFailureLogLevel:    "WARN",
+		},
+		{
+			name:        "Kubernetes virtual GPUs use the same provider lifecycle",
+			kubernetes:  true,
+			virtualGPUs: true,
+		},
+		{
+			name:        "fake-GPU mode uses the same provider lifecycle",
+			useFakeGPUs: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+			var order []string
+
+			mock := withMockDCGMClient(t)
+			mock.EXPECT().
+				GetSupportedMetricGroups(uint(0)).
+				DoAndReturn(func(uint) ([]dcgm.MetricGroup, error) {
+					order = append(order, "dcp")
+					return nil, errors.New("profiling unavailable")
+				})
+
+			coord := newTestCoordinator(t)
+			coord.reloadConfig.Kubernetes = tt.kubernetes
+			coord.reloadConfig.KubernetesVirtualGPUs = tt.virtualGPUs
+			coord.reloadConfig.DisableStartupValidate = tt.disableStartupValidate
+			coord.reloadConfig.UseFakeGPUs = tt.useFakeGPUs
+			coord.cleanupNVML = func() { order = append(order, "nvml-cleanup") }
+			coord.cleanupDCGM = func() { order = append(order, "dcgm-cleanup") }
+			coord.initializeDCGM = func(*appconfig.Config) { order = append(order, "dcgm-init") }
+			coord.initializeNVML = func() error {
+				order = append(order, "nvml")
+				return tt.initializeError
+			}
+			coord.server.SetRegistry(registryWithCleanup(func() {
+				order = append(order, "stale-cleanup")
+			}))
+			newRegistry := registry.NewRegistry()
+			coord.buildRegistry = func(
+				context.Context,
+				*cli.Context,
+				*appconfig.Config,
+			) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+				order = append(order, "build")
+				return newRegistry, topologyManager(), nil
+			}
+
+			coord.handle(context.Background(), evGPUReinitialized)
+
+			assert.Equal(t, wantOrder, order)
+			if tt.wantFailureLogLevel != "" {
+				assert.Contains(t, logs.String(),
+					"level="+tt.wantFailureLogLevel+" msg=\"Failed to reinitialize NVML\"")
+			}
+			assert.Same(t, newRegistry, coord.server.GetRegistry())
+		})
+	}
+}
+
+// TestDoGPULifecycleReset_BuildFailureAllowsConfigRecovery checks the next config reload.
+func TestDoGPULifecycleReset_BuildFailureAllowsConfigRecovery(t *testing.T) {
+	mock := withMockDCGMClient(t)
+	mock.EXPECT().
+		GetSupportedMetricGroups(uint(0)).
+		Return(nil, errors.New("profiling unavailable"))
+
+	coord := newTestCoordinator(t)
+	var retry func()
+	coord.scheduleRetry = func(_ context.Context, _ time.Duration, callback func()) context.CancelFunc {
+		retry = callback
+		return func() {}
+	}
+	newRegistry := registry.NewRegistry()
+	var builds atomic.Int32
+	coord.buildRegistry = func(
+		_ context.Context,
+		_ *cli.Context,
+		cfg *appconfig.Config,
+	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+		if builds.Add(1) == 1 {
+			return nil, nil, errors.New("registry build failed")
+		}
+		assert.Equal(t, "updated-counters.csv", cfg.CollectorsFile)
+		return newRegistry, topologyManager(), nil
+	}
+
+	coord.handle(context.Background(), evGPUReinitialized)
+
+	assert.Nil(t, coord.server.ClearRegistry())
+	assert.Equal(t, gpuRecoveryBuildRegistry, coord.gpuRecoveryStage)
+	assert.True(t, coord.server.IsReloadInProgress())
+
+	coord.reloadConfig.CollectorsFile = "updated-counters.csv"
+	var configCalls atomic.Int32
+	coord.applyConfigReload = func(_ context.Context, cfg *appconfig.Config, _ uint64) {
+		configCalls.Add(1)
+		assert.Equal(t, "updated-counters.csv", cfg.CollectorsFile)
+	}
+	require.NotNil(t, retry)
+	retry()
+	coord.Trigger(evConfigChanged)
+	coord.handlePending(context.Background(), coord.takePending())
+	assert.Equal(t, int32(1), configCalls.Load())
+	assert.Equal(t, int32(2), builds.Load())
+	assert.Same(t, newRegistry, coord.server.GetRegistry())
+	assert.Equal(t, gpuRecoveryIdle, coord.gpuRecoveryStage)
+	assert.False(t, coord.server.IsReloadInProgress())
+}
+
+func TestReloadCoordinator_TriggerIsConcurrentSafe(t *testing.T) {
+	coord := newTestCoordinator(t)
+	events := []reloadEvent{evConfigChanged, evGPUReinitialized}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for i := 0; i < 64; i++ {
+			wg.Add(1)
+			go func(offset int) {
+				defer wg.Done()
+				for j := 0; j < 1000; j++ {
+					coord.Trigger(events[(offset+j)%len(events)])
+				}
+			}(i)
+		}
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Trigger did not complete under concurrent producers")
+	}
+
+	pending := coord.takePending()
+	assert.True(t, pending.configChanged)
+	assert.Equal(t, evGPUReinitialized, pending.latestGPUEvent)
+}
+
 func TestReloadCoordinator_ShutsDownOnContextCancel(t *testing.T) {
 	coord := newTestCoordinator(t)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -2419,368 +3533,29 @@ func TestReloadCoordinator_ShutsDownOnContextCancel(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("coordinator did not exit within 2s of context cancel")
+		t.Fatal("coordinator did not exit after context cancellation")
 	}
 }
 
-// TestReloadCoordinator_TriggerIsNonBlocking pins the non-blocking producer
-// contract. Without Run running, many Triggers must all return quickly; the
-// mailbox+wake design guarantees this without relying on any buffer capacity.
-func TestReloadCoordinator_TriggerIsNonBlocking(t *testing.T) {
-	coord := newTestCoordinator(t)
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for i := 0; i < 1000; i++ {
-			coord.Trigger(evConfigChanged)
-			coord.Trigger(evTopologyChanged)
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("Trigger blocked — mailbox+wake contract violated")
-	}
-	// Mailbox should end up holding the strongest event seen.
-	assert.Equal(t, int32(evTopologyChanged), coord.mailbox.Load())
-}
-
-// TestReloadCoordinator_MailboxCASUpgradeTable exhaustively verifies the
-// monotonic-upgrade rule: Trigger(ev) stores max(current, ev) — it never
-// downgrades. The table covers every (start, trigger) combination.
-func TestReloadCoordinator_MailboxCASUpgradeTable(t *testing.T) {
-	assert.Equal(t, "reloadEvent(99)", reloadEvent(99).String())
-
-	cases := []struct {
-		start, trigger, want reloadEvent
-	}{
-		{evNone, evConfigChanged, evConfigChanged},
-		{evNone, evTopologyChanged, evTopologyChanged},
-		{evConfigChanged, evConfigChanged, evConfigChanged},
-		{evConfigChanged, evTopologyChanged, evTopologyChanged},
-		{evTopologyChanged, evConfigChanged, evTopologyChanged}, // must NOT downgrade
-		{evTopologyChanged, evTopologyChanged, evTopologyChanged},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.start.String()+"_then_"+tc.trigger.String(), func(t *testing.T) {
-			coord := newTestCoordinator(t)
-			coord.mailbox.Store(int32(tc.start))
-
-			coord.Trigger(tc.trigger)
-
-			got := reloadEvent(coord.mailbox.Load())
-			assert.Equalf(t, tc.want, got,
-				"Trigger(%s) from %s must land on %s, got %s",
-				tc.trigger, tc.start, tc.want, got)
-		})
-	}
-}
-
-// TestReloadCoordinator_StressManyProducers hammers Trigger from many
-// producer goroutines and verifies the coordinator processes events cleanly,
-// no CAS livelock, no lost wakeups that leave the mailbox stuck non-empty.
-// Under -race this exercises the paths that the single-producer tests do
-// not: contention on the CAS loop and on the 1-slot wake channel.
-func TestReloadCoordinator_StressManyProducers(t *testing.T) {
-	coord := newTestCoordinator(t)
-
-	var applies atomic.Int32
-	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
-		applies.Add(1)
-	}
-	coord.applyTopologyChange = func(context.Context, uint64) {
-		applies.Add(1)
-	}
-
-	runCoordinator(t, coord)
-
-	const producers = 64
-	const perProducer = 2000
-
-	var wg sync.WaitGroup
-	for p := 0; p < producers; p++ {
-		wg.Add(1)
-		go func(p int) {
-			defer wg.Done()
-			for i := 0; i < perProducer; i++ {
-				ev := evConfigChanged
-				if (i+p)%7 == 0 {
-					ev = evTopologyChanged
-				}
-				coord.Trigger(ev)
-			}
-		}(p)
-	}
-	wg.Wait()
-
-	// Total fired events: producers * perProducer. Coalescing means we
-	// expect many fewer than that many apply calls, but at least one.
-	maxFired := int32(producers * perProducer)
-
-	// Wait for the coordinator to drain to a stable state. The mailbox
-	// should eventually settle to evNone.
-	require.Eventually(t, func() bool {
-		return reloadEvent(coord.mailbox.Load()) == evNone
-	}, 5*time.Second, 10*time.Millisecond, "mailbox did not drain after producer burst")
-
-	// One more Trigger to flush any pending apply and force at least one
-	// observable invocation if the coordinator had somehow gotten wedged.
-	coord.Trigger(evConfigChanged)
-	require.Eventually(t, func() bool {
-		return applies.Load() > 0 && reloadEvent(coord.mailbox.Load()) == evNone
-	}, 2*time.Second, 10*time.Millisecond)
-
-	// Sanity: apply count cannot exceed total fired + 1 (the flush).
-	assert.LessOrEqual(t, applies.Load(), maxFired+1,
-		"apply count exceeded fired events — coalescing broken")
-	assert.Greater(t, applies.Load(), int32(0),
-		"no events were processed despite many producers firing")
-}
-
-// TestInitReloadCoordinator_SeedsDCP pins the startup wiring. The test calls
-// the exact function runDCGMExporter uses to construct and
-// seed the coordinator, so a future refactor that accidentally removes the
-// seeding step will turn this test red rather than silently dropping profiling
-// metrics after reload.
-func TestInitReloadCoordinator_SeedsDCP(t *testing.T) {
-	mock := withMockDCGMClient(t)
-	groups := sampleMetricGroups()
-	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groups, nil)
-	mock.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no gpus")).AnyTimes()
-
+func TestInitReloadCoordinatorStoresStartupConfig(t *testing.T) {
 	cfg := &appconfig.Config{CollectDCP: true}
-	coord := initReloadCoordinator(newTestCLIContext(t), func() {}, cfg)
+	coord := initReloadCoordinator(newTestCLIContext(t), cfg)
 
-	require.NotNil(t, coord.dcp,
-		"initReloadCoordinator must publish a DCP snapshot before returning")
-	assert.True(t, coord.dcp.collectDCP)
-	assert.Equal(t, groups, coord.dcp.metricGroups)
-	assert.Equal(t, groups, cfg.MetricGroups,
-		"the caller's config must also reflect the queried capabilities")
+	require.NotNil(t, coord.reloadConfig)
+	assert.NotSame(t, cfg, coord.reloadConfig)
+	assert.True(t, coord.reloadConfig.CollectDCP)
+	assert.Nil(t, coord.dcp, "DCP discovery must wait until the lifecycle watch is registered")
+
+	callback := cfg.DRAResourceSliceChangeCallback()
+	require.NotNil(t, callback)
+	callback()
+	assert.Equal(t, evDRAResourceSliceChanged, coord.takePending().draResourceSliceEvent)
 }
 
-// TestDoTopologyChange_PessimisticallyInvalidatesDCP is the regression for
-// the reviewer's "stale capabilities survive an early topology panic"
-// concern. doTopologyChange must invalidate r.dcp before touching DCGM, so a
-// later panic cannot leave the next config reload applying capabilities from
-// the pre-change hardware.
-//
-// This test calls handle() directly on the test goroutine so there is no
-// concurrency between the coordinator's write of r.dcp and the test's read.
-func TestDoTopologyChange_PessimisticallyInvalidatesDCP(t *testing.T) {
-	coord := newTestCoordinator(t)
-
-	// Seed a stale snapshot that *would* survive into the next reload if the
-	// invalidation at the start of doTopologyChange were missing.
-	coord.dcp = &dcpCapabilities{collectDCP: true, metricGroups: sampleMetricGroups()}
-
-	// Simulate an early panic inside doTopologyChange by having dcgmCleanup
-	// panic. handle()'s own deferred recover swallows it.
-	coord.dcgmCleanup = func() { panic("synthetic failure before queryDCPMetrics") }
-
-	// Drive handle() directly — it runs the full panic-recover path in the
-	// current goroutine and returns when its defer completes.
-	coord.handle(context.Background(), evTopologyChanged)
-
-	require.NotNil(t, coord.dcp, "dcp must be set to the invalidated snapshot, not left as stale")
-	assert.False(t, coord.dcp.collectDCP,
-		"a topology change must invalidate stale DCP capabilities even if it panics early")
-	assert.Nil(t, coord.dcp.metricGroups)
-}
-
-func TestDoTopologyChange_MissingSnapshotIsNonDestructive(t *testing.T) {
-	coord := newReloadCoordinator(newInvalidTestCLIContext(t), func() {
-		t.Fatal("dcgmCleanup must not run after config build failure")
-	})
-	coord.setServer(&server.MetricsServer{})
-
-	stale := newDCPCapabilities(&appconfig.Config{
-		CollectDCP:   true,
-		MetricGroups: sampleMetricGroups(),
-	})
-	coord.dcp = stale
-
-	gpuWatcher := &fakeGPUWatcherLifecycle{}
-	gpuWatcher.running.Store(true)
-	coord.setGPUWatcher(gpuWatcher)
-
-	coord.handle(context.Background(), evTopologyChanged)
-
-	assert.Same(t, stale, coord.dcp,
-		"config parse failure should return before invalidating DCP")
-	assert.Equal(t, int32(0), gpuWatcher.stopCalls.Load(),
-		"config parse failure should not stop the GPU watcher")
-	assert.True(t, gpuWatcher.running.Load(),
-		"config parse failure should leave the GPU watcher running")
-}
-
-func TestDoTopologyChangeDoesNotRereadYAML(t *testing.T) {
-	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
-collection:
-  interval: 10s
-`), 0o600))
-
-	cliCtx := newTestCLIContext(t)
-	require.NoError(t, cliCtx.Set(CLIConfigFile, configFile))
-	startupConfig, err := contextToConfig(cliCtx)
-	require.NoError(t, err)
-	require.Equal(t, 10000, startupConfig.CollectInterval)
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
-collection:
-  watchGroups:
-    - name: slow
-      interval: 10m
-      fields:
-        - DCGM_FI_DEV_NVLINK_PPCNT_*
-`), 0o600))
-
-	mock := withMockDCGMClient(t)
-	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
-
-	coord := newReloadCoordinator(cliCtx, func() {})
-	coord.setServer(&server.MetricsServer{})
-	coord.reloadConfig = startupConfig.Clone()
-
-	var initialized atomic.Bool
-	coord.initializeDCGM = func(got *appconfig.Config) {
-		assert.Equal(t, 10000, got.CollectInterval,
-			"topology reset must reuse startup YAML instead of re-reading the changed file")
-		initialized.Store(true)
-	}
-
-	var rebuilt atomic.Bool
-	coord.buildRegistry = func(
-		_ context.Context,
-		_ *cli.Context,
-		got *appconfig.Config,
-	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
-		assert.True(t, initialized.Load())
-		assert.Equal(t, 10000, got.CollectInterval)
-		assert.False(t, got.CollectDCP,
-			"topology reset must publish the post-reset DCP result")
-		assert.Nil(t, got.MetricGroups)
-		rebuilt.Store(true)
-		return nil, nil, errors.New("stop before real registry rebuild")
-	}
-
-	coord.handle(context.Background(), evTopologyChanged)
-
-	assert.True(t, initialized.Load(),
-		"invalid edited YAML must not prevent DCGM reinitialization")
-	assert.True(t, rebuilt.Load(),
-		"invalid edited YAML must not prevent registry rebuild")
-	require.NotNil(t, coord.dcp)
-	assert.False(t, coord.dcp.collectDCP)
-	assert.Nil(t, coord.dcp.metricGroups)
-}
-
-func TestDoTopologyChange_StopsGPUWatcherBeforeCleanup(t *testing.T) {
-	coord := newTestCoordinator(t)
-	gpuWatcher := &fakeGPUWatcherLifecycle{}
-	gpuWatcher.running.Store(true)
-	coord.setGPUWatcher(gpuWatcher)
-
-	coord.dcgmCleanup = func() {
-		assert.False(t, gpuWatcher.running.Load(),
-			"GPU watcher must be stopped before DCGM cleanup starts")
-		panic("synthetic cleanup failure")
-	}
-
-	coord.handle(context.Background(), evTopologyChanged)
-
-	assert.Equal(t, int32(1), gpuWatcher.stopCalls.Load())
-	assert.Equal(t, int32(0), gpuWatcher.startCalls.Load(),
-		"watcher should not restart if cleanup panics before DCGM is reinitialized")
-	require.NotNil(t, coord.dcp)
-	assert.False(t, coord.dcp.collectDCP)
-}
-
-func TestDoTopologyChange_RestartsGPUWatcherAfterDCGMInitialize(t *testing.T) {
-	mock := withMockDCGMClient(t)
-	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
-
-	coord := newTestCoordinator(t)
-	gpuWatcher := &fakeGPUWatcherLifecycle{}
-	gpuWatcher.running.Store(true)
-	coord.setGPUWatcher(gpuWatcher)
-
-	var initialized atomic.Bool
-	coord.initializeDCGM = func(*appconfig.Config) {
-		assert.False(t, gpuWatcher.running.Load(),
-			"GPU watcher should still be stopped while DCGM is being initialized")
-		assert.Equal(t, int32(1), gpuWatcher.stopCalls.Load())
-		assert.Equal(t, int32(0), gpuWatcher.startCalls.Load())
-		initialized.Store(true)
-	}
-	coord.buildRegistry = func(
-		context.Context,
-		*cli.Context,
-		*appconfig.Config,
-	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
-		assert.True(t, initialized.Load())
-		assert.True(t, gpuWatcher.running.Load(),
-			"GPU watcher should be recreated against the initialized DCGM client")
-		return nil, nil, errors.New("stop before real registry rebuild")
-	}
-
-	coord.handle(context.Background(), evTopologyChanged)
-
-	assert.Equal(t, int32(1), gpuWatcher.stopCalls.Load())
-	assert.Equal(t, int32(1), gpuWatcher.startCalls.Load())
-}
-
-func TestDoTopologyChangeSuccessInstallsRegistry(t *testing.T) {
-	mock := withMockDCGMClient(t)
-	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
-
-	coord := newTestCoordinator(t)
-	oldRegistry := registry.NewRegistry()
-	coord.server.SetRegistry(oldRegistry)
-
-	gpuWatcher := &fakeGPUWatcherLifecycle{}
-	gpuWatcher.running.Store(true)
-	coord.setGPUWatcher(gpuWatcher)
-
-	var initialized atomic.Bool
-	coord.dcgmCleanup = func() {}
-	coord.initializeDCGM = func(*appconfig.Config) {
-		initialized.Store(true)
-	}
-	newRegistry := registry.NewRegistry()
-	coord.buildRegistry = func(
-		context.Context,
-		*cli.Context,
-		*appconfig.Config,
-	) (*registry.Registry, devicewatchlistmanager.Manager, error) {
-		assert.True(t, initialized.Load())
-		return newRegistry, topologyManager(), nil
-	}
-
-	coord.handle(context.Background(), evTopologyChanged)
-
-	assert.Same(t, newRegistry, coord.server.GetRegistry())
-	assert.Equal(t, int32(1), gpuWatcher.stopCalls.Load())
-	assert.Equal(t, int32(1), gpuWatcher.startCalls.Load())
-	require.NotNil(t, coord.dcp)
-	assert.False(t, coord.dcp.collectDCP)
-}
-
-// TestReloadCoordinator_RepublishedDCPReplacesPreviousSnapshot proves the
-// load-bearing refresh invariant for the topology-change path: once a later
-// query publishes a new DCP snapshot, the next config reload must use that
-// latest snapshot rather than stale capabilities from an earlier topology.
 func TestReloadCoordinator_RepublishedDCPReplacesPreviousSnapshot(t *testing.T) {
 	mock := withMockDCGMClient(t)
 	groupsA := []dcgm.MetricGroup{{Major: 0, Minor: 0, FieldIds: []uint{1001, 1002}}}
 	groupsB := []dcgm.MetricGroup{{Major: 7, Minor: 1, FieldIds: []uint{1077, 1078}}}
-
 	gomock.InOrder(
 		mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groupsA, nil),
 		mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groupsB, nil),
@@ -2789,62 +3564,35 @@ func TestReloadCoordinator_RepublishedDCPReplacesPreviousSnapshot(t *testing.T) 
 
 	coord := newTestCoordinator(t)
 	coord.queryDCPMetrics(&appconfig.Config{CollectDCP: true}, 0)
-
 	cfgA, err := coord.buildReloadConfig()
 	require.NoError(t, err)
-	assert.Equal(t, groupsA, cfgA.MetricGroups)
 
-	// A later topology change republishes the supported groups. The next
-	// config reload must see the new snapshot, not the earlier one.
 	coord.queryDCPMetrics(&appconfig.Config{CollectDCP: true}, 1)
-
 	cfgB, err := coord.buildReloadConfig()
 	require.NoError(t, err)
+
+	assert.Equal(t, groupsA, cfgA.MetricGroups)
 	assert.Equal(t, groupsB, cfgB.MetricGroups)
-	assert.NotEqual(t, cfgA.MetricGroups, cfgB.MetricGroups)
 }
 
-// TestReloadCoordinator_ConfigBuildFailureDoesNotPoisonNextReload verifies
-// that a failed config reload clears the in-progress flag and that a later
-// successful reload still reaches applyConfigReload with the published DCP
-// snapshot intact.
 func TestReloadCoordinator_ConfigBuildFailureDoesNotPoisonNextReload(t *testing.T) {
-	coord := newReloadCoordinator(newInvalidTestCLIContext(t), func() {})
+	coord := newReloadCoordinator(newInvalidTestCLIContext(t))
 	coord.setServer(&server.MetricsServer{})
 
-	var (
-		configCalls atomic.Int32
-		gotConfig   *appconfig.Config
-	)
-	coord.applyConfigReload = func(_ context.Context, cfg *appconfig.Config, _ uint64) {
-		configCalls.Add(1)
-		gotConfig = cfg
+	var calls atomic.Int32
+	coord.applyConfigReload = func(context.Context, *appconfig.Config, uint64) {
+		calls.Add(1)
 	}
 
-	// First reload fails before a startup snapshot is available.
 	coord.handle(context.Background(), evConfigChanged)
-	assert.False(t, coord.server.IsReloadInProgress(),
-		"failed config build must clear reload-in-progress before returning")
-	assert.Equal(t, int32(0), configCalls.Load(),
-		"applyConfigReload must not run when buildReloadConfig fails")
+	assert.False(t, coord.server.IsReloadInProgress())
+	assert.Equal(t, int32(0), calls.Load())
 
-	// Second reload uses a valid startup snapshot and should succeed normally.
 	cfg, err := defaultConfig()
 	require.NoError(t, err)
 	coord.reloadConfig = cfg.Clone()
-	coord.dcp = newDCPCapabilities(&appconfig.Config{
-		CollectDCP:   true,
-		MetricGroups: sampleMetricGroups(),
-	})
-
 	coord.handle(context.Background(), evConfigChanged)
 
-	assert.False(t, coord.server.IsReloadInProgress(),
-		"successful retry must also clear reload-in-progress before returning")
-	assert.Equal(t, int32(1), configCalls.Load(),
-		"a successful retry should still reach applyConfigReload")
-	require.NotNil(t, gotConfig)
-	assert.True(t, gotConfig.CollectDCP)
-	assert.Equal(t, sampleMetricGroups(), gotConfig.MetricGroups,
-		"successful retry should still inherit the latest published DCP snapshot")
+	assert.False(t, coord.server.IsReloadInProgress())
+	assert.Equal(t, int32(1), calls.Load())
 }

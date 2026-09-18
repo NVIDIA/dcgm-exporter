@@ -17,6 +17,8 @@
 package appconfig
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -24,11 +26,14 @@ import (
 )
 
 const (
-	DefaultWebReadTimeout  = 10 * time.Second
-	DefaultWebWriteTimeout = 30 * time.Second
-	DefaultCollectorsFile  = "/etc/dcgm-exporter/default-counters.csv"
-	UndefinedConfigMapData = "none"
-	DefaultConfigMapKey    = "metrics"
+	DefaultWebReadTimeout       = 10 * time.Second
+	DefaultWebWriteTimeout      = 30 * time.Second
+	DefaultMaxConcurrentScrapes = 16
+	DefaultCollectorsFile       = "/etc/dcgm-exporter/default-counters.csv"
+	UndefinedConfigMapData      = "none"
+	DefaultConfigMapKey         = "metrics"
+	DefaultWatchMaxKeepAge      = 10 * time.Minute
+	DefaultWatchMaxSamples      = int64(0)
 )
 
 // MetricSourceKind identifies where dcgm-exporter should load metric definitions from.
@@ -77,11 +82,75 @@ type MetricSource struct {
 	ConfigMap ConfigMapMetricSource
 }
 
-// WatchGroup assigns a set of metric fields to a collection interval.
+// WatchRetention controls how much field history DCGM retains for a watch.
+// Startup resolves and validates this policy before watch-list construction converts it to DCGM arguments.
+type WatchRetention struct {
+	MaxAge     time.Duration
+	MaxSamples int64
+}
+
+// DefaultWatchRetention returns the compatibility field-watch retention policy.
+// Startup and legacy constructors use it when no explicit global policy is available.
+func DefaultWatchRetention() WatchRetention {
+	return WatchRetention{
+		MaxAge:     DefaultWatchMaxKeepAge,
+		MaxSamples: DefaultWatchMaxSamples,
+	}
+}
+
+// Validate rejects retention values that DCGM cannot accept or that leave a watch unbounded.
+// Call it after configuration precedence and per-group inheritance have produced a concrete policy.
+func (r WatchRetention) Validate() error {
+	if r.MaxAge < 0 {
+		return fmt.Errorf("maxAge must not be negative")
+	}
+	if r.MaxSamples < 0 {
+		return fmt.Errorf("maxSamples must not be negative")
+	}
+	if r.MaxSamples > math.MaxInt32 {
+		return fmt.Errorf("maxSamples must not exceed %d", math.MaxInt32)
+	}
+	if r.MaxAge == 0 && r.MaxSamples == 0 {
+		return fmt.Errorf("maxAge and maxSamples cannot both be zero")
+	}
+	return nil
+}
+
+// DCGMMaxKeepSamples validates and converts the sample limit to the type expected by DCGM.
+// Watch-list construction uses it immediately before storing retention on a devicewatcher field group.
+func (r WatchRetention) DCGMMaxKeepSamples() (int32, error) {
+	if err := r.Validate(); err != nil {
+		return 0, err
+	}
+	return int32(r.MaxSamples), nil //nolint:gosec // G115: Validate bounds MaxSamples to int32.
+}
+
+// WatchRetentionOverride contains presence-aware per-watch-group overrides.
+// Pointer fields preserve omitted values so Resolve can inherit each property from the final global policy.
+type WatchRetentionOverride struct {
+	MaxAge     *time.Duration
+	MaxSamples *int64
+}
+
+// Resolve applies explicitly configured values to the global retention policy.
+// Watch-group validation and construction call it after YAML and CLI or environment precedence is complete.
+func (o WatchRetentionOverride) Resolve(global WatchRetention) WatchRetention {
+	resolved := global
+	if o.MaxAge != nil {
+		resolved.MaxAge = *o.MaxAge
+	}
+	if o.MaxSamples != nil {
+		resolved.MaxSamples = *o.MaxSamples
+	}
+	return resolved
+}
+
+// WatchGroup assigns a set of metric fields to a collection interval and optional retention policy.
 type WatchGroup struct {
-	Name     string
-	Interval int
-	Fields   []string
+	Name      string
+	Interval  int
+	Fields    []string
+	Retention WatchRetentionOverride
 }
 
 type Config struct {
@@ -106,12 +175,15 @@ type Config struct {
 	UseFakeGPUs                      bool
 	ConfigMapData                    string
 	MetricSource                     MetricSource
+	WatchRetention                   WatchRetention
 	WatchGroups                      []WatchGroup
 	MetricGroups                     []dcgm.MetricGroup
 	WebSystemdSocket                 bool
 	WebConfigFile                    string
 	WebReadTimeout                   time.Duration
 	WebWriteTimeout                  time.Duration
+	MaxConcurrentScrapes             int
+	EnableExporterMetrics            bool
 	XIDCountWindowSize               int
 	ReplaceBlanksInModelName         bool
 	Debug                            bool
@@ -128,8 +200,24 @@ type Config struct {
 	KubernetesEnableDRA              bool
 	DisableStartupValidate           bool
 	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
-	GPUBindUnbindPollInterval        time.Duration // Poll interval for GPU bind/unbind events
+	GPUBindUnbindPollInterval        time.Duration // Interval between GPU bind/unbind event reads
 	EnablePprof                      bool          // Enable /debug/pprof/ HTTP endpoints
+
+	// draResourceSliceChangeCallback is runtime-only wiring for the DRA
+	// informer. It is deliberately private so it cannot become a YAML, JSON, or
+	// command-line configuration surface.
+	draResourceSliceChangeCallback func()
+}
+
+// SetDRAResourceSliceChangeCallback installs the in-memory notification used
+// when a complete DRA ResourceSlice generation changes.
+func (c *Config) SetDRAResourceSliceChangeCallback(callback func()) {
+	c.draResourceSliceChangeCallback = callback
+}
+
+// DRAResourceSliceChangeCallback returns the in-memory DRA generation notification.
+func (c *Config) DRAResourceSliceChangeCallback() func() {
+	return c.draResourceSliceChangeCallback
 }
 
 // Clone returns a copy of Config with slices duplicated for reload snapshots.
@@ -145,6 +233,14 @@ func (c *Config) Clone() *Config {
 	clone.WatchGroups = append([]WatchGroup(nil), c.WatchGroups...)
 	for i := range clone.WatchGroups {
 		clone.WatchGroups[i].Fields = append([]string(nil), c.WatchGroups[i].Fields...)
+		if c.WatchGroups[i].Retention.MaxAge != nil {
+			maxAge := *c.WatchGroups[i].Retention.MaxAge
+			clone.WatchGroups[i].Retention.MaxAge = &maxAge
+		}
+		if c.WatchGroups[i].Retention.MaxSamples != nil {
+			maxSamples := *c.WatchGroups[i].Retention.MaxSamples
+			clone.WatchGroups[i].Retention.MaxSamples = &maxSamples
+		}
 	}
 	clone.MetricGroups = append([]dcgm.MetricGroup(nil), c.MetricGroups...)
 	for i := range clone.MetricGroups {

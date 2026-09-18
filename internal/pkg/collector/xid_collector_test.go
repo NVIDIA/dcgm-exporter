@@ -661,6 +661,93 @@ func Test_xidCollector_GetMetricsReadsAllDeviceFieldGroups(t *testing.T) {
 	assert.Equal(t, "42", got[counter][0].Labels["xid"])
 }
 
+func Test_xidCollector_GetMetricsUsesConfiguredWindow(t *testing.T) {
+	const windowSize = 1400
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	counter := counters.Counter{
+		FieldID:   dcgm.Short(counters.DCGMXIDErrorsCount),
+		FieldName: counters.DCGMExpXIDErrorsCount,
+	}
+
+	tests := []struct {
+		name         string
+		values       []dcgm.FieldValue_v2
+		wantCount    string
+		wantXID      string
+		wantXIDLabel bool
+	}{
+		{
+			name: "counts an event in the configured window",
+			values: []dcgm.FieldValue_v2{{
+				EntityGroupId: dcgm.FE_GPU,
+				EntityID:      0,
+				FieldID:       dcgm.DCGM_FI_DEV_XID_ERRORS,
+				FieldType:     dcgm.DCGM_FT_INT64,
+				Value:         createInt64ByteArray(42),
+			}},
+			wantCount:    "1",
+			wantXID:      "42",
+			wantXIDLabel: true,
+		},
+		{
+			name:      "reports zero when there are no events in the configured window",
+			wantCount: "0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+			mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+			realDCGM := dcgmprovider.Client()
+			t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+			dcgmprovider.SetClient(mockDCGM)
+
+			mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+			mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+			groupHandle := dcgm.GroupHandle{}
+			groupHandle.SetHandle(uintptr(1))
+			fieldGroupHandle := dcgm.FieldHandle{}
+			fieldGroupHandle.SetHandle(uintptr(1))
+
+			mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+				Return([]dcgm.GroupHandle{groupHandle}, []dcgm.FieldHandle{fieldGroupHandle}, nil, nil)
+
+			deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, 1)
+			collector, err := NewXIDCollector(
+				counters.CounterList{counter},
+				"localhost",
+				&appconfig.Config{XIDCountWindowSize: windowSize},
+				*deviceWatchList,
+			)
+			require.NoError(t, err)
+			collector.(*xidCollector).now = func() time.Time { return now }
+
+			mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+			mockDCGM.EXPECT().GetValuesSince(
+				groupHandle,
+				fieldGroupHandle,
+				now.Add(-windowSize*time.Millisecond),
+			).Return(tt.values, time.Time{}, nil)
+
+			got, err := collector.GetMetrics()
+
+			require.NoError(t, err)
+			require.Len(t, got[counter], 1)
+			assert.Equal(t, tt.wantCount, got[counter][0].Value)
+			assert.Equal(t, "1400", got[counter][0].Labels[windowSizeInMSLabel])
+			if tt.wantXIDLabel {
+				assert.Equal(t, tt.wantXID, got[counter][0].Labels["xid"])
+			} else {
+				assert.NotContains(t, got[counter][0].Labels, "xid")
+			}
+		})
+	}
+}
+
 func Test_xidCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
 	buf := setupDebugLogCapture(t)
 

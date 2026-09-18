@@ -17,8 +17,10 @@
 package appconfig
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +28,8 @@ import (
 )
 
 func TestParseYAMLConfig(t *testing.T) {
+	enableExporterMetricsDisabled := false
+	detectBindUnbindEnabled := true
 	tests := []struct {
 		name      string
 		input     string
@@ -33,28 +37,71 @@ func TestParseYAMLConfig(t *testing.T) {
 		wantError string
 	}{
 		{
-			name: "file source with collection interval",
+			name: "GPU bind/unbind detection",
 			input: `
-version: 1
-metrics:
-  file: /etc/dcgm-exporter/default-counters.csv
-collection:
-  interval: 45s
+version: 2
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: true
+      pollInterval: 250ms
 `,
 			want: &YAMLConfig{
-				Version: 1,
+				Version: 2,
+				Sources: &YAMLSources{
+					DCGM: &YAMLDCGMSource{
+						DetectBindUnbind: &YAMLDetectBindUnbind{
+							Enabled:      &detectBindUnbindEnabled,
+							PollInterval: "250ms",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "file source with collections",
+			input: `
+version: 2
+metrics:
+  file: /etc/dcgm-exporter/default-counters.csv
+collections:
+  - name: scrape
+    every: 45s
+    metrics:
+      include: ["*"]
+`,
+			want: &YAMLConfig{
+				Version: 2,
 				Metrics: &YAMLMetrics{
 					File: "/etc/dcgm-exporter/default-counters.csv",
 				},
-				Collection: &YAMLCollection{
-					Interval: "45s",
+				Collections: []CollectionConfig{
+					{
+						Name:    "scrape",
+						Every:   "45s",
+						Metrics: CollectionMetricsConfig{Include: []string{"*"}},
+					},
+				},
+			},
+		},
+		{
+			name: "exporter metrics without custom metric source",
+			input: `
+version: 2
+metrics:
+  enableExporterMetrics: false
+`,
+			want: &YAMLConfig{
+				Version: 2,
+				Metrics: &YAMLMetrics{
+					EnableExporterMetrics: &enableExporterMetricsDisabled,
 				},
 			},
 		},
 		{
 			name: "inline fields",
 			input: `
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
@@ -62,7 +109,7 @@ metrics:
       help: GPU temperature.
 `,
 			want: &YAMLConfig{
-				Version: 1,
+				Version: 2,
 				Metrics: &YAMLMetrics{
 					Fields: []YAMLMetricField{
 						{Name: "DCGM_FI_DEV_GPU_TEMP", PrometheusType: "gauge", Help: "GPU temperature."},
@@ -73,7 +120,7 @@ metrics:
 		{
 			name: "configmap source is not a YAML metric source",
 			input: `
-version: 1
+version: 2
 metrics:
   configMap:
     namespace: default
@@ -83,9 +130,40 @@ metrics:
 			wantError: "field configMap not found",
 		},
 		{
-			name: "unknown field fails",
+			name: "unknown DCGM source setting fails",
 			input: `
 version: 1
+sources:
+  dcgm:
+    enableBindUnbindWatch: true
+`,
+			wantError: "field enableBindUnbindWatch not found",
+		},
+		{
+			name: "server GPU key is not accepted",
+			input: `
+version: 1
+server:
+  gpu:
+    detectBindUnbind: true
+`,
+			wantError: "field gpu not found",
+		},
+		{
+			name: "non-positive bind unbind interval fails",
+			input: `
+version: 1
+sources:
+  dcgm:
+    detectBindUnbind:
+      pollInterval: 0s
+`,
+			wantError: "sources.dcgm.detectBindUnbind.pollInterval must be greater than 0",
+		},
+		{
+			name: "unknown field fails",
+			input: `
+version: 2
 unknown: true
 `,
 			wantError: "field unknown not found",
@@ -96,12 +174,12 @@ unknown: true
 metrics:
   file: /tmp/counters.csv
 `,
-			wantError: "version must be 1",
+			wantError: "version must be 1 or 2",
 		},
 		{
 			name: "ambiguous metric source fails",
 			input: `
-version: 1
+version: 2
 metrics:
   file: /tmp/counters.csv
   fields:
@@ -114,7 +192,7 @@ metrics:
 		{
 			name: "duplicate inline metric name fails",
 			input: `
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
@@ -129,7 +207,7 @@ metrics:
 		{
 			name: "duplicate trimmed inline metric name fails",
 			input: `
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
@@ -144,7 +222,7 @@ metrics:
 		{
 			name: "duplicate metric source key fails",
 			input: `
-version: 1
+version: 2
 metrics:
   file: /tmp/counters.csv
   file: /tmp/other-counters.csv
@@ -154,88 +232,58 @@ metrics:
 		{
 			name: "non scalar mapping key fails",
 			input: `
-version: 1
+version: 2
 ? [metrics]
 : value
 `,
 			wantError: "YAML mapping keys must be scalar",
 		},
 		{
-			name: "invalid duration unit fails",
+			name: "invalid collection duration unit fails",
 			input: `
-version: 1
-collection:
-  interval: 30000
+version: 2
+collections:
+  - name: scrape
+    every: 30000
+    metrics:
+      include: ["*"]
 `,
 			wantError: "missing unit",
 		},
 		{
-			name: "sub-millisecond duration fails",
+			name: "sub-millisecond collection duration fails",
 			input: `
-version: 1
-collection:
-  interval: 500us
+version: 2
+collections:
+  - name: scrape
+    every: 500us
+    metrics:
+      include: ["*"]
 `,
 			wantError: "whole milliseconds",
 		},
 		{
-			name: "watch groups",
+			name: "collection requires metric patterns",
 			input: `
-version: 1
-collection:
-  watchGroups:
-    - name: slow
-      interval: 10m
-      fields:
-        - DCGM_FI_DEV_NVLINK_PPCNT_*
+version: 2
+collections:
+  - name: scrape
+    every: 30s
+    metrics: {}
 `,
-			want: &YAMLConfig{
-				Version: 1,
-				Collection: &YAMLCollection{
-					WatchGroups: []YAMLWatchGroup{
-						{
-							Name:     "slow",
-							Interval: "10m",
-							Fields:   []string{"DCGM_FI_DEV_NVLINK_PPCNT_*"},
-						},
-					},
-					parsedWatchGroups: []WatchGroup{
-						{
-							Name:     "slow",
-							Interval: 600000,
-							Fields:   []string{"DCGM_FI_DEV_NVLINK_PPCNT_*"},
-						},
-					},
-				},
-			},
+			wantError: "collections[0].metrics.include must not be empty",
 		},
 		{
-			name: "watch group missing fields fails",
+			name: "collection rejects empty metric patterns",
 			input: `
-version: 1
-collection:
-  watchGroups:
-    - name: slow
-      interval: 10m
+version: 2
+collections:
+  - name: scrape
+    every: 30s
+    metrics:
+      include: []
 `,
-			wantError: "fields must not be empty",
-		},
-		{
-			name: "watch group duplicate name fails",
-			input: `
-version: 1
-collection:
-  watchGroups:
-    - name: slow
-      interval: 10m
-      fields:
-        - DCGM_FI_DEV_NVLINK_PPCNT_*
-    - name: slow
-      interval: 20m
-      fields:
-        - DCGM_FI_DEV_ECC_*
-`,
-			wantError: "duplicated",
+			wantError: "collections[0].metrics.include must not be empty",
 		},
 	}
 
@@ -254,14 +302,154 @@ collection:
 	}
 }
 
+func TestParseYAMLConfigRejectsInvalidMaxConcurrentScrapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value int
+	}{
+		{name: "zero", value: 0},
+		{name: "negative", value: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseYAMLConfig([]byte(fmt.Sprintf(`
+version: 2
+server:
+  maxConcurrentScrapes: %d
+`, tt.value)))
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "server.maxConcurrentScrapes must be greater than 0")
+		})
+	}
+}
+
+func TestParseYAMLConfigCollections(t *testing.T) {
+	config, err := ParseYAMLConfig([]byte(`
+version: 2
+metrics:
+  file: /etc/dcgm-exporter/default-counters.csv
+collections:
+  - name: scrape
+    every: 45s
+    metrics:
+      include: ["*"]
+  - name: fast-thermals
+    every: 5s
+    metrics:
+      include:
+        - DCGM_FI_DEV_GPU_TEMP
+        - DCGM_FI_DEV_POWER_USAGE
+`))
+
+	require.NoError(t, err)
+	assert.Equal(t, []CollectionConfig{
+		{
+			Name:    "scrape",
+			Every:   "45s",
+			Metrics: CollectionMetricsConfig{Include: []string{"*"}},
+		},
+		{
+			Name:  "fast-thermals",
+			Every: "5s",
+			Metrics: CollectionMetricsConfig{Include: []string{
+				"DCGM_FI_DEV_GPU_TEMP",
+				"DCGM_FI_DEV_POWER_USAGE",
+			}},
+		},
+	}, config.Collections)
+}
+
+func TestParseYAMLConfigSupportsV1Collection(t *testing.T) {
+	config, err := ParseYAMLConfig([]byte(`
+version: 1
+collection:
+  interval: 30s
+  retention:
+    maxAge: 10m
+    maxSamples: 0
+  watchGroups:
+    - name: fast-thermals
+      interval: 5s
+      retention:
+        maxAge: 0s
+        maxSamples: 2
+      fields:
+        - DCGM_FI_DEV_GPU_TEMP
+`))
+	require.NoError(t, err)
+	assert.Equal(t, 1, config.Version)
+
+	roundTripped, err := yaml.Marshal(config)
+	require.NoError(t, err)
+	assert.Contains(t, string(roundTripped), "version: 1")
+	assert.Contains(t, string(roundTripped), "collection:")
+	assert.NotContains(t, string(roundTripped), "collections:")
+
+	runtime := &Config{CollectInterval: 30000, WatchRetention: DefaultWatchRetention()}
+	require.NoError(t, config.ApplyTo(runtime))
+	assert.Equal(t, 30000, runtime.CollectInterval)
+	assert.Equal(t, WatchRetention{MaxAge: 10 * time.Minute, MaxSamples: 0}, runtime.WatchRetention)
+	require.Len(t, runtime.WatchGroups, 1)
+	zero := time.Duration(0)
+	maxSamples := int64(2)
+	assert.Equal(t, WatchGroup{
+		Name:     "fast-thermals",
+		Interval: 5000,
+		Fields:   []string{"DCGM_FI_DEV_GPU_TEMP"},
+		Retention: WatchRetentionOverride{
+			MaxAge:     &zero,
+			MaxSamples: &maxSamples,
+		},
+	}, runtime.WatchGroups[0])
+}
+
+func TestParseYAMLConfigRejectsV1CollectionInV2(t *testing.T) {
+	_, err := ParseYAMLConfig([]byte(`
+version: 2
+collection:
+  interval: 30s
+`))
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "field collection not found")
+}
+
+func TestParseYAMLConfigRejectsV2CollectionsInV1(t *testing.T) {
+	_, err := ParseYAMLConfig([]byte(`
+version: 1
+collections:
+  - name: scrape
+    every: 30s
+    metrics:
+      include: ["*"]
+`))
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "field collections not found")
+}
+
+func TestParseYAMLConfigRejectsV2WatchSettingsInV1(t *testing.T) {
+	_, err := ParseYAMLConfig([]byte(`
+version: 1
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: 10m
+`))
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "field watch not found")
+}
+
 func FuzzParseYAMLConfig(f *testing.F) {
 	seeds := []string{
-		"version: 1\nmetrics:\n  file: /etc/dcgm-exporter/default-counters.csv\ncollection:\n  interval: 45s\n",
-		"version: 1\nmetrics:\n  fields:\n    - name: DCGM_FI_DEV_GPU_TEMP\n      prometheusType: gauge\n      help: GPU temperature.\n",
-		"version: 1\ncollection:\n  watchGroups:\n    - name: slow\n      interval: 10m\n      fields: [DCGM_FI_DEV_NVLINK_PPCNT_*]\n",
-		"version: 1\nmetrics:\n  file: /tmp/first.csv\n  file: /tmp/second.csv\n",
-		"version: 1\n---\nversion: 1\n",
-		"version: 1\ncollection:\n  watchGroups:\n    -",
+		"version: 2\ncollections:\n  - name: scrape\n    every: 45s\n    metrics:\n      include: ['*']\n",
+		"version: 2\nmetrics:\n  fields:\n    - name: DCGM_FI_DEV_GPU_TEMP\n      prometheusType: gauge\n      help: GPU temperature.\n",
+		"version: 2\nmetrics:\n  file: /tmp/first.csv\n  file: /tmp/second.csv\n",
+		"version: 2\n---\nversion: 2\n",
+		"version: 1\ncollection:\n  interval: 30s\n",
 	}
 	for _, seed := range seeds {
 		f.Add([]byte(seed))
@@ -316,14 +504,17 @@ func TestYAMLConfigApplyTo(t *testing.T) {
 		},
 	}
 	yamlConfig, err := ParseYAMLConfig([]byte(`
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
       prometheusType: gauge
       help: GPU temperature.
-collection:
-  interval: 10s
+collections:
+  - name: scrape
+    every: 10s
+    metrics:
+      include: ["*"]
 `))
 	require.NoError(t, err)
 
@@ -337,31 +528,297 @@ collection:
 	assert.False(t, mustMetricFileWatcherPath(config))
 }
 
-func TestYAMLConfigApplyToWatchGroups(t *testing.T) {
+func TestYAMLConfigApplyToGPUBindUnbindDetection(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		initial     bool
+		detectValue bool
+	}{
+		{name: "enables detection", initial: false, detectValue: true},
+		{name: "disables detection", initial: true, detectValue: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &Config{
+				EnableGPUBindUnbindWatch:  tt.initial,
+				GPUBindUnbindPollInterval: time.Second,
+			}
+			yamlConfig, err := ParseYAMLConfig([]byte(fmt.Sprintf(`
+version: 2
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: %t
+      pollInterval: 250ms
+`, tt.detectValue)))
+			require.NoError(t, err)
+
+			require.NoError(t, yamlConfig.ApplyTo(config))
+
+			assert.Equal(t, tt.detectValue, config.EnableGPUBindUnbindWatch)
+			assert.Equal(t, 250*time.Millisecond, config.GPUBindUnbindPollInterval)
+		})
+	}
+}
+
+func TestYAMLConfigApplyToGPUBindUnbindDetectionUsesDefaultsWhenOmitted(t *testing.T) {
 	config := &Config{
-		CollectInterval: 30000,
+		EnableGPUBindUnbindWatch:  false,
+		GPUBindUnbindPollInterval: time.Second,
 	}
 	yamlConfig, err := ParseYAMLConfig([]byte(`
 version: 1
-collection:
-  interval: 5s
-  watchGroups:
-    - name: slow-nvlink
-      interval: 10m
-      fields:
-        - DCGM_FI_DEV_NVLINK_PPCNT_*
+sources:
+  dcgm:
+    detectBindUnbind: {}
 `))
 	require.NoError(t, err)
 
 	require.NoError(t, yamlConfig.ApplyTo(config))
 
-	assert.Equal(t, 5000, config.CollectInterval)
+	assert.False(t, config.EnableGPUBindUnbindWatch)
+	assert.Equal(t, time.Second, config.GPUBindUnbindPollInterval)
+}
+
+func TestYAMLConfigApplyToMaxConcurrentScrapes(t *testing.T) {
+	config := &Config{MaxConcurrentScrapes: DefaultMaxConcurrentScrapes}
+	yamlConfig, err := ParseYAMLConfig([]byte(`
+version: 2
+server:
+  maxConcurrentScrapes: 8
+`))
+	require.NoError(t, err)
+
+	require.NoError(t, yamlConfig.ApplyTo(config))
+
+	assert.Equal(t, 8, config.MaxConcurrentScrapes)
+}
+
+// TestYAMLConfigApplyToEnableExporterMetrics verifies that YAML can opt into exporter metrics without replacing DCGM metrics.
+func TestYAMLConfigApplyToEnableExporterMetrics(t *testing.T) {
+	config := &Config{
+		CollectorsFile: DefaultCollectorsFile,
+		MetricSource: MetricSource{
+			Kind: MetricSourceFile,
+			File: DefaultCollectorsFile,
+		},
+	}
+	yamlConfig, err := ParseYAMLConfig([]byte(`
+version: 2
+metrics:
+  enableExporterMetrics: true
+`))
+	require.NoError(t, err)
+
+	require.NoError(t, yamlConfig.ApplyTo(config))
+
+	assert.True(t, config.EnableExporterMetrics)
+	assert.Equal(t, DefaultCollectorsFile, config.CollectorsFile)
+	assert.Equal(t, MetricSourceFile, config.MetricSource.Kind)
+	assert.Equal(t, DefaultCollectorsFile, config.MetricSource.File)
+}
+
+func TestYAMLConfigApplyToCollections(t *testing.T) {
+	config := &Config{
+		CollectInterval: 30000,
+		WatchRetention:  DefaultWatchRetention(),
+	}
+	yamlConfig, err := ParseYAMLConfig([]byte(`
+version: 2
+collections:
+  - name: scrape
+    every: 45s
+    metrics:
+      include: ["*"]
+  - name: fast-thermals
+    every: 5s
+    sources:
+      dcgm:
+        watch:
+          maxKeepAge: 0s
+          maxKeepSamples: 2
+    metrics:
+      include:
+        - DCGM_FI_DEV_GPU_TEMP
+        - DCGM_FI_DEV_POWER_USAGE
+`))
+	require.NoError(t, err)
+
+	require.NoError(t, yamlConfig.ApplyTo(config))
+
+	assert.Equal(t, 45000, config.CollectInterval)
 	require.Len(t, config.WatchGroups, 1)
+	zero := time.Duration(0)
+	maxSamples := int64(2)
 	assert.Equal(t, WatchGroup{
-		Name:     "slow-nvlink",
-		Interval: 600000,
-		Fields:   []string{"DCGM_FI_DEV_NVLINK_PPCNT_*"},
+		Name:     "fast-thermals",
+		Interval: 5000,
+		Fields: []string{
+			"DCGM_FI_DEV_GPU_TEMP",
+			"DCGM_FI_DEV_POWER_USAGE",
+		},
+		Retention: WatchRetentionOverride{
+			MaxAge:     &zero,
+			MaxSamples: &maxSamples,
+		},
 	}, config.WatchGroups[0])
+}
+
+// TestYAMLConfigApplyToWatchRetention verifies global, default-collection, and
+// per-collection YAML values retain omission and zero semantics.
+func TestYAMLConfigApplyToWatchRetention(t *testing.T) {
+	config := &Config{
+		CollectInterval: 30000,
+		WatchRetention:  DefaultWatchRetention(),
+	}
+	yamlConfig, err := ParseYAMLConfig([]byte(`
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: 2m
+      maxKeepSamples: 5
+collections:
+  - name: scrape
+    every: 30s
+    sources:
+      dcgm:
+        watch:
+          maxKeepSamples: 4
+    metrics:
+      include: ["*"]
+  - name: latest-values
+    every: 1s
+    sources:
+      dcgm:
+        watch:
+          maxKeepAge: 0s
+    metrics:
+      include:
+        - DCGM_FI_DEV_GPU_TEMP
+  - name: inherited
+    every: 30s
+    metrics:
+      include:
+        - DCGM_FI_DEV_POWER_USAGE
+`))
+	require.NoError(t, err)
+
+	require.NoError(t, yamlConfig.ApplyTo(config))
+
+	assert.Equal(t, WatchRetention{MaxAge: 2 * time.Minute, MaxSamples: 4}, config.WatchRetention)
+	require.Len(t, config.WatchGroups, 2)
+	assert.Equal(t, WatchRetention{MaxAge: 0, MaxSamples: 4},
+		config.WatchGroups[0].Retention.Resolve(config.WatchRetention))
+	assert.Equal(t, config.WatchRetention,
+		config.WatchGroups[1].Retention.Resolve(config.WatchRetention))
+}
+
+// TestParseYAMLConfigRejectsInvalidWatchRetention verifies malformed or impossible YAML bounds fail with field context.
+func TestParseYAMLConfigRejectsInvalidWatchRetention(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "malformed age",
+			yaml: `
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: invalid
+`,
+			wantErr: "sources.dcgm.watch.maxKeepAge",
+		},
+		{
+			name: "negative age",
+			yaml: `
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: -1s
+`,
+			wantErr: "maxKeepAge must not be negative",
+		},
+		{
+			name: "negative samples",
+			yaml: `
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepSamples: -1
+`,
+			wantErr: "maxKeepSamples must not be negative",
+		},
+		{
+			name: "samples exceed DCGM range",
+			yaml: `
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepSamples: 2147483648
+`,
+			wantErr: "must not exceed 2147483647",
+		},
+		{
+			name: "group bounds both disabled",
+			yaml: `
+version: 2
+collections:
+  - name: invalid
+    every: 1s
+    sources:
+      dcgm:
+        watch:
+          maxKeepAge: 0s
+          maxKeepSamples: 0
+    metrics:
+      include:
+        - DCGM_FI_DEV_GPU_TEMP
+`,
+			wantErr: "collections[0].sources.dcgm.watch",
+		},
+		{
+			name: "unknown retention property",
+			yaml: `
+version: 2
+sources:
+  dcgm:
+    watch:
+      samples: 2
+`,
+			wantErr: "field samples not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config, err := ParseYAMLConfig([]byte(tt.yaml))
+
+			require.Error(t, err)
+			assert.Nil(t, config)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// TestParseYAMLConfigAllowsGlobalBoundsToBeCompletedByLaterOverrides guards deferred validation before CLI precedence.
+func TestParseYAMLConfigAllowsGlobalBoundsToBeCompletedByLaterOverrides(t *testing.T) {
+	config, err := ParseYAMLConfig([]byte(`
+version: 2
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: 0s
+      maxKeepSamples: 0
+`))
+
+	require.NoError(t, err)
+	require.NotNil(t, config)
 }
 
 func TestMetricFileWatcherPath(t *testing.T) {

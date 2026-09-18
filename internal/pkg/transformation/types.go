@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"sync"
 
+	"google.golang.org/grpc"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -48,6 +49,12 @@ type PodMapper struct {
 	podLister            corev1listers.PodLister
 	podInformerSynced    cache.InformerSynced
 	stopChan             chan struct{}
+	// grpcConn is a persistent connection to the kubelet pod-resources endpoint,
+	// reused across scrapes to avoid the per-scrape allocation/goroutine overhead
+	// of grpc.NewClient that causes the slow RSS growth reported in issue #702.
+	grpcConn   *grpc.ClientConn
+	grpcConnMu sync.Mutex
+	stopped    bool
 }
 
 // LabelFilterCache provides efficient caching for label filtering decisions
@@ -77,10 +84,26 @@ type PodInfo struct {
 }
 
 type DRAResourceSliceManager struct {
-	factory       informers.SharedInformerFactory
-	cancelContext context.CancelFunc
-	lookup        deviceLookupFunc
+	factory                 informers.SharedInformerFactory
+	cancelContext           context.CancelFunc
+	indexer                 cache.Indexer
+	lookup                  deviceLookupFunc
+	poolGeneration          poolGenerationFunc
+	poolName                resourceSlicePoolNameFunc
+	onGenerationChange      func()
+	generationBaselines     map[string]int64
+	generationTrackingReady bool
+	generationTrackingMu    sync.Mutex
+	stopped                 bool
 }
+
+// poolGenerationFunc returns a pool's newest generation and reports whether
+// all ResourceSlices needed to consider that generation complete are present.
+type poolGenerationFunc func(pool string) (int64, bool)
+
+// resourceSlicePoolNameFunc extracts a GPU DRA pool name from an event object
+// and rejects objects from another driver or an unsupported event shape.
+type resourceSlicePoolNameFunc func(obj any) (string, bool)
 
 // PodMetadata holds pod metadata from API server
 type PodMetadata struct {
@@ -102,4 +125,13 @@ type DRAMigDeviceInfo struct {
 	MIGDeviceUUID string
 	Profile       string
 	ParentUUID    string
+	spec          *draMIGSpec
+}
+
+// draMIGSpec identifies the physical MIG placement encoded in a dynamic DRA
+// device name.
+type draMIGSpec struct {
+	ParentMinor    uint32
+	ProfileID      uint32
+	PlacementStart uint32
 }

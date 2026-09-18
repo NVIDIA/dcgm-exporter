@@ -24,6 +24,7 @@ The `tests/container/Makefile` is a focused local-suite helper for Ginkgo-specif
 Container live scenarios use Ginkgo labels:
 
 - `imageStartup`: image pull/startup, lifecycle, health, and metrics behavior.
+- `dcgmLibraryFailure`: clean startup failure when `libdcgm.so.4` is unavailable through both the loader cache and `LD_LIBRARY_PATH`.
 - `configuration`: runtime configuration and collector behavior.
 - `invalidDeviceSelectors`: invalid `DCGM_EXPORTER_DEVICES_STR` diagnostics.
 - `remoteDcgmUri`: remote DCGM URI parsing, including TCP, Unix socket, and VSOCK forms. This uses `DCGM_IMAGE` for `nv-hostengine` and the configured `EXPORTER_*_IMAGE` values for DCGM Exporter.

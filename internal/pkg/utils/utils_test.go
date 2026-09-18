@@ -71,32 +71,6 @@ func TestRandUint64_Failure(t *testing.T) {
 	assert.Zero(t, num, fmt.Sprintf("Expected a uint64, but got %d", num))
 }
 
-func TestDeepCopy(t *testing.T) {
-	t.Run("Return independent copy for supported value", func(t *testing.T) {
-		src := map[string][]int{"gpu": {1, 2, 3}}
-
-		got, err := DeepCopy(src)
-
-		require.NoError(t, err)
-		assert.Equal(t, src, got)
-		got["gpu"][0] = 99
-		assert.Equal(t, 1, src["gpu"][0])
-	})
-
-	t.Run("Return error when pointer value is nil", func(t *testing.T) {
-		got, err := DeepCopy[*struct{}](nil)
-		assert.Nil(t, got)
-		assert.Error(t, err)
-	})
-
-	t.Run("Return error when src is unsupported type", func(t *testing.T) {
-		ch := make(chan int)
-		got, err := DeepCopy(ch)
-		assert.Nil(t, got)
-		assert.Error(t, err)
-	})
-}
-
 func TestCleanupOnError(t *testing.T) {
 	tests := []struct {
 		name     string

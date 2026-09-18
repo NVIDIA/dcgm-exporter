@@ -49,7 +49,7 @@ type xidTotalCollector struct {
 	// updates cannot overlap.
 	collectMu sync.Mutex
 	stateMu   sync.RWMutex
-	cursors   map[dcgm.GroupHandle]time.Time
+	cursors   map[cumulativeWatchCursorKey]time.Time
 	totals    map[xidTotalKey]int
 }
 
@@ -93,19 +93,32 @@ func (c *xidTotalCollector) collectNewEvents() error {
 		return fmt.Errorf("update fields for xid total collector: %w", err)
 	}
 
-	fieldGroup := c.deviceWatchList.DeviceFieldGroup()
+	polls := make([]cumulativeWatchPoll, 0)
 	for _, group := range c.deviceWatchList.DeviceGroups() {
-		since := c.cursorForGroup(group)
-		values, nextSince, err := dcgmprovider.Client().GetValuesSince(
-			group,
-			fieldGroup,
-			since,
-		)
-		if err != nil {
-			return newCumulativePollContextError("get xid values since cursor", group, fieldGroup, since, err)
-		}
+		for _, fieldGroup := range c.deviceWatchList.DeviceFieldGroups() {
+			since := cumulativeWatchCursor(&c.stateMu, c.cursors, c.initialSince, group, fieldGroup)
+			values, nextSince, err := dcgmprovider.Client().GetValuesSince(
+				group,
+				fieldGroup,
+				since,
+			)
+			if err != nil {
+				return newCumulativePollContextError("get xid values since cursor", group, fieldGroup, since, err)
+			}
 
-		c.accumulateGroupEvents(group, values, nextSince)
+			polls = append(polls, cumulativeWatchPoll{
+				group:      group,
+				fieldGroup: fieldGroup,
+				values:     values,
+				nextSince:  nextSince,
+			})
+		}
+	}
+
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	for _, poll := range polls {
+		c.accumulateGroupEvents(poll.group, poll.fieldGroup, poll.values, poll.nextSince)
 	}
 
 	return nil
@@ -113,12 +126,10 @@ func (c *xidTotalCollector) collectNewEvents() error {
 
 func (c *xidTotalCollector) accumulateGroupEvents(
 	group dcgm.GroupHandle,
+	fieldGroup dcgm.FieldHandle,
 	values []dcgm.FieldValue_v2,
 	nextSince time.Time,
 ) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-
 	for _, val := range values {
 		if val.Status != 0 || isBlankValue(val) {
 			continue
@@ -132,7 +143,7 @@ func (c *xidTotalCollector) accumulateGroupEvents(
 		entity := dcgm.GroupEntityPair{EntityGroupId: val.EntityGroupId, EntityId: val.EntityID}
 		c.totals[xidTotalKey{entity: entity, xid: xid}]++
 	}
-	c.cursors[group] = nextSince
+	c.cursors[newCumulativeWatchCursorKey(group, fieldGroup)] = nextSince
 }
 
 func (c *xidTotalCollector) snapshotTotals() map[xidTotalKey]int {
@@ -140,16 +151,6 @@ func (c *xidTotalCollector) snapshotTotals() map[xidTotalKey]int {
 	defer c.stateMu.RUnlock()
 
 	return maps.Clone(c.totals)
-}
-
-func (c *xidTotalCollector) cursorForGroup(group dcgm.GroupHandle) time.Time {
-	c.stateMu.RLock()
-	defer c.stateMu.RUnlock()
-
-	if cursor, exists := c.cursors[group]; exists {
-		return cursor
-	}
-	return c.initialSince
 }
 
 func (c *xidTotalCollector) Cleanup() {
@@ -182,7 +183,7 @@ func NewXIDTotalCollector(
 	collector := &xidTotalCollector{
 		expCollector: expCollector,
 		initialSince: initialSince,
-		cursors:      map[dcgm.GroupHandle]time.Time{},
+		cursors:      map[cumulativeWatchCursorKey]time.Time{},
 		totals:       map[xidTotalKey]int{},
 	}
 	collector.poller = newCumulativeCollectorPoller(

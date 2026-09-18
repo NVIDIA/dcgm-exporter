@@ -30,6 +30,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
 const (
@@ -444,17 +445,39 @@ func (s *Info) initializeNvSwitchInfo(sOpt appconfig.DeviceOptions) error {
 	return err
 }
 
-func (s *Info) setGPUInstanceProfileName(entityID uint, profileName string) bool {
+func (s *Info) setGPUInstanceProfileName(entityID uint, dcgmProfileName string) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
 		for j := range s.gpus[i].GPUInstances {
 			if s.gpus[i].GPUInstances[j].EntityId == entityID {
-				s.gpus[i].GPUInstances[j].ProfileName = profileName
+				s.gpus[i].GPUInstances[j].ProfileName = s.getGPUInstanceProfileName(
+					s.gpus[i], s.gpus[i].GPUInstances[j], dcgmProfileName)
 				return true
 			}
 		}
 	}
 
 	return false
+}
+
+func (s *Info) getGPUInstanceProfileName(gpu GPUInfo, instance GPUInstanceInfo, dcgmProfileName string) string {
+	parentGPUUUID := instance.Info.GpuUuid
+	if parentGPUUUID == "" {
+		parentGPUUUID = gpu.DeviceInfo.UUID
+	}
+
+	nvmlProfileName, err := nvmlprovider.Client().GetGPUInstanceProfileName(parentGPUUUID, instance.Info.NvmlMigProfileId)
+	if err != nil {
+		slog.Debug("Falling back to DCGM MIG profile name", "entityID", instance.EntityId, "error", err)
+		return dcgmProfileName
+	}
+	// Preserve the DCGM fallback if another NVML implementation violates the
+	// concrete provider's non-empty-name contract.
+	if nvmlProfileName == "" {
+		slog.Debug("Falling back to DCGM MIG profile name", "entityID", instance.EntityId, "error", "NVML profile name is empty")
+		return dcgmProfileName
+	}
+
+	return nvmlProfileName
 }
 
 func (s *Info) setMigProfileNames(values []dcgm.FieldValue_v2) error {

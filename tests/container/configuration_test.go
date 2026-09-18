@@ -29,6 +29,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
 )
 
 const mountedCustomCountersFile = "/tmp/dcgm-exporter-custom-counters.csv"
@@ -146,6 +148,25 @@ var _ = Describe("dcgm-exporter container runtime configuration", Serial, Label(
 
 		body := fetchValidMetrics(ctx, port)
 		Expect(body).To(ContainSubstring("DCGM_FI_DEV_"))
+	})
+
+	It("exposes exporter metrics when enabled", func(ctx context.Context) {
+		img := availableExporterImage(ctx)
+		port := mustFreePort()
+
+		runExporterContainer(ctx, img.FullName,
+			[]string{"--net", "host"},
+			"-a", fmt.Sprintf(":%d", port),
+			"-f", countersFile,
+			"--enable-exporter-metrics")
+
+		body := fetchValidMetrics(ctx, port)
+		families, err := metriccontract.ParseText([]byte(body))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(families).To(HaveKey("go_goroutines"))
+		Expect(families).To(HaveKey("process_cpu_seconds_total"))
+		Expect(families).To(HaveKey("promhttp_metric_handler_requests_in_flight"))
+		Expect(families).To(HaveKey("promhttp_metric_handler_requests_total"))
 	})
 })
 

@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -205,7 +206,7 @@ func TestNewWatchList(t *testing.T) {
 				assert.NotNil(t, err, "expected error")
 			}
 			assert.Empty(t, got.DeviceGroups(), "Unexpected DeviceGroups() output.")
-			assert.Equal(t, dcgm.FieldHandle{}, got.DeviceFieldGroup(), "Unexpected DeviceFieldGroup() output.")
+			assert.Empty(t, got.DeviceFieldGroups(), "Unexpected DeviceFieldGroups() output.")
 
 			if tt.args.newDeviceFields != nil {
 				got.SetDeviceFields(tt.args.newDeviceFields)
@@ -237,6 +238,232 @@ func TestWatchList_SetDeviceFieldsClearsWatchFieldsForLabelOnlyList(t *testing.T
 	assert.Equal(t, []dcgm.Short{100, 101}, got.LabelDeviceFields())
 	assert.Empty(t, got.watchFields)
 	assert.True(t, got.IsEmpty())
+}
+
+func TestWatchListKeepsFieldsAndEntitiesAtMatchingScopes(t *testing.T) {
+	groupName := t.Name()
+	ctrl := gomock.NewController(t)
+	deviceInfo := mockDeviceInfoFunc(ctrl)
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	deviceFields := []dcgm.Short{
+		dcgm.DCGM_FI_DEV_GPU_TEMP,
+		dcgm.DCGM_FI_DEV_FB_USED,
+		dcgm.DCGM_FI_DEV_XID_ERRORS,
+	}
+	labelFields := []dcgm.Short{dcgm.DCGM_FI_DEV_UUID}
+	computeInstanceFields := []dcgm.Short{dcgm.DCGM_FI_DEV_FB_USED, dcgm.DCGM_FI_DEV_XID_ERRORS}
+	watchGroups := []devicewatcher.FieldWatchGroup{{
+		Name:         groupName,
+		Fields:       append(append([]dcgm.Short{}, deviceFields...), labelFields...),
+		IntervalMSec: 1,
+	}}
+	baseGroup := dcgm.GroupHandle{}
+	baseGroup.SetHandle(uintptr(1))
+	computeGroup := dcgm.GroupHandle{}
+	computeGroup.SetHandle(uintptr(2))
+	parentGroup := dcgm.GroupHandle{}
+	parentGroup.SetHandle(uintptr(3))
+	baseFieldGroup := dcgm.FieldHandle{}
+	baseFieldGroup.SetHandle(uintptr(4))
+	computeFieldGroup := dcgm.FieldHandle{}
+	computeFieldGroup.SetHandle(uintptr(5))
+	parentFieldGroup := dcgm.FieldHandle{}
+	parentFieldGroup.SetHandle(uintptr(6))
+	watcher.EXPECT().WatchDeviceFieldGroups([]devicewatcher.FieldWatchGroup{{
+		Name: groupName, Fields: []dcgm.Short{
+			dcgm.DCGM_FI_DEV_GPU_TEMP,
+			dcgm.DCGM_FI_DEV_XID_ERRORS,
+			dcgm.DCGM_FI_DEV_UUID,
+		}, IntervalMSec: 1,
+	}}, deviceInfo).Return([]dcgm.GroupHandle{baseGroup}, []dcgm.FieldHandle{baseFieldGroup}, nil, nil)
+	watcher.EXPECT().WatchDeviceFieldGroupsForComputeInstanceFields(
+		[]devicewatcher.FieldWatchGroup{{Name: groupName, Fields: []dcgm.Short{
+			dcgm.DCGM_FI_DEV_FB_USED,
+			dcgm.DCGM_FI_DEV_XID_ERRORS,
+			dcgm.DCGM_FI_DEV_UUID,
+		}, IntervalMSec: 1}},
+		deviceInfo,
+	).Return([]dcgm.GroupHandle{computeGroup}, []dcgm.FieldHandle{computeFieldGroup}, nil, nil)
+	watcher.EXPECT().WatchDeviceFieldGroupsForParentGPUs([]devicewatcher.FieldWatchGroup{{
+		Name:         groupName,
+		Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS, dcgm.DCGM_FI_DEV_UUID},
+		IntervalMSec: 1,
+	}}, deviceInfo).Return([]dcgm.GroupHandle{parentGroup}, []dcgm.FieldHandle{parentFieldGroup}, nil, nil)
+
+	watchList := newWatchListWithGroups(
+		deviceInfo,
+		deviceFields,
+		labelFields,
+		computeInstanceFields,
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		watchGroups,
+		watcher,
+		1,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+
+	returnedFields := watchList.ComputeInstanceFields()
+	returnedFields[0] = dcgm.DCGM_FI_DEV_GPU_TEMP
+	assert.Equal(t, computeInstanceFields, watchList.ComputeInstanceFields())
+	_, err := watchList.Watch()
+	assert.NoError(t, err)
+	assert.Equal(t, []dcgm.GroupHandle{baseGroup, computeGroup, parentGroup}, watchList.DeviceGroups())
+	assert.Equal(t, []dcgm.FieldHandle{baseFieldGroup, computeFieldGroup, parentFieldGroup}, watchList.DeviceFieldGroups())
+
+	watchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+	assert.Empty(t, watchList.ComputeInstanceFields())
+	assert.Empty(t, watchList.FieldsAtMultipleScopes())
+	watcher.EXPECT().WatchDeviceFieldGroups([]devicewatcher.FieldWatchGroup{{
+		Name:         groupName,
+		Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		IntervalMSec: 1,
+	}}, deviceInfo).Return(nil, nil, nil, nil)
+	_, err = watchList.Watch()
+	assert.NoError(t, err)
+}
+
+func TestWatchListReturnsAllCleanupsWhenParentGPUWatchFails(t *testing.T) {
+	groupName := t.Name()
+	ctrl := gomock.NewController(t)
+	deviceInfo := mockDeviceInfoFunc(ctrl)
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	watchGroups := []devicewatcher.FieldWatchGroup{{
+		Name:         groupName,
+		Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		IntervalMSec: 1,
+	}}
+	baseCleaned := false
+	computeCleaned := false
+	parentCleaned := false
+	watcher.EXPECT().WatchDeviceFieldGroups(watchGroups, deviceInfo).Return(
+		nil,
+		nil,
+		[]func(){func() { baseCleaned = true }},
+		nil,
+	)
+	watcher.EXPECT().WatchDeviceFieldGroupsForComputeInstanceFields(watchGroups, deviceInfo).Return(
+		nil,
+		nil,
+		[]func(){func() { computeCleaned = true }},
+		nil,
+	)
+	watcher.EXPECT().WatchDeviceFieldGroupsForParentGPUs(gomock.Any(), deviceInfo).Return(
+		nil,
+		nil,
+		[]func(){func() { parentCleaned = true }},
+		assert.AnError,
+	)
+
+	watchList := newWatchListWithGroups(
+		deviceInfo,
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		nil,
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+		watchGroups,
+		watcher,
+		1,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+
+	cleanups, err := watchList.Watch()
+
+	require.ErrorIs(t, err, assert.AnError)
+	require.Len(t, cleanups, 3)
+	for _, cleanup := range cleanups {
+		cleanup()
+	}
+	assert.True(t, baseCleaned)
+	assert.True(t, computeCleaned)
+	assert.True(t, parentCleaned)
+}
+
+func TestWatchListWithOnlyComputeInstanceFieldsDoesNotCreateBaseWatch(t *testing.T) {
+	groupName := t.Name()
+	ctrl := gomock.NewController(t)
+	deviceInfo := mockDeviceInfoFunc(ctrl)
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	fields := []dcgm.Short{dcgm.DCGM_FI_DEV_FB_USED}
+	watchGroups := []devicewatcher.FieldWatchGroup{{
+		Name:           groupName,
+		Fields:         fields,
+		IntervalMSec:   5000,
+		MaxKeepAge:     30,
+		MaxKeepSamples: 2,
+	}}
+	watcher.EXPECT().WatchDeviceFieldGroupsForComputeInstanceFields(watchGroups, deviceInfo).Return(nil, nil, nil, nil)
+
+	watchList := newWatchListWithGroups(
+		deviceInfo,
+		fields,
+		nil,
+		fields,
+		nil,
+		watchGroups,
+		watcher,
+		1,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+
+	_, err := watchList.Watch()
+
+	require.NoError(t, err)
+}
+
+func TestWatchListReturnsAllCleanupsWhenComputeInstanceWatchFails(t *testing.T) {
+	groupName := t.Name()
+	ctrl := gomock.NewController(t)
+	deviceInfo := mockDeviceInfoFunc(ctrl)
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	deviceFields := []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP, dcgm.DCGM_FI_DEV_FB_USED}
+	watchGroups := []devicewatcher.FieldWatchGroup{{Name: groupName, Fields: deviceFields, IntervalMSec: 1}}
+	baseCleaned := false
+	computeCleaned := false
+	watcher.EXPECT().WatchDeviceFieldGroups([]devicewatcher.FieldWatchGroup{{
+		Name: groupName, Fields: []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP}, IntervalMSec: 1,
+	}}, deviceInfo).Return(nil, nil, []func(){func() { baseCleaned = true }}, nil)
+	watcher.EXPECT().WatchDeviceFieldGroupsForComputeInstanceFields([]devicewatcher.FieldWatchGroup{{
+		Name: groupName, Fields: []dcgm.Short{dcgm.DCGM_FI_DEV_FB_USED}, IntervalMSec: 1,
+	}}, deviceInfo).Return(nil, nil, []func(){func() { computeCleaned = true }}, assert.AnError)
+
+	watchList := newWatchListWithGroups(
+		deviceInfo,
+		deviceFields,
+		nil,
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_FB_USED},
+		nil,
+		watchGroups,
+		watcher,
+		1,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+
+	cleanups, err := watchList.Watch()
+
+	require.ErrorIs(t, err, assert.AnError)
+	require.Len(t, cleanups, 2)
+	for _, cleanup := range cleanups {
+		cleanup()
+	}
+	assert.True(t, baseCleaned)
+	assert.True(t, computeCleaned)
+}
+
+func TestWatchList_DeviceFieldGroupsReturnsCopy(t *testing.T) {
+	original := dcgm.FieldHandle{}
+	original.SetHandle(uintptr(1))
+	replacement := dcgm.FieldHandle{}
+	replacement.SetHandle(uintptr(2))
+	watchList := &WatchList{deviceFieldGroups: []dcgm.FieldHandle{original}}
+
+	fieldGroups := watchList.DeviceFieldGroups()
+	fieldGroups[0] = replacement
+
+	assert.Equal(t, []dcgm.FieldHandle{original}, watchList.DeviceFieldGroups())
 }
 
 func TestWatchList_SetDeviceFieldsWithoutLabelWatchesPreservesLabelFields(t *testing.T) {
@@ -445,14 +672,18 @@ func TestWatchListManagerPartitionFieldWatchGroups(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []devicewatcher.FieldWatchGroup{
 		{
-			Name:         "power",
-			Fields:       []dcgm.Short{testutils.SampleGPUPowerUsageCounter.FieldID},
-			IntervalMSec: 60000,
+			Name:           "power",
+			Fields:         []dcgm.Short{testutils.SampleGPUPowerUsageCounter.FieldID},
+			IntervalMSec:   60000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 		{
-			Name:         "temperature",
-			Fields:       []dcgm.Short{testutils.SampleGPUTempCounter.FieldID},
-			IntervalMSec: 120000,
+			Name:           "temperature",
+			Fields:         []dcgm.Short{testutils.SampleGPUTempCounter.FieldID},
+			IntervalMSec:   120000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 		{
 			Name: "default",
@@ -460,7 +691,9 @@ func TestWatchListManagerPartitionFieldWatchGroups(t *testing.T) {
 				testutils.SampleGPUTotalEnergyCounter.FieldID,
 				testutils.SampleVGPULicenseStatusCounter.FieldID,
 			},
-			IntervalMSec: 30000,
+			IntervalMSec:   30000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 	}, got)
 }
@@ -484,14 +717,18 @@ func TestWatchListManagerPartitionFieldWatchGroupsKeepsLabelFieldsInDefaultGroup
 	require.NoError(t, err)
 	assert.Equal(t, []devicewatcher.FieldWatchGroup{
 		{
-			Name:         "temperature",
-			Fields:       []dcgm.Short{testutils.SampleGPUTempCounter.FieldID},
-			IntervalMSec: 120000,
+			Name:           "temperature",
+			Fields:         []dcgm.Short{testutils.SampleGPUTempCounter.FieldID},
+			IntervalMSec:   120000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 		{
-			Name:         "default",
-			Fields:       []dcgm.Short{testutils.SampleDriverVersionCounter.FieldID},
-			IntervalMSec: 30000,
+			Name:           "default",
+			Fields:         []dcgm.Short{testutils.SampleDriverVersionCounter.FieldID},
+			IntervalMSec:   30000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 	}, got)
 }
@@ -516,14 +753,63 @@ func TestWatchListManagerPartitionsExporterBackingFieldsByName(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []devicewatcher.FieldWatchGroup{
 		{
-			Name:         "xid",
-			Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
-			IntervalMSec: 60000,
+			Name:           "xid",
+			Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+			IntervalMSec:   60000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 		{
-			Name:         "clock-events",
-			Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS},
-			IntervalMSec: 120000,
+			Name:           "clock-events",
+			Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS},
+			IntervalMSec:   120000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
+		},
+	}, got)
+}
+
+// TestWatchListManagerResolvesPerGroupRetention verifies property-level inheritance reaches concrete field groups.
+func TestWatchListManagerResolvesPerGroupRetention(t *testing.T) {
+	maxSamples := int64(2)
+	manager := &WatchListManager{
+		counters:       testutils.SampleCounters,
+		watchRetention: appconfig.WatchRetention{MaxAge: 5 * time.Minute, MaxSamples: 9},
+		watchGroups: []appconfig.WatchGroup{
+			{
+				Name:     "latest-values",
+				Interval: 1000,
+				Fields:   []string{"DCGM_FI_DEV_GPU_TEMP"},
+				Retention: appconfig.WatchRetentionOverride{
+					MaxSamples: &maxSamples,
+				},
+			},
+		},
+	}
+
+	got, err := manager.partitionFieldWatchGroups(
+		[]dcgm.Short{
+			testutils.SampleGPUTempCounter.FieldID,
+			testutils.SampleGPUPowerUsageCounter.FieldID,
+		},
+		30000,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []devicewatcher.FieldWatchGroup{
+		{
+			Name:           "latest-values",
+			Fields:         []dcgm.Short{testutils.SampleGPUTempCounter.FieldID},
+			IntervalMSec:   1000,
+			MaxKeepAge:     300,
+			MaxKeepSamples: 2,
+		},
+		{
+			Name:           "default",
+			Fields:         []dcgm.Short{testutils.SampleGPUPowerUsageCounter.FieldID},
+			IntervalMSec:   30000,
+			MaxKeepAge:     300,
+			MaxKeepSamples: 9,
 		},
 	}, got)
 }
@@ -563,9 +849,11 @@ func TestWatchListSetDeviceFieldsResetsToDefaultCadence(t *testing.T) {
 
 	assert.Equal(t, []devicewatcher.FieldWatchGroup{
 		{
-			Name:         "default",
-			Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
-			IntervalMSec: 30000,
+			Name:           "default",
+			Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+			IntervalMSec:   30000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 	}, watchList.FieldWatchGroups())
 }
@@ -581,14 +869,18 @@ func TestWatchListSetDeviceFieldsPreservesConfiguredCadence(t *testing.T) {
 		nil,
 		[]devicewatcher.FieldWatchGroup{
 			{
-				Name:         "xid",
-				Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
-				IntervalMSec: 60000,
+				Name:           "xid",
+				Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+				IntervalMSec:   60000,
+				MaxKeepAge:     600,
+				MaxKeepSamples: 0,
 			},
 			{
-				Name:         "clock-events",
-				Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS},
-				IntervalMSec: 120000,
+				Name:           "clock-events",
+				Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS},
+				IntervalMSec:   120000,
+				MaxKeepAge:     0,
+				MaxKeepSamples: 2,
 			},
 			{
 				Name:         "default",
@@ -607,14 +899,18 @@ func TestWatchListSetDeviceFieldsPreservesConfiguredCadence(t *testing.T) {
 
 	assert.Equal(t, []devicewatcher.FieldWatchGroup{
 		{
-			Name:         "xid",
-			Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
-			IntervalMSec: 60000,
+			Name:           "xid",
+			Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+			IntervalMSec:   60000,
+			MaxKeepAge:     600,
+			MaxKeepSamples: 0,
 		},
 		{
-			Name:         "clock-events",
-			Fields:       []dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS},
-			IntervalMSec: 120000,
+			Name:           "clock-events",
+			Fields:         []dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS},
+			IntervalMSec:   120000,
+			MaxKeepAge:     0,
+			MaxKeepSamples: 2,
 		},
 	}, watchList.FieldWatchGroups())
 }
@@ -685,8 +981,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields})
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields})
 
 				fakeDevices := deviceinfo.SpoofGPUDevices()
 				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
@@ -745,8 +1041,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields})
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields})
 
 				fakeDevices := deviceinfo.SpoofGPUDevices()
 				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
@@ -812,8 +1108,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields})
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields})
 
 				fakeDevices := deviceinfo.SpoofGPUDevices()
 				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
@@ -882,8 +1178,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields})
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields})
 
 				fakeDevices := deviceinfo.SpoofGPUDevices()
 				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
@@ -936,8 +1232,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields})
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields})
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), fmt.Errorf("some error"))
 			},
@@ -971,8 +1267,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				watcher *mockdevicewatcher.MockWatcher, counters, labelCounters counters.CounterList,
 				entityType dcgm.Field_Entity_Group, deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields).Times(1)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields).Times(1)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields}).Times(1)
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields}).Times(1)
 
 				fakeDevices := deviceinfo.SpoofGPUDevices()
 				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
@@ -1030,8 +1326,8 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 				entityType dcgm.Field_Entity_Group,
 				deviceFields, labelDeviceFields []dcgm.Short,
 			) {
-				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(deviceFields).Times(1)
-				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(labelDeviceFields).Times(1)
+				watcher.EXPECT().GetDeviceFields(counters, entityType).Return(devicewatcher.ResolvedFields{Fields: deviceFields}).Times(1)
+				watcher.EXPECT().GetDeviceFields(labelCounters, entityType).Return(devicewatcher.ResolvedFields{Fields: labelDeviceFields}).Times(1)
 
 				fakeDevices := deviceinfo.SpoofGPUDevices()
 				_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
@@ -1118,6 +1414,54 @@ func TestWatchListManager_CreateEntityWatchList(t *testing.T) {
 	}
 }
 
+func TestWatchListManagerCreateEntityWatchListUsesResolvedComputeInstanceFields(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	dcgmprovider.SetClient(mockDCGM)
+
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	deviceFields := []dcgm.Short{
+		dcgm.DCGM_FI_DEV_GPU_TEMP,
+		dcgm.DCGM_FI_DEV_FB_USED,
+		dcgm.DCGM_FI_DEV_XID_ERRORS,
+	}
+	labelFields := []dcgm.Short{testutils.SampleDriverVersionCounter.FieldID}
+	sampleCounters := counters.CounterList(testutils.SampleCounters)
+	watcher.EXPECT().GetDeviceFields(sampleCounters.NonLabelCounters(), dcgm.FE_GPU).Return(devicewatcher.ResolvedFields{
+		Fields:                 deviceFields,
+		ComputeInstanceFields:  []dcgm.Short{dcgm.DCGM_FI_DEV_FB_USED},
+		FieldsAtMultipleScopes: []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS},
+	})
+	watcher.EXPECT().GetDeviceFields(sampleCounters.LabelCounters(), dcgm.FE_GPU).Return(devicewatcher.ResolvedFields{
+		Fields: labelFields,
+	})
+
+	fakeDevices := deviceinfo.SpoofGPUDevices()
+	_, fakeGPUs, _, _ := deviceinfo.SpoofMigHierarchy()
+	hierarchy := dcgm.MigHierarchy_v2{Count: 1}
+	hierarchy.EntityList[0] = fakeGPUs[0]
+	mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+	mockDCGM.EXPECT().GetDeviceInfo(uint(0)).Return(fakeDevices[0], nil)
+	mockDCGM.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+	mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(hierarchy, nil)
+
+	manager := &WatchListManager{
+		entityWatchLists: make(map[dcgm.Field_Entity_Group]WatchList),
+		counters:         sampleCounters,
+		gOpts:            deviceOptionFalse,
+		sOpts:            deviceOptionTrue,
+		cOpts:            deviceOptionOther,
+	}
+
+	require.NoError(t, manager.CreateEntityWatchList(dcgm.FE_GPU, watcher, 1))
+	watchList, ok := manager.EntityWatchList(dcgm.FE_GPU)
+	require.True(t, ok)
+	assert.Equal(t, []dcgm.Short{dcgm.DCGM_FI_DEV_FB_USED}, watchList.ComputeInstanceFields())
+	assert.Equal(t, []dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS}, watchList.FieldsAtMultipleScopes())
+}
+
 func TestWatchListManager_CreateEntityWatchListWarnsOnceForGPUInstanceWithoutComputeInstances(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
@@ -1154,8 +1498,8 @@ func TestWatchListManager_CreateEntityWatchListWarnsOnceForGPUInstanceWithoutCom
 	}
 
 	expectWatchFields := func(entityType dcgm.Field_Entity_Group) {
-		watcher.EXPECT().GetDeviceFields(manager.counters.NonLabelCounters(), entityType).Return([]dcgm.Short{})
-		watcher.EXPECT().GetDeviceFields(manager.counters.LabelCounters(), entityType).Return([]dcgm.Short{})
+		watcher.EXPECT().GetDeviceFields(manager.counters.NonLabelCounters(), entityType).Return(devicewatcher.ResolvedFields{})
+		watcher.EXPECT().GetDeviceFields(manager.counters.LabelCounters(), entityType).Return(devicewatcher.ResolvedFields{})
 	}
 	expectGPUInfoInit := func() {
 		mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
@@ -1232,8 +1576,8 @@ func TestWatchListManager_CreateEntityWatchListDoesNotWarnWhenGPUInstancesHaveCo
 		{EntityID: fakeGPUInstances[1].Entity.EntityId},
 	}
 
-	watcher.EXPECT().GetDeviceFields(manager.counters.NonLabelCounters(), dcgm.FE_GPU).Return([]dcgm.Short{})
-	watcher.EXPECT().GetDeviceFields(manager.counters.LabelCounters(), dcgm.FE_GPU).Return([]dcgm.Short{})
+	watcher.EXPECT().GetDeviceFields(manager.counters.NonLabelCounters(), dcgm.FE_GPU).Return(devicewatcher.ResolvedFields{})
+	watcher.EXPECT().GetDeviceFields(manager.counters.LabelCounters(), dcgm.FE_GPU).Return(devicewatcher.ResolvedFields{})
 	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
 	mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(fakeDevices[0], nil)
 	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)

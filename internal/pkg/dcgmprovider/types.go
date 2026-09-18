@@ -47,6 +47,7 @@ type DCGM interface {
 	GetErrorMeta(dcgm.HealthCheckErrorCode) *dcgm.ErrorMeta
 	GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error)
 	GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error)
+	GetMultipleValuesForField(uint, dcgm.Short, int, time.Time, time.Time) ([]dcgm.FieldValue_v1, error)
 	GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error)
 	GetSupportedDevices() ([]uint, error)
 	GetSupportedMetricGroups(uint) ([]dcgm.MetricGroup, error)
@@ -56,6 +57,7 @@ type DCGM interface {
 	LinkGetLatestValues(uint, dcgm.Field_Entity_Group, uint, []dcgm.Short) ([]dcgm.FieldValue_v1, error)
 	NewDefaultGroup(string) (dcgm.GroupHandle, error)
 	UpdateAllFields() error
+	WatchFieldValue(uint, dcgm.Short, time.Duration, time.Duration, int) error
 	WatchFieldsWithGroupEx(dcgm.FieldHandle, dcgm.GroupHandle, int64, float64, int32) error
 	UnwatchFields(dcgm.FieldHandle, dcgm.GroupHandle) error
 	Cleanup()
