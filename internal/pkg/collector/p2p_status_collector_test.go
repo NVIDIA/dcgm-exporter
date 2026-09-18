@@ -18,6 +18,7 @@ package collector
 
 import (
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -34,6 +35,32 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
+
+func TestBoundedLinkValue(t *testing.T) {
+	cases := []struct {
+		name string
+		link uint64
+		want int
+		ok   bool
+	}{
+		{"positive: zero", 0, 0, true},
+		{"positive: small enum value", 6, 6, true},
+		{"boundary: MaxInt32", math.MaxInt32, math.MaxInt32, true},
+		{"corner: MaxInt32+1", math.MaxInt32 + 1, 0, false},
+		{"negative: MaxUint64", math.MaxUint64, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := boundedLinkValue(tc.link)
+			if ok != tc.ok {
+				t.Fatalf("ok=%v want %v", ok, tc.ok)
+			}
+			if ok && got != tc.want {
+				t.Fatalf("got=%d want %d", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestIsDCGMExpP2PStatusEnabled(t *testing.T) {
 	tests := []struct {
