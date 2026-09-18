@@ -33,20 +33,26 @@ import (
 )
 
 const (
-	CurrentVersion           = 1
-	RegularBatchSize         = 127
-	ProfilingBatchSize       = 64
-	int32Blank         int64 = 2147483632
-	int64BlankFloat          = float64(9223372036854775792)
-	fp64Blank                = 140737488355328.0
+	CurrentVersion     = 3
+	RegularBatchSize   = 127
+	ProfilingBatchSize = 64
+	// The NVML injection backend can deadlock during cleanup when MIG profiling
+	// fields share one exporter lifecycle.
+	MIGProfilingBatchSize       = 1
+	gpuInstanceEntity           = "GPU Instance"
+	computeInstanceEntity       = "GPU Compute Instance"
+	int32Blank            int64 = 2147483632
+	int64BlankFloat             = float64(9223372036854775792)
+	fp64Blank                   = 140737488355328.0
 )
 
 // Contract describes every field/entity sample DCGM exposes for one fixture.
 type Contract struct {
-	Version     int           `json:"version"`
-	DeviceCount int           `json:"deviceCount"`
-	Metrics     []Metric      `json:"metrics"`
-	Unavailable []Unavailable `json:"unavailable,omitempty"`
+	Version              int           `json:"version"`
+	DeviceCount          int           `json:"deviceCount"`
+	ComputeInstanceCount int           `json:"computeInstanceCount"`
+	Metrics              []Metric      `json:"metrics"`
+	Unavailable          []Unavailable `json:"unavailable,omitempty"`
 }
 
 // Metric describes one available numeric DCGM field.
@@ -57,11 +63,12 @@ type Metric struct {
 	Samples   []Sample `json:"samples"`
 }
 
-// Sample identifies one expected GPU or GPU-instance sample.
+// Sample identifies one expected GPU, GPU-instance, or compute-instance sample and its public metric value.
 type Sample struct {
 	EntityGroup string            `json:"entityGroup"`
 	EntityID    uint              `json:"entityId"`
 	Labels      map[string]string `json:"labels"`
+	Value       float64           `json:"value"`
 }
 
 // Unavailable records why a candidate field did not produce a usable value.
@@ -92,6 +99,12 @@ func (c Contract) Validate() error {
 	}
 	if c.DeviceCount < 0 {
 		errs = append(errs, errors.New("deviceCount must not be negative"))
+	}
+	if c.ComputeInstanceCount < 0 {
+		errs = append(errs, errors.New("computeInstanceCount must not be negative"))
+	}
+	if c.DeviceCount == 0 && c.ComputeInstanceCount > 0 {
+		errs = append(errs, errors.New("compute-instance topology requires at least one device"))
 	}
 	if c.DeviceCount > 0 && len(c.Metrics) == 0 {
 		errs = append(errs, errors.New("device fixture exposes no exportable metrics"))
@@ -127,24 +140,87 @@ func (c Contract) Validate() error {
 				errs = append(errs, fmt.Errorf("%s has duplicate %s entity %d", prefix, sample.EntityGroup, sample.EntityID))
 			}
 			seenSamples[key] = struct{}{}
+			if !saneValue(sample.Value) {
+				errs = append(errs, fmt.Errorf("%s.samples[%d] has an invalid value", prefix, sampleIndex))
+			}
 		}
+	}
+	if err := c.ValidateComputeInstanceSamples(); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
 
 // Batches returns limit-aware regular and profiling metric batches.
 func (c Contract) Batches() [][]Metric {
-	var regular, profiling []Metric
+	var regular, profiling, migProfiling []Metric
+	isolateProfiling := contractHasMIGSamples(c.Metrics)
 	for _, metric := range c.Metrics {
-		if metric.Profiling {
+		switch {
+		case metric.Profiling && isolateProfiling:
+			migProfiling = append(migProfiling, metric)
+		case metric.Profiling:
 			profiling = append(profiling, metric)
-		} else {
+		default:
 			regular = append(regular, metric)
 		}
 	}
 	var batches [][]Metric
 	batches = appendBatches(batches, regular, RegularBatchSize)
-	return appendBatches(batches, profiling, ProfilingBatchSize)
+	batches = appendBatches(batches, profiling, ProfilingBatchSize)
+	return appendBatches(batches, migProfiling, MIGProfilingBatchSize)
+}
+
+func contractHasMIGSamples(metrics []Metric) bool {
+	for _, metric := range metrics {
+		for _, sample := range metric.Samples {
+			if sample.EntityGroup == gpuInstanceEntity || sample.EntityGroup == computeInstanceEntity {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ValidateComputeInstanceSamples verifies that compute-instance observations
+// retain the GPU-instance and compute-instance labels needed to distinguish
+// Prometheus series.
+func (c Contract) ValidateComputeInstanceSamples() error {
+	var errs []error
+	var hasComputeInstanceSample bool
+	seenComputeInstances := map[string]struct{}{}
+	for _, metric := range c.Metrics {
+		for _, sample := range metric.Samples {
+			if sample.EntityGroup != computeInstanceEntity {
+				continue
+			}
+			hasComputeInstanceSample = true
+			for _, label := range []string{"GPU_I_ID", "GPU_I_PROFILE", "GPU_CI_ID"} {
+				if sample.Labels[label] == "" {
+					errs = append(errs, fmt.Errorf("compute-instance metric %q is missing %s", metric.Name, label))
+				}
+			}
+			if sample.Labels["GPU_I_ID"] != "" &&
+				sample.Labels["GPU_I_PROFILE"] != "" &&
+				sample.Labels["GPU_CI_ID"] != "" {
+				seenComputeInstances[canonicalLabels(sample.Labels)] = struct{}{}
+			}
+		}
+	}
+	if c.ComputeInstanceCount > 0 && !hasComputeInstanceSample {
+		errs = append(errs, errors.New("compute-instance fixture exposes no compute-instance field samples"))
+	}
+	if c.ComputeInstanceCount == 0 && hasComputeInstanceSample {
+		errs = append(errs, errors.New("compute-instance samples require computeInstanceCount > 0"))
+	}
+	if c.ComputeInstanceCount > 0 && len(seenComputeInstances) != c.ComputeInstanceCount {
+		errs = append(errs, fmt.Errorf(
+			"compute-instance count %d does not match %d sampled compute instances",
+			c.ComputeInstanceCount,
+			len(seenComputeInstances),
+		))
+	}
+	return errors.Join(errs...)
 }
 
 func appendBatches(dst [][]Metric, metrics []Metric, size int) [][]Metric {
@@ -200,6 +276,17 @@ func ValidateFamilies(families map[string]*dto.MetricFamily, metrics []Metric) e
 			value := actual[index].GetGauge().GetValue()
 			if !saneValue(value) {
 				errs = append(errs, fmt.Errorf("metric family %q %s entity %d has an invalid value", expected.Name, sample.EntityGroup, sample.EntityID))
+				continue
+			}
+			if value != sample.Value {
+				errs = append(errs, fmt.Errorf(
+					"metric family %q %s entity %d has value %v, expected %v",
+					expected.Name,
+					sample.EntityGroup,
+					sample.EntityID,
+					value,
+					sample.Value,
+				))
 			}
 		}
 	}

@@ -20,6 +20,9 @@ package nvmlprovider
 
 type NVML interface {
 	GetMIGDeviceInfoByID(string) (*MIGDeviceInfo, error)
+	GetGPUInstanceProfileName(parentGPUUUID string, profileID uint) (string, error)
+	// GetGPUInstanceIDByProfileAndPlacement resolves dynamic DRA MIG placement metadata to a live GPU instance ID.
+	GetGPUInstanceIDByProfileAndPlacement(parentUUID string, parentMinor, profileID, placementStart uint32) (uint, error)
 	// GetDeviceProcessMemory returns memory usage for processes running on the GPU.
 	// Returns a map from PID to memory used in bytes.
 	GetDeviceProcessMemory(gpuUUID string) (map[uint32]uint64, error)

@@ -17,8 +17,10 @@
 package host
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -45,9 +48,26 @@ var randomPortMutex sync.Mutex
 var usedPorts = map[int]struct{}{}
 
 const (
-	exporterTerminateTimeout = 10 * time.Second
-	exporterKillTimeout      = 5 * time.Second
+	// exporterWebWriteTimeout tracks the current product default without making
+	// host black-box tests import exporter internals.
+	exporterWebWriteTimeout            = 30 * time.Second
+	exporterShutdownMargin             = 15 * time.Second
+	exporterKillTimeout                = 5 * time.Second
+	hostTerminationTestGracefulTimeout = 25 * time.Millisecond
+	hostTerminationTestKillTimeout     = time.Second
 )
+
+// hostProcessTerminationPolicy bounds test cleanup while allowing the product's
+// documented HTTP shutdown window and DCGM cleanup to finish.
+type hostProcessTerminationPolicy struct {
+	GracefulTimeout time.Duration
+	KillTimeout     time.Duration
+}
+
+var exporterTerminationPolicy = hostProcessTerminationPolicy{
+	GracefulTimeout: exporterWebWriteTimeout + exporterShutdownMargin,
+	KillTimeout:     exporterKillTimeout,
+}
 
 var exporterBinaryFlag = flag.String(
 	"exporter-binary",
@@ -58,7 +78,7 @@ var exporterBinaryFlag = flag.String(
 var dcgmProbeBinaryFlag = flag.String(
 	"dcgm-probe-binary",
 	"",
-	"path to the direct-DCGM probe used by NVML-injection tests",
+	"path to the direct-DCGM probe used by DCGM mock tests",
 )
 
 var dcgmFieldsFileFlag = flag.String(
@@ -113,11 +133,16 @@ type hostExporterProcess struct {
 
 // startExporterProcess starts the product exporter with the supplied CLI args.
 func startExporterProcess(t testing.TB, args ...string) *hostExporterProcess {
+	return startExporterProcessWithEnv(t, nil, args...)
+}
+
+// startExporterProcessWithEnv starts the product exporter with explicit environment overrides.
+func startExporterProcessWithEnv(t testing.TB, envOverrides []string, args ...string) *hostExporterProcess {
 	t.Helper()
 	processOutput := &lockedBuffer{}
 	// #nosec G204 -- requireExporterBinary requires an explicit flag/env path and validates absolute path, existence, non-directory, and executable bit.
 	cmd := exec.Command(requireExporterBinary(t), args...)
-	cmd.Env = hostExporterEnv()
+	cmd.Env = mergeEnv(hostExporterEnv(), envOverrides)
 	cmd.Stdout = processOutput
 	cmd.Stderr = processOutput
 	require.NoErrorf(t, cmd.Start(), "start dcgm-exporter %v", args)
@@ -136,6 +161,20 @@ func startExporterProcess(t testing.TB, args ...string) *hostExporterProcess {
 	return process
 }
 
+func mergeEnv(base, overrides []string) []string {
+	merged := append([]string{}, base...)
+	for _, override := range overrides {
+		key, _, _ := strings.Cut(override, "=")
+		for i := len(merged) - 1; i >= 0; i-- {
+			if existingKey, _, _ := strings.Cut(merged[i], "="); existingKey == key {
+				merged = append(merged[:i], merged[i+1:]...)
+			}
+		}
+		merged = append(merged, override)
+	}
+	return merged
+}
+
 func hostExporterEnv() []string {
 	allowed := []string{
 		"PATH",
@@ -147,6 +186,7 @@ func hostExporterEnv() []string {
 		"E2E_REQUIRE_DCGM",
 		"NVML_INJECTION_MODE",
 		"NVML_YAML_FILE",
+		"DCGM_NVSDM_MOCK_YAML",
 	}
 	env := make([]string, 0, len(allowed))
 	for _, key := range allowed {
@@ -163,14 +203,26 @@ func TestHostExporterEnvFiltersUnrelatedDCGMVars(t *testing.T) {
 	t.Setenv("E2E_REQUIRE_VSOCK", "1")
 	t.Setenv("NVML_INJECTION_MODE", "True")
 	t.Setenv("NVML_YAML_FILE", "/tmp/injection.yaml")
+	t.Setenv("DCGM_NVSDM_MOCK_YAML", "/tmp/mock.yaml")
 	env := hostExporterEnv()
 	require.Contains(t, env, "GOCOVERDIR=/tmp/cover")
 	require.Contains(t, env, "E2E_REQUIRE_VSOCK=1")
 	require.Contains(t, env, "NVML_INJECTION_MODE=True")
 	require.Contains(t, env, "NVML_YAML_FILE=/tmp/injection.yaml")
+	require.Contains(t, env, "DCGM_NVSDM_MOCK_YAML=/tmp/mock.yaml")
 	for _, item := range env {
 		require.NotContains(t, item, "DCGM_FI_DEV_GPU_TEMP")
 	}
+}
+
+func TestMergeEnvOverridesExistingValues(t *testing.T) {
+	merged := mergeEnv(
+		[]string{"PATH=/usr/bin", "LD_LIBRARY_PATH=/system", "HOME=/tmp"},
+		[]string{"LD_LIBRARY_PATH=/custom", "LD_DEBUG=libs"},
+	)
+	require.ElementsMatch(t, []string{
+		"PATH=/usr/bin", "LD_LIBRARY_PATH=/custom", "HOME=/tmp", "LD_DEBUG=libs",
+	}, merged)
 }
 
 // signal sends an OS signal to the exporter child process.
@@ -195,41 +247,125 @@ func (p *hostExporterProcess) terminate(t testing.TB) {
 		default:
 		}
 
-		if p.cmd.Process != nil {
-			_ = p.cmd.Process.Signal(syscall.SIGTERM)
-		}
-		select {
-		case err := <-p.done:
-			require.NoErrorf(t, err, "dcgm-exporter shutdown failed; output:\n%s", p.output.String())
-		case <-time.After(exporterTerminateTimeout):
-			if p.processExitedWithoutWait() {
-				t.Log("dcgm-exporter process exited before cleanup observed Wait completion")
-				return
-			}
-			if p.cmd.Process != nil {
-				_ = p.cmd.Process.Kill()
-			}
-			select {
-			case err := <-p.done:
-				t.Fatalf("dcgm-exporter did not shut down within timeout; forced kill returned %v; output:\n%s", err, p.output.String())
-			case <-time.After(exporterKillTimeout):
-				if p.processExitedWithoutWait() {
-					t.Log("dcgm-exporter process exited after SIGKILL before cleanup observed Wait completion")
-					return
-				}
-				t.Fatalf("dcgm-exporter did not exit after SIGKILL; output:\n%s", p.output.String())
-			}
+		if err := terminateRunningHostProcess("dcgm-exporter", p.cmd.Process, p.done, exporterTerminationPolicy); err != nil {
+			t.Fatalf("%v; output:\n%s", err, p.output.String())
 		}
 	})
 }
 
+// terminateRunningHostProcess requests a graceful exit, then bounds the forced-kill path.
+// Callers first check whether their child exited before cleanup begins.
+func terminateRunningHostProcess(name string, process *os.Process, done <-chan error, policy hostProcessTerminationPolicy) error {
+	if process == nil {
+		return fmt.Errorf("%s process was not started", name)
+	}
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		select {
+		case exitErr := <-done:
+			if exitErr == nil {
+				return nil
+			}
+			return fmt.Errorf("%s exited before SIGTERM could be sent: %w", name, exitErr)
+		case <-time.After(policy.KillTimeout):
+			return fmt.Errorf("send SIGTERM to %s: %w", name, err)
+		}
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("%s shutdown failed: %w", name, err)
+		}
+		return nil
+	case <-time.After(policy.GracefulTimeout):
+		if processExitedWithoutWait(process) {
+			return nil
+		}
+	}
+	killErr := process.Kill()
+	if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+		return fmt.Errorf("kill %s after graceful shutdown timeout: %w", name, killErr)
+	}
+	return waitForForcedHostProcessExit(name, done, policy, killErr)
+}
+
+// waitForForcedHostProcessExit distinguishes a child that exited gracefully
+// while cleanup was checking it from one that needed a forced exit.
+func waitForForcedHostProcessExit(name string, done <-chan error, policy hostProcessTerminationPolicy, killErr error) error {
+	select {
+	case exitErr := <-done:
+		if errors.Is(killErr, os.ErrProcessDone) && exitErr == nil {
+			return nil
+		}
+		return fmt.Errorf("%s did not shut down within %s; forced kill returned %v", name, policy.GracefulTimeout, exitErr)
+	case <-time.After(policy.KillTimeout):
+		return fmt.Errorf("%s did not exit within %s after SIGKILL", name, policy.KillTimeout)
+	}
+}
+
 // processExitedWithoutWait reports whether /proc says the child is already gone.
-func (p *hostExporterProcess) processExitedWithoutWait() bool {
-	if p.cmd.Process == nil || p.cmd.Process.Pid <= 0 {
+func processExitedWithoutWait(process *os.Process) bool {
+	if process == nil || process.Pid <= 0 {
 		return false
 	}
-	_, err := os.Stat(fmt.Sprintf("/proc/%d", p.cmd.Process.Pid))
+	// #nosec G703 -- process is a child started by this test harness, so its PID is not user input.
+	_, err := os.Stat(fmt.Sprintf("/proc/%d", process.Pid))
 	return os.IsNotExist(err)
+}
+
+func TestTerminateRunningHostProcessKillsHungChild(t *testing.T) {
+	if mode := os.Getenv("HOST_TERMINATION_HELPER"); mode != "" {
+		switch mode {
+		case "graceful":
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, syscall.SIGTERM)
+			fmt.Fprintln(os.Stdout, "ready")
+			<-signals
+			return
+		case "hung":
+			signal.Ignore(syscall.SIGTERM)
+			fmt.Fprintln(os.Stdout, "ready")
+			select {}
+		default:
+			t.Fatalf("unknown host termination helper mode %q", mode)
+		}
+	}
+
+	cmd, done := startHostTerminationHelper(t, "hung")
+	policy := hostProcessTerminationPolicy{GracefulTimeout: hostTerminationTestGracefulTimeout, KillTimeout: hostTerminationTestKillTimeout}
+	started := time.Now()
+	terminationErr := terminateRunningHostProcess("hung test helper", cmd.Process, done, policy)
+	require.ErrorContains(t, terminationErr, "forced kill returned")
+	require.Less(t, time.Since(started), policy.GracefulTimeout+policy.KillTimeout)
+}
+
+func TestTerminateRunningHostProcessAllowsGracefulChild(t *testing.T) {
+	cmd, done := startHostTerminationHelper(t, "graceful")
+	policy := hostProcessTerminationPolicy{GracefulTimeout: time.Second, KillTimeout: time.Second}
+	require.NoError(t, terminateRunningHostProcess("graceful test helper", cmd.Process, done, policy))
+}
+
+func TestWaitForForcedHostProcessExitAllowsAlreadyReapedGracefulChild(t *testing.T) {
+	done := make(chan error, 1)
+	done <- nil
+	policy := hostProcessTerminationPolicy{GracefulTimeout: time.Second, KillTimeout: time.Second}
+
+	require.NoError(t, waitForForcedHostProcessExit("graceful test helper", done, policy, os.ErrProcessDone))
+}
+
+func startHostTerminationHelper(t testing.TB, mode string) (*exec.Cmd, <-chan error) {
+	t.Helper()
+	// #nosec G204,G702 -- this test re-executes the current test binary with a fixed test selector.
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTerminateRunningHostProcessKillsHungChild$")
+	cmd.Env = append(os.Environ(), "HOST_TERMINATION_HELPER="+mode)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	ready, err := bufio.NewReader(stdout).ReadString('\n')
+	require.NoError(t, err)
+	require.Equal(t, "ready\n", ready)
+	return cmd, done
 }
 
 // running reports whether the exporter process has not exited yet.
@@ -247,6 +383,10 @@ func (p *hostExporterProcess) running() error {
 
 // startExporterAndWait starts the product exporter and returns its first metrics scrape.
 func startExporterAndWait(t testing.TB, metricsURL string, args ...string) (*hostExporterProcess, string) {
+	return startExporterAndWaitWithEnv(t, metricsURL, nil, args...)
+}
+
+func startExporterAndWaitWithEnv(t testing.TB, metricsURL string, envOverrides []string, args ...string) (*hostExporterProcess, string) {
 	t.Helper()
 	hasCollectInterval := false
 	for _, arg := range args {
@@ -258,7 +398,7 @@ func startExporterAndWait(t testing.TB, metricsURL string, args ...string) (*hos
 	if !hasCollectInterval {
 		args = append([]string{"-c", "1000"}, args...)
 	}
-	process := startExporterProcess(t, args...)
+	process := startExporterProcessWithEnv(t, envOverrides, args...)
 	metricsResp, err := retryMetrics(metricsURL, process)
 	if err != nil {
 		t.Fatalf("read metrics from dcgm-exporter: %v\n%s", err, process.output.String())

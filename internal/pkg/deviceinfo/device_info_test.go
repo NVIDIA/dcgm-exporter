@@ -32,8 +32,10 @@ import (
 	"go.uber.org/mock/gomock"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
+	mocknvml "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
 var fakeProfileName = "2fake.4gb"
@@ -2946,6 +2948,112 @@ func TestSetMigProfileNames(t *testing.T) {
 			} else {
 				assert.Error(t, tt.deviceInfo.setMigProfileNames(tt.values), "Expected an error.")
 			}
+		})
+	}
+}
+
+func TestSetMigProfileNamesPrefersNVMLProfileName(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockNVMLProvider := mocknvml.NewMockNVML(ctrl)
+
+	realDCGM := dcgmprovider.Client()
+	realNVML := nvmlprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+		nvmlprovider.SetClient(realNVML)
+	}()
+
+	dcgmprovider.SetClient(mockDCGMProvider)
+	nvmlprovider.SetClient(mockNVMLProvider)
+
+	fieldValue := dcgm.FieldValue_v2{EntityID: 1}
+	deviceInfo := Info{
+		gpuCount: 1,
+		gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+			{
+				DeviceInfo: dcgm.Device{UUID: "GPU-parent"},
+				GPUInstances: []GPUInstanceInfo{
+					{
+						EntityId: 1,
+						Info: dcgm.MigEntityInfo{
+							GpuUuid:          "GPU-parent",
+							NvmlMigProfileId: 9,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	mockDCGMProvider.EXPECT().Fv2_String(fieldValue).Return("7g.79gb")
+	mockNVMLProvider.EXPECT().GetGPUInstanceProfileName("GPU-parent", uint(9)).Return("7g.80gb", nil)
+
+	err := deviceInfo.setMigProfileNames([]dcgm.FieldValue_v2{fieldValue})
+	require.NoError(t, err)
+	assert.Equal(t, "7g.80gb", deviceInfo.gpus[0].GPUInstances[0].ProfileName)
+}
+
+func TestSetMigProfileNamesFallsBackToDCGMProfileName(t *testing.T) {
+	tests := []struct {
+		name            string
+		deviceGPUUUID   string
+		nvmlProfileName string
+		nvmlErr         error
+	}{
+		{
+			name:          "remote parent UUID is unavailable to local NVML",
+			deviceGPUUUID: "GPU-remote-parent",
+			nvmlErr:       fmt.Errorf("nvml unavailable"),
+		},
+		{
+			name:          "NVML returns an empty profile name",
+			deviceGPUUUID: "GPU-parent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+			mockNVMLProvider := mocknvml.NewMockNVML(ctrl)
+
+			realDCGM := dcgmprovider.Client()
+			realNVML := nvmlprovider.Client()
+			defer func() {
+				dcgmprovider.SetClient(realDCGM)
+				nvmlprovider.SetClient(realNVML)
+			}()
+
+			dcgmprovider.SetClient(mockDCGMProvider)
+			nvmlprovider.SetClient(mockNVMLProvider)
+
+			fieldValue := dcgm.FieldValue_v2{EntityID: 1}
+			deviceInfo := Info{
+				gpuCount: 1,
+				gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
+					{
+						DeviceInfo: dcgm.Device{UUID: tt.deviceGPUUUID},
+						GPUInstances: []GPUInstanceInfo{
+							{
+								EntityId: 1,
+								Info: dcgm.MigEntityInfo{
+									NvmlMigProfileId: 9,
+								},
+							},
+						},
+					},
+				},
+			}
+
+			mockDCGMProvider.EXPECT().Fv2_String(fieldValue).Return("7g.79gb")
+			mockNVMLProvider.EXPECT().
+				GetGPUInstanceProfileName(tt.deviceGPUUUID, uint(9)).
+				Return(tt.nvmlProfileName, tt.nvmlErr)
+
+			err := deviceInfo.setMigProfileNames([]dcgm.FieldValue_v2{fieldValue})
+			require.NoError(t, err)
+			assert.Equal(t, "7g.79gb", deviceInfo.gpus[0].GPUInstances[0].ProfileName)
 		})
 	}
 }

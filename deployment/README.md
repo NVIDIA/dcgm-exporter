@@ -2,6 +2,15 @@
 
 This Helm chart deploys NVIDIA DCGM Exporter to monitor GPU metrics in Kubernetes clusters.
 
+For installation, configuration, verification, administration, and
+troubleshooting, see [Install DCGM Exporter](https://docs.nvidia.com/datacenter/dcgm/latest/installation/install-dcgm-exporter.html).
+Related documentation includes:
+
+- [Configure Prometheus for DCGM Exporter](https://docs.nvidia.com/datacenter/dcgm/latest/learn/getting-started-for-system-administrators/configure-prometheus-for-dcgm-exporter.html)
+- [`dcgm-exporter` command reference](https://docs.nvidia.com/datacenter/dcgm/latest/reference/command-line-reference/dcgm-exporter.html)
+- [DCGM Exporter Metrics](https://docs.nvidia.com/datacenter/dcgm/latest/reference/dcgm-exporter-metrics.html)
+- [DCGM Exporter Release Notes](https://docs.nvidia.com/datacenter/dcgm/latest/release-notes/dcgm-exporter.html)
+
 ## Quick Start
 
 ```bash
@@ -12,6 +21,42 @@ helm install dcgm-exporter ./deployment
 helm install dcgm-exporter ./deployment -f my-debug-values.yaml
 ```
 
+### GPU node taints
+
+If GPU nodes are tainted with `nvidia.com/gpu:NoSchedule`, create a values
+file with a matching toleration:
+
+```yaml
+# gpu-tainted-nodes-values.yaml
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+```
+
+Install or upgrade with that file:
+
+```bash
+helm upgrade --install dcgm-exporter ./deployment \
+  -f gpu-tainted-nodes-values.yaml
+```
+
+The `tolerations` value replaces the chart default list. Include every
+toleration needed by your cluster.
+
+The chart enables its `ServiceMonitor` by default. If Prometheus Operator and
+the `ServiceMonitor` custom resource definition are not installed, use
+`--set serviceMonitor.enabled=false`.
+
+Chart-managed TLS and basic authentication protect the exporter endpoint, but
+the default `ServiceMonitor` does not configure HTTPS or authentication. When
+you enable `tlsServerConfig` or `basicAuth`, set
+`serviceMonitor.enabled=false` and supply a Prometheus scrape configuration
+with the matching scheme, TLS settings, and credentials.
+
 ## Configuration
 
 ### YAML Exporter Configuration
@@ -20,16 +65,31 @@ The chart can mount an optional dcgm-exporter YAML config and set `DCGM_EXPORTER
 The YAML file is read at exporter startup; changing it requires restarting the pod.
 
 ```yaml
+arguments:
+  - --watch-max-keep-age=10m
+  - --watch-max-keep-samples=0
+
 config:
   enabled: true
   create: true
   data: |
-    version: 1
+    version: 2
     metrics:
       file: /etc/dcgm-exporter/default-counters.csv
-    collection:
-      interval: 30s
+      enableExporterMetrics: false
+    collections:
+      - name: scrape
+        every: 30s
+        metrics:
+          include: ["*"]
 ```
+
+Exporter metrics (`go_*`, `process_*`, and `promhttp_*`) are disabled by default
+to preserve existing `/metrics` output. The setting enables or disables all of
+these metrics together. It does not change the `DCGM_FI_*` or `DCGM_EXP_*`
+metrics selected by the CSV file. Set `metrics.enableExporterMetrics: true`, pass
+`--enable-exporter-metrics`, or set
+`DCGM_EXPORTER_ENABLE_EXPORTER_METRICS=true` to enable them.
 
 Inline metric definitions can be supplied without a CSV file:
 
@@ -38,7 +98,7 @@ config:
   enabled: true
   create: true
   data: |
-    version: 1
+    version: 2
     metrics:
       fields:
         - name: DCGM_FI_DEV_GPU_TEMP
@@ -60,31 +120,57 @@ customMetrics: |
 
 When using an existing ConfigMap for the YAML file, set `config.create=false` and `config.name` to the existing ConfigMap name.
 
-Per-field watch intervals can be configured with `collection.watchGroups`. Unmatched fields use
-`collection.interval`; startup fails if a field matches multiple named groups or a named group matches no
-configured fields.
+Use one or more named `collections` to assign a cadence to DCGM field patterns. The all-fields
+`scrape` collection supplies the default cadence; narrower collections override it. Go keeps its
+existing DCGM field-pattern matching, so `metrics.include` values are not nv-exporter catalog SignalIds.
+Startup fails if an override pattern matches no configured fields or two overrides match the same field.
+
+Version 2 is the canonical collection schema. Version 1 remains supported for existing configuration files,
+but accepts only its original singular `collection` block. New files should use version 2 and `collections`;
+the two schemas cannot be mixed.
 
 ```yaml
 config:
   enabled: true
   create: true
   data: |
-    version: 1
+    version: 2
     metrics:
       file: /etc/dcgm-exporter/default-counters.csv
-    collection:
-      interval: 30s
-      watchGroups:
-        - name: fast-thermals
-          interval: 5s
-          fields:
+    sources:
+      dcgm:
+        watch:
+          maxKeepAge: 10m
+          maxKeepSamples: 0
+    collections:
+      - name: scrape
+        every: 30s
+        metrics:
+          include: ["*"]
+      - name: fast-thermals
+        every: 5s
+        sources:
+          dcgm:
+            watch:
+              maxKeepAge: 0s
+              maxKeepSamples: 2
+        metrics:
+          include:
             - DCGM_FI_DEV_GPU_TEMP
             - DCGM_FI_DEV_POWER_USAGE
-        - name: slow-nvlink-prm
-          interval: 5m
-          fields:
+      - name: slow-nvlink-prm
+        every: 5m
+        metrics:
+          include:
             - DCGM_FI_DEV_NVLINK_PPCNT_*
 ```
+
+The chart uses its existing `arguments` and `config.data` passthroughs for field-watch retention; there are
+no chart-specific retention keys. `sources.dcgm.watch` sets the default policy, and a collection's
+`sources.dcgm.watch` overrides it. `extraEnv` can alternatively set `DCGM_EXPORTER_WATCH_MAX_KEEP_AGE`
+and `DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES`. Keep XID and clock-event fields on the compatibility `10m`/`0`
+policy unless a shorter history has been qualified for the intended `_COUNT` window and `_TOTAL` polling
+interval.
 
 When upgrading from older chart values, the default `arguments: []` may remove
 the rendered container `args:` stanza and roll the DaemonSet. The exporter still
@@ -107,6 +193,51 @@ serviceMonitor:
 - `service.webReadTimeout`: Maximum time for the exporter to read an HTTP scrape request.
 - `service.webWriteTimeout`: Maximum time for the exporter to generate and write an HTTP scrape response.
 - `serviceMonitor.scrapeTimeout`: Maximum scrape duration used by Prometheus Operator when the ServiceMonitor is enabled. Keep this lower than `service.webWriteTimeout` and no greater than `serviceMonitor.interval`.
+
+### Concurrent Scrape Configuration
+
+Set the limit in the exporter YAML configuration:
+
+```yaml
+config:
+  enabled: true
+  data: |
+    version: 2
+    server:
+      maxConcurrentScrapes: 16
+```
+
+Alternatively, pass `--max-concurrent-scrapes=16` through `arguments` or use
+`extraEnv` to set `DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES`.
+
+### Detached GPU Lifecycle Detection
+
+On systems that support detached GPUs, enable DCGM bind/unbind detection in the
+exporter YAML configuration. After DCGM reports that GPU reinitialization is
+complete, the exporter rebuilds its DCGM, NVML, and metrics state to match the
+resulting topology.
+
+```yaml
+config:
+  enabled: true
+  data: |
+    version: 2
+    sources:
+      dcgm:
+        detectBindUnbind:
+          enabled: true
+          pollInterval: 1s
+```
+
+This requires DCGM 4.5 or later and an NVIDIA driver from the 590 series or
+later. The polling interval defaults to one second when omitted. Do not use
+this setting on older driver stacks, where detached-GPU support is unavailable.
+
+The YAML setting is preferred. Existing deployments can continue using
+`--enable-gpu-bind-unbind-watch` and `--gpu-bind-unbind-poll-interval`, or the
+corresponding `DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH` and
+`DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL` environment variables. Explicit
+CLI or environment values override YAML.
 
 ### Debug Dump Functionality
 
@@ -262,4 +393,8 @@ These files are compressed with gzip if compression is enabled and are automatic
 
 ## Support
 
-For issues related to DCGM Exporter, please refer to the main project documentation or create an issue in the project repository.
+For usage and troubleshooting, see [Install DCGM Exporter](https://docs.nvidia.com/datacenter/dcgm/latest/installation/install-dcgm-exporter.html).
+For source or chart issues, create an issue in the project repository.
+
+Enterprise users can review NVIDIA Knowledge Base articles and existing
+support cases, or [submit a ticket](https://www.nvidia.com/en-us/data-center/products/ai-enterprise-suite/support/).

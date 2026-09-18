@@ -260,6 +260,12 @@ func (d dcgmProvider) GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
 	return dcgm.GetGPUInstanceHierarchy()
 }
 
+func (d dcgmProvider) GetMultipleValuesForField(
+	gpuID uint, fieldID dcgm.Short, maxSamples int, startTime, endTime time.Time,
+) ([]dcgm.FieldValue_v1, error) {
+	return dcgm.GetMultipleValuesForField(gpuID, fieldID, maxSamples, startTime, endTime)
+}
+
 func (d dcgmProvider) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
 	return dcgm.GetNvLinkLinkStatus()
 }
@@ -300,6 +306,12 @@ func (d dcgmProvider) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error
 
 func (d dcgmProvider) UpdateAllFields() error {
 	return dcgm.UpdateAllFields()
+}
+
+func (d dcgmProvider) WatchFieldValue(
+	gpuID uint, fieldID dcgm.Short, updateFreq, maxKeepAge time.Duration, maxKeepSamples int,
+) error {
+	return dcgm.WatchFieldValue(gpuID, fieldID, updateFreq, maxKeepAge, maxKeepSamples)
 }
 
 func (d dcgmProvider) WatchFieldsWithGroupEx(

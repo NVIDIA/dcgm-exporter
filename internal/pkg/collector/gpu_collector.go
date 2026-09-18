@@ -39,16 +39,24 @@ import (
 
 const unknownErr = "Unknown Error"
 
+// maxLatestValueFieldBatch matches DCGM_MAX_FIELD_IDS_PER_FIELD_GROUP, the
+// fixed field-ID capacity used by DCGM's latest-value request structs.
+const maxLatestValueFieldBatch = 128
+
 // DCGMCollector owns the watched DCGM fields for one entity type and converts
 // their latest values into exporter metrics during each Prometheus collection.
 type DCGMCollector struct {
-	mu                       sync.Mutex
-	counters                 []counters.Counter
-	cleanups                 []func()
-	useOldNamespace          bool
-	deviceWatchList          devicewatchlistmanager.WatchList
-	hostname                 string
-	replaceBlanksInModelName bool
+	mu                          sync.Mutex
+	counters                    []counters.Counter
+	cleanups                    []func()
+	useOldNamespace             bool
+	deviceWatchList             devicewatchlistmanager.WatchList
+	scrapeFields                []dcgm.Short
+	nonComputeInstanceFields    []dcgm.Short
+	computeInstanceScrapeFields []dcgm.Short
+	parentGPUScrapeFields       []dcgm.Short
+	hostname                    string
+	replaceBlanksInModelName    bool
 
 	profilingStaleWindows map[dcgm.Short]time.Duration
 	profilingSamples      map[profilingSampleKey]profilingSample
@@ -102,10 +110,29 @@ func NewDCGMCollector(
 		return nil, errors.New("deviceWatchList is empty")
 	}
 
+	scrapeFields := fieldsToScrape(deviceWatchList)
+	computeInstanceFields := deviceWatchList.ComputeInstanceFields()
+	fieldsAtMultipleScopes := deviceWatchList.FieldsAtMultipleScopes()
+	nonComputeInstanceFields, computeInstanceScrapeFields := splitComputeInstanceFields(
+		scrapeFields,
+		computeInstanceFields,
+		fieldsAtMultipleScopes,
+		deviceWatchList.LabelDeviceFields(),
+	)
+	parentGPUScrapeFields := []dcgm.Short(nil)
+	if len(fieldsAtMultipleScopes) > 0 {
+		parentGPUScrapeFields = append([]dcgm.Short(nil), fieldsAtMultipleScopes...)
+		parentGPUScrapeFields = append(parentGPUScrapeFields, deviceWatchList.LabelDeviceFields()...)
+		parentGPUScrapeFields = dedupeFieldIDs(parentGPUScrapeFields)
+	}
 	collector := &DCGMCollector{
-		counters:        c,
-		deviceWatchList: deviceWatchList,
-		hostname:        hostname,
+		counters:                    c,
+		deviceWatchList:             deviceWatchList,
+		scrapeFields:                scrapeFields,
+		nonComputeInstanceFields:    nonComputeInstanceFields,
+		computeInstanceScrapeFields: computeInstanceScrapeFields,
+		parentGPUScrapeFields:       parentGPUScrapeFields,
+		hostname:                    hostname,
 	}
 
 	if config == nil {
@@ -213,12 +240,17 @@ func (c *DCGMCollector) repairProfilingWatch(
 
 // getMetricsOnce performs one scrape and reports stale profiling state separately from API errors.
 func (c *DCGMCollector) getMetricsOnce() (MetricsByCounter, *profilingRepairReason, error) {
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
+	var monitoringInfo []devicemonitoring.Info
+	if len(c.computeInstanceScrapeFields) > 0 {
+		monitoringInfo = devicemonitoring.GetMonitoredEntitiesIncludingComputeInstances(c.deviceWatchList.DeviceInfo())
+	} else {
+		monitoringInfo = devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
+	}
 	metrics := make(MetricsByCounter)
 	var firstReason *profilingRepairReason
 
 	for _, mi := range monitoringInfo {
-		vals, err := c.latestValues(mi)
+		vals, err := c.latestValuesForFields(mi, c.fieldsForScrape(mi))
 		if err != nil {
 			if reason := c.repairReasonForError(err); reason != nil {
 				return metrics, reason, nil
@@ -232,6 +264,25 @@ func (c *DCGMCollector) getMetricsOnce() (MetricsByCounter, *profilingRepairReas
 		}
 
 		c.addMetrics(metrics, vals, mi)
+	}
+
+	if len(c.parentGPUScrapeFields) > 0 {
+		for _, mi := range devicemonitoring.GetParentGPUsForMonitoredGPUInstances(c.deviceWatchList.DeviceInfo()) {
+			vals, err := c.latestValuesForFields(mi, c.parentGPUScrapeFields)
+			if err != nil {
+				if reason := c.repairReasonForError(err); reason != nil {
+					return metrics, reason, nil
+				}
+				handleScrapeError(err)
+				return nil, nil, err
+			}
+
+			if reason := c.observeProfilingSamples(mi.Entity, vals); reason != nil && firstReason == nil {
+				firstReason = reason
+			}
+
+			c.addMetrics(metrics, vals, mi)
+		}
 	}
 
 	return metrics, firstReason, nil
@@ -249,22 +300,106 @@ func nonProfilingMetrics(metrics MetricsByCounter) MetricsByCounter {
 
 // latestValues reads one monitored entity through the DCGM API appropriate for its type.
 func (c *DCGMCollector) latestValues(mi devicemonitoring.Info) ([]dcgm.FieldValue_v1, error) {
-	fields := fieldsToScrape(c.deviceWatchList)
+	return c.latestValuesForFields(mi, c.fieldsForScrape(mi))
+}
 
-	if mi.Entity.EntityGroupId == dcgm.FE_LINK {
-		return dcgmprovider.Client().LinkGetLatestValues(
-			mi.Entity.EntityId,
-			mi.ParentType,
-			mi.ParentId,
-			fields,
+// latestValuesForFields reads the supplied fields for one entity in batches that
+// DCGM accepts. Callers use it when an entity needs a different field set from
+// the collector's default scrape fields.
+func (c *DCGMCollector) latestValuesForFields(
+	mi devicemonitoring.Info,
+	fields []dcgm.Short,
+) ([]dcgm.FieldValue_v1, error) {
+	values := make([]dcgm.FieldValue_v1, 0, len(fields))
+	for start := 0; start < len(fields); start += maxLatestValueFieldBatch {
+		end := min(start+maxLatestValueFieldBatch, len(fields))
+		batch := fields[start:end]
+
+		var (
+			batchValues []dcgm.FieldValue_v1
+			err         error
 		)
+		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
+			batchValues, err = dcgmprovider.Client().LinkGetLatestValues(
+				mi.Entity.EntityId,
+				mi.ParentType,
+				mi.ParentId,
+				batch,
+			)
+		} else {
+			batchValues, err = dcgmprovider.Client().EntityGetLatestValues(
+				mi.Entity.EntityGroupId,
+				mi.Entity.EntityId,
+				batch,
+			)
+		}
+		if err != nil {
+			return nil, fmt.Errorf(
+				"get latest values for entity group %d entity %d field batch [%d:%d]: %w",
+				mi.Entity.EntityGroupId,
+				mi.Entity.EntityId,
+				start,
+				end,
+				err,
+			)
+		}
+		values = append(values, batchValues...)
+	}
+	return values, nil
+}
+
+func (c *DCGMCollector) fieldsForScrape(mi devicemonitoring.Info) []dcgm.Short {
+	if mi.Entity.EntityGroupId == dcgm.FE_GPU_CI {
+		return c.computeInstanceScrapeFields
+	}
+	// A selected whole GPU keeps the legacy full field set. DCGM reports some
+	// fields at both GPU and compute-instance scope even when their metadata uses
+	// FE_GPU_CI. Parent-only MIG reads bypass this method and remain narrow.
+	if mi.Entity.EntityGroupId == dcgm.FE_GPU && c.scrapeFields != nil {
+		return c.scrapeFields
+	}
+	if c.nonComputeInstanceFields != nil {
+		return c.nonComputeInstanceFields
+	}
+	if c.scrapeFields != nil {
+		return c.scrapeFields
+	}
+	return fieldsToScrape(c.deviceWatchList)
+}
+
+// splitComputeInstanceFields separates fields that must be read from compute
+// instances from fields read at the other selected entity scopes. Multi-scope
+// fields remain in both sets, and compute-instance reads include label fields.
+func splitComputeInstanceFields(
+	fields []dcgm.Short,
+	computeInstanceFields []dcgm.Short,
+	fieldsAtMultipleScopes []dcgm.Short,
+	labelFields []dcgm.Short,
+) ([]dcgm.Short, []dcgm.Short) {
+	if len(computeInstanceFields) == 0 {
+		return append([]dcgm.Short(nil), fields...), nil
 	}
 
-	return dcgmprovider.Client().EntityGetLatestValues(
-		mi.Entity.EntityGroupId,
-		mi.Entity.EntityId,
-		fields,
-	)
+	computeInstanceSet := make(map[dcgm.Short]struct{}, len(computeInstanceFields))
+	for _, fieldID := range computeInstanceFields {
+		computeInstanceSet[fieldID] = struct{}{}
+	}
+	multiScopeSet := make(map[dcgm.Short]struct{}, len(fieldsAtMultipleScopes))
+	for _, fieldID := range fieldsAtMultipleScopes {
+		multiScopeSet[fieldID] = struct{}{}
+	}
+	nonComputeInstanceFields := make([]dcgm.Short, 0, len(fields))
+	for _, fieldID := range fields {
+		_, isComputeInstanceField := computeInstanceSet[fieldID]
+		_, isMultiScopeField := multiScopeSet[fieldID]
+		if !isComputeInstanceField || isMultiScopeField {
+			nonComputeInstanceFields = append(nonComputeInstanceFields, fieldID)
+		}
+	}
+
+	computeInstanceFields = append([]dcgm.Short{}, computeInstanceFields...)
+	computeInstanceFields = append(computeInstanceFields, labelFields...)
+	return nonComputeInstanceFields, dedupeFieldIDs(computeInstanceFields)
 }
 
 // addMetrics renders values with the labels and identity fields for their entity type.
@@ -612,6 +747,12 @@ func toSwitchMetric(
 	values []dcgm.FieldValue_v1, c []counters.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
 ) {
 	labels := labelsFromValues(values, c, hostname)
+	nvSwitchID := mi.Entity.EntityId
+	nvLinkID := ""
+	if mi.Entity.EntityGroupId == dcgm.FE_LINK {
+		nvSwitchID = mi.ParentId
+		nvLinkID = fmt.Sprintf("%d", mi.Entity.EntityId)
+	}
 
 	for _, val := range values {
 		v := toString(val)
@@ -642,8 +783,8 @@ func toSwitchMetric(
 			Counter:    counter,
 			Value:      v,
 			UUID:       uuid,
-			NvLink:     fmt.Sprintf("%d", mi.Entity.EntityId),
-			NvSwitch:   fmt.Sprintf("nvswitch%d", mi.ParentId),
+			NvLink:     nvLinkID,
+			NvSwitch:   fmt.Sprintf("nvswitch%d", nvSwitchID),
 			Hostname:   hostname,
 			Labels:     labels,
 			Attributes: nil,
@@ -768,6 +909,23 @@ func toMetric(
 	replaceBlanksInModelName bool,
 ) {
 	labels := labelsFromValues(values, c, hostname)
+	uuid := "UUID"
+	if useOld {
+		uuid = "uuid"
+	}
+	gpu := strconv.FormatUint(uint64(mi.DeviceInfo.GPU), 10)
+	gpuDevice := "nvidia" + gpu
+	gpuModel := getGPUModel(mi.DeviceInfo, replaceBlanksInModelName)
+	migProfile := ""
+	gpuInstanceID := ""
+	computeInstanceID := ""
+	if mi.InstanceInfo != nil {
+		migProfile = mi.InstanceInfo.ProfileName
+		gpuInstanceID = strconv.FormatUint(uint64(mi.InstanceInfo.Info.NvmlInstanceId), 10)
+	}
+	if mi.ComputeInstanceInfo != nil {
+		computeInstanceID = strconv.FormatUint(uint64(mi.ComputeInstanceInfo.InstanceInfo.NvmlComputeInstanceId), 10)
+	}
 
 	for _, val := range values {
 		v := toString(val)
@@ -789,13 +947,6 @@ func toMetric(
 		if counter.IsLabel() {
 			continue
 		}
-		uuid := "UUID"
-		if useOld {
-			uuid = "uuid"
-		}
-
-		gpuModel := getGPUModel(mi.DeviceInfo, replaceBlanksInModelName)
-
 		attrs := map[string]string{}
 		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
 			errCode := int(val.Int64())
@@ -812,23 +963,19 @@ func toMetric(
 			Value:   v,
 
 			UUID:         uuid,
-			GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
+			GPU:          gpu,
 			GPUUUID:      mi.DeviceInfo.UUID,
-			GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
+			GPUDevice:    gpuDevice,
 			GPUModelName: gpuModel,
 			GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
 			Hostname:     hostname,
 
-			Labels:     labels,
-			Attributes: attrs,
-			ParentType: mi.ParentType,
-		}
-		if mi.InstanceInfo != nil {
-			m.MigProfile = mi.InstanceInfo.ProfileName
-			m.GPUInstanceID = fmt.Sprintf("%d", mi.InstanceInfo.Info.NvmlInstanceId)
-		} else {
-			m.MigProfile = ""
-			m.GPUInstanceID = ""
+			Labels:               labels,
+			Attributes:           attrs,
+			ParentType:           mi.ParentType,
+			MigProfile:           migProfile,
+			GPUInstanceID:        gpuInstanceID,
+			GPUComputeInstanceID: computeInstanceID,
 		}
 
 		metrics[m.Counter] = append(metrics[m.Counter], m)
@@ -883,13 +1030,13 @@ func toString(value dcgm.FieldValue_v1) string {
 		if isInt64Blank(v) {
 			return skipDCGMValue
 		}
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatInt(v, 10)
 	case dcgm.DCGM_FT_DOUBLE:
 		v := value.Float64()
 		if isFloat64Blank(v) {
 			return skipDCGMValue
 		}
-		return fmt.Sprintf("%f", v)
+		return strconv.FormatFloat(v, 'f', 6, 64)
 	case dcgm.DCGM_FT_STRING:
 		v := value.String()
 		if isStringBlank(v) {

@@ -152,13 +152,60 @@ func TestChartKubernetesRBACRenderContract(t *testing.T) {
 	}
 }
 
+func TestChartDaemonSetAnnotationsRenderContract(t *testing.T) {
+	t.Run("default deployment omits DaemonSet annotations", func(t *testing.T) {
+		resources := renderChart(t, nil)
+		daemonSet := requireResourceKind(t, resources, "DaemonSet")
+
+		assert.Nil(t, daemonSet.Metadata.Annotations)
+		assert.Nil(t, daemonSet.Spec.Template.Metadata.Annotations)
+	})
+
+	t.Run("DaemonSet annotations do not affect pod annotations", func(t *testing.T) {
+		resources := renderChart(t, map[string]interface{}{
+			"daemonSetAnnotations": map[string]interface{}{
+				"example.com/release-owner": "platform-team",
+			},
+			"podAnnotations": map[string]interface{}{
+				"example.com/scrape": "enabled",
+			},
+		})
+		daemonSet := requireResourceKind(t, resources, "DaemonSet")
+
+		assert.Equal(t, map[string]string{
+			"example.com/release-owner": "platform-team",
+		}, daemonSet.Metadata.Annotations)
+		assert.Equal(t, map[string]string{
+			"example.com/scrape": "enabled",
+		}, daemonSet.Spec.Template.Metadata.Annotations)
+	})
+}
+
 func TestChartYAMLConfigRenderContract(t *testing.T) {
 	configData := strings.TrimSpace(`
-version: 1
+version: 2
 metrics:
   file: /etc/dcgm-exporter/default-counters.csv
-collection:
-  interval: 30s
+sources:
+  dcgm:
+    watch:
+      maxKeepAge: 10m
+      maxKeepSamples: 0
+collections:
+  - name: scrape
+    every: 30s
+    metrics:
+      include: ["*"]
+  - name: latest-values
+    every: 500ms
+    sources:
+      dcgm:
+        watch:
+          maxKeepAge: 0s
+          maxKeepSamples: 2
+    metrics:
+      include:
+        - DCGM_FI_DEV_GPU_TEMP
 `)
 
 	testCases := []struct {
@@ -194,9 +241,12 @@ collection:
 			})
 
 			configMap := requireResourceName(t, resources, "ConfigMap", tc.wantConfigMapName)
-			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "version: 1")
+			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "version: 2")
 			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "file: /etc/dcgm-exporter/default-counters.csv")
-			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "interval: 30s")
+			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "every: 30s")
+			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "maxKeepAge: 10m")
+			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "maxKeepSamples: 0")
+			assert.Contains(t, configMap.Data["dcgm-exporter.yaml"], "maxKeepSamples: 2")
 
 			daemonSet := requireResourceKind(t, resources, "DaemonSet")
 			container := requireContainer(t, daemonSet, "exporter")
@@ -218,6 +268,116 @@ collection:
 
 			envValues := containerEnvValues(container)
 			assert.Equal(t, "/etc/dcgm-exporter/config.yaml", envValues[envConfigFile])
+		})
+	}
+}
+
+// TestChartFieldWatchRetentionArgumentsRenderContract verifies existing Helm argument passthrough carries both flags.
+func TestChartFieldWatchRetentionArgumentsRenderContract(t *testing.T) {
+	resources := renderChart(t, map[string]interface{}{
+		"arguments": []interface{}{
+			"--watch-max-keep-age=10m",
+			"--watch-max-keep-samples=0",
+		},
+	})
+
+	daemonSet := requireResourceKind(t, resources, "DaemonSet")
+	container := requireContainer(t, daemonSet, "exporter")
+	assert.Contains(t, container.Args, "--watch-max-keep-age=10m")
+	assert.Contains(t, container.Args, "--watch-max-keep-samples=0")
+}
+
+// TestChartDebugDumpCompressionArgumentRenderContract verifies Helm explicitly passes either compression value.
+func TestChartDebugDumpCompressionArgumentRenderContract(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value bool
+		want  string
+	}{
+		{
+			name:  "compression enabled",
+			value: true,
+			want:  "--dump-compression=true",
+		},
+		{
+			name:  "compression disabled",
+			value: false,
+			want:  "--dump-compression=false",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resources := renderChart(t, map[string]interface{}{
+				"debugDump": map[string]interface{}{
+					"enabled":     true,
+					"compression": tc.value,
+				},
+			})
+
+			daemonSet := requireResourceKind(t, resources, "DaemonSet")
+			container := requireContainer(t, daemonSet, "exporter")
+			assert.Equal(t, []string{tc.want}, dumpCompressionArguments(container.Args))
+		})
+	}
+}
+
+// TestChartDebugDumpCompressionValidation rejects values that would make the exporter flag ambiguous.
+func TestChartDebugDumpCompressionValidation(t *testing.T) {
+	testCases := []struct {
+		name   string
+		values map[string]interface{}
+		want   string
+	}{
+		{
+			name: "null compression",
+			values: map[string]interface{}{
+				"debugDump": map[string]interface{}{
+					"enabled":     true,
+					"compression": nil,
+				},
+			},
+			want: "debugDump.compression must be a Boolean",
+		},
+		{
+			name: "string compression",
+			values: map[string]interface{}{
+				"debugDump": map[string]interface{}{
+					"enabled":     true,
+					"compression": "false",
+				},
+			},
+			want: "debugDump.compression must be a Boolean",
+		},
+		{
+			name: "valueless compression argument",
+			values: map[string]interface{}{
+				"arguments": []interface{}{"--dump-compression"},
+				"debugDump": map[string]interface{}{
+					"enabled":     true,
+					"compression": true,
+				},
+			},
+			want: "arguments must not set --dump-compression",
+		},
+		{
+			name: "value-bearing compression argument",
+			values: map[string]interface{}{
+				"arguments": []interface{}{"--dump-compression=false"},
+				"debugDump": map[string]interface{}{
+					"enabled":     true,
+					"compression": true,
+				},
+			},
+			want: "arguments must not set --dump-compression",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := renderChartError(t, tc.values)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tc.want)
 		})
 	}
 }
@@ -277,6 +437,88 @@ func TestChartImageRenderingContract(t *testing.T) {
 	assert.NotContains(t, container.Image, "ignored-tag")
 	require.Len(t, daemonSet.Spec.Template.Spec.ImagePullSecrets, 1)
 	assert.Equal(t, "registry-auth", daemonSet.Spec.Template.Spec.ImagePullSecrets[0].Name)
+}
+
+func TestChartProbeSettingsRenderContract(t *testing.T) {
+	testCases := []struct {
+		name               string
+		values             map[string]interface{}
+		wantLivenessProbe  probe
+		wantReadinessProbe probe
+	}{
+		{
+			name: "defaults leave optional Kubernetes probe settings unset",
+			wantLivenessProbe: probe{
+				InitialDelaySeconds: 45,
+				PeriodSeconds:       intPointer(5),
+			},
+			wantReadinessProbe: probe{
+				InitialDelaySeconds: 45,
+			},
+		},
+		{
+			name: "explicit probe settings render for liveness and readiness",
+			values: map[string]interface{}{
+				"livenessProbe": map[string]interface{}{
+					"timeoutSeconds":   9,
+					"failureThreshold": 12,
+				},
+				"readinessProbe": map[string]interface{}{
+					"periodSeconds":    7,
+					"timeoutSeconds":   8,
+					"failureThreshold": 11,
+				},
+			},
+			wantLivenessProbe: probe{
+				InitialDelaySeconds: 45,
+				PeriodSeconds:       intPointer(5),
+				TimeoutSeconds:      intPointer(9),
+				FailureThreshold:    intPointer(12),
+			},
+			wantReadinessProbe: probe{
+				InitialDelaySeconds: 45,
+				PeriodSeconds:       intPointer(7),
+				TimeoutSeconds:      intPointer(8),
+				FailureThreshold:    intPointer(11),
+			},
+		},
+		{
+			name: "explicit zero values are rendered for Kubernetes validation",
+			values: map[string]interface{}{
+				"livenessProbe": map[string]interface{}{
+					"timeoutSeconds":   0,
+					"failureThreshold": 0,
+				},
+				"readinessProbe": map[string]interface{}{
+					"periodSeconds":    0,
+					"timeoutSeconds":   0,
+					"failureThreshold": 0,
+				},
+			},
+			wantLivenessProbe: probe{
+				InitialDelaySeconds: 45,
+				PeriodSeconds:       intPointer(5),
+				TimeoutSeconds:      intPointer(0),
+				FailureThreshold:    intPointer(0),
+			},
+			wantReadinessProbe: probe{
+				InitialDelaySeconds: 45,
+				PeriodSeconds:       intPointer(0),
+				TimeoutSeconds:      intPointer(0),
+				FailureThreshold:    intPointer(0),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resources := renderChart(t, tc.values)
+			container := requireContainer(t, requireResourceKind(t, resources, "DaemonSet"), "exporter")
+
+			assert.Equal(t, tc.wantLivenessProbe, container.LivenessProbe)
+			assert.Equal(t, tc.wantReadinessProbe, container.ReadinessProbe)
+		})
+	}
 }
 
 func TestChartServiceMonitorRenderingContract(t *testing.T) {
@@ -560,7 +802,18 @@ func assertNoDefaultCollectorsArgs(t *testing.T, container container) {
 	assert.NotContains(t, container.Args, "/etc/dcgm-exporter/default-counters.csv")
 }
 
-// chartResource captures the rendered Kubernetes fields needed by the RBAC contract tests.
+func dumpCompressionArguments(args []string) []string {
+	var values []string
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "--dump-compression") {
+			values = append(values, argument)
+		}
+	}
+
+	return values
+}
+
+// chartResource captures the rendered Kubernetes fields needed by render-contract tests.
 type chartResource struct {
 	APIVersion                   string            `yaml:"apiVersion"`
 	Kind                         string            `yaml:"kind"`
@@ -576,10 +829,12 @@ type chartResource struct {
 		} `yaml:"namespaceSelector"`
 		Endpoints []serviceMonitorEndpoint `yaml:"endpoints"`
 		Template  struct {
-			Spec struct {
+			Metadata metadata `yaml:"metadata"`
+			Spec     struct {
 				AutomountServiceAccountToken *bool             `yaml:"automountServiceAccountToken"`
 				Containers                   []container       `yaml:"containers"`
 				ImagePullSecrets             []imagePullSecret `yaml:"imagePullSecrets"`
+				Tolerations                  []toleration      `yaml:"tolerations"`
 				Volumes                      []volume          `yaml:"volumes"`
 			} `yaml:"spec"`
 		} `yaml:"template"`
@@ -589,18 +844,40 @@ type chartResource struct {
 
 // metadata captures object identity fields from rendered Kubernetes manifests.
 type metadata struct {
-	Name      string            `yaml:"name"`
-	Namespace string            `yaml:"namespace"`
-	Labels    map[string]string `yaml:"labels"`
+	Name        string            `yaml:"name"`
+	Namespace   string            `yaml:"namespace"`
+	Labels      map[string]string `yaml:"labels"`
+	Annotations map[string]string `yaml:"annotations"`
 }
 
 // container captures the DaemonSet container fields needed by the render contract.
 type container struct {
-	Name         string        `yaml:"name"`
-	Image        string        `yaml:"image"`
-	Args         []string      `yaml:"args"`
-	Env          []env         `yaml:"env"`
-	VolumeMounts []volumeMount `yaml:"volumeMounts"`
+	Name           string        `yaml:"name"`
+	Image          string        `yaml:"image"`
+	Args           []string      `yaml:"args"`
+	Env            []env         `yaml:"env"`
+	VolumeMounts   []volumeMount `yaml:"volumeMounts"`
+	LivenessProbe  probe         `yaml:"livenessProbe"`
+	ReadinessProbe probe         `yaml:"readinessProbe"`
+}
+
+// toleration captures the pod toleration fields needed by render-contract tests.
+type toleration struct {
+	Key      string `yaml:"key"`
+	Operator string `yaml:"operator"`
+	Effect   string `yaml:"effect"`
+}
+
+// probe captures configurable health probe timing fields from the rendered chart.
+type probe struct {
+	InitialDelaySeconds int  `yaml:"initialDelaySeconds"`
+	PeriodSeconds       *int `yaml:"periodSeconds"`
+	TimeoutSeconds      *int `yaml:"timeoutSeconds"`
+	FailureThreshold    *int `yaml:"failureThreshold"`
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 type imagePullSecret struct {

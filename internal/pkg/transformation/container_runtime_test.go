@@ -51,7 +51,9 @@ func (r runtimeTestDeviceInfo) Switch(uint) deviceinfo.SwitchInfo { return devic
 func (r runtimeTestDeviceInfo) CPUs() []deviceinfo.CPUInfo        { return nil }
 func (r runtimeTestDeviceInfo) CPU(uint) deviceinfo.CPUInfo       { return deviceinfo.CPUInfo{} }
 func (r runtimeTestDeviceInfo) GOpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
-func (r runtimeTestDeviceInfo) SOpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
+
+func (r runtimeTestDeviceInfo) SOpts() appconfig.DeviceOptions { return appconfig.DeviceOptions{} }
+
 func (r runtimeTestDeviceInfo) COpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
 func (r runtimeTestDeviceInfo) InfoType() dcgm.Field_Entity_Group { return dcgm.FE_GPU }
 func (r runtimeTestDeviceInfo) IsCPUWatched(uint) bool            { return false }

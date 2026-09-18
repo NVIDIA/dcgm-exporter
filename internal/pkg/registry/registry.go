@@ -19,6 +19,7 @@ package registry
 import (
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,18 +29,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 )
 
 // ErrRegistryShuttingDown is returned when Gather() is called on a registry that is shutting down
 var ErrRegistryShuttingDown = errors.New("registry is shutting down")
-
-// groupCounterTuple represents a composite key, that consists Group and Counter.
-// The groupCounterTuple is necessary to maintain uniqueness of Group and Counter pairs.
-type groupCounterTuple struct {
-	Group   dcgm.Field_Entity_Group
-	Counter counters.Counter
-}
 
 type Registry struct {
 	collectorGroups     map[dcgm.Field_Entity_Group][]collector.Collector
@@ -90,7 +83,7 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 
 	g := new(errgroup.Group)
 
-	metricsByCounterGroup := map[groupCounterTuple][]collector.Metric{}
+	output := MetricsByCounterGroup{}
 	var metricsByCounterGroupMtx sync.Mutex
 
 	for group, collectors := range r.collectorGroups {
@@ -106,8 +99,16 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 				metricsByCounterGroupMtx.Lock()
 				defer metricsByCounterGroupMtx.Unlock()
 				for counter, metricVals := range metrics {
-					tuple := groupCounterTuple{Group: group, Counter: counter}
-					metricsByCounterGroup[tuple] = append(metricsByCounterGroup[tuple], metricVals...)
+					metricsByCounter, exists := output[group]
+					if !exists {
+						metricsByCounter = collector.MetricsByCounter{}
+						output[group] = metricsByCounter
+					}
+					if existing, exists := metricsByCounter[counter]; exists {
+						metricsByCounter[counter] = append(existing, metricVals...)
+						continue
+					}
+					metricsByCounter[counter] = slices.Clone(metricVals)
 				}
 
 				return nil
@@ -117,15 +118,6 @@ func (r *Registry) Gather() (MetricsByCounterGroup, error) {
 
 	if err := g.Wait(); err != nil {
 		return nil, err
-	}
-
-	output := MetricsByCounterGroup{}
-
-	for tuple, metricVals := range metricsByCounterGroup {
-		if _, exists := output[tuple.Group]; !exists {
-			output[tuple.Group] = map[counters.Counter][]collector.Metric{}
-		}
-		output[tuple.Group][tuple.Counter] = metricVals
 	}
 
 	return output, nil

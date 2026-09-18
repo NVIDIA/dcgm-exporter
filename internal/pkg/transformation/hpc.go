@@ -23,17 +23,24 @@ import (
 	sysOS "os"
 	"path"
 	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 type hpcMapper struct {
-	Config           *appconfig.Config
-	missingDirectory bool
+	Config                  *appconfig.Config
+	missingDirectory        bool
+	warningMu               sync.Mutex
+	warnedUnmatchedMappings map[string]string
 }
 
 func newHPCMapper(c *appconfig.Config) *hpcMapper {
@@ -55,7 +62,7 @@ func (p *hpcMapper) Name() string {
 	return "hpcMapper"
 }
 
-func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
+func (p *hpcMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
 	_, err := os.Stat(p.Config.HPCJobMappingDir)
 	if err != nil {
 		if os.IsNotExist(err) && p.missingDirectory {
@@ -91,6 +98,8 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 
 	slog.Debug(fmt.Sprintf("GPU to job mapping: %+v", gpuToJobMap))
 
+	p.warnUnmatchedMIGMappings(gpuFiles, deviceInfo)
+
 	for counter := range metrics {
 		var modifiedMetrics []collector.Metric
 		for _, metric := range metrics[counter] {
@@ -106,12 +115,7 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 
 			if exists && len(jobs) != 0 {
 				for _, job := range jobs {
-					modifiedMetric, err := utils.DeepCopy(metric)
-					if err != nil {
-						slog.Error(fmt.Sprintf("Can not create deepCopy for the value: %v", metric),
-							slog.String(logging.ErrorKey, err.Error()))
-						continue
-					}
+					modifiedMetric := cloneMetric(metric)
 					if modifiedMetric.Attributes == nil {
 						slog.Debug("modifiedMetric.Attributes is nil, making an empty map")
 						modifiedMetric.Attributes = make(map[string]string)
@@ -127,6 +131,94 @@ func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Pro
 	}
 
 	return nil
+}
+
+func (p *hpcMapper) warnUnmatchedMIGMappings(
+	mappingFiles []string, deviceInfo deviceinfo.Provider,
+) {
+	if deviceInfo == nil || deviceInfo.InfoType() != dcgm.FE_GPU {
+		return
+	}
+
+	availableIDsByGPU := make(map[string][]uint)
+	for _, gpu := range deviceInfo.GPUs() {
+		gpuID := fmt.Sprint(gpu.DeviceInfo.GPU)
+		ids := make([]uint, 0, len(gpu.GPUInstances))
+		for _, instance := range gpu.GPUInstances {
+			ids = append(ids, instance.Info.NvmlInstanceId)
+		}
+		slices.Sort(ids)
+		availableIDsByGPU[gpuID] = slices.Compact(ids)
+	}
+
+	type mismatch struct {
+		gpuID        string
+		instanceID   string
+		availableIDs []uint
+		signature    string
+	}
+	type pendingWarning struct {
+		mappingFile string
+		entry       mismatch
+	}
+	unmatched := make(map[string]mismatch)
+
+	for _, mappingFile := range mappingFiles {
+		gpuID, instanceID, isMIGMapping := strings.Cut(mappingFile, ".")
+		if !isMIGMapping {
+			continue
+		}
+
+		availableIDs, gpuFound := availableIDsByGPU[gpuID]
+		matchesInstance := slices.ContainsFunc(availableIDs, func(availableID uint) bool {
+			return strconv.FormatUint(uint64(availableID), 10) == instanceID
+		})
+		if matchesInstance {
+			continue
+		}
+		if !gpuFound {
+			availableIDs = []uint{}
+		}
+
+		unmatched[mappingFile] = mismatch{
+			gpuID:        gpuID,
+			instanceID:   instanceID,
+			availableIDs: availableIDs,
+			signature:    fmt.Sprintf("%t:%v", gpuFound, availableIDs),
+		}
+	}
+
+	nextWarnings := make(map[string]string, len(unmatched))
+	for mappingFile, entry := range unmatched {
+		nextWarnings[mappingFile] = entry.signature
+	}
+	pendingWarnings := make([]pendingWarning, 0, len(unmatched))
+
+	p.warningMu.Lock()
+	for _, mappingFile := range mappingFiles {
+		entry, exists := unmatched[mappingFile]
+		if !exists || p.warnedUnmatchedMappings[mappingFile] == entry.signature {
+			continue
+		}
+
+		pendingWarnings = append(pendingWarnings, pendingWarning{
+			mappingFile: mappingFile,
+			entry:       entry,
+		})
+	}
+	p.warnedUnmatchedMappings = nextWarnings
+	p.warningMu.Unlock()
+
+	for _, warning := range pendingWarnings {
+		slog.Warn(
+			"HPC job mapping file does not match a discovered MIG GPU instance; job labels from this file will not be applied",
+			slog.String("mapping_file", warning.mappingFile),
+			slog.String("gpu_id", warning.entry.gpuID),
+			slog.String("gpu_instance_id", warning.entry.instanceID),
+			slog.Any("available_gpu_instance_ids", warning.entry.availableIDs),
+			slog.String("hint", "name MIG mapping files using the GPU_I_ID metric label, not the nvidia-smi Device ordinal"),
+		)
+	}
 }
 
 func readFile(path string) ([]string, error) {

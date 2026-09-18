@@ -31,7 +31,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/prerequisites"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout"
@@ -72,6 +71,8 @@ const (
 	CLIFieldsFile                       = "collectors"
 	CLIAddress                          = "address"
 	CLICollectInterval                  = "collect-interval"
+	CLIWatchMaxKeepAge                  = "watch-max-keep-age"
+	CLIWatchMaxKeepSamples              = "watch-max-keep-samples"
 	CLIKubernetes                       = "kubernetes"
 	CLIKubernetesEnablePodLabels        = "kubernetes-enable-pod-labels"
 	CLIKubernetesEnablePodUID           = "kubernetes-enable-pod-uid"
@@ -89,6 +90,8 @@ const (
 	CLIWebConfigFile                    = "web-config-file"
 	CLIWebReadTimeout                   = "web-read-timeout"
 	CLIWebWriteTimeout                  = "web-write-timeout"
+	CLIMaxConcurrentScrapes             = "max-concurrent-scrapes"
+	CLIEnableExporterMetrics            = "enable-exporter-metrics"
 	CLIXIDCountWindowSize               = "xid-count-window-size"
 	CLIReplaceBlanksInModelName         = "replace-blanks-in-model-name"
 	CLIDebugMode                        = "debug"
@@ -114,9 +117,9 @@ const (
 )
 
 var (
-	validatePrerequisitesFunc   = prerequisites.Validate
 	initializeDCGMProviderFunc  = dcgmprovider.Initialize
 	initializeNVMLProviderFunc  = nvmlprovider.Initialize
+	cleanupNVMLProviderFunc     = func() { nvmlprovider.Client().Cleanup() }
 	buildRegistryFunc           = buildRegistry
 	getCountersFunc             = getCounters
 	startWatchListManagerFunc   = startDeviceWatchListManager
@@ -176,11 +179,37 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_WEB_WRITE_TIMEOUT"},
 		},
 		&cli.IntFlag{
+			Name:    CLIMaxConcurrentScrapes,
+			Value:   appconfig.DefaultMaxConcurrentScrapes,
+			Usage:   "Maximum concurrent scrape requests. Excess requests receive HTTP 503 while admitted overlapping requests are coalesced.",
+			EnvVars: []string{"DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIEnableExporterMetrics,
+			Value:   false,
+			Usage:   "Expose Go runtime, process, and HTTP handler metrics about dcgm-exporter itself.",
+			EnvVars: []string{"DCGM_EXPORTER_ENABLE_EXPORTER_METRICS"},
+		},
+		&cli.IntFlag{
 			Name:    CLICollectInterval,
 			Aliases: []string{"c"},
 			Value:   30000,
 			Usage:   "Interval of time at which point metrics are collected. Unit is milliseconds (ms).",
 			EnvVars: []string{"DCGM_EXPORTER_INTERVAL"},
+		},
+		&cli.DurationFlag{
+			Name:  CLIWatchMaxKeepAge,
+			Value: appconfig.DefaultWatchMaxKeepAge,
+			Usage: "Maximum age of samples retained by DCGM field watches. " +
+				"Set to 0s to disable the age limit when a sample limit is configured.",
+			EnvVars: []string{"DCGM_EXPORTER_WATCH_MAX_KEEP_AGE"},
+		},
+		&cli.Int64Flag{
+			Name:  CLIWatchMaxKeepSamples,
+			Value: appconfig.DefaultWatchMaxSamples,
+			Usage: "Sample-count retention requested for DCGM field watches. " +
+				"Set to 0 for no sample-count limit when an age limit is configured.",
+			EnvVars: []string{"DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES"},
 		},
 		&cli.BoolFlag{
 			Name:    CLIKubernetes,
@@ -501,53 +530,58 @@ func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequest
 		return err
 	}
 
-	// Validate prerequisites once
-	if !config.DisableStartupValidate {
-		err = validatePrerequisitesFunc()
-		if err != nil {
-			return err
-		}
-	}
-
 	// Initialize DCGM Provider Instance (once)
 	initializeDCGMProviderFunc(config)
 
-	// Create cleanup function that calls the CURRENT provider's Cleanup method
-	// This is critical to avoid closure capture bugs when reinitializing DCGM
-	// during GPU bind/unbind cycles.
-	dcgmCleanup := func() {
-		dcgmprovider.Client().Cleanup()
-	}
-
-	// NOTE: dcgmCleanup is managed by GPU topology change handler if GPU watching is enabled
-	// Otherwise, defer cleanup for normal shutdown
-	if !config.EnableGPUBindUnbindWatch {
-		defer dcgmCleanup()
-	}
-
-	// Initialize NVML Provider Instance only if Kubernetes mode is enabled
-	// NVML is only needed for MIG device UUID parsing in Kubernetes environments
-	if config.Kubernetes {
-		err = initializeNVMLProviderFunc()
-		if err != nil && !config.DisableStartupValidate {
-			return err
-		}
-		defer nvmlprovider.Client().Cleanup()
-		slog.Info("NVML provider successfully initialized for Kubernetes MIG support")
-	} else {
-		slog.Info("NVML provider skipped (not running in Kubernetes mode)")
-	}
-
+	defer func() { dcgmprovider.Client().Cleanup() }()
 	slog.Info("DCGM successfully initialized!")
 
 	ctx := lifecycleCtx
+	coord := initReloadCoordinator(c, config)
+	watcherCtx, watcherCancel := context.WithCancel(lifecycleCtx)
+	defer watcherCancel()
+	var watcherWg sync.WaitGroup
+	var gpuWatcher *restartableGPUWatcher
 
-	// Construct and seed the reload coordinator in one step. The seeding
-	// call is load-bearing: without it, coord.dcp stays nil until the first
-	// GPU topology event and a CSV reload in that window would drop profiling
-	// metrics. Extracted as its own function so tests can assert the
-	// seeding happens without driving the full startup pipeline.
-	coord := initReloadCoordinator(c, dcgmCleanup, config)
+	// Register the lifecycle watch immediately after DCGM initialization. Trigger
+	// safely queues any completion observed before later startup reads or before
+	// the coordinator begins draining events.
+	if config.EnableGPUBindUnbindWatch {
+		bindUnbindWatcher := newGPUBindUnbindWatcherFunc(
+			watcher.WithPollInterval(config.GPUBindUnbindPollInterval),
+		)
+		gpuWatcher = newRestartableGPUWatcher(bindUnbindWatcher.Start, func(state dcgm.BindUnbindEventState) {
+			event, ok := reloadEventForGPUState(state)
+			if !ok {
+				return
+			}
+			coord.Trigger(event)
+		})
+		if err := gpuWatcher.Start(watcherCtx); err != nil {
+			return fmt.Errorf("start GPU bind/unbind watcher: %w", err)
+		}
+		defer gpuWatcher.Stop()
+		coord.setGPUWatcher(gpuWatcher)
+	}
+
+	// Initialize NVML as the preferred MIG profile-name source in every deployment mode.
+	err = initializeNVMLProviderFunc()
+	if err != nil {
+		// Keep validated Kubernetes startup strict; other modes fall back to DCGM.
+		if config.Kubernetes && !config.DisableStartupValidate {
+			return err
+		}
+		slog.Warn("NVML provider unavailable; falling back to DCGM MIG profile names",
+			slog.String("error", err.Error()))
+	} else {
+		slog.Info("NVML provider successfully initialized")
+	}
+	defer cleanupNVMLProviderFunc()
+
+	// Seed DCP capability state only after the lifecycle cursor exists. Without
+	// this snapshot, a CSV reload before the first GPU event could drop profiling
+	// metrics.
+	coord.queryDCPMetrics(config, 0)
 
 	// Build initial registry
 	initialRegistry, deviceWatchListManager, err := buildRegistryFunc(ctx, c, config)
@@ -585,12 +619,8 @@ func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequest
 
 	slog.Info("HTTP server started - ready to serve metrics")
 
-	// Start watchers
-	watcherCtx, watcherCancel := context.WithCancel(lifecycleCtx)
-	var watcherWg sync.WaitGroup
-
-	// Reload coordinator goroutine. Must be started BEFORE watchers so
-	// early-fired events are not lost.
+	// Start the coordinator after the server is ready. Any lifecycle completion
+	// observed during startup is already queued by Trigger.
 	watcherWg.Add(1)
 	go func() {
 		defer watcherWg.Done()
@@ -607,18 +637,9 @@ func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequest
 		}, &watcherWg)
 	}
 
-	// GPU bind/unbind watcher (optional) — trigger a topology change.
-	if config.EnableGPUBindUnbindWatch {
-		gpuWatcher := newGPUWatcherLifecycle(watcherCtx, func() *watcher.GPUBindUnbindWatcher {
-			return newGPUBindUnbindWatcherFunc(
-				watcher.WithPollInterval(config.GPUBindUnbindPollInterval),
-			)
-		}, func() {
-			slog.DebugContext(watcherCtx, "GPU topology change detected")
-			coord.Trigger(evTopologyChanged)
-		})
-		coord.setGPUWatcher(gpuWatcher)
-		runGPUWatcher(gpuWatcher, &watcherWg)
+	// GPU bind/unbind watcher (optional) reports concrete DCGM lifecycle phases.
+	if gpuWatcher != nil {
+		runGPUWatcher(watcherCtx, gpuWatcher, &watcherWg)
 	}
 
 	// Wait for shutdown. Reload requests trigger the same handler as a CSV
@@ -649,12 +670,6 @@ shutdown:
 	// Stop HTTP server
 	close(stop)
 	serverWg.Wait()
-
-	// If GPU watching is enabled, cleanup DCGM manually (not deferred)
-	if config.EnableGPUBindUnbindWatch {
-		slog.Info("Cleaning up DCGM on shutdown")
-		dcgmCleanup()
-	}
 
 	slog.Info("Shutdown complete")
 	return nil
@@ -839,142 +854,213 @@ func logTopologyInfo(reloadID uint64, deviceWatchListMgr devicewatchlistmanager.
 		slog.Uint64("cpus", uint64(cpuCount)))
 }
 
-// reloadEvent is the mailbox payload. Values are ordered: higher ordinals
-// dominate lower ones when both are pending, via the CAS-upgrade in Trigger.
-type reloadEvent int32
+// reloadEvent identifies one kind of reload work.
+type reloadEvent int
 
 const (
-	evNone            reloadEvent = -1 // sentinel for an empty mailbox
-	evConfigChanged   reloadEvent = 0  // CSV file change OR SIGHUP — same handler
-	evTopologyChanged reloadEvent = 1  // strongest; dominates the mailbox
+	evNone reloadEvent = iota
+	evConfigChanged
+	// evDRAResourceSliceChanged rebuilds the registry after a complete DRA pool topology changes.
+	evDRAResourceSliceChanged
+	// evDRAResourceSliceRetry is the one bounded replay for a failed
+	// ResourceSlice-triggered registry build. A retry never schedules another retry.
+	evDRAResourceSliceRetry
+	evGPUReinitialized
+	evGPURecoveryRetry
 )
 
-// String satisfies fmt.Stringer for readable logs and test names.
-func (e reloadEvent) String() string {
-	switch e {
-	case evNone:
-		return "none"
-	case evConfigChanged:
-		return "configChanged"
-	case evTopologyChanged:
-		return "topologyChanged"
-	default:
-		return fmt.Sprintf("reloadEvent(%d)", int32(e))
-	}
+type gpuRecoveryStage int
+
+const (
+	gpuRecoveryIdle gpuRecoveryStage = iota
+	gpuRecoveryRestartWatcher
+	gpuRecoveryBuildRegistry
+)
+
+type pendingReload struct {
+	configChanged bool
+	// draResourceSliceEvent retains one DRA-triggered registry rebuild while other reload work is coalesced.
+	draResourceSliceEvent reloadEvent
+	latestGPUEvent        reloadEvent
 }
 
-// reloadCoordinator owns all reload state. Every piece of that state is
-// either written only by producers via the documented Trigger path (the
-// mailbox) or accessed only from the Run goroutine (dcp and the apply
-// seams). No atomic dances, no in-progress flag races, no replay loops.
-//
-// Single-threaded ownership replaces the previous atomics-plus-ordering
-// defenses: a topology event arriving during a config reload simply updates
-// the mailbox; the coordinator picks it up at the start of the next loop
-// iteration with no "too soon" rate-limit to defeat.
+func (p pendingReload) empty() bool {
+	return !p.configChanged && p.draResourceSliceEvent == evNone && p.latestGPUEvent == evNone
+}
+
+// reloadCoordinator serializes config and GPU lifecycle work.
 type reloadCoordinator struct {
 	server       *server.MetricsServer
 	c            *cli.Context
-	dcgmCleanup  func()
 	reloadConfig *appconfig.Config
 
-	// mailbox holds the strongest pending event, or evNone if empty. Writers
-	// CAS-upgrade; the consumer swaps it out at the start of each iteration.
-	mailbox atomic.Int32
-	// wake is a single-slot signal. Multiple Triggers between consumptions
-	// collapse to one wakeup; a spurious wake (mailbox empty at swap) is
-	// harmless.
-	wake chan struct{}
+	pendingMu sync.Mutex
+	pending   pendingReload
+	wake      chan struct{}
 
-	// Single-goroutine-owned state (accessed only from Run).
+	// Owned by the Run goroutine.
 	dcp *dcpCapabilities
 
-	// Test seams — default to the real implementations. Both receive the
-	// already-constructed reload config so tests can inspect exactly what
-	// the rebuild would use without driving the full DCGM stack.
-	applyConfigReload   func(ctx context.Context, cfg *appconfig.Config, reloadID uint64)
-	applyTopologyChange func(ctx context.Context, reloadID uint64)
-	buildRegistry       func(ctx context.Context, c *cli.Context, cfg *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error)
-	initializeDCGM      func(cfg *appconfig.Config)
-	gpuWatcher          gpuWatcherLifecycle
+	// Existing test seams for config application and registry construction.
+	applyConfigReload func(ctx context.Context, cfg *appconfig.Config, reloadID uint64)
+	buildRegistry     func(ctx context.Context, c *cli.Context, cfg *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error)
+	cleanupDCGM       func()
+	initializeDCGM    func(cfg *appconfig.Config)
+	cleanupNVML       func()
+	initializeNVML    func() error
+	gpuWatcher        gpuWatcherLifecycle
+	scheduleRetry     func(context.Context, time.Duration, func()) context.CancelFunc
+
+	// Owned by the Run goroutine. Recovery retries resume at the failed stage
+	// so DCGM and NVML are not repeatedly torn down while the coordinator
+	// remains free to process config reloads and shutdown.
+	gpuRecoveryStage       gpuRecoveryStage
+	gpuRecoveryConfig      *appconfig.Config
+	gpuRecoveryStartedAt   time.Time
+	gpuRecoveryRetryDelay  time.Duration
+	cancelGPURecoveryRetry context.CancelFunc
 }
 
-// newReloadCoordinator builds a coordinator ready to Trigger. Call setServer
-// and seed DCP via queryDCPMetrics before Run.
-func newReloadCoordinator(c *cli.Context, dcgmCleanup func()) *reloadCoordinator {
+const (
+	lifecycleRetryInitial = time.Second
+	lifecycleRetryMax     = 30 * time.Second
+)
+
+func newReloadCoordinator(c *cli.Context) *reloadCoordinator {
 	r := &reloadCoordinator{
-		c:           c,
-		dcgmCleanup: dcgmCleanup,
-		wake:        make(chan struct{}, 1),
+		c:    c,
+		wake: make(chan struct{}, 1),
 	}
-	r.mailbox.Store(int32(evNone))
-	r.applyConfigReload = r.doConfigReload
-	r.applyTopologyChange = r.doTopologyChange
+	r.applyConfigReload = func(ctx context.Context, cfg *appconfig.Config, reloadID uint64) {
+		r.doConfigReload(ctx, cfg, reloadID)
+	}
 	r.buildRegistry = buildRegistryFunc
+	r.cleanupDCGM = func() { dcgmprovider.Client().Cleanup() }
 	r.initializeDCGM = initializeDCGMProviderFunc
+	r.cleanupNVML = cleanupNVMLProviderFunc
+	r.initializeNVML = initializeNVMLProviderFunc
+	r.scheduleRetry = scheduleAfter
+	r.gpuRecoveryRetryDelay = lifecycleRetryInitial
 	return r
 }
 
-// setServer installs the metrics server. Must be called before Run; not safe
-// to call concurrently with Run.
-func (r *reloadCoordinator) setServer(s *server.MetricsServer) { r.server = s }
+func scheduleAfter(ctx context.Context, delay time.Duration, callback func()) context.CancelFunc {
+	retryCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-retryCtx.Done():
+		case <-timer.C:
+			callback()
+		}
+	}()
+	return cancel
+}
 
-// setGPUWatcher installs the optional GPU watcher lifecycle. Must be called
-// before Run; not safe to call concurrently with Run.
-func (r *reloadCoordinator) setGPUWatcher(w gpuWatcherLifecycle) { r.gpuWatcher = w }
+func nextLifecycleRetryDelay(delay time.Duration) time.Duration {
+	delay *= 2
+	if delay > lifecycleRetryMax {
+		return lifecycleRetryMax
+	}
+	return delay
+}
 
-// initReloadCoordinator constructs a reload coordinator and seeds its DCP
-// capabilities in one step, which is the load-bearing startup sequence.
-// Extracted from runDCGMExporter so TestInitReloadCoordinator
-// can assert that startup seeding actually happens, instead of relying on
-// a test that manually calls queryDCPMetrics.
-func initReloadCoordinator(c *cli.Context, dcgmCleanup func(), config *appconfig.Config) *reloadCoordinator {
-	coord := newReloadCoordinator(c, dcgmCleanup)
+// setServer installs the metrics server before Run starts.
+func (r *reloadCoordinator) setServer(s *server.MetricsServer) {
+	r.server = s
+}
+
+// setGPUWatcher gives lifecycle resets control of the GPU watcher.
+func (r *reloadCoordinator) setGPUWatcher(w gpuWatcherLifecycle) {
+	r.gpuWatcher = w
+}
+
+func initReloadCoordinator(c *cli.Context, config *appconfig.Config) *reloadCoordinator {
+	coord := newReloadCoordinator(c)
+	config.SetDRAResourceSliceChangeCallback(func() {
+		coord.Trigger(evDRAResourceSliceChanged)
+	})
 	coord.reloadConfig = config.Clone()
-	coord.queryDCPMetrics(config, 0)
 	return coord
 }
 
-// Trigger is safe to call from any goroutine. O(1), non-blocking, zero
-// allocation. CAS-upgrades the mailbox to max(current, ev) so a stronger
-// event is never lost behind weaker ones.
+// Trigger coalesces work into the bounded pending snapshot.
 func (r *reloadCoordinator) Trigger(ev reloadEvent) {
-	for {
-		cur := reloadEvent(r.mailbox.Load())
-		if cur != evNone && cur >= ev {
-			// Mailbox already holds an equal-or-stronger event; don't
-			// downgrade. Still signal in case the consumer missed it.
-			break
+	r.pendingMu.Lock()
+	switch ev {
+	case evConfigChanged:
+		r.pending.configChanged = true
+	case evDRAResourceSliceChanged:
+		r.pending.draResourceSliceEvent = evDRAResourceSliceChanged
+	case evDRAResourceSliceRetry:
+		if r.pending.draResourceSliceEvent == evNone {
+			r.pending.draResourceSliceEvent = evDRAResourceSliceRetry
 		}
-		if r.mailbox.CompareAndSwap(int32(cur), int32(ev)) {
-			break
+	case evGPUReinitialized:
+		r.pending.latestGPUEvent = evGPUReinitialized
+	case evGPURecoveryRetry:
+		if r.pending.latestGPUEvent == evNone {
+			r.pending.latestGPUEvent = evGPURecoveryRetry
 		}
 	}
+	r.pendingMu.Unlock()
+
 	select {
 	case r.wake <- struct{}{}:
 	default:
 	}
 }
 
-// Run processes events serially until ctx is cancelled.
+func (r *reloadCoordinator) takePending() pendingReload {
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+
+	pending := r.pending
+	r.pending = pendingReload{}
+	return pending
+}
+
+func (r *reloadCoordinator) handlePending(ctx context.Context, pending pendingReload) {
+	// A completed physical lifecycle is safe to reset. The watcher deliberately
+	// suppresses the earlier reinitializing state because its topology is not
+	// ready for exporter reinitialization yet.
+	// A new lifecycle reset rereads the metric source and consumes a coalesced
+	// config or DRA change. Retry events do not: registry-only reloads remain
+	// serviceable while recovery is waiting on a watcher or registry dependency.
+	if pending.latestGPUEvent != evGPUReinitialized {
+		switch {
+		case pending.draResourceSliceEvent != evNone:
+			// Both registry-only paths use the same config snapshot. Prioritize DRA
+			// work so a failed topology rebuild retains its one bounded retry.
+			r.handle(ctx, pending.draResourceSliceEvent)
+		case pending.configChanged:
+			r.handle(ctx, evConfigChanged)
+		}
+	}
+	if pending.latestGPUEvent == evGPUReinitialized || pending.latestGPUEvent == evGPURecoveryRetry {
+		r.handle(ctx, pending.latestGPUEvent)
+	}
+}
+
+// Run drains pending work while preserving the latest GPU lifecycle state.
 func (r *reloadCoordinator) Run(ctx context.Context) {
+	defer r.cancelRecoveryRetry()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-r.wake:
-			ev := reloadEvent(r.mailbox.Swap(int32(evNone)))
-			if ev == evNone {
-				continue // spurious wake
+			pending := r.takePending()
+			if pending.empty() {
+				continue
 			}
-			r.handle(ctx, ev)
+			r.handlePending(ctx, pending)
 		}
 	}
 }
 
-// handle dispatches a single event. Sets the server's reload-in-progress
-// flag so /health reports accurately, and recovers from handler panics so
-// the coordinator outlives them.
+// handle runs one event with panic recovery so later pending work can still run.
 func (r *reloadCoordinator) handle(ctx context.Context, ev reloadEvent) {
 	reloadID := hotReloadCounter.Add(1)
 
@@ -987,14 +1073,31 @@ func (r *reloadCoordinator) handle(ctx context.Context, ev reloadEvent) {
 				slog.String("panic_type", fmt.Sprintf("%T", p)),
 				slog.Uint64("reload_id", reloadID),
 				slog.String("stack_trace", string(stackBuf[:n])))
+			if (ev == evGPUReinitialized || ev == evGPURecoveryRetry) &&
+				r.gpuRecoveryStage != gpuRecoveryIdle && r.gpuRecoveryConfig != nil && ctx.Err() == nil {
+				r.scheduleRecoveryRetry(
+					ctx,
+					reloadID,
+					"GPU lifecycle recovery panicked",
+					fmt.Errorf("panic: %v", p),
+				)
+			} else if ev == evDRAResourceSliceChanged && ctx.Err() == nil {
+				// Match the bounded error path: the first DRA-triggered attempt gets
+				// one replay even when registry construction panics.
+				r.Trigger(evDRAResourceSliceRetry)
+			}
 		}
 	}()
 
 	r.server.SetReloadInProgress(true)
-	defer r.server.SetReloadInProgress(false)
+	defer func() {
+		if r.gpuRecoveryStage == gpuRecoveryIdle {
+			r.server.SetReloadInProgress(false)
+		}
+	}()
 
 	switch ev {
-	case evConfigChanged:
+	case evConfigChanged, evDRAResourceSliceChanged, evDRAResourceSliceRetry:
 		cfg, err := r.buildReloadConfig()
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to build reload config",
@@ -1002,17 +1105,27 @@ func (r *reloadCoordinator) handle(ctx context.Context, ev reloadEvent) {
 				slog.String("error", err.Error()))
 			return
 		}
-		r.applyConfigReload(ctx, cfg, reloadID)
-	case evTopologyChanged:
-		r.applyTopologyChange(ctx, reloadID)
+		if ev == evConfigChanged {
+			if r.gpuRecoveryStage != gpuRecoveryIdle {
+				// A later recovery retry must not replace this reload with the
+				// older snapshot captured when the GPU event began.
+				r.gpuRecoveryConfig = cfg.Clone()
+			}
+			r.applyConfigReload(ctx, cfg, reloadID)
+			return
+		}
+		if !r.doConfigReload(ctx, cfg, reloadID) && ev == evDRAResourceSliceChanged {
+			// One immediate, coalesced retry covers a transient registry build
+			// failure without creating an unbounded or tight retry loop.
+			r.Trigger(evDRAResourceSliceRetry)
+		}
+	case evGPUReinitialized:
+		r.doGPULifecycleReset(ctx, reloadID)
+	case evGPURecoveryRetry:
+		r.retryGPULifecycleRecovery(ctx, reloadID)
 	}
 }
 
-// buildReloadConfig returns a fresh appconfig.Config for reload paths by cloning
-// the startup snapshot so startup-only YAML is not re-read.
-// The latest DCP capabilities are also overlaid: config reloads consume that
-// snapshot directly, while topology reloads overwrite it by re-querying DCP
-// after DCGM is stable.
 func (r *reloadCoordinator) buildReloadConfig() (*appconfig.Config, error) {
 	if r.reloadConfig != nil {
 		cfg := r.reloadConfig.Clone()
@@ -1025,12 +1138,10 @@ func (r *reloadCoordinator) buildReloadConfig() (*appconfig.Config, error) {
 	return nil, fmt.Errorf("buildReloadConfig: no startup config snapshot; coordinator was not initialized via initReloadCoordinator")
 }
 
-// doConfigReload rebuilds the registry after a CSV file change or SIGHUP.
-// During rebuild, /metrics continues serving the last-good registry until a
-// replacement has been built successfully. Does NOT reset DCGM — it reuses the
-// DCP capabilities most recently discovered during startup or a topology
-// change.
-func (r *reloadCoordinator) doConfigReload(ctx context.Context, cfg *appconfig.Config, reloadID uint64) {
+// doConfigReload preserves the last-good registry until its replacement exists.
+// It reports whether a replacement was installed so DRA topology reloads can
+// schedule their single bounded retry after a transient build failure.
+func (r *reloadCoordinator) doConfigReload(ctx context.Context, cfg *appconfig.Config, reloadID uint64) bool {
 	slog.InfoContext(ctx, "Hot reload triggered - building new registry",
 		slog.Uint64("reload_id", reloadID))
 	startTime := time.Now()
@@ -1041,7 +1152,7 @@ func (r *reloadCoordinator) doConfigReload(ctx context.Context, cfg *appconfig.C
 			slog.Uint64("reload_id", reloadID),
 			slog.String("error", err.Error()),
 			slog.String("metrics_state", "preserving last-good registry"))
-		return
+		return false
 	}
 
 	oldRegistry := r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
@@ -1050,97 +1161,183 @@ func (r *reloadCoordinator) doConfigReload(ctx context.Context, cfg *appconfig.C
 	}
 
 	duration := time.Since(startTime)
-
 	slog.InfoContext(ctx, "Hot reload complete",
 		slog.Uint64("reload_id", reloadID),
 		slog.Duration("reload_duration", duration))
-
 	logTopologyInfo(reloadID, deviceWatchListMgr, duration)
+	return true
 }
 
-// doTopologyChange handles a GPU bind/unbind/swap event: reuse the startup
-// config snapshot, cleanup old registry, reset DCGM, re-query DCP, rebuild.
-// Works for all scenarios:
-//   - GPU unbind: cleanup succeeds, reinit fails (no GPU), /metrics returns empty
-//   - GPU bind: cleanup succeeds, reinit succeeds, /metrics serves new GPU
-//   - GPU swap: cleanup succeeds, reinit succeeds with new GPU
-func (r *reloadCoordinator) doTopologyChange(ctx context.Context, reloadID uint64) {
-	slog.InfoContext(ctx, "GPU topology change detected - full reset",
-		slog.Uint64("reload_id", reloadID))
-
-	cfg, err := r.buildReloadConfig()
-	if err != nil {
-		slog.ErrorContext(ctx, "Failed to build topology reload config",
-			slog.Uint64("reload_id", reloadID),
-			slog.String("error", err.Error()))
-		return
-	}
-
-	// Pessimistically invalidate the DCP snapshot. The hardware topology is
-	// about to change; any capabilities published for the previous topology
-	// must not survive into a subsequent config reload. queryDCPMetrics
-	// below republishes on success; if we return early or a later step
-	// panics, the next config reload sees a disabled snapshot rather than
-	// stale capabilities from the pre-change hardware.
-	r.dcp = &dcpCapabilities{}
-
-	if r.gpuWatcher != nil {
-		r.gpuWatcher.Stop()
-	}
-
-	slog.InfoContext(ctx, "Clearing registry - /metrics will return empty during reset",
-		slog.Uint64("reload_id", reloadID))
+func (r *reloadCoordinator) clearMetricsRegistry() {
 	oldRegistry := r.server.ClearRegistry()
 	if oldRegistry != nil {
 		oldRegistry.Cleanup()
 	}
+}
 
-	slog.InfoContext(ctx, "Cleaning up DCGM resources",
+// doGPULifecycleReset replaces provider and registry state after a completed GPU bind or unbind.
+func (r *reloadCoordinator) doGPULifecycleReset(ctx context.Context, reloadID uint64) {
+	slog.InfoContext(ctx, "GPU lifecycle event detected - resetting providers",
 		slog.Uint64("reload_id", reloadID))
-	r.dcgmCleanup()
+	r.gpuRecoveryStartedAt = time.Now()
+	r.cancelRecoveryRetry()
+	r.gpuRecoveryStage = gpuRecoveryIdle
+	r.gpuRecoveryConfig = nil
+	r.gpuRecoveryRetryDelay = lifecycleRetryInitial
 
-	slog.InfoContext(ctx, "Reinitializing DCGM",
-		slog.Uint64("reload_id", reloadID))
-	r.initializeDCGM(cfg)
-	if r.gpuWatcher != nil {
-		r.gpuWatcher.Start()
-	}
-
-	if cfg.Kubernetes && cfg.KubernetesVirtualGPUs {
-		slog.InfoContext(ctx, "Cleaning up NVML resources", slog.Uint64("reload_id", reloadID))
-		nvmlprovider.Client().Cleanup()
-
-		slog.InfoContext(ctx, "Reinitializing NVML", slog.Uint64("reload_id", reloadID))
-		if err := nvmlprovider.Initialize(); err != nil {
-			slog.ErrorContext(ctx, "Failed to reinitialize NVML",
-				slog.Uint64("reload_id", reloadID),
-				slog.String("error", err.Error()))
-		}
-	}
-
-	// Safe to re-query DCP: the GPU is stable after a topology change.
-	r.queryDCPMetrics(cfg, reloadID)
-
-	slog.InfoContext(ctx, "Building registry for current GPU topology",
-		slog.Uint64("reload_id", reloadID))
-
-	startTime := time.Now()
-	newRegistry, deviceWatchListMgr, err := r.buildRegistry(ctx, r.c, cfg)
+	cfg, err := r.buildReloadConfig()
 	if err != nil {
-		slog.ErrorContext(ctx, "Failed to build registry",
+		slog.ErrorContext(ctx, "Failed to build GPU lifecycle reload config",
 			slog.Uint64("reload_id", reloadID),
 			slog.String("error", err.Error()))
 		return
 	}
 
-	r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
-	duration := time.Since(startTime)
+	r.dcp = &dcpCapabilities{}
 
-	slog.InfoContext(ctx, "GPU topology change complete",
+	// Stop the watcher before releasing the DCGM resources it uses.
+	watcherStopped := false
+	if r.gpuWatcher != nil {
+		r.gpuWatcher.Stop()
+		watcherStopped = true
+		defer func() {
+			if watcherStopped {
+				if err := r.gpuWatcher.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					slog.ErrorContext(ctx, "Failed to restore GPU watcher after interrupted lifecycle reset",
+						slog.Uint64("reload_id", reloadID),
+						slog.String("error", err.Error()))
+				}
+			}
+		}()
+	}
+
+	slog.InfoContext(ctx, "Clearing registry - metrics remain empty during GPU lifecycle reset",
+		slog.Uint64("reload_id", reloadID))
+	r.clearMetricsRegistry()
+
+	// Release providers in reverse startup order, then bring DCGM back first.
+	slog.InfoContext(ctx, "Cleaning up exporter NVML resources",
+		slog.Uint64("reload_id", reloadID))
+	r.cleanupNVML()
+
+	slog.InfoContext(ctx, "Cleaning up DCGM resources",
+		slog.Uint64("reload_id", reloadID))
+	r.cleanupDCGM()
+
+	slog.InfoContext(ctx, "Reinitializing DCGM",
+		slog.Uint64("reload_id", reloadID))
+	r.initializeDCGM(cfg)
+	r.gpuRecoveryConfig = cfg
+	if watcherStopped {
+		r.gpuRecoveryStage = gpuRecoveryRestartWatcher
+		watcherStopped = false
+	} else {
+		r.prepareRegistryRecovery(ctx, cfg, reloadID)
+	}
+	r.continueGPULifecycleRecovery(ctx, reloadID)
+}
+
+func (r *reloadCoordinator) prepareRegistryRecovery(ctx context.Context, cfg *appconfig.Config, reloadID uint64) {
+	// Match startup scope: refresh optional NVML state on every lifecycle reset.
+	if err := r.initializeNVML(); err != nil {
+		level := slog.LevelWarn
+		if cfg.Kubernetes && !cfg.DisableStartupValidate {
+			level = slog.LevelError
+		}
+		slog.LogAttrs(ctx, level, "Failed to reinitialize NVML",
+			slog.Uint64("reload_id", reloadID),
+			slog.String("error", err.Error()))
+	}
+
+	r.queryDCPMetrics(cfg, reloadID)
+	r.gpuRecoveryStage = gpuRecoveryBuildRegistry
+}
+
+func (r *reloadCoordinator) retryGPULifecycleRecovery(ctx context.Context, reloadID uint64) {
+	r.cancelRecoveryRetry()
+	if r.gpuRecoveryStage == gpuRecoveryIdle || r.gpuRecoveryConfig == nil {
+		return
+	}
+	r.continueGPULifecycleRecovery(ctx, reloadID)
+}
+
+func (r *reloadCoordinator) continueGPULifecycleRecovery(ctx context.Context, reloadID uint64) {
+	if ctx.Err() != nil || r.gpuRecoveryConfig == nil {
+		return
+	}
+
+	if r.gpuRecoveryStage == gpuRecoveryRestartWatcher {
+		if err := r.gpuWatcher.Start(ctx); err != nil {
+			if ctx.Err() == nil {
+				r.scheduleRecoveryRetry(ctx, reloadID, "Failed to restart GPU watcher after lifecycle reset", err)
+			}
+			return
+		}
+		r.prepareRegistryRecovery(ctx, r.gpuRecoveryConfig, reloadID)
+	}
+
+	if r.gpuRecoveryStage != gpuRecoveryBuildRegistry {
+		return
+	}
+
+	// Rebuild metrics only after the providers reflect the new topology. A
+	// failed attempt schedules another coordinator event without blocking
+	// config reloads or repeating provider teardown.
+	newRegistry, deviceWatchListMgr, err := r.buildRegistry(ctx, r.c, r.gpuRecoveryConfig)
+	if err != nil {
+		r.scheduleRecoveryRetry(ctx, reloadID, "Failed to build registry after GPU lifecycle reset", err)
+		return
+	}
+	if ctx.Err() != nil {
+		newRegistry.Cleanup()
+		return
+	}
+
+	oldRegistry := r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
+	if oldRegistry != nil {
+		oldRegistry.Cleanup()
+	}
+
+	duration := time.Since(r.gpuRecoveryStartedAt)
+	slog.InfoContext(ctx, "GPU metrics resumed after lifecycle reset",
 		slog.Uint64("reload_id", reloadID),
-		slog.Duration("total_time", duration))
-
+		slog.Duration("reload_duration", duration))
 	logTopologyInfo(reloadID, deviceWatchListMgr, duration)
+	r.finishGPURecovery()
+}
+
+func (r *reloadCoordinator) scheduleRecoveryRetry(
+	ctx context.Context,
+	reloadID uint64,
+	message string,
+	err error,
+) {
+	delay := r.gpuRecoveryRetryDelay
+	slog.ErrorContext(ctx, message,
+		slog.Uint64("reload_id", reloadID),
+		slog.String("error", err.Error()),
+		slog.Duration("retry_delay", delay),
+		slog.String("metrics_state", "recovery pending"))
+	r.cancelRecoveryRetry()
+	r.cancelGPURecoveryRetry = r.scheduleRetry(ctx, delay, func() {
+		r.Trigger(evGPURecoveryRetry)
+	})
+	r.gpuRecoveryRetryDelay = nextLifecycleRetryDelay(delay)
+}
+
+func (r *reloadCoordinator) cancelRecoveryRetry() {
+	if r.cancelGPURecoveryRetry != nil {
+		r.cancelGPURecoveryRetry()
+		r.cancelGPURecoveryRetry = nil
+	}
+}
+
+func (r *reloadCoordinator) finishGPURecovery() {
+	r.cancelRecoveryRetry()
+	r.gpuRecoveryStage = gpuRecoveryIdle
+	r.gpuRecoveryConfig = nil
+	r.gpuRecoveryRetryDelay = lifecycleRetryInitial
+	r.server.SetReloadInProgress(false)
 }
 
 func startDeviceWatchListManager(
@@ -1240,7 +1437,7 @@ func getCounters(ctx context.Context, config *appconfig.Config) (*counters.Count
 // segfault during GPU state transitions).
 //
 // Called at: startup (from runDCGMExporter before the
-// first buildRegistry) and from doTopologyChange after DCGM reinitialises.
+// first buildRegistry) and from doGPULifecycleReset after DCGM is reinitialized.
 // Config reloads do NOT call this; they apply r.dcp instead.
 //
 // Single deferred epilogue: recover from any profiling API panic, then
@@ -1436,6 +1633,7 @@ func defaultConfig() (*appconfig.Config, error) {
 		CollectorsFile:                   appconfig.DefaultCollectorsFile,
 		Address:                          ":9400",
 		CollectInterval:                  30000,
+		WatchRetention:                   appconfig.DefaultWatchRetention(),
 		Kubernetes:                       false,
 		KubernetesEnablePodLabels:        false,
 		KubernetesEnablePodUID:           false,
@@ -1459,6 +1657,8 @@ func defaultConfig() (*appconfig.Config, error) {
 		WebConfigFile:              "",
 		WebReadTimeout:             appconfig.DefaultWebReadTimeout,
 		WebWriteTimeout:            appconfig.DefaultWebWriteTimeout,
+		MaxConcurrentScrapes:       appconfig.DefaultMaxConcurrentScrapes,
+		EnableExporterMetrics:      false,
 		XIDCountWindowSize:         int((5 * time.Minute).Milliseconds()),
 		ReplaceBlanksInModelName:   false,
 		Debug:                      false,
@@ -1495,6 +1695,12 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 	}
 	if c.IsSet(CLICollectInterval) {
 		config.CollectInterval = c.Int(CLICollectInterval)
+	}
+	if c.IsSet(CLIWatchMaxKeepAge) {
+		config.WatchRetention.MaxAge = c.Duration(CLIWatchMaxKeepAge)
+	}
+	if c.IsSet(CLIWatchMaxKeepSamples) {
+		config.WatchRetention.MaxSamples = c.Int64(CLIWatchMaxKeepSamples)
 	}
 	if c.IsSet(CLIKubernetes) {
 		config.Kubernetes = c.Bool(CLIKubernetes)
@@ -1561,6 +1767,12 @@ func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) erro
 	}
 	if c.IsSet(CLIWebWriteTimeout) {
 		config.WebWriteTimeout = parseDuration(c.String(CLIWebWriteTimeout), appconfig.DefaultWebWriteTimeout)
+	}
+	if c.IsSet(CLIMaxConcurrentScrapes) {
+		config.MaxConcurrentScrapes = c.Int(CLIMaxConcurrentScrapes)
+	}
+	if c.IsSet(CLIEnableExporterMetrics) {
+		config.EnableExporterMetrics = c.Bool(CLIEnableExporterMetrics)
 	}
 	if c.IsSet(CLIXIDCountWindowSize) {
 		config.XIDCountWindowSize = c.Int(CLIXIDCountWindowSize)
@@ -1663,6 +1875,22 @@ func applyConfigMapDataSource(config *appconfig.Config, configMapData string) er
 
 // validateConfig checks cross-field runtime requirements after all config sources are applied.
 func validateConfig(config *appconfig.Config) error {
+	if config.MaxConcurrentScrapes <= 0 {
+		return fmt.Errorf(
+			"invalid %s parameter value: %d, must be greater than 0",
+			CLIMaxConcurrentScrapes,
+			config.MaxConcurrentScrapes,
+		)
+	}
+
+	if err := config.WatchRetention.Validate(); err != nil {
+		return fmt.Errorf("invalid field watch retention: %w", err)
+	}
+	for i, watchGroup := range config.WatchGroups {
+		if err := watchGroup.Retention.Resolve(config.WatchRetention).Validate(); err != nil {
+			return fmt.Errorf("invalid watch group %q retention at index %d: %w", watchGroup.Name, i, err)
+		}
+	}
 	if !slices.Contains(DCGMDbgLvlValues, config.DCGMLogLevel) {
 		return fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, config.DCGMLogLevel)
 	}
@@ -1727,88 +1955,11 @@ func runWatcher(ctx context.Context, w watcher.Watcher, onChange func(), wg *syn
 	}()
 }
 
-// runGPUWatcher runs the managed GPU bind/unbind watcher lifecycle.
-func runGPUWatcher(w *gpuWatcherLifecycleController, wg *sync.WaitGroup) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		w.Run()
-	}()
-}
-
-type gpuWatcherLifecycle interface {
-	Start()
-	Stop()
-}
-
-type gpuWatcherLifecycleController struct {
-	ctx        context.Context
-	newWatcher func() *watcher.GPUBindUnbindWatcher
-	onChange   func()
-
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-func newGPUWatcherLifecycle(
-	ctx context.Context,
-	newWatcher func() *watcher.GPUBindUnbindWatcher,
-	onChange func(),
-) *gpuWatcherLifecycleController {
-	return &gpuWatcherLifecycleController{
-		ctx:        ctx,
-		newWatcher: newWatcher,
-		onChange:   onChange,
-	}
-}
-
-func (g *gpuWatcherLifecycleController) Run() {
-	g.Start()
-	<-g.ctx.Done()
-	g.Stop()
-}
-
-func (g *gpuWatcherLifecycleController) Start() {
-	select {
-	case <-g.ctx.Done():
-		return
+func reloadEventForGPUState(state dcgm.BindUnbindEventState) (reloadEvent, bool) {
+	switch state {
+	case dcgm.DcgmBUEventStateSystemReinitializationCompleted:
+		return evGPUReinitialized, true
 	default:
+		return evNone, false
 	}
-
-	g.mu.Lock()
-	if g.cancel != nil {
-		g.mu.Unlock()
-		return
-	}
-
-	watchCtx, cancel := context.WithCancel(g.ctx)
-	done := make(chan struct{})
-	g.cancel = cancel
-	g.done = done
-	w := g.newWatcher()
-	g.mu.Unlock()
-
-	go func() {
-		defer close(done)
-		err := w.Watch(watchCtx, g.onChange)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			slog.ErrorContext(watchCtx, "GPU watcher failed", slog.String("error", err.Error()))
-		}
-	}()
-}
-
-func (g *gpuWatcherLifecycleController) Stop() {
-	g.mu.Lock()
-	cancel := g.cancel
-	done := g.done
-	g.cancel = nil
-	g.done = nil
-	g.mu.Unlock()
-
-	if cancel == nil {
-		return
-	}
-	cancel()
-	<-done
 }

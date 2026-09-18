@@ -178,6 +178,13 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 			}
 		}
 
+		if replacement, retired := retiredPCIeFieldReplacement(fieldID); retired {
+			return nil, fmt.Errorf(
+				"DCGM field %q (ID %d) is no longer supported; use %q instead",
+				record[0], fieldID, replacement,
+			)
+		}
+
 		if !fieldIsSupported(uint(fieldID), c) {
 			slog.Warn(fmt.Sprintf("Skipping line %d ('%s'): metric not enabled", i, record[0]))
 			continue
@@ -188,6 +195,19 @@ func ExtractCounters(records [][]string, c *appconfig.Config) (*CounterSet, erro
 	}
 
 	return &res, nil
+}
+
+// retiredPCIeFieldReplacement returns the profiling field that replaces a PCIe
+// throughput field which DCGM no longer supports.
+func retiredPCIeFieldReplacement(fieldID dcgm.Short) (string, bool) {
+	switch fieldID {
+	case dcgm.DCGM_FI_DEV_PCIE_TX_THROUGHPUT:
+		return "DCGM_FI_PROF_PCIE_TX_BYTES", true
+	case dcgm.DCGM_FI_DEV_PCIE_RX_THROUGHPUT:
+		return "DCGM_FI_PROF_PCIE_RX_BYTES", true
+	default:
+		return "", false
+	}
 }
 
 func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {

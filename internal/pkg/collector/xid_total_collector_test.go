@@ -176,7 +176,7 @@ func TestXIDTotalCollectorGetValuesSinceErrorIncludesPollContext(t *testing.T) {
 
 	since := time.Unix(123, 0)
 	collector.stateMu.Lock()
-	collector.cursors[group] = since
+	collector.cursors[newCumulativeWatchCursorKey(group, fieldGroup)] = since
 	collector.stateMu.Unlock()
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -204,20 +204,65 @@ func TestXIDTotalCollectorPollErrorsDoNotMutateState(t *testing.T) {
 	require.NoError(t, collector.collectNewEvents())
 
 	wantTotals := collector.snapshotTotals()
-	require.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	require.True(t, stableCursor.Equal(xidCursor(collector, group, fieldGroup)))
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(errors.New("update failed"))
 	err := collector.collectNewEvents()
 	require.Error(t, err)
 	assert.Equal(t, wantTotals, collector.snapshotTotals())
-	assert.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	assert.True(t, stableCursor.Equal(xidCursor(collector, group, fieldGroup)))
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
 	mockDCGM.EXPECT().GetValuesSince(group, fieldGroup, stableCursor).Return(nil, time.Time{}, errors.New("get failed"))
 	err = collector.collectNewEvents()
 	require.Error(t, err)
 	assert.Equal(t, wantTotals, collector.snapshotTotals())
-	assert.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	assert.True(t, stableCursor.Equal(xidCursor(collector, group, fieldGroup)))
+}
+
+func TestXIDTotalCollectorSplitPollErrorDoesNotPartiallyMutateState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := setMockDCGMClient(t, ctrl)
+	group := testGroupHandle(1)
+	firstFieldGroup := testFieldHandle(1)
+	secondFieldGroup := testFieldHandle(2)
+	collector := newTestXIDTotalCollectorWithFieldGroups(
+		t,
+		ctrl,
+		1,
+		[]dcgm.GroupHandle{group},
+		[]dcgm.FieldHandle{firstFieldGroup, secondFieldGroup},
+		nil,
+	)
+	defer collector.Cleanup()
+
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, collector.initialSince).Return(
+		[]dcgm.FieldValue_v2{xidTotalValue(0, 42, 0)},
+		time.Unix(10, 0),
+		nil,
+	)
+	mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, collector.initialSince).Return(
+		nil,
+		time.Time{},
+		errors.New("second field group failed"),
+	)
+
+	err := collector.collectNewEvents()
+
+	require.Error(t, err)
+	assert.Empty(t, collector.snapshotTotals())
+	collector.stateMu.RLock()
+	defer collector.stateMu.RUnlock()
+	assert.Empty(t, collector.cursors)
+}
+
+// xidCursor reads the stored GetValuesSince cursor for one entity/field-group pair.
+func xidCursor(c *xidTotalCollector, group dcgm.GroupHandle, fieldGroup dcgm.FieldHandle) time.Time {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+
+	return c.cursors[newCumulativeWatchCursorKey(group, fieldGroup)]
 }
 
 func TestXIDTotalCollectorConcurrentCollectAndScrape(t *testing.T) {
@@ -383,6 +428,68 @@ func newTestXIDTotalCollector(
 	group := testGroupHandle(1)
 	collector, fieldGroup := newTestXIDTotalCollectorWithGroups(t, ctrl, 1, []dcgm.GroupHandle{group}, cleanups)
 	return collector, group, fieldGroup
+}
+
+func TestXIDTotalCollectorPollsAllFieldGroups(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := setMockDCGMClient(t, ctrl)
+
+	group := testGroupHandle(1)
+	firstFieldGroup := testFieldHandle(1)
+	secondFieldGroup := testFieldHandle(2)
+	collector := newTestXIDTotalCollectorWithFieldGroups(
+		t, ctrl, 1, []dcgm.GroupHandle{group}, []dcgm.FieldHandle{firstFieldGroup, secondFieldGroup}, nil,
+	)
+	defer collector.Cleanup()
+
+	firstCursor := time.Unix(10, 0)
+	secondCursor := time.Unix(11, 0)
+	gomock.InOrder(
+		mockDCGM.EXPECT().UpdateAllFields().Return(nil),
+		mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, collector.initialSince).Return(nil, firstCursor, nil),
+		mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, collector.initialSince).Return([]dcgm.FieldValue_v2{
+			xidTotalValue(0, 42, 0),
+		}, secondCursor, nil),
+		mockDCGM.EXPECT().UpdateAllFields().Return(nil),
+		mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, firstCursor).Return(nil, time.Unix(20, 0), nil),
+		mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, secondCursor).Return([]dcgm.FieldValue_v2{
+			xidTotalValue(0, 42, 0),
+		}, time.Unix(21, 0), nil),
+	)
+
+	require.NoError(t, collector.collectNewEvents())
+	require.NoError(t, collector.collectNewEvents())
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+	metrics := got[xidTotalCounter()]
+	assert.Equal(t, "2", metricValueByLabel(t, metrics, "xid", "42"))
+}
+
+func newTestXIDTotalCollectorWithFieldGroups(
+	t *testing.T,
+	ctrl *gomock.Controller,
+	gpuCount int,
+	groups []dcgm.GroupHandle,
+	fieldGroups []dcgm.FieldHandle,
+	cleanups []func(),
+) *xidTotalCollector {
+	t.Helper()
+
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, gpuCount, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return(groups, fieldGroups, cleanups, nil)
+
+	counterList := counters.CounterList{xidTotalCounter()}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, int64(time.Hour/time.Second))
+
+	collector, err := NewXIDTotalCollector(counterList, "localhost", &appconfig.Config{CollectInterval: int(time.Hour / time.Millisecond)}, *deviceWatchList)
+	require.NoError(t, err)
+
+	return collector.(*xidTotalCollector)
 }
 
 func newTestXIDTotalCollectorWithGroups(

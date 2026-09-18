@@ -19,7 +19,7 @@ tests.cov
 README.md
 CONTRIBUTING.md
 RELEASE.md
-security.md
+SECURITY.md
 *.md
 
 # CI/CD and deployment

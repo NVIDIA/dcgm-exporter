@@ -44,16 +44,24 @@ export PATH := $(GOBIN_DIR):$(PATH)
 GOLANG_VERSION := $(GO_VERSION)
 VERSION        := $(EXPORTER_VERSION)
 FULL_VERSION   := $(DCGM_VERSION)-$(VERSION)
-PACKAGE_VERSION := $(EXPORTER_VERSION).$(PACKAGE_REVISION)
-UBUNTU_IMAGE   ?= ubuntu:26.04
-PACKAGE_BUILDER_IMAGE ?= registry.access.redhat.com/ubi8/ubi:latest
+PACKAGE_VERSION ?= $(EXPORTER_VERSION)
+SOURCE_REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+UBUNTU_IMAGE   ?= $(UBUNTU_IMAGE_REPOSITORY):$(BUILDER_UBUNTU_TAG)@$(UBUNTU_2604_IMAGE_DIGEST)
+PACKAGE_BUILDER_IMAGE ?= $(UBI8_IMAGE_REPOSITORY):$(UBI8_IMAGE_TAG)@$(UBI8_IMAGE_DIGEST)
 PACKAGE_COMPONENT_DIR ?= dcgm_exporter
 MODULE         := github.com/NVIDIA/dcgm-exporter
+GO_NOTICE_PACKAGE ?= ./cmd/dcgm-exporter
+GO_NOTICE_TARGETS ?= linux/amd64,linux/arm64
+THIRD_PARTY_NOTICES_FILE ?= THIRD_PARTY_NOTICES
+GO_DCGM_DIR    ?= ../go-dcgm-dev
+GO_DCGM_MODULE := github.com/NVIDIA/go-dcgm
+GO_WORKFILE    := $(CURDIR)/go.work
 
 # Docker build defaults.
 OUTPUT         := type=oci,dest=/dev/null
 PLATFORMS      := linux/amd64,linux/arm64
 DOCKERCMD      := docker --debug buildx build
+DOCKER_GOWORK  ?= off
 # Keep release and CI image builds clean by default; use DOCKER_NO_CACHE= for faster local rebuilds.
 DOCKER_NO_CACHE ?= --no-cache
 IMAGE_TAG      ?= ""
@@ -62,12 +70,12 @@ CONTAINER      ?= all
 
 # Local e2e validation defaults.
 E2E_EXPORTER_UBUNTU_IMAGE ?=
-E2E_DCGM_IMAGE ?= nvcr.io/nvidia/cloud-native/dcgm:$(DCGM_VERSION)-$(DCGM_IMAGE_TAG_SUFFIX)
-E2E_K3S_IMAGE ?= rancher/k3s:$(K3S_VERSION)
-E2E_K3D_NODE_BASE_IMAGE ?= nvcr.io/nvidia/cuda:$(CUDA_BASE_TAG)-ubuntu$(K3D_NODE_BASE_UBUNTU_TAG)
-E2E_K3D_NODE_OUTPUT_IMAGE ?= dcgm-exporter/k3s-nvidia:$(K3S_VERSION)-cuda$(CUDA_BASE_TAG)-ubuntu$(K3D_NODE_BASE_UBUNTU_TAG)
-E2E_BUSYBOX_IMAGE ?= busybox:$(BUSYBOX_IMAGE_TAG)
-E2E_CONTAINER_TOOLKIT_TEST_IMAGE ?= nvcr.io/nvidia/cuda:$(CUDA_BASE_TAG)-ubuntu$(CUDA_UBUNTU_TAG)
+E2E_DCGM_IMAGE ?= $(DCGM_E2E_IMAGE_REPOSITORY):$(DCGM_VERSION)-$(DCGM_IMAGE_TAG_SUFFIX)@$(DCGM_E2E_IMAGE_DIGEST)
+E2E_K3S_IMAGE ?= $(K3S_IMAGE_REPOSITORY):$(K3S_VERSION)@$(K3S_IMAGE_DIGEST)
+E2E_K3D_NODE_BASE_IMAGE ?= $(CUDA_IMAGE_REPOSITORY):$(CUDA_BASE_TAG)-ubuntu$(K3D_NODE_BASE_UBUNTU_TAG)@$(K3D_NODE_CUDA_IMAGE_DIGEST)
+E2E_K3D_NODE_OUTPUT_IMAGE ?= dcgm-exporter/k3s-nvidia:$(K3S_VERSION)-cuda$(CUDA_BASE_TAG)-ubuntu$(K3D_NODE_BASE_UBUNTU_TAG)-nct$(NVIDIA_CONTAINER_TOOLKIT_VERSION)
+E2E_BUSYBOX_IMAGE ?= $(BUSYBOX_IMAGE_REPOSITORY):$(BUSYBOX_IMAGE_TAG)@$(BUSYBOX_IMAGE_DIGEST)
+E2E_CONTAINER_TOOLKIT_TEST_IMAGE ?= $(CUDA_IMAGE_REPOSITORY):$(CUDA_BASE_TAG)-ubuntu$(CUDA_UBUNTU_TAG)@$(CUDA_UBUNTU_IMAGE_DIGEST)
 E2E_CUDA_WORKLOAD_IMAGE ?= $(E2E_CONTAINER_TOOLKIT_TEST_IMAGE)
 E2E_LOCAL_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
 E2E_LOCAL_DIRTY ?= $(shell test -z "$$(git status --porcelain 2>/dev/null)" || echo -dirty)
@@ -77,7 +85,7 @@ endif
 E2E_LOCAL_EXPORTER_BASE_IMAGE ?= $(REGISTRY)/dcgm-exporter:$(FULL_VERSION)-local-$(E2E_LOCAL_COMMIT)$(E2E_LOCAL_DIRTY)-$(E2E_LOCAL_BUILD_ID)-distroless
 
 export DCGM_VERSION K3D_VERSION K3S_VERSION HELM_VERSION
-export NVIDIA_DEVICE_PLUGIN_VERSION GPU_OPERATOR_VERSION NVIDIA_DRA_DRIVER_VERSION
+export NVIDIA_DEVICE_PLUGIN_VERSION NVIDIA_CONTAINER_TOOLKIT_VERSION GPU_OPERATOR_VERSION NVIDIA_DRA_DRIVER_VERSION
 export K3D_LINUX_AMD64_SHA256 K3D_LINUX_ARM64_SHA256
 export KUBECTL_LINUX_AMD64_SHA256 KUBECTL_LINUX_ARM64_SHA256
 export HELM_LINUX_AMD64_SHA256 HELM_LINUX_ARM64_SHA256
@@ -105,18 +113,50 @@ help: ## Show available make targets
 		| sort \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "%-32s %s\n", $$1, $$2}'
 
+.PHONY: setup-local-go-dcgm
+setup-local-go-dcgm:
+	@set -eu; \
+	module="$$(GOWORK=off $(GO) -C "$(GO_DCGM_DIR)" list -m -f '{{.Path}}')"; \
+	if [ "$$module" != "$(GO_DCGM_MODULE)" ]; then \
+		echo "ERROR: expected $(GO_DCGM_MODULE) at $(GO_DCGM_DIR), got $$module" >&2; \
+		exit 1; \
+	fi; \
+	if [ -f "$(GO_WORKFILE)" ]; then \
+		if legacy_result="$$(GOWORK="$(GO_WORKFILE)" $(GO) list -m -f '{{if and .Main (eq .Path "$(GO_DCGM_MODULE)")}}{{.Dir}}{{end}}' "$(GO_DCGM_MODULE)" 2>&1)"; then \
+			legacy_dir="$$legacy_result"; \
+		else \
+			case "$$legacy_result" in \
+				*"module $(GO_DCGM_MODULE): not a known dependency") legacy_dir="" ;; \
+				*) printf '%s\n' "$$legacy_result" >&2; exit 1 ;; \
+			esac; \
+		fi; \
+		if [ -n "$$legacy_dir" ]; then \
+			echo "ERROR: $(GO_WORKFILE) already uses go-dcgm at $$legacy_dir" >&2; \
+			echo "Remove the matching use directive once, using its path exactly as written in go.work, then rerun this target." >&2; \
+			exit 1; \
+		fi; \
+	else \
+		GOWORK=off $(GO) work init .; \
+	fi; \
+	GOWORK=off $(GO) work edit \
+		-use=. \
+		-replace="$(GO_DCGM_MODULE)=$(GO_DCGM_DIR)" \
+		"$(GO_WORKFILE)"; \
+	resolved_dir="$$(GOWORK="$(GO_WORKFILE)" $(GO) list -m -f '{{.Dir}}' "$(GO_DCGM_MODULE)")"; \
+	echo "Go workspace now replaces $(GO_DCGM_MODULE) with $$resolved_dir"
+
 # ------------------------------------------------------------------------------
 # Build
 # ------------------------------------------------------------------------------
 
-.PHONY: all binary build-e2e install push push-dockerhub local
+.PHONY: all binary build-e2e install push mirror-dockerhub local
 all: ubuntu26.04 distroless ## Build the default Ubuntu and distroless images
 
 binary: ## Build the dcgm-exporter binary
 	cd cmd/dcgm-exporter; \
 		$(GO) build \
 			-trimpath \
-			-ldflags "-X main.BuildVersion=${DCGM_VERSION}-${VERSION}"
+			-ldflags "-X main.BuildVersion=${VERSION}"
 
 build-e2e: ## Build the e2e validation CLI
 	$(MKDIR) -p bin
@@ -130,12 +170,11 @@ install: binary ## Install dcgm-exporter and default counters into system paths
 	install -m 755 -D cmd/dcgm-exporter/dcgm-exporter $(DESTDIR)/usr/bin/dcgm-exporter
 	install -m 644 -D ./etc/default-counters.csv $(DESTDIR)/etc/dcgm-exporter/default-counters.csv
 
-push: ## Build and push Ubuntu and distroless images
-	$(MAKE) ubuntu26.04 OUTPUT=type=registry
+push: ## Build and push the distroless image
 	$(MAKE) distroless OUTPUT=type=registry
 
-push-dockerhub: ## Build and push the Docker Hub distroless image
-	$(MAKE) REGISTRY=nvidia distroless OUTPUT=type=registry
+mirror-dockerhub: ## Mirror an approved production NGC image to Docker Hub
+	bash hack/ci/mirror-dockerhub.sh
 
 local: ## Build the configured image for the local host architecture
 ifeq ($(shell uname -p),aarch64)
@@ -167,6 +206,10 @@ package-image: BUILD_TARGET = package-artifact
 package-image: IMAGE_TAG = package
 package-image: --docker-build-package ## Build the host-package payload image
 
+e2e-cgo-artifacts: DOCKERFILE = docker/package.Dockerfile
+e2e-cgo-artifacts: BUILD_TARGET = e2e-cgo-artifacts
+e2e-cgo-artifacts: --docker-build-e2e-cgo-artifacts ## Build glibc-compatible e2e host binaries
+
 --docker-build-%:
 	@echo "Building for $@ with target $(BUILD_TARGET)"
 	mkdir -p .go/compiler .go/pkg/mod
@@ -183,6 +226,8 @@ package-image: --docker-build-package ## Build the host-package payload image
 		--build-arg "GOLANG_VERSION=$(GOLANG_VERSION)" \
 		--build-arg "DCGM_VERSION=$(DCGM_VERSION)" \
 		--build-arg "VERSION=$(VERSION)" \
+		--build-arg "SOURCE_REVISION=$(SOURCE_REVISION)" \
+		--build-arg "GOWORK=$(DOCKER_GOWORK)" \
 		$(if $(GOPROXY_ENABLED),--build-arg "GOPROXY_ENABLED=$(GOPROXY_ENABLED)") \
 		$(if $(GOPROXY),--secret id=goproxy$(COMMA)env=GOPROXY) \
 		$(if $(GONOSUMDB),--build-arg "GONOSUMDB=$(GONOSUMDB)") \
@@ -194,7 +239,8 @@ package-image: --docker-build-package ## Build the host-package payload image
 # Packaging
 # ------------------------------------------------------------------------------
 
-.PHONY: packages package-arm64 package-amd64 package-build stage-package-payload test-package
+.PHONY: packages package-arm64 package-amd64 package-build stage-package-payload
+.PHONY: check-package test-package
 packages: package-amd64 package-arm64 ## Build packages for all supported architectures
 
 package-arm64: ## Build the arm64 package artifact
@@ -214,6 +260,12 @@ package-build: IMAGE_TAG = package
 
 DIST_PREFIX ?=
 
+# Published package tarballs cannot be replaced, so rebuilds of the same commit
+# must produce the same bytes.
+# Entry order, entry mtimes, and the gzip header timestamp are the parts that
+# would otherwise change on every build.
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || echo 0)
+
 package-build:
 	ARCH=`echo $(PLATFORMS) | cut -d'/' -f2`; \
 	if [ "$$ARCH" = "amd64" ]; then \
@@ -230,11 +282,17 @@ package-build:
 	docker cp $$I:/package-payload/$$COMPONENT_NAME /tmp/$$DIST_NAME/ && \
 	docker rm -f $$I && \
 	$(MKDIR) -p $(CURDIR)/dist && \
-	cd "/tmp/$$DIST_NAME" && tar -czf $(CURDIR)/dist/$$DIST_NAME.tar.gz `ls -A` && \
+	cd "/tmp/$$DIST_NAME" && tar --owner=0 --group=0 --numeric-owner \
+		--sort=name --mtime="@$(SOURCE_DATE_EPOCH)" \
+		--use-compress-program='gzip -n' \
+		-cf $(CURDIR)/dist/$$DIST_NAME.tar.gz `ls -A` && \
 	rm -rf "/tmp/$$DIST_NAME";
 
+check-package: ## Inspect package tarballs without building distro packages
+	bash hack/package/test.sh inspect
+
 test-package: ## Validate package tarballs through RPM/DEB install smoke tests
-	bash hack/package/test.sh
+	bash hack/package/test.sh install
 
 # ------------------------------------------------------------------------------
 # Tests and Coverage
@@ -261,7 +319,7 @@ test-integration-host: generate ## Run host GPU/DCGM integration tests with bina
 		-buildvcs=false \
 		-cover -covermode=atomic -coverpkg=./internal/...,./pkg/... \
 		-trimpath \
-		-ldflags "-X main.BuildVersion=$(DCGM_VERSION)-$(VERSION)" \
+		-ldflags "-X main.BuildVersion=$(VERSION)" \
 		-o .coverdata/integration_binary/dcgm-exporter ./cmd/dcgm-exporter
 	@GOCOVERDIR=$(CURDIR)/.coverdata/integration_binary $(GO) test -race -count=1 -timeout 5m -v $(TEST_ARGS) \
 		./tests/host/ \
@@ -333,7 +391,8 @@ test-coverage: ## Run unit and integration coverage, then merge profiles
 
 unit-test-coverage: ## Run CI-safe unit coverage without GPU/DCGM/NVML packages
 	@echo "Running unit tests only (skipping integration tests and nvmlprovider)..."
-	gotestsum --format testname --jsonfile test_results.json -- \
+	@mkdir -p test-reports
+	gotestsum --format testname --jsonfile test_results.json --junitfile test-reports/unit.xml -- \
 		$$($(GO) list ./... | grep -v -E "(tests/k8s|integration_test|nvmlprovider)") \
 		-count=1 -timeout 5m \
 		-covermode=count \
@@ -352,6 +411,7 @@ unit-test-coverage: ## Run CI-safe unit coverage without GPU/DCGM/NVML packages
 # ------------------------------------------------------------------------------
 
 .PHONY: lint lint-shell hadolint lint-dockerfiles validate-modules validate
+.PHONY: third-party-notices check-third-party-notices
 .PHONY: tools fmt goimports check-format check-fmt
 lint: ## Run golangci-lint against changed Go code
 	$(MKDIR) -p "$(GOLANGCILINT_TMPDIR)" "$(GOLANGCILINT_CACHE)"
@@ -366,9 +426,11 @@ lint-shell: ## Run shellcheck against repository shell scripts
 	shellcheck -x \
 		hack/utils.sh \
 		hack/ci/e2e-image.sh \
+		hack/ci/mirror-dockerhub.sh \
 		hack/ci/retry.sh \
 		internal/e2e/capability/dcgmi_probe.sh \
 		hack/package/*.sh \
+		hack/licenses/stage-container-runtime.sh \
 		docker/build-cross.sh \
 		docker/dcgm-exporter-entrypoint.sh
 
@@ -394,8 +456,23 @@ validate-modules: ## Verify module contents and go.mod/go.sum tidiness
 	go mod tidy
 	@git diff --exit-code -- go.sum go.mod
 
-validate: validate-modules hadolint check-fmt ## Run all validation checks
+validate: validate-modules hadolint check-fmt check-third-party-notices ## Run all validation checks
 	@echo "✓ All validation checks passed"
+
+third-party-notices: ## Generate Go dependency notices
+	GOWORK=off $(GO) run ./hack/licenses \
+		-package "$(GO_NOTICE_PACKAGE)" \
+		-targets "$(GO_NOTICE_TARGETS)" \
+		-notices "$(THIRD_PARTY_NOTICES_FILE)"
+
+check-third-party-notices: ## Verify checked-in Go dependency notices are current
+	@set -e; notices_tmp=$$(mktemp); \
+		trap 'rm -f "$$notices_tmp"' EXIT; \
+		GOWORK=off $(GO) run ./hack/licenses \
+			-package "$(GO_NOTICE_PACKAGE)" \
+			-targets "$(GO_NOTICE_TARGETS)" \
+			-notices "$$notices_tmp"; \
+		cmp --silent "$$notices_tmp" "$(THIRD_PARTY_NOTICES_FILE)" || { echo "$(THIRD_PARTY_NOTICES_FILE) is out of date; run make third-party-notices"; exit 1; }
 
 tools: ## Install required tools and utilities
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION)
@@ -465,11 +542,11 @@ install-uv: ## Install uv at the pinned UV_VERSION
 	  curl -LsSf https://astral.sh/uv/$(UV_VERSION)/install.sh | sh; \
 	fi
 
-sync-versions: ## Propagate hack/versions.env to derived files (fetches Go SHA256s)
-	@hack/sync-versions.py -v
+sync-versions: ## Verify public version metadata after updating hack/versions.env
+	@python3 hack/validate-versions.py
 
 validate-versions: ## Fail if derived files drift from hack/versions.env
-	@hack/sync-versions.py --check
+	@python3 hack/validate-versions.py
 
 check-versions: ## Report outdated pinned versions
 	@hack/check-versions.py
@@ -509,7 +586,7 @@ test-e2e: build-e2e ## Build local prerequisites and run e2e validation
 	CGO_ENABLED=1 $(GO) build \
 		-buildvcs=false \
 		-trimpath \
-		-ldflags "-X main.BuildVersion=$(DCGM_VERSION)-$(VERSION)" \
+		-ldflags "-X main.BuildVersion=$(VERSION)" \
 		-o bin/dcgm-exporter ./cmd/dcgm-exporter
 	@set -eu; \
 	base_image="$(E2E_LOCAL_EXPORTER_BASE_IMAGE)"; \

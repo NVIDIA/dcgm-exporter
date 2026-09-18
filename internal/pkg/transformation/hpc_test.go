@@ -16,25 +16,47 @@
 package transformation
 
 import (
+	"bytes"
 	"cmp"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
+	stdos "os"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mockos "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
 )
+
+const unmatchedMIGMappingWarning = "HPC job mapping file does not match a discovered MIG GPU instance; " +
+	"job labels from this file will not be applied"
+
+type inspectingHandler struct {
+	slog.Handler
+	inspect func(slog.Record)
+}
+
+func (h *inspectingHandler) Handle(ctx context.Context, record slog.Record) error {
+	h.inspect(record)
+	return h.Handler.Handle(ctx, record)
+}
 
 func TestHPCProcess(t *testing.T) {
 	realOS := osinterface.RealOS{}
@@ -240,6 +262,157 @@ func TestHPCProcess(t *testing.T) {
 			tt.assertion(t, metrics)
 		})
 	}
+}
+
+func TestHPCProcessWarnsForUnmatchedMIGMapping(t *testing.T) {
+	mappingDir := t.TempDir()
+	require.NoError(t, stdos.WriteFile(mappingDir+"/3", []byte("parent-job\n"), 0o600))
+	require.NoError(t, stdos.WriteFile(mappingDir+"/3.0", []byte("wrong-job\n"), 0o600))
+	require.NoError(t, stdos.WriteFile(mappingDir+"/3.1", []byte("matched-job\n"), 0o600))
+
+	mapper := newHPCMapper(&appconfig.Config{HPCJobMappingDir: mappingDir})
+	var logs bytes.Buffer
+	warningLoggedOutsideLock := false
+	handler := &inspectingHandler{
+		Handler: slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}),
+		inspect: func(record slog.Record) {
+			if record.Message != unmatchedMIGMappingWarning || !mapper.warningMu.TryLock() {
+				return
+			}
+			warningLoggedOutsideLock = true
+			mapper.warningMu.Unlock()
+		},
+	}
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	ctrl := gomock.NewController(t)
+	provider := mockdeviceinfo.NewMockProvider(ctrl)
+	provider.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
+	gpuInstanceIDs := []uint{2, 1}
+	provider.EXPECT().GPUs().DoAndReturn(func() []deviceinfo.GPUInfo {
+		instances := make([]deviceinfo.GPUInstanceInfo, 0, len(gpuInstanceIDs))
+		for _, instanceID := range gpuInstanceIDs {
+			instances = append(instances, deviceinfo.GPUInstanceInfo{
+				Info: dcgm.MigEntityInfo{NvmlInstanceId: instanceID},
+			})
+		}
+		return []deviceinfo.GPUInfo{{
+			DeviceInfo:   dcgm.Device{GPU: 3},
+			GPUInstances: instances,
+		}}
+	}).AnyTimes()
+
+	counter := counters.Counter{
+		FieldID:   1001,
+		FieldName: "DCGM_FI_PROF_GR_ENGINE_ACTIVE",
+		PromType:  "gauge",
+	}
+	metrics := collector.MetricsByCounter{
+		counter: {
+			{
+				GPU:           "3",
+				GPUInstanceID: "1",
+				MigProfile:    "3g.40gb",
+				Value:         "1",
+				Counter:       counter,
+				Attributes:    map[string]string{},
+			},
+			{
+				GPU:           "3",
+				GPUInstanceID: "2",
+				MigProfile:    "3g.40gb",
+				Value:         "2",
+				Counter:       counter,
+				Attributes:    map[string]string{},
+			},
+		},
+	}
+
+	require.NoError(t, mapper.Process(metrics, provider))
+	require.NoError(t, mapper.Process(metrics, provider))
+
+	records := hpcWarningRecords(t, &logs)
+	require.Len(t, records, 1, "an unchanged mismatch should warn only once")
+	assert.True(t, warningLoggedOutsideLock, "warning handler should run after releasing warningMu")
+	assert.Equal(t, "3.0", records[0]["mapping_file"])
+	assert.Equal(t, "3", records[0]["gpu_id"])
+	assert.Equal(t, "0", records[0]["gpu_instance_id"])
+	assert.Equal(t, []any{float64(1), float64(2)}, records[0]["available_gpu_instance_ids"])
+	assert.Contains(t, records[0]["hint"], "GPU_I_ID")
+	assert.Contains(t, records[0]["hint"], "Device ordinal")
+
+	for _, metric := range metrics[counter] {
+		switch metric.GPUInstanceID {
+		case "1":
+			assert.Equal(t, "matched-job", metric.Attributes[hpcJobAttribute])
+		case "2":
+			assert.NotContains(t, metric.Attributes, hpcJobAttribute)
+		default:
+			t.Fatalf("unexpected GPU instance ID %q", metric.GPUInstanceID)
+		}
+	}
+
+	gpuInstanceIDs = []uint{3, 1}
+	require.NoError(t, mapper.Process(metrics, provider))
+	records = hpcWarningRecords(t, &logs)
+	require.Len(t, records, 2, "a changed topology should produce an updated warning")
+	assert.Equal(t, []any{float64(1), float64(3)}, records[1]["available_gpu_instance_ids"])
+
+	require.NoError(t, stdos.Remove(mappingDir+"/3.0"))
+	require.NoError(t, mapper.Process(metrics, provider))
+	require.NoError(t, stdos.WriteFile(mappingDir+"/3.0", []byte("wrong-job\n"), 0o600))
+	require.NoError(t, mapper.Process(metrics, provider))
+	assert.Len(t, hpcWarningRecords(t, &logs), 3, "a mismatch that recurs after correction should warn again")
+}
+
+func TestHPCProcessWarnsWhenMappingGPUIsAbsent(t *testing.T) {
+	mappingDir := t.TempDir()
+	require.NoError(t, stdos.WriteFile(mappingDir+"/4.0", []byte("absent-gpu-job\n"), 0o600))
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	ctrl := gomock.NewController(t)
+	provider := mockdeviceinfo.NewMockProvider(ctrl)
+	provider.EXPECT().InfoType().Return(dcgm.FE_GPU)
+	provider.EXPECT().GPUs().Return([]deviceinfo.GPUInfo{{
+		DeviceInfo: dcgm.Device{GPU: 3},
+		GPUInstances: []deviceinfo.GPUInstanceInfo{{
+			Info: dcgm.MigEntityInfo{NvmlInstanceId: 0},
+		}},
+	}})
+
+	mapper := newHPCMapper(&appconfig.Config{HPCJobMappingDir: mappingDir})
+	require.NoError(t, mapper.Process(collector.MetricsByCounter{}, provider))
+
+	records := hpcWarningRecords(t, &logs)
+	require.Len(t, records, 1)
+	assert.Equal(t, "4.0", records[0]["mapping_file"])
+	assert.Equal(t, "4", records[0]["gpu_id"])
+	assert.Equal(t, "0", records[0]["gpu_instance_id"])
+	assert.Empty(t, records[0]["available_gpu_instance_ids"])
+}
+
+func hpcWarningRecords(t *testing.T, logs *bytes.Buffer) []map[string]any {
+	t.Helper()
+
+	var records []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record["msg"] == unmatchedMIGMappingWarning {
+			records = append(records, record)
+		}
+	}
+	return records
 }
 
 func TestGetGPUFiles(t *testing.T) {

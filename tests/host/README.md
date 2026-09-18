@@ -28,6 +28,7 @@ directly with a label filter:
 ```bash
 go build -o /tmp/dcgm-exporter ./cmd/dcgm-exporter
 go test ./tests/host -v -args -exporter-binary=/tmp/dcgm-exporter --ginkgo.label-filter=startupMetrics
+go test ./tests/host -v -args -exporter-binary=/tmp/dcgm-exporter --ginkgo.label-filter=dcgmLibraryPath
 go test ./tests/host -v -args -exporter-binary=/tmp/dcgm-exporter --ginkgo.label-filter='startupTLS || reload'
 ```
 
@@ -43,7 +44,7 @@ E2E_REQUIRE_VSOCK=1 E2E_REQUIRE_DCGM=1 go test --tags=dcgm_uri_integration ./tes
 The e2e CLI selects ordinary host scenarios and direct URI coverage through
 Ginkgo labels such as
 `startupMetrics`, `configFile`, `hpcJobMapping`, `startupTLS`, `reload`, `ipv6Listen`,
-`systemdSocket`, and `dcgmUri`.
+`latestValueBatching`, `oversizedFieldGroup`, `systemdSocket`, and `dcgmUri`.
 
 Pass `--result-markers` to emit `&&&&` markers for each executed spec.
 `--no-result-markers` disables both the host suite lifecycle and per-spec

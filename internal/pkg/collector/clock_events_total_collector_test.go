@@ -253,7 +253,7 @@ func TestClockEventsTotalCollectorGetValuesSinceErrorIncludesPollContext(t *test
 
 	since := time.Unix(123, 0)
 	collector.stateMu.Lock()
-	collector.cursors[group] = since
+	collector.cursors[newCumulativeWatchCursorKey(group, fieldGroup)] = since
 	collector.stateMu.Unlock()
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -283,14 +283,14 @@ func TestClockEventsTotalCollectorPollErrorsDoNotMutateState(t *testing.T) {
 
 	wantTotals := collector.snapshotTotals()
 	wantPrevious := clockPreviousSnapshot(collector)
-	require.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	require.True(t, stableCursor.Equal(clockCursor(collector, group, fieldGroup)))
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(errors.New("update failed"))
 	err := collector.collectNewEvents()
 	require.Error(t, err)
 	assert.Equal(t, wantTotals, collector.snapshotTotals())
 	assert.Equal(t, wantPrevious, clockPreviousSnapshot(collector))
-	assert.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	assert.True(t, stableCursor.Equal(clockCursor(collector, group, fieldGroup)))
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
 	mockDCGM.EXPECT().GetValuesSince(group, fieldGroup, stableCursor).Return(nil, time.Time{}, errors.New("get failed"))
@@ -298,7 +298,53 @@ func TestClockEventsTotalCollectorPollErrorsDoNotMutateState(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, wantTotals, collector.snapshotTotals())
 	assert.Equal(t, wantPrevious, clockPreviousSnapshot(collector))
-	assert.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	assert.True(t, stableCursor.Equal(clockCursor(collector, group, fieldGroup)))
+}
+
+func TestClockEventsTotalCollectorSplitPollErrorDoesNotPartiallyMutateState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := setMockDCGMClient(t, ctrl)
+	group := testGroupHandle(1)
+	firstFieldGroup := testFieldHandle(1)
+	secondFieldGroup := testFieldHandle(2)
+	collector := newTestClockEventsTotalCollectorWithFieldGroups(
+		t,
+		ctrl,
+		1,
+		[]dcgm.GroupHandle{group},
+		[]dcgm.FieldHandle{firstFieldGroup, secondFieldGroup},
+		nil,
+	)
+	defer collector.Cleanup()
+
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, collector.initialSince).Return(
+		[]dcgm.FieldValue_v2{clockTotalValue(0, int64(DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE), 0)},
+		time.Unix(10, 0),
+		nil,
+	)
+	mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, collector.initialSince).Return(
+		nil,
+		time.Time{},
+		errors.New("second field group failed"),
+	)
+
+	err := collector.collectNewEvents()
+
+	require.Error(t, err)
+	assert.Empty(t, collector.snapshotTotals())
+	collector.stateMu.RLock()
+	defer collector.stateMu.RUnlock()
+	assert.Empty(t, collector.previous)
+	assert.Empty(t, collector.cursors)
+}
+
+// clockCursor reads the stored GetValuesSince cursor for one entity/field-group pair.
+func clockCursor(c *clockEventsTotalCollector, group dcgm.GroupHandle, fieldGroup dcgm.FieldHandle) time.Time {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+
+	return c.cursors[newCumulativeWatchCursorKey(group, fieldGroup)]
 }
 
 func TestClockEventsTotalCollectorConcurrentCollectAndScrape(t *testing.T) {
@@ -454,6 +500,45 @@ func TestClockEventsTotalCollectorCleanupIsIdempotent(t *testing.T) {
 	assert.Equal(t, 1, cleanupCalls)
 }
 
+func TestClockEventsTotalCollectorPollsAllFieldGroups(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := setMockDCGMClient(t, ctrl)
+
+	group := testGroupHandle(1)
+	firstFieldGroup := testFieldHandle(1)
+	secondFieldGroup := testFieldHandle(2)
+	collector := newTestClockEventsTotalCollectorWithFieldGroups(
+		t, ctrl, 1, []dcgm.GroupHandle{group}, []dcgm.FieldHandle{firstFieldGroup, secondFieldGroup}, nil,
+	)
+	defer collector.Cleanup()
+
+	firstCursor := time.Unix(10, 0)
+	secondCursor := time.Unix(11, 0)
+	gomock.InOrder(
+		// First poll primes the per-entity baseline from the second field group.
+		mockDCGM.EXPECT().UpdateAllFields().Return(nil),
+		mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, collector.initialSince).Return(nil, firstCursor, nil),
+		mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, collector.initialSince).Return([]dcgm.FieldValue_v2{
+			clockTotalValue(0, int64(DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE), 0),
+		}, secondCursor, nil),
+		// Second poll observes a new reason and must resume each field group from
+		// its own cursor, proving both field groups are tracked independently.
+		mockDCGM.EXPECT().UpdateAllFields().Return(nil),
+		mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, firstCursor).Return(nil, time.Unix(20, 0), nil),
+		mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, secondCursor).Return([]dcgm.FieldValue_v2{
+			clockTotalValue(0, int64(DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE|DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING), 0),
+		}, time.Unix(21, 0), nil),
+	)
+
+	require.NoError(t, collector.collectNewEvents())
+	require.NoError(t, collector.collectNewEvents())
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+	metrics := got[clockEventsTotalCounter()]
+	assert.Equal(t, "1", metricValueByLabel(t, metrics, "clock_event", "clocks_setting"))
+}
+
 func newTestClockEventsTotalCollector(
 	t *testing.T, ctrl *gomock.Controller, cleanups []func(),
 ) (*clockEventsTotalCollector, dcgm.GroupHandle, dcgm.FieldHandle) {
@@ -462,6 +547,32 @@ func newTestClockEventsTotalCollector(
 	group := testGroupHandle(1)
 	collector, fieldGroup := newTestClockEventsTotalCollectorWithGroups(t, ctrl, 1, []dcgm.GroupHandle{group}, cleanups)
 	return collector, group, fieldGroup
+}
+
+func newTestClockEventsTotalCollectorWithFieldGroups(
+	t *testing.T,
+	ctrl *gomock.Controller,
+	gpuCount int,
+	groups []dcgm.GroupHandle,
+	fieldGroups []dcgm.FieldHandle,
+	cleanups []func(),
+) *clockEventsTotalCollector {
+	t.Helper()
+
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, gpuCount, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return(groups, fieldGroups, cleanups, nil)
+
+	counterList := counters.CounterList{clockEventsTotalCounter()}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, int64(time.Hour/time.Second))
+
+	collector, err := NewClockEventsTotalCollector(counterList, "localhost", &appconfig.Config{CollectInterval: int(time.Hour / time.Millisecond)}, *deviceWatchList)
+	require.NoError(t, err)
+
+	return collector.(*clockEventsTotalCollector)
 }
 
 func newTestClockEventsTotalCollectorWithGroups(

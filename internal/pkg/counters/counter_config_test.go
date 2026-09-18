@@ -232,6 +232,47 @@ func TestExtractCounters(t *testing.T) {
 	}
 }
 
+func TestExtractCountersRejectsRetiredPCIeThroughputFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		fieldName   string
+		replacement string
+	}{
+		{
+			name:        "canonical TX field",
+			fieldName:   "DCGM_FI_DEV_PCIE_TX_THROUGHPUT",
+			replacement: "DCGM_FI_PROF_PCIE_TX_BYTES",
+		},
+		{
+			name:        "canonical RX field",
+			fieldName:   "DCGM_FI_DEV_PCIE_RX_THROUGHPUT",
+			replacement: "DCGM_FI_PROF_PCIE_RX_BYTES",
+		},
+		{
+			name:        "legacy TX alias",
+			fieldName:   "dcgm_pcie_tx_throughput",
+			replacement: "DCGM_FI_PROF_PCIE_TX_BYTES",
+		},
+		{
+			name:        "legacy RX alias",
+			fieldName:   "dcgm_pcie_rx_throughput",
+			replacement: "DCGM_FI_PROF_PCIE_RX_BYTES",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ExtractCounters([][]string{{tt.fieldName, "gauge", "PCIe throughput"}}, &appconfig.Config{})
+
+			require.Error(t, err)
+			assert.Nil(t, got)
+			assert.Contains(t, err.Error(), "is no longer supported")
+			assert.Contains(t, err.Error(), tt.fieldName)
+			assert.Contains(t, err.Error(), tt.replacement)
+		})
+	}
+}
+
 func TestExtractCounters_EdgeAndFailurePaths(t *testing.T) {
 	tests := []struct {
 		name    string

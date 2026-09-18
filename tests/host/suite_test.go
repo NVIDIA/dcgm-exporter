@@ -51,6 +51,12 @@ var _ = Describe("host exporter startup", Label("startupMetrics"), func() {
 	})
 })
 
+var _ = Describe("host DCGM library loading", Label("dcgmLibraryPath"), func() {
+	It("loads libdcgm.so.4 from LD_LIBRARY_PATH", func() {
+		runDCGMLibraryPath(GinkgoTB())
+	})
+})
+
 var _ = Describe("host exporter TLS", Label("startupTLS"), func() {
 	It("enforces TLS and basic authentication", func() {
 		runStartWithTLSEnabledAndBasicAuth(GinkgoTB())
@@ -63,15 +69,39 @@ var _ = Describe("host exporter YAML config", Label("configFile"), func() {
 	})
 })
 
+var _ = Describe("host exporter configuration precedence", Label("configPrecedence"), func() {
+	It("uses an explicit collectors environment variable over inline YAML metrics", func() {
+		runYAMLCollectorsEnvironmentPrecedence(GinkgoTB())
+	})
+})
+
 var _ = Describe("host exporter NVML injection metrics", Label("nvmlInjectionMetrics"), func() {
-	It("exports every metric and entity sample reported by direct DCGM", func() {
+	It("matches every metric, entity sample, and value reported by direct DCGM", func() {
 		runNVMLInjectionMetrics(GinkgoTB())
 	})
 })
 
-var _ = Describe("host exporter YAML watch groups", Label("watchGroups"), func() {
-	It("starts with per-watch-group collection config", func() {
-		runStartWithYAMLWatchGroups(GinkgoTB())
+var _ = Describe("host exporter NVSDM mock metrics", Label("nvsdmMockMetrics"), func() {
+	It("exports deterministic NVSwitch and link telemetry", func() {
+		runNVSDMMockMetrics(GinkgoTB())
+	})
+})
+
+var _ = Describe("host exporter YAML collections", Label("watchGroups"), func() {
+	It("starts with per-collection configuration", func() {
+		runStartWithYAMLCollections(GinkgoTB())
+	})
+})
+
+var _ = Describe("host exporter latest-value batching", Label("latestValueBatching"), func() {
+	It("scrapes fields beyond the DCGM latest-value request boundary", func() {
+		runLatestValueBatching(GinkgoTB())
+	})
+})
+
+var _ = Describe("host exporter oversized field groups", Label("oversizedFieldGroup"), func() {
+	It("splits one logical field group at the DCGM capacity", func() {
+		runOversizedFieldGroup(GinkgoTB())
 	})
 })
 
@@ -84,6 +114,10 @@ var _ = Describe("host exporter runtime container labels", Label("runtimeContain
 var _ = Describe("host exporter HPC job mapping", Label("hpcJobMapping"), func() {
 	It("adds hpc_job labels from host mapping files", func() {
 		runStartWithHPCJobMapping(GinkgoTB())
+	})
+
+	It("deduplicates repeated hpc_job labels from host mapping files", func() {
+		runStartWithRepeatedHPCJobMapping(GinkgoTB())
 	})
 })
 

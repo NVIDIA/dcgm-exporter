@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -42,11 +44,12 @@ import (
 )
 
 const (
-	contentTypeOptionsHeader  = "X-Content-Type-Options"
-	failedWriteResponseError  = "Failed to write response."
-	internalServerError       = "internal server error"
-	prometheusTextContentType = "text/plain; version=0.0.4; charset=utf-8"
-	shutdownWaitTimeout       = 3 * time.Second
+	contentTypeOptionsHeader      = "X-Content-Type-Options"
+	failedWriteResponseError      = "Failed to write response."
+	internalServerError           = "internal server error"
+	prometheusTextContentType     = "text/plain; version=0.0.4; charset=utf-8"
+	scrapeCapacityExceededMessage = "scrape concurrency limit reached"
+	shutdownWaitTimeout           = 3 * time.Second
 )
 
 func NewMetricsServer(
@@ -60,6 +63,13 @@ func NewMetricsServer(
 	fileDumper := debug.NewFileDumper(c.DumpConfig)
 	readTimeout := timeoutOrDefault(c.WebReadTimeout, appconfig.DefaultWebReadTimeout)
 	writeTimeout := timeoutOrDefault(c.WebWriteTimeout, appconfig.DefaultWebWriteTimeout)
+	maxConcurrentScrapes := c.MaxConcurrentScrapes
+	if maxConcurrentScrapes <= 0 {
+		return nil, nil, fmt.Errorf(
+			"max concurrent scrapes must be greater than zero: %d",
+			maxConcurrentScrapes,
+		)
+	}
 
 	serverv1 := &MetricsServer{
 		server: &http.Server{
@@ -78,10 +88,16 @@ func NewMetricsServer(
 		transformations:        transformation.GetTransformations(c),
 		deviceWatchListManager: deviceWatchListManager,
 		fileDumper:             fileDumper,
+		scrapes:                newScrapeCoordinator(maxConcurrentScrapes),
 	}
 
 	serverv1.registry.Store(registry)
 	serverv1.reloadInProgress.Store(false)
+	metricsHandler := http.Handler(http.HandlerFunc(serverv1.Metrics))
+	if c.EnableExporterMetrics {
+		serverv1.exporterMetrics = newExporterMetrics(metricsHandler)
+		metricsHandler = serverv1.exporterMetrics
+	}
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeOptionsHeader, "nosniff")
 		pprofHTML := ""
@@ -111,7 +127,7 @@ func NewMetricsServer(
 	})
 
 	router.HandleFunc("/health", serverv1.Health)
-	router.HandleFunc("/metrics", serverv1.Metrics)
+	router.Handle("/metrics", metricsHandler)
 
 	if c.EnablePprof {
 		router.HandleFunc("/debug/pprof/", pprof.Index)
@@ -279,6 +295,11 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 		s.fatal()
 	}
 
+	if err := s.scrapes.wait(shutdownCtx); err != nil {
+		slog.Error("Failed waiting for active scrape producer.", slog.String(logging.ErrorKey, err.Error()))
+		s.fatal()
+	}
+
 	if err := utils.WaitWithTimeout(&httpwg, shutdownWaitTimeout); err != nil {
 		slog.Error("Failed waiting for HTTP server to shutdown.", slog.String(logging.ErrorKey, err.Error()))
 		s.fatal()
@@ -294,14 +315,37 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", prometheusTextContentType)
 	w.Header().Set(contentTypeOptionsHeader, "nosniff")
 
-	var buf bytes.Buffer
-	if err := s.gatherAndRenderMetrics(r.Context(), &buf); err != nil {
+	if r.Context().Err() != nil {
+		return
+	}
+
+	if !s.scrapes.tryAcquire() {
+		http.Error(w, scrapeCapacityExceededMessage, http.StatusServiceUnavailable)
+
+		return
+	}
+	defer s.scrapes.release()
+
+	producerContext := context.WithoutCancel(r.Context())
+	response, err := s.scrapes.do(r.Context(), func() ([]byte, error) {
+		var buf bytes.Buffer
+		if err := s.gatherAndRenderMetrics(producerContext, &buf); err != nil {
+			return nil, err
+		}
+
+		return buf.Bytes(), nil
+	})
+	requestErr := r.Context().Err()
+	if errors.Is(requestErr, context.Canceled) || errors.Is(requestErr, context.DeadlineExceeded) {
+		return
+	}
+	if err != nil {
 		http.Error(w, internalServerError, http.StatusInternalServerError)
 
 		return
 	}
 
-	_, err := w.Write(buf.Bytes())
+	_, err = w.Write(response)
 	if err != nil {
 		slog.Error(failedWriteResponseError, slog.String(logging.ErrorKey, err.Error()))
 		http.Error(w, "failed to write response", http.StatusInternalServerError)
@@ -310,7 +354,8 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *MetricsServer) gatherAndRenderMetrics(ctx context.Context, w io.Writer) error {
+// gatherAndRenderMetrics renders DCGM metrics and appends enabled exporter metrics to one response.
+func (s *MetricsServer) gatherAndRenderMetrics(ctx context.Context, w *bytes.Buffer) error {
 	// Keep the registry and device topology paired for the whole scrape. This
 	// lets reload cleanup wait until rendering no longer references the old
 	// runtime.
@@ -327,7 +372,17 @@ func (s *MetricsServer) gatherAndRenderMetrics(ctx context.Context, w io.Writer)
 		slog.Error("Failed to gather metrics from collectors", slog.String(logging.ErrorKey, err.Error()))
 		return err
 	}
-	return s.render(ctx, w, deviceWatchListManager, metricGroups)
+	if err := s.render(ctx, w, deviceWatchListManager, metricGroups); err != nil {
+		return err
+	}
+	if err := s.exporterMetrics.appendTo(w); err != nil {
+		slog.Warn(
+			"Failed to append exporter metrics",
+			slog.String(logging.ErrorKey, err.Error()),
+		)
+	}
+
+	return nil
 }
 
 // render transforms all gathered groups before rendering one combined metrics document.

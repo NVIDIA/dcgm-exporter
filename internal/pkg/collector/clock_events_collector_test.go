@@ -944,6 +944,93 @@ func Test_clockEventsCollector_GetMetrics(t *testing.T) {
 	}
 }
 
+func Test_clockEventsCollector_GetMetricsUsesConfiguredWindow(t *testing.T) {
+	const windowSize = 2750
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	counter := counters.Counter{
+		FieldID:   dcgm.Short(counters.DCGMClockEventsCount),
+		FieldName: counters.DCGMExpClockEventsCount,
+	}
+
+	tests := []struct {
+		name           string
+		values         []dcgm.FieldValue_v2
+		wantCount      string
+		wantClockEvent string
+		wantEventLabel bool
+	}{
+		{
+			name: "counts an event in the configured window",
+			values: []dcgm.FieldValue_v2{{
+				EntityGroupId: dcgm.FE_GPU,
+				EntityID:      0,
+				FieldID:       dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
+				FieldType:     dcgm.DCGM_FT_INT64,
+				Value:         createInt64ByteArray(int64(DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP)),
+			}},
+			wantCount:      "1",
+			wantClockEvent: "power_cap",
+			wantEventLabel: true,
+		},
+		{
+			name:      "reports zero when there are no events in the configured window",
+			wantCount: "0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+			mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+
+			realDCGM := dcgmprovider.Client()
+			t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+			dcgmprovider.SetClient(mockDCGM)
+
+			mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, nil)
+			mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+			groupHandle := dcgm.GroupHandle{}
+			groupHandle.SetHandle(uintptr(1))
+			fieldGroupHandle := dcgm.FieldHandle{}
+			fieldGroupHandle.SetHandle(uintptr(1))
+
+			mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+				Return([]dcgm.GroupHandle{groupHandle}, []dcgm.FieldHandle{fieldGroupHandle}, nil, nil)
+
+			deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, 1)
+			collector, err := NewClockEventsCollector(
+				counters.CounterList{counter},
+				"localhost",
+				&appconfig.Config{ClockEventsCountWindowSize: windowSize},
+				*deviceWatchList,
+			)
+			require.NoError(t, err)
+			collector.(*clockEventsCollector).now = func() time.Time { return now }
+
+			mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+			mockDCGM.EXPECT().GetValuesSince(
+				groupHandle,
+				fieldGroupHandle,
+				now.Add(-windowSize*time.Millisecond),
+			).Return(tt.values, time.Time{}, nil)
+
+			got, err := collector.GetMetrics()
+
+			require.NoError(t, err)
+			require.Len(t, got[counter], 1)
+			assert.Equal(t, tt.wantCount, got[counter][0].Value)
+			assert.Equal(t, "2750", got[counter][0].Labels[windowSizeInMSLabel])
+			if tt.wantEventLabel {
+				assert.Equal(t, tt.wantClockEvent, got[counter][0].Labels["clock_event"])
+			} else {
+				assert.NotContains(t, got[counter][0].Labels, "clock_event")
+			}
+		})
+	}
+}
+
 func Test_clockEventsCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
 	buf := setupDebugLogCapture(t)
 

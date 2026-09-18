@@ -26,6 +26,8 @@ type Info struct {
 	Entity       dcgm.GroupEntityPair
 	DeviceInfo   dcgm.Device
 	InstanceInfo *deviceinfo.GPUInstanceInfo
-	ParentId     uint
-	ParentType   dcgm.Field_Entity_Group
+	// ComputeInstanceInfo identifies the child compute instance when Entity is a GPU compute instance.
+	ComputeInstanceInfo *deviceinfo.ComputeInstanceInfo
+	ParentId            uint
+	ParentType          dcgm.Field_Entity_Group
 }

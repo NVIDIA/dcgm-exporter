@@ -35,6 +35,13 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/nvmlinjection"
 )
 
+const dcgmRequiresRootStatusCode = -29
+
+const (
+	nvmlInjectionCollectInterval = time.Second
+	nvmlInjectionWarmup          = 2 * nvmlInjectionCollectInterval
+)
+
 // runStartAndReadMetrics starts the exporter on the host and verifies it serves parseable metrics.
 func runStartAndReadMetrics(t testing.TB) {
 	if testing.Short() {
@@ -52,7 +59,7 @@ func runStartAndReadMetrics(t testing.TB) {
 	validateHostDefaultMetrics(t, metricsResp)
 }
 
-// runNVMLInjectionMetrics compares exporter output with direct injected-DCGM availability.
+// runNVMLInjectionMetrics compares exporter output with direct configured-DCGM telemetry.
 func runNVMLInjectionMetrics(t testing.TB) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
@@ -66,27 +73,31 @@ func runNVMLInjectionMetrics(t testing.TB) {
 	require.NotEmpty(t, strings.TrimSpace(*dcgmFieldsFileFlag), "-dcgm-fields-file is required")
 	contractPath := filepath.Join(t.TempDir(), "dcgm-contract.json")
 	// #nosec G204 -- both paths are explicit E2E harness inputs validated before the host suite starts.
-	cmd := exec.Command(*dcgmProbeBinaryFlag, "--field-names", *dcgmFieldsFileFlag, "--output", contractPath)
+	cmd := exec.Command(*dcgmProbeBinaryFlag, "nvml-injection", "--field-names", *dcgmFieldsFileFlag, "--output", contractPath)
 	cmd.Env = hostExporterEnv()
 	cmd.Stdout = io.Discard
 	var probeStderr bytes.Buffer
 	cmd.Stderr = &probeStderr
 	if err := cmd.Run(); err != nil {
-		require.NoError(t, err, "query direct injected DCGM contract (stage: %s)", safeProbeFailureStage(probeStderr.String()))
+		require.NoError(t, err, "query direct injected DCGM contract (%s)", safeProbeFailureSummary(probeStderr.String()))
 	}
 	contractFile, err := os.Open(contractPath)
 	require.NoError(t, err)
 	defer contractFile.Close()
 	contract, err := nvmlinjection.Read(contractFile)
 	require.NoError(t, err)
-	switch strings.TrimSpace(os.Getenv("E2E_DCGM_EXPECT_DEVICES")) {
-	case "true":
-		require.Positive(t, contract.DeviceCount, "fixture declares devices but DCGM discovered none")
-	case "false":
-		require.Zero(t, contract.DeviceCount, "loader-only fixture unexpectedly discovered devices")
-	}
+	require.NoError(t, contract.ValidateComputeInstanceSamples())
 	if contract.DeviceCount == 0 {
-		t.Log("NVML injection initialized successfully with zero declared devices")
+		port := getRandomAvailablePort(t)
+		process, healthResp := startExporterAndWait(
+			t,
+			fmt.Sprintf("http://localhost:%d/health", port),
+			"--collectors", "./testdata/default-counters.csv",
+			"--address", fmt.Sprintf(":%d", port),
+		)
+		defer process.terminate(t)
+		require.Equal(t, "OK", strings.TrimSpace(healthResp))
+		t.Log("dcgm-exporter health check passed without direct DCGM GPU entities")
 		return
 	}
 
@@ -98,15 +109,25 @@ func runNVMLInjectionMetrics(t testing.TB) {
 
 		port := getRandomAvailablePort(t)
 		metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
-		process, _ := startExporterAndWait(
-			t,
-			metricsURL,
-			"--collectors", collectorsPath,
-			"--address", fmt.Sprintf(":%d", port),
-			"--collect-interval", "100",
-		)
-		require.NoError(t, waitForNVMLInjectionBatch(metricsURL, process, batch))
-		process.terminate(t)
+		healthURL := fmt.Sprintf("http://localhost:%d/health", port)
+		func() {
+			process := startExporterProcess(
+				t,
+				"--collectors", collectorsPath,
+				"--address", fmt.Sprintf(":%d", port),
+				"--collect-interval", fmt.Sprint(nvmlInjectionCollectInterval.Milliseconds()),
+			)
+			defer process.terminate(t)
+
+			healthResp, err := retryMetrics(healthURL, process)
+			require.NoError(t, err)
+			require.Equal(t, "OK", strings.TrimSpace(healthResp))
+			// Profiling fields require a baseline and current sample. The direct-DCGM
+			// oracle forces an update after two watch intervals; this black-box process
+			// has no update hook, so allow its injected cache manager to update first.
+			time.Sleep(nvmlInjectionWarmup)
+			require.NoError(t, waitForNVMLInjectionBatch(metricsURL, process, batch))
+		}()
 	}
 	profiling := 0
 	for _, metric := range contract.Metrics {
@@ -138,7 +159,7 @@ func unavailableReasonSummary(unavailable []nvmlinjection.Unavailable) string {
 	return strings.Join(parts, ",")
 }
 
-func safeProbeFailureStage(stderr string) string {
+func safeProbeFailureSummary(stderr string) string {
 	const prefix = "DCGM probe failed during "
 	allowed := map[string]struct{}{
 		"DCGM initialization":          {},
@@ -153,28 +174,59 @@ func safeProbeFailureStage(stderr string) string {
 		"field unwatch":                {},
 		"field group destruction":      {},
 	}
+	stage := "unknown"
 	for _, line := range strings.Split(stderr, "\n") {
-		stage := strings.TrimPrefix(strings.TrimSpace(line), prefix)
-		if _, found := allowed[stage]; found {
-			return stage
+		candidate := strings.TrimPrefix(strings.TrimSpace(line), prefix)
+		if _, found := allowed[candidate]; found {
+			stage = candidate
+			break
 		}
 	}
-	return "unknown"
+	summary := "stage: " + stage
+	if hasProbeStatus(stderr, dcgmRequiresRootStatusCode) {
+		summary += "; status: DCGM_ST_REQUIRES_ROOT; run the host test as root"
+	}
+	return summary
 }
 
-func TestSafeProbeFailureStage(t *testing.T) {
+func hasProbeStatus(stderr string, code int) bool {
+	want := fmt.Sprint(code)
+	for _, line := range strings.Split(stderr, "\n") {
+		fields := strings.Fields(line)
+		for i := 1; i < len(fields); i++ {
+			if fields[i-1] == "Error:" && fields[i] == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestSafeProbeFailureSummary(t *testing.T) {
 	tests := []struct {
 		name   string
 		stderr string
 		want   string
 	}{
-		{name: "allowed", stderr: "private output\nDCGM probe failed during field watch\n", want: "field watch"},
-		{name: "not allowlisted", stderr: "DCGM probe failed during private-device-value\n", want: "unknown"},
-		{name: "empty", want: "unknown"},
+		{name: "allowed stage", stderr: "private output\nDCGM probe failed during field watch\n", want: "stage: field watch"},
+		{
+			name:   "requires root",
+			stderr: "CacheManager Init Failed. Error: -29\nDCGM probe failed during DCGM initialization\n",
+			want:   "stage: DCGM initialization; status: DCGM_ST_REQUIRES_ROOT; run the host test as root",
+		},
+		{
+			name:   "requires root without stage",
+			stderr: "CacheManager Init Failed. Error: -29\n",
+			want:   "stage: unknown; status: DCGM_ST_REQUIRES_ROOT; run the host test as root",
+		},
+		{name: "status split across lines", stderr: "CacheManager Init Failed. Error:\n-29\n", want: "stage: unknown"},
+		{name: "different status", stderr: "CacheManager Init Failed. Error: -290\n", want: "stage: unknown"},
+		{name: "not allowlisted", stderr: "DCGM probe failed during private-device-value\n", want: "stage: unknown"},
+		{name: "empty", want: "stage: unknown"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, safeProbeFailureStage(test.stderr))
+			require.Equal(t, test.want, safeProbeFailureSummary(test.stderr))
 		})
 	}
 }
@@ -221,14 +273,22 @@ func runStartWithGPUBindUnbindWatch(t testing.TB) {
 		t.Skip("skipping test in short mode.")
 	}
 
+	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+version: 1
+sources:
+  dcgm:
+    detectBindUnbind:
+      enabled: true
+`), 0o600))
+
 	port := getRandomAvailablePort(t)
 	_, metricsResp := startExporterAndWait(
 		t,
 		fmt.Sprintf("http://localhost:%d/metrics", port),
+		"--config-file", configFile,
 		"--collectors", "./testdata/default-counters.csv",
 		"--address", fmt.Sprintf(":%d", port),
-		"--enable-gpu-bind-unbind-watch",
-		"--gpu-bind-unbind-poll-interval", "1s",
 	)
 
 	validateHostDefaultMetrics(t, metricsResp)
@@ -241,14 +301,17 @@ func runStartWithYAMLConfigFile(t testing.TB) {
 
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
       prometheusType: gauge
       help: GPU temperature.
-collection:
-  interval: 1s
+collections:
+  - name: scrape
+    every: 1s
+    metrics:
+      include: ["*"]
 `), 0o600))
 
 	port := getRandomAvailablePort(t)
@@ -265,15 +328,15 @@ collection:
 	require.NotContains(t, families, "DCGM_FI_DEV_POWER_USAGE")
 }
 
-// runStartWithYAMLWatchGroups verifies YAML watch groups are accepted by the runtime startup path.
-func runStartWithYAMLWatchGroups(t testing.TB) {
+// runStartWithYAMLCollections verifies YAML collections are accepted by the runtime startup path.
+func runStartWithYAMLCollections(t testing.TB) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
 
 	configFile := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configFile, []byte(`
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
@@ -282,12 +345,15 @@ metrics:
     - name: DCGM_FI_DEV_POWER_USAGE
       prometheusType: gauge
       help: Power draw.
-collection:
-  interval: 1s
-  watchGroups:
-    - name: temperature
-      interval: 1s
-      fields:
+collections:
+  - name: scrape
+    every: 1s
+    metrics:
+      include: ["*"]
+  - name: temperature
+    every: 1s
+    metrics:
+      include:
         - DCGM_FI_DEV_GPU_TEMP
 `), 0o600))
 
@@ -324,6 +390,48 @@ func runStartWithHPCJobMapping(t testing.TB) {
 	)
 
 	require.True(t, metricsContainLabelValue(t, metricsResp, "hpc_job", jobName), "expected hpc_job label %q", jobName)
+}
+
+// runStartWithRepeatedHPCJobMapping verifies the process serves one sample for
+// each distinct mapping-file job ID rather than duplicate Prometheus series.
+func runStartWithRepeatedHPCJobMapping(t testing.TB) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
+	jobDir := t.TempDir()
+	const (
+		firstJob  = "host-job-0"
+		secondJob = "host-job-1"
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(jobDir, "0"), []byte(firstJob+"\n"+secondJob+"\n"+firstJob+"\n"), 0o600))
+	collectorsPath := filepath.Join(t.TempDir(), "collectors.csv")
+	require.NoError(t, os.WriteFile(collectorsPath, []byte("DCGM_FI_DEV_GPU_TEMP,gauge,GPU temperature.\n"), 0o600))
+
+	port := getRandomAvailablePort(t)
+	_, metricsResp := startExporterAndWait(
+		t,
+		fmt.Sprintf("http://localhost:%d/metrics", port),
+		"--collectors", collectorsPath,
+		"--address", fmt.Sprintf(":%d", port),
+		"--hpc-job-mapping-dir", jobDir,
+	)
+
+	families, err := parseMetricFamilies(metricsResp)
+	require.NoError(t, err)
+	family, found := families["DCGM_FI_DEV_GPU_TEMP"]
+	require.True(t, found, "expected DCGM_FI_DEV_GPU_TEMP metric family")
+	jobSamples := map[string]int{}
+	for _, metric := range family.GetMetric() {
+		labels := map[string]string{}
+		for _, label := range metric.GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		if labels["gpu"] == "0" && labels["hpc_job"] != "" {
+			jobSamples[labels["hpc_job"]]++
+		}
+	}
+	require.Equal(t, map[string]int{firstJob: 1, secondJob: 1}, jobSamples)
 }
 
 func metricsContainLabelValue(t testing.TB, metricsResp string, labelName string, labelValue string) bool {

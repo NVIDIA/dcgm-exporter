@@ -17,10 +17,8 @@
 package utils
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/gob"
 	"fmt"
 	"regexp"
 	"strings"
@@ -55,32 +53,6 @@ func RandUint64() (uint64, error) {
 	}
 
 	return num, nil
-}
-
-func DeepCopy[T any](src T) (dst T, err error) {
-	var buf bytes.Buffer
-
-	defer func() {
-		if r := recover(); r != nil {
-			// If there was a panic, return the zero value of T and the error.
-			dst = *new(T)
-			err = fmt.Errorf("panic occurred: %v", r)
-		}
-	}()
-
-	// Create an encoder and send a value.
-	err = gob.NewEncoder(&buf).Encode(src)
-	if err != nil {
-		return *new(T), err
-	}
-
-	// Create a new instance of the type T and decode into that.
-	err = gob.NewDecoder(&buf).Decode(&dst)
-	if err != nil {
-		return *new(T), err
-	}
-
-	return dst, nil
 }
 
 func CleanupOnError(cleanups []func()) []func() {

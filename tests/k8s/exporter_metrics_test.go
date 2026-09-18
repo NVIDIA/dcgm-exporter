@@ -170,7 +170,7 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 
 		It("should use inline YAML metrics from the generated config ConfigMap", func(ctx context.Context) {
 			yamlConfig := strings.TrimSpace(`
-version: 1
+version: 2
 metrics:
   fields:
     - name: DCGM_FI_DEV_GPU_TEMP
@@ -179,8 +179,11 @@ metrics:
     - name: DCGM_FI_DEV_FB_USED
       prometheusType: gauge
       help: Framebuffer memory used (in MiB).
-collection:
-  interval: 1s
+collections:
+  - name: scrape
+    every: 1s
+    metrics:
+      include: ["*"]
 `)
 
 			_, _ = shouldInstallExporterAndReadMetrics(ctx,

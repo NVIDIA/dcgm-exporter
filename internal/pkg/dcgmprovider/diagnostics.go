@@ -23,6 +23,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -39,6 +40,8 @@ const (
 	remoteHostengineHint = "Verify nv-hostengine is running and listening on the expected address. " +
 		"For IPv6, use bracket notation: [<IPv6_ADDR>]:<PORT> (e.g., \"[::1]:5555\")"
 	unknownDCGMStatusHint = "Enable DCGM debug logs and check the DCGM hostengine logs for the status-specific failure reason."
+	dcgmLibraryName       = "libdcgm.so.4"
+	dcgmLibraryLoadHint   = "Install a compatible DCGM library, or add the directory containing libdcgm.so.4 to LD_LIBRARY_PATH before starting dcgm-exporter."
 )
 
 var dcgmStatusCodePatterns = []*regexp.Regexp{
@@ -53,6 +56,13 @@ type dcgmStartupStatus struct {
 }
 
 func logDCGMInitFailure(config *appconfig.Config, mode string, err error, extraAttrs ...slog.Attr) {
+	if isDCGMLibraryLoadError(err) {
+		extraAttrs = []slog.Attr{
+			slog.String("library", dcgmLibraryName),
+			slog.String("hint", dcgmLibraryLoadHint),
+		}
+	}
+
 	attrs, hasHint := dcgmStartupLogAttrs(config, mode, extraAttrs...)
 	attrs = append(attrs, slog.String("error", err.Error()))
 
@@ -62,6 +72,10 @@ func logDCGMInitFailure(config *appconfig.Config, mode string, err error, extraA
 	}
 
 	slog.Error(dcgmInitFailureMessage(mode), attrs...)
+}
+
+func isDCGMLibraryLoadError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), dcgmLibraryName+" not found")
 }
 
 func logDCGMFieldsInitFailure(config *appconfig.Config, statusCode int) {

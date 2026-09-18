@@ -331,6 +331,21 @@ func (mr *MockDCGMMockRecorder) GetGroupInfo(groupID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupInfo", reflect.TypeOf((*MockDCGM)(nil).GetGroupInfo), groupID)
 }
 
+// GetMultipleValuesForField mocks base method.
+func (m *MockDCGM) GetMultipleValuesForField(arg0 uint, arg1 dcgm.Short, arg2 int, arg3, arg4 time.Time) ([]dcgm.FieldValue_v1, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMultipleValuesForField", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].([]dcgm.FieldValue_v1)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMultipleValuesForField indicates an expected call of GetMultipleValuesForField.
+func (mr *MockDCGMMockRecorder) GetMultipleValuesForField(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMultipleValuesForField", reflect.TypeOf((*MockDCGM)(nil).GetMultipleValuesForField), arg0, arg1, arg2, arg3, arg4)
+}
+
 // GetNvLinkLinkStatus mocks base method.
 func (m *MockDCGM) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
 	m.ctrl.T.Helper()
@@ -535,6 +550,20 @@ func (m *MockDCGM) UpdateAllFields() error {
 func (mr *MockDCGMMockRecorder) UpdateAllFields() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAllFields", reflect.TypeOf((*MockDCGM)(nil).UpdateAllFields))
+}
+
+// WatchFieldValue mocks base method.
+func (m *MockDCGM) WatchFieldValue(arg0 uint, arg1 dcgm.Short, arg2, arg3 time.Duration, arg4 int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WatchFieldValue", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WatchFieldValue indicates an expected call of WatchFieldValue.
+func (mr *MockDCGMMockRecorder) WatchFieldValue(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchFieldValue", reflect.TypeOf((*MockDCGM)(nil).WatchFieldValue), arg0, arg1, arg2, arg3, arg4)
 }
 
 // WatchFieldsWithGroupEx mocks base method.

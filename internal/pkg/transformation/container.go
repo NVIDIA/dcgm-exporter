@@ -19,7 +19,6 @@ package transformation
 import (
 	"context"
 	"log/slog"
-	"maps"
 	"sync"
 	"time"
 
@@ -78,9 +77,7 @@ func (m *containerMapper) Process(metrics collector.MetricsByCounter, deviceInfo
 				if info.Name == "" {
 					continue
 				}
-				copyMetric := metric
-				copyMetric.Labels = maps.Clone(metric.Labels)
-				copyMetric.Attributes = maps.Clone(metric.Attributes)
+				copyMetric := cloneMetric(metric)
 				if copyMetric.Attributes == nil {
 					copyMetric.Attributes = make(map[string]string)
 				}

@@ -157,6 +157,72 @@ func TestLogDCGMInitFailureRemoteDiagnostics(t *testing.T) {
 	assert.Contains(t, logs, "Verify nv-hostengine is running and restart dcgm-exporter after the DCGM connection recovers.")
 }
 
+func TestLogDCGMInitFailureLibraryGuidance(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		config *appconfig.Config
+		mode   string
+		extra  []slog.Attr
+	}{
+		{
+			name:   "embedded",
+			config: &appconfig.Config{},
+			mode:   dcgmInitModeEmbedded,
+		},
+		{
+			name: "remote hostengine",
+			config: &appconfig.Config{
+				UseRemoteHE:  true,
+				RemoteHEInfo: "127.0.0.1:5555",
+			},
+			mode:  dcgmInitModeStandalone,
+			extra: []slog.Attr{slog.String("hint", remoteHostengineHint)},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			logBuffer := captureDefaultSlog(t)
+
+			logDCGMInitFailure(tt.config, tt.mode, errors.New("libdcgm.so.4 not found"), tt.extra...)
+
+			logs := logBuffer.String()
+			assert.Contains(t, logs, "library=libdcgm.so.4")
+			assert.Contains(t, logs, "compatible DCGM library")
+			assert.Contains(t, logs, "LD_LIBRARY_PATH")
+			assert.NotContains(t, logs, remoteHostengineHint)
+		})
+	}
+}
+
+func TestIsDCGMLibraryLoadError(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "exact go-dcgm error",
+			err:  errors.New("libdcgm.so.4 not found"),
+			want: true,
+		},
+		{
+			name: "wrapped go-dcgm error",
+			err:  fmt.Errorf("initialize DCGM: %w", errors.New("libdcgm.so.4 not found")),
+			want: true,
+		},
+		{
+			name: "unrelated error",
+			err:  errors.New("failed to connect to nv-hostengine"),
+		},
+		{
+			name: "nil error",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isDCGMLibraryLoadError(tt.err))
+		})
+	}
+}
+
 func TestLogDCGMInitFailureUnknownStatusDiagnostics(t *testing.T) {
 	t.Run("without existing hint", func(t *testing.T) {
 		logBuffer := captureDefaultSlog(t)
