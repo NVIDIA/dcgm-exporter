@@ -260,8 +260,8 @@ package-build: IMAGE_TAG = package
 
 DIST_PREFIX ?=
 
-# Package tarballs are content-addressed in Artifactory and cannot be replaced
-# once published, so rebuilds of the same commit must produce the same bytes.
+# Published package tarballs cannot be replaced, so rebuilds of the same commit
+# must produce the same bytes.
 # Entry order, entry mtimes, and the gzip header timestamp are the parts that
 # would otherwise change on every build.
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || echo 0)
