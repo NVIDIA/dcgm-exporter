@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/exporter-toolkit/web"
 
@@ -478,7 +479,8 @@ func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	// Check the raw atomic value to see if registry is nil
-	if s.registry.Load() == nil {
+	reg := s.registry.Load()
+	if reg == nil {
 		w.Header().Set("X-Registry-Available", "false")
 		w.Header().Set("X-Reload-In-Progress", "true")
 		_, _ = w.Write([]byte("OK - reload in progress"))
@@ -486,6 +488,28 @@ func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	w.Header().Set("X-Registry-Available", "true")
+
+	// A registry built while the hostengine had no GPUs visible carries no GPU
+	// collector, and is only rebuilt on reload or a bind event, so on its own the
+	// exporter serves an empty metrics page while still reporting healthy.
+	// Reporting that as unhealthy lets a liveness probe already pointed at /health
+	// restart the pod so it re-enumerates once the hostengine itself is sighted.
+	// While the hostengine stays blind this is a restart loop rather than a silent
+	// blind pod - the loud failure is the point.
+	//
+	// Note this counts collectors registered under FE_GPU, which is a proxy for
+	// GPU visibility: a counters file contributing no FE_GPU fields also yields
+	// zero. See the flag's usage text.
+	if s.config != nil && s.config.HealthRequireGPUs && !s.IsReloadInProgress() {
+		// reg is non-nil: the nil case returned above. Load once so an unbind
+		// swapping it to nil between loads cannot skip the check.
+		if reg.CollectorCount(dcgm.FE_GPU) == 0 {
+			w.Header().Set("X-GPU-Collectors", "0")
+			http.Error(w, "KO - no GPU collector registered", http.StatusServiceUnavailable)
+			return
+		}
+	}
+
 	_, err := w.Write([]byte("OK"))
 	if err != nil {
 		slog.Error(failedWriteResponseError, slog.String(logging.ErrorKey, err.Error()))

@@ -46,6 +46,12 @@ arguments: []
 # If adding "--enable-pprof", also enable tlsServerConfig and/or basicAuth.
 # Pprof requires a web config file so /debug/pprof/ is protected by
 # exporter-toolkit authentication or TLS.
+# Use "--health-require-gpus" to have /health report 503 while no GPU collector
+# is registered, so the liveness probe restarts an exporter that started against
+# a hostengine with no GPUs visible. Off by default.
+# Example arguments: ["--health-require-gpus"]
+# NOTE: this has no effect when basicAuth.users is set - the chart then degrades
+# both probes to tcpSocket, which cannot see the 503.
 
 # Optional dcgm-exporter YAML configuration. YAML is read at exporter startup.
 # Changes to the YAML file require restarting the exporter pod.

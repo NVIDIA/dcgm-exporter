@@ -245,3 +245,25 @@ func TestRegistry_Register_Accepts_Duplicates_(t *testing.T) {
 	assert.Len(t, reg.collectorGroups, 1)
 	assert.Len(t, reg.collectorGroupsSeen, 1)
 }
+
+func TestRegistryCollectorCountIsKeyedByEntityGroup(t *testing.T) {
+	reg := NewRegistry()
+
+	cpuTuple := collectorpkg.EntityCollectorTuple{}
+	cpuTuple.SetEntity(dcgm.FE_CPU)
+	cpuTuple.SetCollector(&mockCollector{})
+	reg.Register(cpuTuple)
+
+	// One collector is registered, but none of them is a GPU collector. A
+	// count that ignored the entity group would report 1 for FE_GPU here.
+	assert.Equal(t, 1, reg.CollectorCount(dcgm.FE_CPU))
+	assert.Equal(t, 0, reg.CollectorCount(dcgm.FE_GPU))
+
+	gpuTuple := collectorpkg.EntityCollectorTuple{}
+	gpuTuple.SetEntity(dcgm.FE_GPU)
+	gpuTuple.SetCollector(&mockCollector{})
+	reg.Register(gpuTuple)
+
+	assert.Equal(t, 1, reg.CollectorCount(dcgm.FE_GPU))
+	assert.Equal(t, 0, reg.CollectorCount(dcgm.FE_SWITCH))
+}

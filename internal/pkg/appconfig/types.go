@@ -173,6 +173,7 @@ type Config struct {
 	CPUDeviceOptions                 DeviceOptions
 	NoHostname                       bool
 	UseFakeGPUs                      bool
+	HealthRequireGPUs                bool
 	ConfigMapData                    string
 	MetricSource                     MetricSource
 	WatchRetention                   WatchRetention
