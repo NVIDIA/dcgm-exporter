@@ -528,6 +528,9 @@ func TestChartServiceMonitorRenderingContract(t *testing.T) {
 			"interval":      "45s",
 			"scrapeTimeout": "40s",
 			"honorLabels":   true,
+			"attachMetadata": map[string]interface{}{
+				"node": true,
+			},
 			"additionalLabels": map[string]interface{}{
 				"monitoring": "prometheus",
 			},
@@ -550,6 +553,7 @@ func TestChartServiceMonitorRenderingContract(t *testing.T) {
 
 	serviceMonitor := requireResourceKind(t, resources, "ServiceMonitor")
 	assert.Equal(t, "prometheus", serviceMonitor.Metadata.Labels["monitoring"])
+	assert.True(t, serviceMonitor.Spec.AttachMetadata.Node)
 	require.Len(t, serviceMonitor.Spec.Endpoints, 1)
 	endpoint := serviceMonitor.Spec.Endpoints[0]
 	assert.Equal(t, "metrics", endpoint.Port)
@@ -564,6 +568,22 @@ func TestChartServiceMonitorRenderingContract(t *testing.T) {
 	require.Len(t, endpoint.MetricRelabelings, 1)
 	assert.Equal(t, "DCGM_FI_DEV_GPU_TEMP", endpoint.MetricRelabelings[0].Regex)
 	assert.Equal(t, "keep", endpoint.MetricRelabelings[0].Action)
+}
+
+func TestChartServiceMonitorOmitsEmptyAttachMetadata(t *testing.T) {
+	release, err := runHelmInstall(t, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, release.Manifest, "attachMetadata:")
+
+	resources := renderChart(t, map[string]interface{}{
+		"serviceMonitor": map[string]interface{}{
+			"enabled": false,
+			"attachMetadata": map[string]interface{}{
+				"node": true,
+			},
+		},
+	})
+	assert.False(t, hasResourceKind(resources, "ServiceMonitor"))
 }
 
 // assertPodInformerRule requires the rendered ClusterRole to allow pod informer reads.
@@ -827,6 +847,9 @@ type chartResource struct {
 		NamespaceSelector struct {
 			MatchNames []string `yaml:"matchNames"`
 		} `yaml:"namespaceSelector"`
+		AttachMetadata struct {
+			Node bool `yaml:"node"`
+		} `yaml:"attachMetadata"`
 		Endpoints []serviceMonitorEndpoint `yaml:"endpoints"`
 		Template  struct {
 			Metadata metadata `yaml:"metadata"`

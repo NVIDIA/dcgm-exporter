@@ -238,6 +238,25 @@ The YAML setting is preferred. Existing deployments can continue using
 corresponding `DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH` and
 `DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL` environment variables. Explicit
 CLI or environment values override YAML.
+### ServiceMonitor Node Metadata
+
+A Prometheus Operator version that supports `attachMetadata` can attach
+Kubernetes node metadata to discovered dcgm-exporter targets. Enable the chart
+pass-through and copy the desired discovery labels onto scraped series with
+relabeling rules:
+
+```yaml
+serviceMonitor:
+  attachMetadata:
+    node: true
+  relabelings:
+    - sourceLabels: [__meta_kubernetes_node_label_node_kubernetes_io_instance_type]
+      targetLabel: instance_type
+```
+
+This requires Prometheus 2.37 or later. The Prometheus service account (not the
+dcgm-exporter service account) must also have `list` and `watch` permissions for
+Node objects.
 
 ### Debug Dump Functionality
 
