@@ -38,6 +38,8 @@ for supported package and remote-connection combinations.
 - Checked-in Grafana dashboard: [`grafana/dcgm-exporter-dashboard.json`](grafana/dcgm-exporter-dashboard.json)
 - Community [OpenObserve dashboard](https://github.com/openobserve/dashboards/tree/main/NVIDIA%20GPU%20Monitoring)
   and [integration guide](https://openobserve.ai/blog/how-to-monitor-nvidia-gpu/)
+- Community [Parseable dashboard](https://github.com/parseablehq/dashboards/tree/main/nvidia-gpu-monitoring)
+  and [integration guide](https://www.parseable.com/docs/ingest-data/gpu/nvidia-dcgm-exporter)
 
 ## Contributing and support
 
