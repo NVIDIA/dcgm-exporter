@@ -19,6 +19,10 @@ metadata:
   namespace: {{ include "dcgm-exporter.namespace" . }}
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
+  {{- with .Values.daemonSetAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   updateStrategy:
     type: RollingUpdate
@@ -58,7 +62,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "dcgm-exporter.serviceAccountName" . }}
-      automountServiceAccountToken: {{ or (and (or .Values.kubernetes.enablePodLabels .Values.kubernetes.enablePodUID) .Values.kubernetes.rbac.create) .Values.kubernetesDRA.enabled }}
+      automountServiceAccountToken: {{ include "dcgm-exporter.automountServiceAccountToken" . }}
       {{- if .Values.podSecurityContext }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -85,10 +89,16 @@ spec:
           secretName: {{ include "dcgm-exporter.tlsCertsSecretName" . }}
           defaultMode: 0664
       {{- end }}
-      {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
+      {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users }}
       - name: "web-config-yaml"
         configMap:
           name: {{ include "dcgm-exporter.webConfigConfigMap" . }}
+          defaultMode: 0664
+      {{- end }}
+      {{- if .Values.config.enabled }}
+      - name: "dcgm-exporter-config"
+        configMap:
+          name: {{ include "dcgm-exporter.configConfigMap" . }}
           defaultMode: 0664
       {{- end }}
       {{- range .Values.extraHostVolumes }}
@@ -113,12 +123,25 @@ spec:
       - name: exporter
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
-        {{- if .Values.image.tag }}
+        {{- if .Values.image.digest }}
+        image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+        {{- else if .Values.image.tag }}
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         {{- else }}
         image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
         {{- end }}
         imagePullPolicy: "{{ .Values.image.pullPolicy }}"
+        {{- if .Values.debugDump.enabled }}
+        {{- if not (kindIs "bool" .Values.debugDump.compression) }}
+        {{- fail "debugDump.compression must be a Boolean when debugDump.enabled is true" }}
+        {{- end }}
+        {{- range $.Values.arguments }}
+        {{- if or (eq . "--dump-compression") (hasPrefix "--dump-compression=" .) }}
+        {{- fail "arguments must not set --dump-compression when debugDump.enabled is true" }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+        {{- if or .Values.arguments .Values.debugDump.enabled }}
         args:
         {{- range $.Values.arguments }}
         - {{ . }}
@@ -127,8 +150,7 @@ spec:
         - "--dump-enabled"
         - "--dump-directory={{ .Values.debugDump.directory }}"
         - "--dump-retention={{ .Values.debugDump.retention }}"
-        {{- if .Values.debugDump.compression }}
-        - "--dump-compression"
+        - "--dump-compression={{ .Values.debugDump.compression }}"
         {{- end }}
         {{- end }}
         env:
@@ -148,13 +170,21 @@ spec:
         {{- end }}
         - name: "DCGM_EXPORTER_LISTEN"
           value: "{{ .Values.service.address }}"
+        - name: "DCGM_EXPORTER_WEB_READ_TIMEOUT"
+          value: "{{ .Values.service.webReadTimeout }}"
+        - name: "DCGM_EXPORTER_WEB_WRITE_TIMEOUT"
+          value: "{{ .Values.service.webWriteTimeout }}"
         - name: NODE_NAME
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
-        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
+        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users }}
         - name: "DCGM_EXPORTER_WEB_CONFIG_FILE"
           value: /etc/dcgm-exporter/web-config.yaml
+        {{- end }}
+        {{- if .Values.config.enabled }}
+        - name: "DCGM_EXPORTER_CONFIG_FILE"
+          value: {{ .Values.config.mountPath | quote }}
         {{- end }}
         {{- if .Values.kubernetesDRA.enabled }}
         - name: "KUBERNETES_ENABLE_DRA"
@@ -174,10 +204,15 @@ spec:
         - name: "tls"
           mountPath: /etc/dcgm-exporter/tls
         {{- end }}
-        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users}}
+        {{- if or .Values.tlsServerConfig.enabled $.Values.basicAuth.users }}
         - name: "web-config-yaml"
           mountPath: /etc/dcgm-exporter/web-config.yaml
           subPath: web-config.yaml
+        {{- end }}
+        {{- if .Values.config.enabled }}
+        - name: "dcgm-exporter-config"
+          mountPath: {{ .Values.config.mountPath | quote }}
+          subPath: {{ .Values.config.key | quote }}
         {{- end }}
         {{- if .Values.extraVolumeMounts }}
         {{- toYaml .Values.extraVolumeMounts | nindent 8 }}
@@ -198,6 +233,12 @@ spec:
           {{- end }}
           initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
           periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+          {{- if hasKey .Values.livenessProbe "timeoutSeconds" }}
+          timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.livenessProbe "failureThreshold" }}
+          failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          {{- end }}
         readinessProbe:
           {{- if not $.Values.basicAuth.users }}
           httpGet:
@@ -209,6 +250,15 @@ spec:
               port: {{ .Values.service.port }}
           {{- end }}
           initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+          {{- if hasKey .Values.readinessProbe "periodSeconds" }}
+          periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.readinessProbe "timeoutSeconds" }}
+          timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.readinessProbe "failureThreshold" }}
+          failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
+          {{- end }}
         {{- if .Values.resources }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}

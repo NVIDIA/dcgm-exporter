@@ -29,6 +29,15 @@ import (
 )
 
 type Factory interface {
+	// NewCollectors constructs collectors for each relevant entity type.
+	//
+	// Side effects: each returned collector installs DCGM field watches and
+	// GPU groups. These are released by (*registry.Registry).Cleanup after
+	// the collector is registered. Callers MUST register every returned
+	// collector and MUST call this method exactly once per registry
+	// lifecycle — calling it a second time without registering leaks DCGM
+	// field groups and GPU groups, surfacing as "RemoveFieldWatch returned
+	// -16 (NOT_WATCHED)" warnings in nv-hostengine.log.
 	NewCollectors() []EntityCollectorTuple
 }
 
@@ -102,9 +111,33 @@ func (cf *collectorFactory) NewCollectors() []EntityCollectorTuple {
 		}
 	}
 
+	if IsDCGMExpClockEventsTotalEnabled(cf.counterSet.ExporterCounters) {
+		if newCollector, err := cf.enableExpCollector(counters.DCGMExpClockEventsTotal); err != nil {
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpClockEventsTotal, err))
+			os.Exit(1)
+		} else {
+			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
+				entity:    dcgm.FE_GPU,
+				collector: newCollector,
+			})
+		}
+	}
+
 	if IsDCGMExpXIDErrorsCountEnabled(cf.counterSet.ExporterCounters) {
 		if newCollector, err := cf.enableExpCollector(counters.DCGMExpXIDErrorsCount); err != nil {
 			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpXIDErrorsCount, err))
+			os.Exit(1)
+		} else {
+			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
+				entity:    dcgm.FE_GPU,
+				collector: newCollector,
+			})
+		}
+	}
+
+	if IsDCGMExpXIDErrorsTotalEnabled(cf.counterSet.ExporterCounters) {
+		if newCollector, err := cf.enableExpCollector(counters.DCGMExpXIDErrorsTotal); err != nil {
+			slog.Error(fmt.Sprintf("collector '%s' cannot be initialized; err: %v", counters.DCGMExpXIDErrorsTotal, err))
 			os.Exit(1)
 		} else {
 			entityCollectorTuples = append(entityCollectorTuples, EntityCollectorTuple{
@@ -167,17 +200,25 @@ func (cf *collectorFactory) enableExpCollector(expCollectorName string) (Collect
 	case counters.DCGMExpClockEventsCount:
 		newCollector, err = NewClockEventsCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config,
 			item)
+	case counters.DCGMExpClockEventsTotal:
+		newCollector, err = NewClockEventsTotalCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config,
+			item)
 	case counters.DCGMExpXIDErrorsCount:
 		newCollector, err = NewXIDCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config,
 			item)
+	case counters.DCGMExpXIDErrorsTotal:
+		newCollector, err = NewXIDTotalCollector(cf.counterSet.ExporterCounters, cf.hostname, cf.config,
+			item)
 	case counters.DCGMExpGPUHealthStatus:
-		newCollector, err = NewGPUHealthStatusCollector(cf.counterSet.ExporterCounters,
+		newCollector, err = NewGPUHealthStatusCollector(
+			cf.counterSet.ExporterCounters,
 			cf.hostname,
 			cf.config,
 			item,
 		)
 	case counters.DCGMExpP2PStatus:
-		newCollector, err = NewP2PStatusCollector(cf.counterSet.ExporterCounters,
+		newCollector, err = NewP2PStatusCollector(
+			cf.counterSet.ExporterCounters,
 			cf.hostname,
 			cf.config,
 			item,

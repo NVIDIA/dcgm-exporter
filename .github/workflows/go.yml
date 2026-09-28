@@ -11,12 +11,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        persist-credentials: false
 
     - name: Set up Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
       with:
-        go-version: 1.24
+        go-version: 1.26
 
     - name: Build
       run: make binary

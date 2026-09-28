@@ -32,6 +32,10 @@ const (
 	CAP_SYS_ADMIN = 21
 )
 
+var readProcStatus = func() ([]byte, error) {
+	return os.ReadFile("/proc/self/status")
+}
+
 // HasCapability checks if the current process has the specified Linux capability.
 // It reads from /proc/self/status to check the effective capabilities.
 func HasCapability(cap int) (bool, error) {
@@ -40,7 +44,7 @@ func HasCapability(cap int) (bool, error) {
 		return false, fmt.Errorf("invalid capability number: %d (must be 0-63)", cap)
 	}
 
-	data, err := os.ReadFile("/proc/self/status")
+	data, err := readProcStatus()
 	if err != nil {
 		return false, fmt.Errorf("failed to read /proc/self/status: %w", err)
 	}
@@ -103,7 +107,7 @@ func WarnIfMissingProfilingCapabilities(hasProfilingMetrics bool) {
 // GetCurrentCapabilities returns a human-readable string of current effective capabilities.
 // Useful for debugging.
 func GetCurrentCapabilities() string {
-	data, err := os.ReadFile("/proc/self/status")
+	data, err := readProcStatus()
 	if err != nil {
 		return fmt.Sprintf("error reading capabilities: %v", err)
 	}

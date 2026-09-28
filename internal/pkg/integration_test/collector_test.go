@@ -207,7 +207,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	expectations := map[string]clockEventsCountExpectation{}
 
 	for i, gpuID := range gpuIDs {
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(
+			gpuID,
 			dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -216,7 +217,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(
+			gpuID,
 			dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -225,7 +227,8 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(
+			gpuID,
 			dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -366,7 +369,8 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	require.Len(t, gpuIDs, 1)
 	gpuID := gpuIDs[0]
-	err = dcgmprovider.Client().InjectFieldValue(gpuID,
+	err = dcgmprovider.Client().InjectFieldValue(
+		gpuID,
 		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		dcgm.DCGM_FT_INT64,
 		0,
@@ -494,7 +498,8 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	config.GPUDeviceOptions.MajorRange = majorRange
 
 	gpuID := gpuIDs[0]
-	err = dcgmprovider.Client().InjectFieldValue(gpuID,
+	err = dcgmprovider.Client().InjectFieldValue(
+		gpuID,
 		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
 		dcgm.DCGM_FT_INT64,
 		0,
@@ -622,7 +627,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	config.GPUDeviceOptions.MajorRange = majorRange
 
 	for i, gpuID := range fakeGPUIDs {
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(
+			gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -631,7 +637,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(
+			gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -640,7 +647,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		err = dcgmprovider.Client().InjectFieldValue(gpuID,
+		err = dcgmprovider.Client().InjectFieldValue(
+			gpuID,
 			dcgm.DCGM_FI_DEV_XID_ERRORS,
 			dcgm.DCGM_FT_INT64,
 			0,
@@ -701,7 +709,8 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 
 	// We inject new error
-	err = dcgmprovider.Client().InjectFieldValue(fakeGPUIDs[0],
+	err = dcgmprovider.Client().InjectFieldValue(
+		fakeGPUIDs[0],
 		dcgm.DCGM_FI_DEV_XID_ERRORS,
 		dcgm.DCGM_FT_INT64,
 		0,
@@ -754,7 +763,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	require.Len(t, metricFamily.Metric, 1+(len(fakeGPUIDs)*2))
 	for _, mv := range metricFamily.Metric {
 		require.NotNil(t, mv.Gauge.Value)
-		if *(mv.Gauge.Value) == 0 {
+		if *mv.Gauge.Value == 0 {
 			// We don't inject XID errors into the hardware GPU, so we do not expect XID label
 			assert.Len(t, mv.Label, 7)
 			assert.False(t, slices.ContainsFunc(mv.Label, func(lp *io_prometheus_client.LabelPair) bool {

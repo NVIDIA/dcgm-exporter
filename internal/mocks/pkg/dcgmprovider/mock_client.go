@@ -243,10 +243,10 @@ func (mr *MockDCGMMockRecorder) GetAllDeviceCount() *gomock.Call {
 }
 
 // GetCPUHierarchy mocks base method.
-func (m *MockDCGM) GetCPUHierarchy() (dcgm.CPUHierarchy_v1, error) {
+func (m *MockDCGM) GetCPUHierarchy() (dcgm.CPUHierarchy_v2, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetCPUHierarchy")
-	ret0, _ := ret[0].(dcgm.CPUHierarchy_v1)
+	ret0, _ := ret[0].(dcgm.CPUHierarchy_v2)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -287,6 +287,20 @@ func (mr *MockDCGMMockRecorder) GetEntityGroupEntities(entityGroup any) *gomock.
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEntityGroupEntities", reflect.TypeOf((*MockDCGM)(nil).GetEntityGroupEntities), entityGroup)
 }
 
+// GetErrorMeta mocks base method.
+func (m *MockDCGM) GetErrorMeta(arg0 dcgm.HealthCheckErrorCode) *dcgm.ErrorMeta {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetErrorMeta", arg0)
+	ret0, _ := ret[0].(*dcgm.ErrorMeta)
+	return ret0
+}
+
+// GetErrorMeta indicates an expected call of GetErrorMeta.
+func (mr *MockDCGMMockRecorder) GetErrorMeta(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetErrorMeta", reflect.TypeOf((*MockDCGM)(nil).GetErrorMeta), arg0)
+}
+
 // GetGPUInstanceHierarchy mocks base method.
 func (m *MockDCGM) GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
 	m.ctrl.T.Helper()
@@ -315,6 +329,21 @@ func (m *MockDCGM) GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, erro
 func (mr *MockDCGMMockRecorder) GetGroupInfo(groupID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGroupInfo", reflect.TypeOf((*MockDCGM)(nil).GetGroupInfo), groupID)
+}
+
+// GetMultipleValuesForField mocks base method.
+func (m *MockDCGM) GetMultipleValuesForField(arg0 uint, arg1 dcgm.Short, arg2 int, arg3, arg4 time.Time) ([]dcgm.FieldValue_v1, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMultipleValuesForField", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].([]dcgm.FieldValue_v1)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetMultipleValuesForField indicates an expected call of GetMultipleValuesForField.
+func (mr *MockDCGMMockRecorder) GetMultipleValuesForField(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMultipleValuesForField", reflect.TypeOf((*MockDCGM)(nil).GetMultipleValuesForField), arg0, arg1, arg2, arg3, arg4)
 }
 
 // GetNvLinkLinkStatus mocks base method.
@@ -521,6 +550,20 @@ func (m *MockDCGM) UpdateAllFields() error {
 func (mr *MockDCGMMockRecorder) UpdateAllFields() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateAllFields", reflect.TypeOf((*MockDCGM)(nil).UpdateAllFields))
+}
+
+// WatchFieldValue mocks base method.
+func (m *MockDCGM) WatchFieldValue(arg0 uint, arg1 dcgm.Short, arg2, arg3 time.Duration, arg4 int) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WatchFieldValue", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WatchFieldValue indicates an expected call of WatchFieldValue.
+func (mr *MockDCGMMockRecorder) WatchFieldValue(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchFieldValue", reflect.TypeOf((*MockDCGM)(nil).WatchFieldValue), arg0, arg1, arg2, arg3, arg4)
 }
 
 // WatchFieldsWithGroupEx mocks base method.

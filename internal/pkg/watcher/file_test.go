@@ -17,7 +17,11 @@
 package watcher
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,7 +55,8 @@ func TestNewFileWatcher_WithOptions(t *testing.T) {
 	customDelay := 500 * time.Millisecond
 	customMask := fsnotify.Write | fsnotify.Create
 
-	fw := NewFileWatcher(testFile,
+	fw := NewFileWatcher(
+		testFile,
 		WithDebounceDelay(customDelay),
 		WithEventMask(customMask),
 	)
@@ -83,5 +88,63 @@ func TestNewFileWatcher_MultipleOptions(t *testing.T) {
 
 	if fw.eventMask != fsnotify.Write {
 		t.Errorf("expected eventMask=Write, got %v", fw.eventMask)
+	}
+}
+
+func TestFileWatcher_WatchReportsDebouncedFileChange(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fw := NewFileWatcher(testFile, WithDebounceDelay(10*time.Millisecond))
+	changed := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- fw.Watch(ctx, func() {
+			select {
+			case changed <- struct{}{}:
+			default:
+			}
+		})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(testFile, []byte("after"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-changed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("file watcher did not report the write")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("file watcher did not stop")
+	}
+}
+
+func TestFileWatcher_WatchReturnsDirectoryError(t *testing.T) {
+	missingDir := filepath.Join(t.TempDir(), "missing")
+	fw := NewFileWatcher(filepath.Join(missingDir, "test.txt"))
+
+	err := fw.Watch(context.Background(), func() {})
+
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); !strings.Contains(got, "failed to watch directory") {
+		t.Fatalf("expected directory watch error, got %q", got)
 	}
 }

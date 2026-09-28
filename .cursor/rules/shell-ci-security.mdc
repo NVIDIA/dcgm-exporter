@@ -1,0 +1,15 @@
+---
+description: Shell, CI, Docker, packaging, and security rules
+globs: ["**/*.sh", ".gitlab/**/*.yml", ".gitlab-ci.yml", ".github/workflows/**", "docker/**", "packaging/**", "hack/**", "Dockerfile*"]
+alwaysApply: false
+---
+
+# Shell, CI, Docker, And Security
+
+- Shell scripts use strict mode and quote path variables.
+- Do not mask verification commands with `|| true` except cleanup for already
+  gone resources.
+- Preserve checksum/signature verification for downloaded tools or release
+  artifacts.
+- Version-derived files flow from `hack/versions.env` through
+  `make sync-versions` and `make validate-versions`.

@@ -1,0 +1,70 @@
+static|chartRbacRendering|Helm chart RBAC rendering for Kubernetes attribution features||||TestChartKubernetesRBACRenderContract|always|none|
+static|chartImageRendering|Helm chart image and pull-secret rendering||||TestChartImageRenderingContract|always|none|
+static|chartServiceMonitorRendering|Helm chart ServiceMonitor rendering||||TestChartServiceMonitorRenderingContract|always|none|
+static|chartYamlConfig|Helm chart YAML config rendering||||TestChartYAMLConfigRenderContract,TestChartYAMLConfigCanMountExistingConfigMap,TestChartYAMLConfigExistingConfigMapRequiresName|always|none|
+static|dockerfileRuntimeSymbols|Dockerfile runtime DCGM symbol and package pinning checks||||TestDockerfileGuardsRuntimeDCGMSymbolChecks,TestDockerfilePinsRuntimeDCGMPackages,TestPackageDockerfileEnforcesOfflineCompileWhenModulesAreCached|always|none|
+static|paths|Source and package path resolution checks||||TestRepoPathResolvesSourceAndPackageFiles|always|none|
+static|packageSystemdUnit|Packaged systemd unit contract||||TestPackageSystemdUnitContract|always|none|
+host|startupMetrics|Direct host exporter startup and metrics scrape||dcgm_exporter_e2e_host_startup_metrics||startupMetrics|always|none|
+host|configFile|Direct host YAML config file behavior||dcgm_exporter_e2e_host_config_file||configFile|always|none|
+host|nvmlInjectionMetrics|Direct DCGM/exporter parity for every available numeric GPU field||dcgm_exporter_e2e_host_nvml_injection_metrics||nvmlInjectionMetrics|nvml_injection|none|
+host|watchGroups|Direct host YAML watch group behavior||dcgm_exporter_e2e_host_watch_groups||watchGroups|always|none|
+host|runtimeContainerLabels|Direct host runtime container labels||dcgm_exporter_e2e_host_runtime_container_labels||runtimeContainerLabels|always|none|
+host|hpcJobMapping|Direct host HPC/SLURM job mapping labels||dcgm_exporter_e2e_host_hpc_job_mapping||hpcJobMapping|always|none|
+host|startupTLS|Direct host TLS and basic auth behavior||dcgm_exporter_e2e_host_startup_tls||startupTLS|always|none|
+host|reload|Direct host SIGHUP and file-watcher reload behavior||dcgm_exporter_e2e_host_reload||reload|always|none|
+host|dcgmUri|Direct host remote DCGM URI and VSOCK behavior||dcgm_exporter_e2e_host_dcgm_uri||dcgmUri|always|none|
+host|ipv6Listen|Direct host IPv6 listen and scrape behavior||dcgm_exporter_e2e_host_ipv6_listen||ipv6Listen|always|none|
+host|gpuBindUnbindWatch|Direct host GPU bind/unbind watcher startup smoke||dcgm_exporter_e2e_host_gpu_bind_unbind_watch||gpuBindUnbindWatch|always|none|
+host|systemdSocket|Direct host systemd socket activation behavior||dcgm_exporter_e2e_host_systemd_socket||systemdSocket|always|none|
+container|imageStartup|Container image startup, health, and default metrics||dcgm_exporter_e2e_container_image_startup||imageStartup|always|none|
+container|configuration|Container runtime configuration and custom collectors||dcgm_exporter_e2e_container_configuration||configuration|always|none|
+container|pprofRequiresWebConfig|Container startup rejects pprof without web config||dcgm_exporter_e2e_container_pprof_requires_web_config||pprofRequiresWebConfig|always|none|
+container|invalidDeviceSelectors|Container invalid device selector diagnostics||dcgm_exporter_e2e_container_invalid_device_selectors||invalidDeviceSelectors|always|none|
+container|remoteDcgmUri|Container remote DCGM URI behavior||dcgm_exporter_e2e_container_remote_dcgm_uri||remoteDcgmUri|always|none|
+k8s|default|Default Helm deployment and default metric contract|embedded-baseline|||default|always|none|
+k8s|configMatrix|Custom metrics replacement through Helm|embedded-baseline|dcgm_exporter_e2e_config_matrix||configMatrix|always|none|
+k8s|configMapData|Kubernetes ConfigMap metric loading through --configmap-data|embedded-baseline|||configMapData|always|none|
+k8s|yamlConfig|Kubernetes YAML config loading through Helm|embedded-baseline|dcgm_exporter_e2e_yaml_config||yamlConfig|always|none|
+k8s|oldNamespace|Legacy Kubernetes attribution label names|embedded-baseline|||oldNamespace|always|none|
+k8s|clockEventsCounters|Clock event exporter counters|embedded-baseline|||clockEventsCounters|always|none|
+k8s|tls|TLS scrape endpoint|embedded-baseline|||tls|always|none|
+k8s|basicAuth|Basic auth scrape endpoint|embedded-baseline|||basicAuth|always|none|
+k8s|tlsBasicAuth|TLS and basic auth together|embedded-baseline|dcgm_exporter_e2e_tls_basic_auth||tlsBasicAuth|always|none|
+k8s|serviceAccess|Kubernetes Service and direct scrape behavior|embedded-baseline|dcgm_exporter_e2e_service_access||serviceAccess|always|none|
+k8s|podLabels|Kubernetes pod label attribution|embedded-baseline|dcgm_exporter_e2e_pod_labels||podLabels|always|none|
+k8s|podUID|Kubernetes pod UID attribution|embedded-baseline|dcgm_exporter_e2e_pod_uid||podUID|always|none|
+k8s|podLabelAllowlist|Pod label allowlist filtering|embedded-baseline|dcgm_exporter_e2e_pod_label_allowlist||podLabelAllowlist|always|none|
+k8s|kubernetesGpuId|Kubernetes GPU ID mapping mode|embedded-baseline|dcgm_exporter_e2e_kubernetes_gpu_id||kubernetesGpuId|always|none|
+k8s|noHostname|Hostname label suppression|embedded-baseline|dcgm_exporter_e2e_no_hostname||noHostname|always|none|
+k8s|modelName|Model name normalization|embedded-baseline|dcgm_exporter_e2e_model_name||modelName|always|none|
+k8s|pprof|pprof endpoint enablement|embedded-baseline|||pprof|always|none|
+k8s|debugDump|Debug dump file output|embedded-baseline|dcgm_exporter_e2e_debug_dump||debugDump|always|none|
+k8s|hpcJobMapping|HPC job mapping labels|embedded-baseline|dcgm_exporter_e2e_hpc_job_mapping||hpcJobMapping|always|none|
+k8s|customResourceNames|Custom NVIDIA resource name attribution|embedded-baseline|dcgm_exporter_e2e_custom_resource_names||customResourceNames|always|none|
+k8s|profiling|Datacenter profiling metrics|embedded-hardware||host:profiling|profiling|always|none|
+k8s|p2pStatus|P2P status exporter metric|embedded-hardware|dcgm_exporter_e2e_p2p_status|host:p2p|p2pStatus|always|none|
+k8s|fieldUnsupported|Unsupported DCGM field omission behavior|embedded-hardware|dcgm_exporter_e2e_field_unsupported|host:unsupported_field|fieldUnsupported|always|none|
+k8s|nvlink|NVLink metrics|embedded-hardware||host:nvlink|nvlink|always|none|
+k8s|mig|MIG metrics and attribution|embedded-mig||host:mig|mig|always|mig|
+k8s|migFullGpuSelection|DCGM_EXPORTER_DEVICES_STR full GPU selection in mixed MIG mode|embedded-mig|dcgm_exporter_e2e_mig_full_gpu_selection|host:mixed_mig|migFullGpuSelection|always|none|
+k8s|migInstanceSelection|DCGM_EXPORTER_DEVICES_STR all-MIG-instance selection in mixed MIG mode|embedded-mig|dcgm_exporter_e2e_mig_instance_selection|host:mixed_mig|migInstanceSelection|always|none|
+k8s|migSpecificInstanceSelection|DCGM_EXPORTER_DEVICES_STR specific MIG instance selection in mixed MIG mode|embedded-mig|dcgm_exporter_e2e_mig_specific_instance_selection|host:mixed_mig,host:mig_instance_entity|migSpecificInstanceSelection|always|none|
+k8s|migCombinedDeviceSelection|DCGM_EXPORTER_DEVICES_STR combined full-GPU and MIG-instance selection in mixed MIG mode|embedded-mig|dcgm_exporter_e2e_mig_combined_device_selection|host:mixed_mig|migCombinedDeviceSelection|always|none|
+k8s|dra|DRA attribution|embedded-dra||cluster:dra|dra|always|dra|
+k8s|sharedGpu|Shared/vGPU attribution|embedded-shared-gpu|dcgm_exporter_e2e_shared_gpu|cluster:shared_gpu|sharedGpu|always|shared_gpu|
+k8s|nvswitch|NVSwitch metrics|embedded-hardware||host:nvswitch|nvswitch|always|none|
+k8s|graceCpu|Grace CPU/Sysmon metrics|embedded-hardware|dcgm_exporter_e2e_grace_cpu|host:grace_cpu|graceCpu|always|none|
+k8s|c2c|C2C metrics|embedded-hardware||host:c2c|c2c|always|none|
+k8s|remoteDcgm|Exporter connected to standalone DCGM|standalone-baseline|dcgm_exporter_e2e_remote_dcgm|dcgm:remote_dcgm,cluster:standalone_dcgm_resources|remoteDcgm|always|none|remote
+k8s|remoteDcgmRestart|Exporter recovers after standalone DCGM restart|standalone-baseline|dcgm_exporter_e2e_remote_dcgm_restart|dcgm:remote_dcgm,cluster:standalone_dcgm_resources|remoteDcgmRestart|always|none|remote
+k8s|failureXid|Injected XID values reported through exporter metrics|standalone-failure-injection|dcgm_exporter_e2e_failure_xid|dcgm:failure_injection,cluster:standalone_dcgm_resources|failureXid|failure_injection|failure_injection|remote
+k8s|failureXidCounters|Injected XID count and total metrics|standalone-failure-injection|dcgm_exporter_e2e_failure_xid_counters|dcgm:failure_injection,cluster:standalone_dcgm_resources|failureXidCounters|failure_injection|failure_injection|remote
+k8s|failureGpuHealth|Injected failure signals reflected in GPU health metrics|standalone-failure-injection|dcgm_exporter_e2e_failure_gpu_health|dcgm:failure_injection,cluster:standalone_dcgm_resources|failureGpuHealth|failure_injection|failure_injection|remote
+k8s|failureNvlinkHealth|Injected NVLink failure signals reflected in NVLink metrics|standalone-failure-injection|dcgm_exporter_e2e_failure_nvlink_health|dcgm:failure_injection_nvlink_crc,cluster:standalone_dcgm_resources|failureNvlinkHealth|failure_injection|failure_injection_nvlink|remote
+k8s|gpuOperatorChart|GPU Operator chart integration|gpu-operator-baseline|dcgm_exporter_e2e_gpu_operator_chart|cluster:gpu_operator|gpuOperatorChart|gpu_operator|gpu_operator|
+k8s|gpuOperatorExporter|GPU Operator managed exporter integration|gpu-operator-baseline|dcgm_exporter_e2e_gpu_operator_exporter|cluster:gpu_operator|gpuOperatorExporter|gpu_operator|gpu_operator|
+k8s|gpuOperatorSharedGpu|GPU Operator shared GPU integration|gpu-operator-shared-gpu|dcgm_exporter_e2e_gpu_operator_shared_gpu|cluster:gpu_operator,cluster:shared_gpu|gpuOperatorSharedGpu|gpu_operator|gpu_operator_shared|
+k8s|gpuOperatorMig|GPU Operator MIG integration|gpu-operator-mig|dcgm_exporter_e2e_gpu_operator_mig|cluster:gpu_operator,host:mig|gpuOperatorMig|gpu_operator|gpu_operator_mig|
+k8s|gpuOperatorDRA|GPU Operator DRA integration|gpu-operator-dra|dcgm_exporter_e2e_gpu_operator_dra|cluster:gpu_operator,cluster:dra|gpuOperatorDRA|gpu_operator|gpu_operator_dra|
+k8s|gpuOperatorIPv6|GPU Operator exporter over IPv6 service networking|gpu-operator-baseline|dcgm_exporter_e2e_gpu_operator_ipv6|cluster:gpu_operator,cluster:ipv6|gpuOperatorIPv6|gpu_operator|gpu_operator_ipv6|

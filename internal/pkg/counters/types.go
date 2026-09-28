@@ -50,6 +50,17 @@ func (c CounterList) LabelCounters() CounterList {
 	return labelsCounters
 }
 
+func (c CounterList) NonLabelCounters() CounterList {
+	var nonLabelCounters CounterList
+	for _, counter := range c {
+		if !counter.IsLabel() {
+			nonLabelCounters = append(nonLabelCounters, counter)
+		}
+	}
+
+	return nonLabelCounters
+}
+
 func (c CounterList) HasProfilingMetrics() bool {
 	for _, counter := range c {
 		if counter.IsProfilingMetric() {

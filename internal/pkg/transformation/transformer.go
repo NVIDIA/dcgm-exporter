@@ -33,5 +33,9 @@ func GetTransformations(c *appconfig.Config) []Transform {
 		transformations = append(transformations, hpcMapper)
 	}
 
+	if c.ContainerLabels && !c.Kubernetes {
+		transformations = append(transformations, newContainerMapper(c))
+	}
+
 	return transformations
 }

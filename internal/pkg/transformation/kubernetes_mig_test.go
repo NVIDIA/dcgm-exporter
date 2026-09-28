@@ -1042,6 +1042,7 @@ func TestPodMapperProcess_WhenMIGDevicesAvailableAndPodRunning(t *testing.T) {
 		KubernetesVirtualGPUs:     false,
 	})
 	require.NotNil(t, podMapper)
+	defer podMapper.Stop()
 
 	// Store original metrics count for verification
 	originalMetricsCount := len(metrics)

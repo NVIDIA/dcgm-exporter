@@ -21,6 +21,7 @@ import (
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
@@ -540,6 +541,84 @@ func TestGetMonitoredEntities(t *testing.T) {
 			assert.Equalf(t, tt.want, got, "Unexpected Output")
 		})
 	}
+}
+
+func TestGetMonitoredEntitiesIncludingComputeInstances(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	instance := deviceinfo.GPUInstanceInfo{
+		Info:        dcgm.MigEntityInfo{NvmlInstanceId: 3},
+		ProfileName: "1g.10gb",
+		EntityId:    7,
+		ComputeInstances: []deviceinfo.ComputeInstanceInfo{
+			{InstanceInfo: dcgm.MigEntityInfo{NvmlComputeInstanceId: 0}, EntityId: 21},
+			{InstanceInfo: dcgm.MigEntityInfo{NvmlComputeInstanceId: 1}, EntityId: 22},
+		},
+	}
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, map[int][]deviceinfo.GPUInstanceInfo{0: {instance}})
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	got := GetMonitoredEntitiesIncludingComputeInstances(deviceInfo)
+
+	require.Len(t, got, 3)
+	assert.Equal(t, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 7}, got[0].Entity)
+	for index, want := range []struct {
+		entityID uint
+		nvmlID   uint
+	}{
+		{entityID: 21, nvmlID: 0},
+		{entityID: 22, nvmlID: 1},
+	} {
+		computeInstance := got[index+1]
+		assert.Equal(t, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: want.entityID}, computeInstance.Entity)
+		assert.Equal(t, dcgm.FE_GPU_I, computeInstance.ParentType)
+		assert.Equal(t, uint(7), computeInstance.ParentId)
+		assert.Equal(t, uint(3), computeInstance.InstanceInfo.Info.NvmlInstanceId)
+		assert.Equal(t, want.nvmlID, computeInstance.ComputeInstanceInfo.InstanceInfo.NvmlComputeInstanceId)
+	}
+}
+
+func TestGetMonitoredEntitiesForComputeInstanceFieldsIncludesWholeGPUsAndComputeInstances(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	instance := deviceinfo.GPUInstanceInfo{
+		EntityId: 7,
+		ComputeInstances: []deviceinfo.ComputeInstanceInfo{
+			{EntityId: 21},
+			{EntityId: 22},
+		},
+	}
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 2, map[int][]deviceinfo.GPUInstanceInfo{0: {instance}})
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	got := GetMonitoredEntitiesForComputeInstanceFields(deviceInfo)
+
+	require.Len(t, got, 3)
+	assert.Equal(t, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 1}, got[0].Entity)
+	assert.Equal(t, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 21}, got[1].Entity)
+	assert.Equal(t, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 22}, got[2].Entity)
+}
+
+func TestGetParentGPUsForMonitoredGPUInstances(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	instance := deviceinfo.GPUInstanceInfo{EntityId: 7}
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, map[int][]deviceinfo.GPUInstanceInfo{0: {instance}})
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	got := GetParentGPUsForMonitoredGPUInstances(deviceInfo)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0}, got[0].Entity)
+}
+
+func TestGetParentGPUsForMonitoredGPUInstancesSkipsSelectedGPUs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	instance := deviceinfo.GPUInstanceInfo{EntityId: 7}
+	deviceInfo := testutils.MockGPUDeviceInfo(ctrl, 1, map[int][]deviceinfo.GPUInstanceInfo{0: {instance}})
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{
+		MajorRange: []int{-1},
+		MinorRange: []int{-1},
+	}).AnyTimes()
+
+	assert.Empty(t, GetParentGPUsForMonitoredGPUInstances(deviceInfo))
 }
 
 func Test_monitorAllGPUs(t *testing.T) {

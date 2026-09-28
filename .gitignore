@@ -1,21 +1,34 @@
 *.swp
 *.swo
+
+# Local build and dependency caches.
 dcgm-exporter
 .go/
-.cursor/
+.cache/
 !etc/
 !deployment/
 .env
 *.pem
 *.csr
 vendor/
+
+# Test, package, and scanner outputs.
 tests.cov
 test_results.json
+combined_coverage.out*
 .coverdata/
 .scannerwork
 dist/
 .run
-dist/
+_out_runLogs/
+
+# Local e2e helper tools and generated kubeconfigs.
+.e2e-tools/
+.local-e2e/
+bin/
+
+# Vulnerability scan exports (run-specific, not source)
+Vulnerabilities Gate Actions.csv
 
 ###############################################################################
 # JetBrains

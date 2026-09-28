@@ -1,0 +1,16 @@
+---
+description: Metric CSV, exporter counter, and Prometheus exposition contracts
+globs: ["etc/*.csv", "internal/pkg/counters/**/*.go", "internal/pkg/collector/**/*.go", "internal/pkg/rendermetrics/**/*.go", "llms.txt"]
+alwaysApply: false
+---
+
+# Metrics Contracts
+
+- Metric CSV rows have exactly three fields: field name, Prometheus type, help.
+- Exporter-owned counters must stay aligned across code, CSV examples, docs,
+  tests, and `llms.txt`.
+- Do not invent metric names or labels.
+- Prometheus families must have stable HELP/TYPE metadata and unique label
+  sets.
+- Run `go test ./internal/pkg/counters` after metric guidance or counter
+  changes.

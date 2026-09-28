@@ -1,0 +1,24 @@
+---
+description: Run common DCGM Exporter quality checks
+globs: ["**/*.go", "**/*.md", "**/*.yaml", "Makefile"]
+---
+
+# Run Quality Checks
+
+From the repository root:
+
+```bash
+go test ./internal/pkg/counters
+make test-main
+make lint
+make check-fmt
+make validate
+```
+
+Run conditional gates when relevant:
+
+```bash
+make generate
+make validate-versions
+make test-images
+```

@@ -63,19 +63,18 @@ func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
 		uuid = "uuid"
 	}
 
-	labels := map[string]string{}
-
 	for i, status := range p2pStatus.Gpus {
+		labels := map[string]string{}
+		if len(status) > 1 && len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
+			err := c.getLabelsFromCounters(monitoringInfo[i], labels)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		for j, link := range status {
 			if i == j {
 				continue
-			}
-
-			if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
-				err := c.getLabelsFromCounters(monitoringInfo[i], labels)
-				if err != nil {
-					return nil, err
-				}
 			}
 
 			metricValueLabels := maps.Clone(labels)

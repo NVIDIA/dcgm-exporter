@@ -1,0 +1,16 @@
+---
+description: Plan a DCGM Exporter feature before implementation
+globs: ["**/*"]
+---
+
+# Plan Feature
+
+Use the root `AGENTS.md` Feature Planning checklist and Repository Surface Map.
+
+Produce a concise plan that names:
+
+- the owning surface and scoped `AGENTS.md` files to read;
+- source-of-truth files, tests, and generated artifacts to verify;
+- user-visible contracts affected;
+- implementation approach and smallest useful abstraction;
+- validation commands and prerequisite-dependent gates.

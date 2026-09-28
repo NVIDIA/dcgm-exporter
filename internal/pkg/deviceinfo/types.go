@@ -65,6 +65,7 @@ type ComputeInstanceInfo struct {
 type CPUInfo struct {
 	EntityId uint
 	Cores    []uint
+	Serial   string
 }
 
 type SwitchInfo struct {

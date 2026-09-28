@@ -164,9 +164,8 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 	// Each health watch may contribute at most one incident per entity for this scrape.
 	applyGPUHealthIncidents(entityHealthSystemToIncident, gpuHealthStatus.Incidents)
 
-	labels := map[string]string{}
-
 	for _, mi := range monitoringInfoInGroup {
+		labels := map[string]string{}
 		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
 			err := c.getLabelsFromCounters(mi, labels)
 			if err != nil {
@@ -175,9 +174,12 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 		}
 		for _, healthSystem := range gpuHealthChecks {
 			incident := entityHealthSystemToIncident[mi.Entity][healthSystem]
+			severity, category := healthErrorMetadataLabels(incident.Error.Code)
 			metricValueLabels := maps.Clone(labels)
 			metricValueLabels["health_watch"] = healthSystemWatchToString(incident.System)
 			metricValueLabels["health_error_code"] = healthCheckErrorToString(incident.Error.Code)
+			metricValueLabels["health_error_severity"] = severity
+			metricValueLabels["health_error_category"] = category
 			m := c.createMetric(metricValueLabels, mi, uuid, int(incident.Health))
 			metrics[c.counter] = append(metrics[c.counter], m)
 		}
@@ -321,6 +323,84 @@ func healthSystemWatchToString(healthSystem dcgm.HealthSystem) string {
 	return name
 }
 
+// healthErrorMetadataLabels maps a DCGM error code to stable severity and category label values.
+func healthErrorMetadataLabels(code dcgm.HealthCheckErrorCode) (string, string) {
+	if code == dcgm.DCGM_FR_OK {
+		return "NONE", "NONE"
+	}
+
+	meta := dcgmprovider.Client().GetErrorMeta(code)
+	if meta == nil {
+		return "UNKNOWN", "UNKNOWN"
+	}
+
+	return healthErrorSeverityToString(meta.Severity), healthErrorCategoryToString(meta.Category)
+}
+
+// healthErrorSeverityToString maps a DCGM severity to a stable metric label value.
+func healthErrorSeverityToString(severity dcgm.ErrorSeverity) string {
+	switch severity {
+	case dcgm.DCGM_ERROR_NONE:
+		return "NONE"
+	case dcgm.DCGM_ERROR_MONITOR:
+		return "MONITOR"
+	case dcgm.DCGM_ERROR_ISOLATE:
+		return "ISOLATE"
+	case dcgm.DCGM_ERROR_UNKNOWN:
+		return "UNKNOWN"
+	case dcgm.DCGM_ERROR_TRIAGE:
+		return "TRIAGE"
+	case dcgm.DCGM_ERROR_CONFIG:
+		return "CONFIG"
+	case dcgm.DCGM_ERROR_RESET:
+		return "RESET"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// healthErrorCategoryToString maps a DCGM category to a stable metric label value.
+func healthErrorCategoryToString(category dcgm.ErrorCategory) string {
+	switch category {
+	case dcgm.DCGM_FR_EC_NONE:
+		return "NONE"
+	case dcgm.DCGM_FR_EC_PERF_THRESHOLD:
+		return "PERF_THRESHOLD"
+	case dcgm.DCGM_FR_EC_PERF_VIOLATION:
+		return "PERF_VIOLATION"
+	case dcgm.DCGM_FR_EC_SOFTWARE_CONFIG:
+		return "SOFTWARE_CONFIG"
+	case dcgm.DCGM_FR_EC_SOFTWARE_LIBRARY:
+		return "SOFTWARE_LIBRARY"
+	case dcgm.DCGM_FR_EC_SOFTWARE_XID:
+		return "SOFTWARE_XID"
+	case dcgm.DCGM_FR_EC_SOFTWARE_CUDA:
+		return "SOFTWARE_CUDA"
+	case dcgm.DCGM_FR_EC_SOFTWARE_EUD:
+		return "SOFTWARE_EUD"
+	case dcgm.DCGM_FR_EC_SOFTWARE_OTHER:
+		return "SOFTWARE_OTHER"
+	case dcgm.DCGM_FR_EC_HARDWARE_THERMAL:
+		return "HARDWARE_THERMAL"
+	case dcgm.DCGM_FR_EC_HARDWARE_MEMORY:
+		return "HARDWARE_MEMORY"
+	case dcgm.DCGM_FR_EC_HARDWARE_NVLINK:
+		return "HARDWARE_NVLINK"
+	case dcgm.DCGM_FR_EC_HARDWARE_NVSWITCH:
+		return "HARDWARE_NVSWITCH"
+	case dcgm.DCGM_FR_EC_HARDWARE_PCIE:
+		return "HARDWARE_PCIE"
+	case dcgm.DCGM_FR_EC_HARDWARE_POWER:
+		return "HARDWARE_POWER"
+	case dcgm.DCGM_FR_EC_HARDWARE_OTHER:
+		return "HARDWARE_OTHER"
+	case dcgm.DCGM_FR_EC_INTERNAL_OTHER:
+		return "INTERNAL_OTHER"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 var healthCheckErrorToStringMap = map[dcgm.HealthCheckErrorCode]string{
 	dcgm.DCGM_FR_OK:                              "DCGM_FR_OK",
 	dcgm.DCGM_FR_UNKNOWN:                         "DCGM_FR_UNKNOWN",
@@ -404,9 +484,11 @@ var healthCheckErrorToStringMap = map[dcgm.HealthCheckErrorCode]string{
 	dcgm.DCGM_FR_L1TAG_MISCOMPARE:                "DCGM_FR_L1TAG_MISCOMPARE",
 	dcgm.DCGM_FR_ROW_REMAP_FAILURE:               "DCGM_FR_ROW_REMAP_FAILURE",
 	dcgm.DCGM_FR_UNCONTAINED_ERROR:               "DCGM_FR_UNCONTAINED_ERROR",
+	dcgm.DCGM_FR_CONTAINED_ERROR:                 "DCGM_FR_CONTAINED_ERROR",
 	dcgm.DCGM_FR_EMPTY_GPU_LIST:                  "DCGM_FR_EMPTY_GPU_LIST",
 	dcgm.DCGM_FR_DBE_PENDING_PAGE_RETIREMENTS:    "DCGM_FR_DBE_PENDING_PAGE_RETIREMENTS",
 	dcgm.DCGM_FR_UNCORRECTABLE_ROW_REMAP:         "DCGM_FR_UNCORRECTABLE_ROW_REMAP",
+	dcgm.DCGM_FR_UNCORRECTABLE_ROW_REMAP_LIMIT:   "DCGM_FR_UNCORRECTABLE_ROW_REMAP_LIMIT",
 	dcgm.DCGM_FR_PENDING_ROW_REMAP:               "DCGM_FR_PENDING_ROW_REMAP",
 	dcgm.DCGM_FR_BROKEN_P2P_MEMORY_DEVICE:        "DCGM_FR_BROKEN_P2P_MEMORY_DEVICE",
 	dcgm.DCGM_FR_BROKEN_P2P_WRITER_DEVICE:        "DCGM_FR_BROKEN_P2P_WRITER_DEVICE",

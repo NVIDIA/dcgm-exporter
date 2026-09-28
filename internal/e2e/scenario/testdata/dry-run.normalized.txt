@@ -1,0 +1,46 @@
+selected: 20
+skipped: 26
+
+Execution groups:
+  embedded-baseline        20 scenarios
+    default, configMatrix, configMapData, yamlConfig, oldNamespace, clockEventsCounters, tls, basicAuth, tlsBasicAuth, serviceAccess, podLabels, podUID, podLabelAllowlist, kubernetesGpuId, noHostname, modelName, pprof, debugDump, hpcJobMapping, customResourceNames
+
+Skipped scenarios:
+  DCGM profiling probe was unavailable; check DCGM image, Docker GPU runtime, and nv-hostengine probe logs:
+    k8s/profiling
+  P2P status validation requires at least two GPUs:
+    k8s/p2pStatus
+  DCGM unsupported-field probe was unavailable; check DCGM image, Docker GPU runtime, and nv-hostengine probe logs:
+    k8s/fieldUnsupported
+  active NVLink evidence was not detected:
+    k8s/nvlink
+  MIG instances or profiles were not detected:
+    k8s/mig
+  Mixed MIG device selection requires MIG profiles and at least two GPUs:
+    k8s/migFullGpuSelection
+    k8s/migInstanceSelection
+    k8s/migSpecificInstanceSelection
+    k8s/migCombinedDeviceSelection
+  cluster was not probed:
+    k8s/dra
+    k8s/sharedGpu
+    k8s/gpuOperatorChart
+    k8s/gpuOperatorExporter
+    k8s/gpuOperatorSharedGpu
+    k8s/gpuOperatorMig
+    k8s/gpuOperatorDRA
+    k8s/gpuOperatorIPv6
+  DCGM switch-discovery probe was unavailable; check DCGM image, Docker GPU runtime, and nv-hostengine probe logs:
+    k8s/nvswitch
+  Grace CPU or DCGM CPU hierarchy evidence was not detected:
+    k8s/graceCpu
+  GPU C2C mode is not enabled:
+    k8s/c2c
+  dry-run found the image manifest but did not run nv-hostengine for version verification:
+    k8s/remoteDcgm
+    k8s/remoteDcgmRestart
+  failure injection requires a verified remote DCGM image:
+    k8s/failureXid
+    k8s/failureXidCounters
+    k8s/failureGpuHealth
+    k8s/failureNvlinkHealth

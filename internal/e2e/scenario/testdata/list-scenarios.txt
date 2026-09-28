@@ -1,0 +1,70 @@
+static/chartRbacRendering Helm chart RBAC rendering for Kubernetes attribution features
+static/chartImageRendering Helm chart image and pull-secret rendering
+static/chartServiceMonitorRendering Helm chart ServiceMonitor rendering
+static/chartYamlConfig Helm chart YAML config rendering
+static/dockerfileRuntimeSymbols Dockerfile runtime DCGM symbol and package pinning checks
+static/paths           Source and package path resolution checks
+static/packageSystemdUnit Packaged systemd unit contract
+host/startupMetrics    Direct host exporter startup and metrics scrape
+host/configFile        Direct host YAML config file behavior
+host/nvmlInjectionMetrics Direct DCGM/exporter parity for every available numeric GPU field
+host/watchGroups       Direct host YAML watch group behavior
+host/runtimeContainerLabels Direct host runtime container labels
+host/hpcJobMapping     Direct host HPC/SLURM job mapping labels
+host/startupTLS        Direct host TLS and basic auth behavior
+host/reload            Direct host SIGHUP and file-watcher reload behavior
+host/dcgmUri           Direct host remote DCGM URI and VSOCK behavior
+host/ipv6Listen        Direct host IPv6 listen and scrape behavior
+host/gpuBindUnbindWatch Direct host GPU bind/unbind watcher startup smoke
+host/systemdSocket     Direct host systemd socket activation behavior
+container/imageStartup Container image startup, health, and default metrics
+container/configuration Container runtime configuration and custom collectors
+container/pprofRequiresWebConfig Container startup rejects pprof without web config
+container/invalidDeviceSelectors Container invalid device selector diagnostics
+container/remoteDcgmUri Container remote DCGM URI behavior
+k8s/default            Default Helm deployment and default metric contract
+k8s/configMatrix       Custom metrics replacement through Helm
+k8s/configMapData      Kubernetes ConfigMap metric loading through --configmap-data
+k8s/yamlConfig         Kubernetes YAML config loading through Helm
+k8s/oldNamespace       Legacy Kubernetes attribution label names
+k8s/clockEventsCounters Clock event exporter counters
+k8s/tls                TLS scrape endpoint
+k8s/basicAuth          Basic auth scrape endpoint
+k8s/tlsBasicAuth       TLS and basic auth together
+k8s/serviceAccess      Kubernetes Service and direct scrape behavior
+k8s/podLabels          Kubernetes pod label attribution
+k8s/podUID             Kubernetes pod UID attribution
+k8s/podLabelAllowlist  Pod label allowlist filtering
+k8s/kubernetesGpuId    Kubernetes GPU ID mapping mode
+k8s/noHostname         Hostname label suppression
+k8s/modelName          Model name normalization
+k8s/pprof              pprof endpoint enablement
+k8s/debugDump          Debug dump file output
+k8s/hpcJobMapping      HPC job mapping labels
+k8s/customResourceNames Custom NVIDIA resource name attribution
+k8s/profiling          Datacenter profiling metrics (host:profiling)
+k8s/p2pStatus          P2P status exporter metric (host:p2p)
+k8s/fieldUnsupported   Unsupported DCGM field omission behavior (host:unsupported_field)
+k8s/nvlink             NVLink metrics (host:nvlink)
+k8s/mig                MIG metrics and attribution (host:mig)
+k8s/migFullGpuSelection DCGM_EXPORTER_DEVICES_STR full GPU selection in mixed MIG mode (host:mixed_mig)
+k8s/migInstanceSelection DCGM_EXPORTER_DEVICES_STR all-MIG-instance selection in mixed MIG mode (host:mixed_mig)
+k8s/migSpecificInstanceSelection DCGM_EXPORTER_DEVICES_STR specific MIG instance selection in mixed MIG mode (host:mixed_mig, host:mig_instance_entity)
+k8s/migCombinedDeviceSelection DCGM_EXPORTER_DEVICES_STR combined full-GPU and MIG-instance selection in mixed MIG mode (host:mixed_mig)
+k8s/dra                DRA attribution (cluster:dra)
+k8s/sharedGpu          Shared/vGPU attribution (cluster:shared_gpu)
+k8s/nvswitch           NVSwitch metrics (host:nvswitch)
+k8s/graceCpu           Grace CPU/Sysmon metrics (host:grace_cpu)
+k8s/c2c                C2C metrics (host:c2c)
+k8s/remoteDcgm         Exporter connected to standalone DCGM (dcgm:remote_dcgm, cluster:standalone_dcgm_resources)
+k8s/remoteDcgmRestart  Exporter recovers after standalone DCGM restart (dcgm:remote_dcgm, cluster:standalone_dcgm_resources)
+k8s/failureXid         Injected XID values reported through exporter metrics (dcgm:failure_injection, cluster:standalone_dcgm_resources)
+k8s/failureXidCounters Injected XID count and total metrics (dcgm:failure_injection, cluster:standalone_dcgm_resources)
+k8s/failureGpuHealth   Injected failure signals reflected in GPU health metrics (dcgm:failure_injection, cluster:standalone_dcgm_resources)
+k8s/failureNvlinkHealth Injected NVLink failure signals reflected in NVLink metrics (dcgm:failure_injection_nvlink_crc, cluster:standalone_dcgm_resources)
+k8s/gpuOperatorChart   GPU Operator chart integration (cluster:gpu_operator)
+k8s/gpuOperatorExporter GPU Operator managed exporter integration (cluster:gpu_operator)
+k8s/gpuOperatorSharedGpu GPU Operator shared GPU integration (cluster:gpu_operator, cluster:shared_gpu)
+k8s/gpuOperatorMig     GPU Operator MIG integration (cluster:gpu_operator, host:mig)
+k8s/gpuOperatorDRA     GPU Operator DRA integration (cluster:gpu_operator, cluster:dra)
+k8s/gpuOperatorIPv6    GPU Operator exporter over IPv6 service networking (cluster:gpu_operator, cluster:ipv6)

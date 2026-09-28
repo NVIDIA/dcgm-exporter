@@ -1,0 +1,20 @@
+---
+description: Validate a completed change before handoff
+globs: ["**/*"]
+---
+
+# Validate After Change
+
+1. Run the narrow package tests for changed Go packages.
+2. Run:
+
+```bash
+make test-main
+make lint
+make check-fmt
+make validate
+```
+
+3. Run `make validate-versions`, `make generate`, `make test-images`, GPU
+   integration, or Kubernetes e2e gates when the change touches those surfaces.
+4. Record any skipped prerequisite-dependent gate with the reason.

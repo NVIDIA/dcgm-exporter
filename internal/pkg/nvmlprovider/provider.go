@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,55 @@ type MIGDeviceInfo struct {
 	ParentUUID        string
 	GPUInstanceID     int
 	ComputeInstanceID int
+}
+
+// gpuInstanceAPI isolates the NVML calls needed to resolve a dynamic DRA MIG placement.
+type gpuInstanceAPI interface {
+	deviceHandleByUUID(string) (nvml.Device, nvml.Return)
+	deviceMinorNumber(nvml.Device) (int, nvml.Return)
+	gpuInstanceProfileInfoByID(nvml.Device, int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return)
+	gpuInstances(nvml.Device, *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return)
+	gpuInstanceInfo(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return)
+}
+
+// goNVMLGPUInstanceAPI adapts package-level go-nvml calls to gpuInstanceAPI.
+// Package-level calls share the nvml.Init and nvml.Shutdown lifecycle owned by nvmlProvider.
+type goNVMLGPUInstanceAPI struct{}
+
+// newGPUInstanceAPI returns the production GPU instance API backed by the initialized package-level library.
+func newGPUInstanceAPI() gpuInstanceAPI {
+	return goNVMLGPUInstanceAPI{}
+}
+
+// deviceHandleByUUID resolves an NVML device handle from its UUID.
+func (goNVMLGPUInstanceAPI) deviceHandleByUUID(uuid string) (nvml.Device, nvml.Return) {
+	return nvml.DeviceGetHandleByUUID(uuid)
+}
+
+// deviceMinorNumber returns the device node minor number for an NVML device.
+func (goNVMLGPUInstanceAPI) deviceMinorNumber(device nvml.Device) (int, nvml.Return) {
+	return nvml.DeviceGetMinorNumber(device)
+}
+
+// gpuInstanceProfileInfoByID returns version 2 profile metadata for an explicit profile ID.
+func (goNVMLGPUInstanceAPI) gpuInstanceProfileInfoByID(
+	device nvml.Device,
+	profileID int,
+) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+	return nvml.DeviceGetGpuInstanceProfileInfoByIdV(device, profileID).V2()
+}
+
+// gpuInstances lists the live GPU instances matching a profile.
+func (goNVMLGPUInstanceAPI) gpuInstances(
+	device nvml.Device,
+	profile *nvml.GpuInstanceProfileInfo,
+) ([]nvml.GpuInstance, nvml.Return) {
+	return nvml.DeviceGetGpuInstances(device, profile)
+}
+
+// gpuInstanceInfo returns placement metadata for a live GPU instance.
+func (goNVMLGPUInstanceAPI) gpuInstanceInfo(instance nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return) {
+	return nvml.GpuInstanceGetInfo(instance)
 }
 
 var nvmlInterface NVML
@@ -66,7 +116,8 @@ func SetClient(n NVML) {
 
 // nvmlProvider implements NVML Interface
 type nvmlProvider struct {
-	initialized bool
+	initialized    bool
+	gpuInstanceAPI gpuInstanceAPI
 }
 
 func newNVMLProvider() (NVML, error) {
@@ -84,7 +135,10 @@ func newNVMLProvider() (NVML, error) {
 		return nvmlProvider{initialized: false}, err
 	}
 
-	return nvmlProvider{initialized: true}, nil
+	return nvmlProvider{
+		initialized:    true,
+		gpuInstanceAPI: newGPUInstanceAPI(),
+	}, nil
 }
 
 func (n nvmlProvider) preCheck() error {
@@ -107,6 +161,173 @@ func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) 
 	}
 
 	return getMIGDeviceInfoForOldDriver(uuid)
+}
+
+// GetGPUInstanceProfileName returns the canonical NVML name for a MIG GPU instance profile.
+func (n nvmlProvider) GetGPUInstanceProfileName(parentGPUUUID string, profileID uint) (string, error) {
+	if err := n.preCheck(); err != nil {
+		return "", fmt.Errorf("failed to get GPU instance profile name: %w", err)
+	}
+
+	if profileID > uint(math.MaxInt) {
+		return "", fmt.Errorf("GPU instance profile ID %d exceeds maximum int value %d", profileID, math.MaxInt)
+	}
+
+	device, ret := nvml.DeviceGetHandleByUUID(parentGPUUUID)
+	if ret != nvml.SUCCESS {
+		return "", fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentGPUUUID, nvml.ErrorString(ret))
+	}
+
+	profileIDInt := int(profileID)
+	infoV2, ret := device.GetGpuInstanceProfileInfoByIdV(profileIDInt).V2()
+	if ret != nvml.SUCCESS {
+		return "", fmt.Errorf("failed to get GPU instance profile info for UUID %s profile %d: %s",
+			parentGPUUUID, profileID, nvml.ErrorString(ret))
+	}
+
+	return migProfileNameFromBytes(infoV2.Name[:])
+}
+
+func migProfileNameFromBytes[T ~int8 | ~uint8](name []T) (string, error) {
+	var builder strings.Builder
+	for _, b := range name {
+		if b == 0 {
+			break
+		}
+		builder.WriteByte(byte(b))
+	}
+
+	profileName := builder.String()
+	if profileName == "" {
+		return "", errors.New("GPU instance profile name is empty")
+	}
+
+	return profileName, nil
+}
+
+// GetGPUInstanceIDByProfileAndPlacement resolves a dynamic DRA MIG
+// specification to a live NVML GPU instance.
+func (n nvmlProvider) GetGPUInstanceIDByProfileAndPlacement(
+	parentUUID string,
+	parentMinor,
+	profileID,
+	placementStart uint32,
+) (uint, error) {
+	if err := n.preCheck(); err != nil {
+		return 0, fmt.Errorf("failed to resolve GPU instance placement: %w", err)
+	}
+	if n.gpuInstanceAPI == nil {
+		return 0, errors.New("failed to resolve GPU instance placement: NVML GPU instance API is unavailable")
+	}
+
+	parentDevice, ret := n.gpuInstanceAPI.deviceHandleByUUID(parentUUID)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentUUID, nvml.ErrorString(ret))
+	}
+
+	actualMinor, ret := n.gpuInstanceAPI.deviceMinorNumber(parentDevice)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf("failed to get minor number for parent UUID %s: %s", parentUUID, nvml.ErrorString(ret))
+	}
+	if actualMinor < 0 || uint64(actualMinor) != uint64(parentMinor) {
+		return 0, fmt.Errorf(
+			"parent UUID %s has minor number %d, expected %d from DRA device name",
+			parentUUID,
+			actualMinor,
+			parentMinor,
+		)
+	}
+
+	const maxInt32 = uint32(^uint32(0) >> 1)
+	if strconv.IntSize == 32 && profileID > maxInt32 {
+		return 0, fmt.Errorf("GPU instance profile ID %d exceeds the platform int range", profileID)
+	}
+	profileV2, ret := n.gpuInstanceAPI.gpuInstanceProfileInfoByID(
+		parentDevice,
+		int(profileID), //nolint:gosec // G115: bounded above on 32-bit platforms
+	)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf(
+			"failed to get GPU instance profile ID %d for parent UUID %s: %s",
+			profileID,
+			parentUUID,
+			nvml.ErrorString(ret),
+		)
+	}
+	if profileV2.Id != profileID {
+		return 0, fmt.Errorf(
+			"NVML returned GPU instance profile ID %d for requested ID %d on parent UUID %s",
+			profileV2.Id,
+			profileID,
+			parentUUID,
+		)
+	}
+	profile := gpuInstanceProfileInfoFromV2(profileV2)
+
+	instances, ret := n.gpuInstanceAPI.gpuInstances(parentDevice, &profile)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf(
+			"failed to enumerate GPU instances for profile ID %d on parent UUID %s: %s",
+			profileID,
+			parentUUID,
+			nvml.ErrorString(ret),
+		)
+	}
+
+	var matchedID uint32
+	matches := 0
+	for _, instance := range instances {
+		info, ret := n.gpuInstanceAPI.gpuInstanceInfo(instance)
+		if ret != nvml.SUCCESS {
+			return 0, fmt.Errorf(
+				"failed to inspect GPU instance for profile ID %d on parent UUID %s: %s",
+				profileID,
+				parentUUID,
+				nvml.ErrorString(ret),
+			)
+		}
+		if info.ProfileId != profileID || info.Placement.Start != placementStart {
+			continue
+		}
+		matchedID = info.Id
+		matches++
+	}
+
+	switch matches {
+	case 0:
+		return 0, fmt.Errorf(
+			"no GPU instance matches profile ID %d and placement start %d on parent UUID %s",
+			profileID,
+			placementStart,
+			parentUUID,
+		)
+	case 1:
+		return uint(matchedID), nil
+	default:
+		return 0, fmt.Errorf(
+			"multiple GPU instances match profile ID %d and placement start %d on parent UUID %s",
+			profileID,
+			placementStart,
+			parentUUID,
+		)
+	}
+}
+
+// gpuInstanceProfileInfoFromV2 converts version 2 profile metadata for NVML's instance enumeration API.
+func gpuInstanceProfileInfoFromV2(info nvml.GpuInstanceProfileInfo_v2) nvml.GpuInstanceProfileInfo {
+	return nvml.GpuInstanceProfileInfo{
+		Id:                  info.Id,
+		IsP2pSupported:      info.IsP2pSupported,
+		SliceCount:          info.SliceCount,
+		InstanceCount:       info.InstanceCount,
+		MultiprocessorCount: info.MultiprocessorCount,
+		CopyEngineCount:     info.CopyEngineCount,
+		DecoderCount:        info.DecoderCount,
+		EncoderCount:        info.EncoderCount,
+		JpegCount:           info.JpegCount,
+		OfaCount:            info.OfaCount,
+		MemorySizeMB:        info.MemorySizeMB,
+	}
 }
 
 // getMIGDeviceInfoForNewDriver identifies MIG Device Information for drivers >= R470 (470.42.01+),

@@ -1,10 +1,25 @@
+/*
+ * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package watcher
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -12,114 +27,99 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 )
 
-// GPUBindUnbindWatcher monitors GPU bind/unbind events using DCGM_FI_BIND_UNBIND_EVENT field
-// This is a GLOBAL field (DCGM_FS_GLOBAL) that tracks system-wide driver attach/detach events
-// Requires DCGM 4.5.0 or later
+// GPUBindUnbindWatcher monitors GPU bind/unbind events using DCGM_FI_SYSTEM_GPU_BIND_EVENT.
+// This is a global field that tracks system-wide driver attach and detach events. Detached-GPU
+// support requires DCGM detached-GPU support and an NVIDIA driver from the 590 series or later.
 type GPUBindUnbindWatcher struct {
 	pollInterval time.Duration
 }
 
-// GPUBindUnbindWatcherOption configures a GPUBindUnbindWatcher
+// GPUBindUnbindEventHandler receives an observed DCGM lifecycle state.
+type GPUBindUnbindEventHandler func(dcgm.BindUnbindEventState)
+
+// A physical lifecycle emits reinitializing and then completed. Two retained samples preserve
+// that pair while the watcher polls at DCGM's recommended one-second cadence.
+const bindUnbindHistorySamples = 2
+
+// GPUBindUnbindWatcherOption changes a GPU lifecycle watcher's behavior.
 type GPUBindUnbindWatcherOption func(*GPUBindUnbindWatcher)
 
-// WithPollInterval sets how often to check for bind/unbind events
-// DCGM recommends 1 second for this field (see dcgm_fields.h)
-// Default is 1 second
+// WithPollInterval sets how often the watcher reads retained lifecycle events.
+// The default is DCGM's recommended one-second cadence.
 func WithPollInterval(interval time.Duration) GPUBindUnbindWatcherOption {
 	return func(w *GPUBindUnbindWatcher) {
 		w.pollInterval = interval
 	}
 }
 
-// NewGPUBindUnbindWatcher creates a new GPU bind/unbind event watcher
+// NewGPUBindUnbindWatcher creates a lifecycle watcher that polls once each
+// second by default. The application starts it only when bind/unbind detection
+// is enabled.
 func NewGPUBindUnbindWatcher(opts ...GPUBindUnbindWatcherOption) *GPUBindUnbindWatcher {
 	w := &GPUBindUnbindWatcher{
-		pollInterval: 1 * time.Second, // DCGM recommended frequency
+		pollInterval: time.Second,
 	}
-
 	for _, opt := range opts {
 		opt(w)
 	}
-
 	return w
 }
 
-// Watch starts monitoring GPU bind/unbind events and calls onChange when detected
-// It blocks until the context is cancelled
-// onChange is called for any GPU topology change (bind or unbind)
-func (w *GPUBindUnbindWatcher) Watch(ctx context.Context, onChange func()) error {
+// Start installs the DCGM watch synchronously and returns the blocking event
+// loop. Callers can therefore establish the watch before taking a topology
+// snapshot without losing an event in between.
+func (w *GPUBindUnbindWatcher) Start(
+	ctx context.Context,
+	onEvent GPUBindUnbindEventHandler,
+) (func() error, error) {
 	slog.Info("Watching for GPU bind/unbind events",
 		slog.Duration("poll_interval", w.pollInterval))
-
-	// Create field group for bind/unbind event
-	fieldGroupName := "dcgm_exporter_bind_unbind_watch"
-	fieldGroup, err := dcgmprovider.Client().FieldGroupCreate(fieldGroupName, []dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT})
-	if err != nil {
-		// Check if this is because NVML isn't available
-		if strings.Contains(err.Error(), "NVML doesn't exist") {
-			slog.Warn("GPU bind/unbind watcher disabled - NVML not available on this system")
-			return nil
-		}
-		return fmt.Errorf("failed to create bind/unbind field group: %w", err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	defer func() {
-		if destroyErr := dcgmprovider.Client().FieldGroupDestroy(fieldGroup); destroyErr != nil {
-			slog.Warn("Failed to destroy bind/unbind field group", slog.String("error", destroyErr.Error()))
-		}
-	}()
 
-	// DCGM_FI_BIND_UNBIND_EVENT is a GLOBAL field (DCGM_FE_NONE)
-	// Use GPU ID 0 - ID doesn't matter for global fields
-	groupID := dcgmprovider.Client().GroupAllGPUs()
-	err = dcgmprovider.Client().WatchFieldsWithGroupEx(
-		fieldGroup,
-		groupID,
-		int64(w.pollInterval.Microseconds()),
-		0.0, // maxKeepAge - no limit
-		0,   // maxKeepSamples - no limit
-	)
-	if err != nil {
-		return fmt.Errorf("failed to watch bind/unbind events: %w", err)
-	}
-	defer func() {
-		// Explicitly unwatch the bind/unbind event field from GroupAllGPUs().
-		//
-		// This is independent from metric collection watchers because:
-		// 1. Different field group: we watch "dcgm_exporter_bind_unbind_watch" (only DCGM_FI_BIND_UNBIND_EVENT)
-		// 2. Different device group: we use built-in GroupAllGPUs(), metrics use custom "gpu-collector-group-XXX"
-		// 3. Each watch is identified by (fieldGroup, deviceGroup) pair - unwatching ours doesn't affect others
-		//
-		// Note: Metric collectors use the legacy pattern (only destroy groups/field groups without explicit unwatch).
-		// We use UnwatchFields explicitly for proper cleanup of the global bind/unbind event field.
-		if unwatchErr := dcgmprovider.Client().UnwatchFields(fieldGroup, groupID); unwatchErr != nil {
-			// Ignore benign errors when DCGM shuts down before cleanup (during reload)
-			errMsg := unwatchErr.Error()
-			if !strings.Contains(errMsg, "Setting not configured") &&
-				!strings.Contains(errMsg, "Field is not being watched") {
-				slog.Warn("Failed to unwatch bind/unbind events", slog.String("error", errMsg))
-			}
-		}
-	}()
-
-	slog.Info("Successfully started watching GPU bind/unbind events (global field)")
-
-	// Initialize with current timestamp to avoid triggering on startup state
-	// We want to detect CHANGES in GPU topology, not the initial state
-	var lastEventTS int64
-	err = dcgmprovider.Client().UpdateAllFields()
-	if err == nil {
-		values, err := dcgmprovider.Client().EntityGetLatestValues(
-			dcgm.FE_GPU,
-			0, // GPU ID doesn't matter for global fields
-			[]dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT},
+	// This is a global field (DCGM_FE_NONE), so it must be watched directly.
+	// Watching DCGM_GROUP_ALL_GPUS creates no watch while the exporter starts
+	// without GPUs, which is precisely the recovery case this watcher handles.
+	cursor := time.Now()
+	if err := dcgmprovider.Client().WatchFieldValue(
+		0,
+		dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+		w.pollInterval,
+		0,
+		bindUnbindHistorySamples,
+	); err != nil {
+		return nil, fmt.Errorf(
+			"GPU bind/unbind detection requires DCGM detached-GPU support and NVIDIA driver 590+; DCGM watch setup failed: %w",
+			err,
 		)
-		if err == nil && len(values) > 0 {
-			lastEventTS = values[0].TS
-			slog.Debug("Initialized bind/unbind watcher with current timestamp",
-				slog.Int64("initial_timestamp", lastEventTS),
-				slog.Int64("initial_state", values[0].Int64()))
-		}
 	}
+
+	// The application stops this watcher before it terminates DCGM for a
+	// lifecycle reset or process shutdown. That DCGM cleanup releases this
+	// direct field watch; a field group is neither created nor needed here.
+	return func() error {
+		return w.watchFieldEvents(ctx, cursor, onEvent)
+	}, nil
+}
+
+// Watch installs the watch and monitors events until the context is cancelled.
+func (w *GPUBindUnbindWatcher) Watch(ctx context.Context, onEvent GPUBindUnbindEventHandler) error {
+	run, err := w.Start(ctx, onEvent)
+	if err != nil {
+		return err
+	}
+	return run()
+}
+
+// watchFieldEvents reads retained system-field history newer than cursor. DCGM
+// records bind/unbind events directly, so UpdateAllFields is not required.
+func (w *GPUBindUnbindWatcher) watchFieldEvents(
+	ctx context.Context,
+	cursor time.Time,
+	onEvent GPUBindUnbindEventHandler,
+) error {
+	slog.Info("Successfully started watching GPU bind/unbind events (global field)")
 
 	ticker := time.NewTicker(w.pollInterval)
 	defer ticker.Stop()
@@ -129,54 +129,53 @@ func (w *GPUBindUnbindWatcher) Watch(ctx context.Context, onChange func()) error
 		case <-ctx.Done():
 			slog.Debug("GPU bind/unbind watcher stopping")
 			return ctx.Err()
-
 		case <-ticker.C:
-			// Update field values
-			err := dcgmprovider.Client().UpdateAllFields()
-			if err != nil {
-				slog.Warn("Failed to update fields for bind/unbind check",
-					slog.String("error", err.Error()))
-				continue
-			}
-
-			// Get latest value for the global bind/unbind event field
-			// Use GPU ID 0 since it's a global field
-			values, err := dcgmprovider.Client().EntityGetLatestValues(
-				dcgm.FE_GPU,
-				0, // GPU ID doesn't matter for global fields
-				[]dcgm.Short{dcgm.DCGM_FI_BIND_UNBIND_EVENT},
+			values, err := dcgmprovider.Client().GetMultipleValuesForField(
+				0,
+				dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
+				bindUnbindHistorySamples,
+				cursor,
+				time.Time{},
 			)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			if err != nil {
-				slog.Debug("No bind/unbind events available yet",
+				slog.Warn("Failed to read bind/unbind events",
+					slog.Time("cursor", cursor),
 					slog.String("error", err.Error()))
 				continue
 			}
 
-			if len(values) == 0 {
-				continue
+			for _, value := range values {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				if value.TS >= cursor.UnixMicro() {
+					cursor = time.UnixMicro(value.TS + 1)
+				}
+
+				if value.FieldID != dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT || value.Status != 0 {
+					continue
+				}
+
+				switch state := dcgm.BindUnbindEventState(value.Int64()); state {
+				case dcgm.DcgmBUEventStateSystemReinitializing:
+					// Keep watching. Resetting while DCGM is reinitializing can race
+					// the topology transition and prevent us from seeing completion.
+					slog.Info("GPU system reinitializing event detected",
+						slog.Int64("event_state", int64(state)),
+						slog.Int64("timestamp", value.TS))
+				case dcgm.DcgmBUEventStateSystemReinitializationCompleted:
+					slog.Info("GPU system reinitialization-completed event detected",
+						slog.Int64("event_state", int64(state)),
+						slog.Int64("timestamp", value.TS))
+					onEvent(state)
+				}
 			}
 
-			// Check event value and timestamp
-			eventValue := values[0].Int64()
-			eventTS := values[0].TS
-
-			// Only process if this is a new event (timestamp changed)
-			if eventTS > lastEventTS && eventValue != 0 {
-				lastEventTS = eventTS
-
-				if eventValue == int64(dcgm.DcgmBUEventStateSystemReinitializing) {
-					slog.Info("GPU unbind event detected (system reinitializing)",
-						slog.Int64("event_state", eventValue),
-						slog.Int64("timestamp", eventTS))
-					onChange()
-					// Continue watching for more events
-				} else if eventValue == int64(dcgm.DcgmBUEventStateSystemReinitializationCompleted) {
-					slog.Info("GPU bind event detected (reinitialization completed)",
-						slog.Int64("event_state", eventValue),
-						slog.Int64("timestamp", eventTS))
-					onChange()
-					// Continue watching for more events
-				}
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 		}
 	}

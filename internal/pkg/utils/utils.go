@@ -17,17 +17,16 @@
 package utils
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/gob"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
 
-// invalidLabelCharRE is a regular expression that matches any character that is not a letter, digit, or underscore.
+// invalidLabelCharRE matches any character that is not a letter, digit, or underscore.
 var invalidLabelCharRE = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
@@ -56,32 +55,6 @@ func RandUint64() (uint64, error) {
 	return num, nil
 }
 
-func DeepCopy[T any](src T) (dst T, err error) {
-	var buf bytes.Buffer
-
-	defer func() {
-		if r := recover(); r != nil {
-			// If there was a panic, return the zero value of T and the error.
-			dst = *new(T)
-			err = fmt.Errorf("panic occurred: %v", r)
-		}
-	}()
-
-	// Create an encoder and send a value.
-	err = gob.NewEncoder(&buf).Encode(src)
-	if err != nil {
-		return *new(T), err
-	}
-
-	// Create a new instance of the type T and decode into that.
-	err = gob.NewDecoder(&buf).Decode(&dst)
-	if err != nil {
-		return *new(T), err
-	}
-
-	return dst, nil
-}
-
 func CleanupOnError(cleanups []func()) []func() {
 	for _, cleanup := range cleanups {
 		cleanup()
@@ -90,6 +63,24 @@ func CleanupOnError(cleanups []func()) []func() {
 	return nil
 }
 
+// SanitizeLabelName converts arbitrary input into a Prometheus-safe label name.
 func SanitizeLabelName(s string) string {
-	return invalidLabelCharRE.ReplaceAllString(s, "_")
+	sanitized := invalidLabelCharRE.ReplaceAllString(s, "_")
+	if sanitized == "" {
+		return "_"
+	}
+
+	if sanitized[0] >= '0' && sanitized[0] <= '9' {
+		sanitized = "_" + sanitized
+	}
+
+	// Double-underscore labels are reserved by Prometheus internals.
+	if strings.HasPrefix(sanitized, "__") {
+		sanitized = "_" + strings.TrimLeft(sanitized, "_")
+		if sanitized == "_" {
+			return "_"
+		}
+	}
+
+	return sanitized
 }

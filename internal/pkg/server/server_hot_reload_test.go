@@ -24,6 +24,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+
+	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 )
@@ -81,6 +84,22 @@ func TestMetricsServer_SetRegistry(t *testing.T) {
 			assert.Equal(t, newReg, server.GetRegistry())
 		}
 	})
+}
+
+func TestMetricsServer_SwapMetricsRuntime(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	server := &MetricsServer{}
+
+	oldRegistry := registry.NewRegistry()
+	newRegistry := registry.NewRegistry()
+	newDeviceWatchListManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	server.SetRegistry(oldRegistry)
+
+	old := server.SwapMetricsRuntime(newRegistry, newDeviceWatchListManager)
+
+	assert.Equal(t, oldRegistry, old)
+	assert.Equal(t, newRegistry, server.GetRegistry())
+	assert.Same(t, newDeviceWatchListManager, server.deviceWatchListManager)
 }
 
 func TestMetricsServer_GetRegistry(t *testing.T) {

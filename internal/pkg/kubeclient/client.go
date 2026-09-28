@@ -21,13 +21,20 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+var (
+	inClusterConfigFunc     = rest.InClusterConfig
+	newKubernetesClientFunc = func(config *rest.Config) (kubernetes.Interface, error) {
+		return kubernetes.NewForConfig(config)
+	}
+)
+
 func GetKubeClient() (kubernetes.Interface, error) {
-	config, err := rest.InClusterConfig()
+	config, err := inClusterConfigFunc()
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := kubernetes.NewForConfig(config)
+	client, err := newKubernetesClientFunc(config)
 	if err != nil {
 		return nil, err
 	}

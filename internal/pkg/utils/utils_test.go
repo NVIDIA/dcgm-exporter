@@ -71,21 +71,6 @@ func TestRandUint64_Failure(t *testing.T) {
 	assert.Zero(t, num, fmt.Sprintf("Expected a uint64, but got %d", num))
 }
 
-func TestDeepCopy(t *testing.T) {
-	t.Run("Return error when pointer value is nil", func(t *testing.T) {
-		got, err := DeepCopy[*struct{}](nil)
-		assert.Nil(t, got)
-		assert.Error(t, err)
-	})
-
-	t.Run("Return error when src is unsupported type", func(t *testing.T) {
-		ch := make(chan int)
-		got, err := DeepCopy(ch)
-		assert.Nil(t, got)
-		assert.Error(t, err)
-	})
-}
-
 func TestCleanupOnError(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -148,6 +133,27 @@ func TestSanitizeLabelName(t *testing.T) {
 	t.Run("Keep valid label unchanged", func(t *testing.T) {
 		input := "valid_label_name"
 		expected := "valid_label_name"
+		got := SanitizeLabelName(input)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("Prefix label starting with digit", func(t *testing.T) {
+		input := "123label"
+		expected := "_123label"
+		got := SanitizeLabelName(input)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("Avoid reserved internal label prefix", func(t *testing.T) {
+		input := "__name__"
+		expected := "_name__"
+		got := SanitizeLabelName(input)
+		assert.Equal(t, expected, got)
+	})
+
+	t.Run("Empty label becomes valid placeholder", func(t *testing.T) {
+		input := ""
+		expected := "_"
 		got := SanitizeLabelName(input)
 		assert.Equal(t, expected, got)
 	})

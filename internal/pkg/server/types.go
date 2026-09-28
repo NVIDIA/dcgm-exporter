@@ -41,6 +41,8 @@ type MetricsServer struct {
 	transformations        []transformation.Transform
 	deviceWatchListManager devicewatchlistmanager.Manager
 	fileDumper             *debug.FileDumper
+	scrapes                *scrapeCoordinator
+	exporterMetrics        *exporterMetrics
 
 	reloadInProgress atomic.Bool
 }

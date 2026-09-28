@@ -75,6 +75,12 @@ func (c *baseExpCollector) getLabelsFromCounters(mi devicemonitoring.Info, label
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 		if v == skipDCGMValue {
+			logFieldValueSkipped(
+				val,
+				counterFieldNameOrUnknown(c.labelsCounters, val.FieldID),
+				mi.Entity.EntityGroupId,
+				mi.Entity.EntityId,
+			)
 			continue
 		}
 
@@ -84,7 +90,7 @@ func (c *baseExpCollector) getLabelsFromCounters(mi devicemonitoring.Info, label
 		}
 
 		if counter.IsLabel() {
-			labels[counter.FieldName] = v
+			addMetricLabel(labels, counter, v, c.hostname)
 			continue
 		}
 	}

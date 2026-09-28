@@ -23,6 +23,41 @@ import (
 )
 
 func GetMonitoredEntities(deviceInfo deviceinfo.Provider) []Info {
+	return getMonitoredEntities(deviceInfo, false)
+}
+
+// GetMonitoredEntitiesIncludingComputeInstances returns the configured GPU
+// entities and the compute instances belonging to selected GPU instances.
+func GetMonitoredEntitiesIncludingComputeInstances(deviceInfo deviceinfo.Provider) []Info {
+	return getMonitoredEntities(deviceInfo, true)
+}
+
+// GetMonitoredEntitiesForComputeInstanceFields returns selected whole GPUs and
+// the compute instances belonging to selected GPU instances. DCGM exposes
+// compute-instance fields at both of those scopes, but not on GPU instances.
+func GetMonitoredEntitiesForComputeInstanceFields(deviceInfo deviceinfo.Provider) []Info {
+	selected := getMonitoredEntities(deviceInfo, false)
+	monitoring := make([]Info, 0, len(selected))
+	for _, entity := range selected {
+		if entity.Entity.EntityGroupId == dcgm.FE_GPU {
+			monitoring = append(monitoring, entity)
+		}
+	}
+
+	return append(monitoring, computeInstancesFor(selected)...)
+}
+
+// GetParentGPUsForMonitoredGPUInstances returns parent GPUs that are not
+// already included in the configured GPU entities. Callers use this to collect
+// a field that DCGM stores on both GPU instances and their parent GPUs.
+func GetParentGPUsForMonitoredGPUInstances(deviceInfo deviceinfo.Provider) []Info {
+	return appendMissingParentGPUs(getMonitoredEntities(deviceInfo, false))
+}
+
+// getMonitoredEntities applies the configured device selection and optionally
+// adds compute instances below the selected GPU instances. The exported
+// helpers choose the option appropriate for their collection scope.
+func getMonitoredEntities(deviceInfo deviceinfo.Provider, includeComputeInstances bool) []Info {
 	var monitoring []Info
 
 	switch deviceInfo.InfoType() {
@@ -45,7 +80,73 @@ func GetMonitoredEntities(deviceInfo deviceinfo.Provider) []Info {
 		}
 	}
 
+	if includeComputeInstances {
+		monitoring = append(monitoring, computeInstancesFor(monitoring)...)
+	}
+
 	return monitoring
+}
+
+// computeInstancesFor returns one monitored entity for each compute instance
+// below an already selected GPU instance. It preserves the parent identity so
+// metric rendering can keep the GPU-instance labels.
+func computeInstancesFor(monitoring []Info) []Info {
+	computeInstances := make([]Info, 0)
+	for _, monitored := range monitoring {
+		if monitored.Entity.EntityGroupId != dcgm.FE_GPU_I || monitored.InstanceInfo == nil {
+			continue
+		}
+
+		for index := range monitored.InstanceInfo.ComputeInstances {
+			computeInstance := &monitored.InstanceInfo.ComputeInstances[index]
+			computeInstances = append(computeInstances, Info{
+				Entity: dcgm.GroupEntityPair{
+					EntityGroupId: dcgm.FE_GPU_CI,
+					EntityId:      computeInstance.EntityId,
+				},
+				DeviceInfo:          monitored.DeviceInfo,
+				InstanceInfo:        monitored.InstanceInfo,
+				ComputeInstanceInfo: computeInstance,
+				ParentId:            monitored.Entity.EntityId,
+				ParentType:          dcgm.FE_GPU_I,
+			})
+		}
+	}
+
+	return computeInstances
+}
+
+// appendMissingParentGPUs adds each parent GPU required to read a multi-scope
+// field when that GPU was not selected directly. It avoids duplicate parent
+// reads when a GPU and one of its instances are both selected.
+func appendMissingParentGPUs(monitoring []Info) []Info {
+	knownGPUs := make(map[uint]struct{})
+	for _, monitored := range monitoring {
+		if monitored.Entity.EntityGroupId == dcgm.FE_GPU {
+			knownGPUs[monitored.DeviceInfo.GPU] = struct{}{}
+		}
+	}
+
+	parents := make([]Info, 0)
+	for _, monitored := range monitoring {
+		if monitored.Entity.EntityGroupId != dcgm.FE_GPU_I {
+			continue
+		}
+
+		gpuID := monitored.DeviceInfo.GPU
+		if _, exists := knownGPUs[gpuID]; exists {
+			continue
+		}
+
+		parents = append(parents, Info{
+			Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: gpuID},
+			DeviceInfo: monitored.DeviceInfo,
+			ParentId:   PARENT_ID_IGNORED,
+			ParentType: dcgm.FE_NONE,
+		})
+		knownGPUs[gpuID] = struct{}{}
+	}
+	return parents
 }
 
 func handleGPUOptions(deviceInfo deviceinfo.Provider) []Info {
@@ -85,6 +186,7 @@ func monitorAllGPUs(deviceInfo deviceinfo.Provider) []Info {
 			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: deviceInfo.GPU(i).DeviceInfo.GPU},
 			deviceInfo.GPU(i).DeviceInfo,
 			nil,
+			nil,
 			PARENT_ID_IGNORED,
 			dcgm.FE_NONE,
 		}
@@ -104,6 +206,7 @@ func monitorAllGPUInstances(deviceInfo deviceinfo.Provider, addFlexibly bool) []
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: deviceInfo.GPU(i).DeviceInfo.GPU},
 				deviceInfo.GPU(i).DeviceInfo,
 				nil,
+				nil,
 				PARENT_ID_IGNORED,
 				dcgm.FE_NONE,
 			}
@@ -117,6 +220,7 @@ func monitorAllGPUInstances(deviceInfo deviceinfo.Provider, addFlexibly bool) []
 					},
 					deviceInfo.GPU(i).DeviceInfo,
 					&deviceInfo.GPU(i).GPUInstances[j],
+					nil,
 					PARENT_ID_IGNORED,
 					dcgm.FE_GPU,
 				}
@@ -139,6 +243,7 @@ func monitorAllCPUs(deviceInfo deviceinfo.Provider) []Info {
 		mi := Info{
 			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU, EntityId: cpu.EntityId},
 			dcgm.Device{},
+			nil,
 			nil,
 			PARENT_ID_IGNORED,
 			dcgm.FE_NONE,
@@ -166,6 +271,7 @@ func monitorAllCPUCores(deviceInfo deviceinfo.Provider) []Info {
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: core},
 				dcgm.Device{},
 				nil,
+				nil,
 				cpu.EntityId,
 				dcgm.FE_CPU,
 			}
@@ -187,6 +293,7 @@ func monitorAllSwitches(deviceInfo deviceinfo.Provider) []Info {
 		mi := Info{
 			dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_SWITCH, EntityId: sw.EntityId},
 			dcgm.Device{},
+			nil,
 			nil,
 			PARENT_ID_IGNORED,
 			dcgm.FE_NONE,
@@ -218,6 +325,7 @@ func monitorAllNvSwitchNvLinks(deviceInfo deviceinfo.Provider) []Info {
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: link.Index},
 				dcgm.Device{},
 				nil,
+				nil,
 				link.ParentId,
 				dcgm.FE_SWITCH,
 			}
@@ -241,6 +349,7 @@ func monitorAllGPUNvLinks(deviceInfo deviceinfo.Provider) []Info {
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: link.Index},
 				deviceInfo.GPU(i).DeviceInfo,
 				nil,
+				nil,
 				link.ParentId,
 				dcgm.FE_GPU,
 			}
@@ -257,6 +366,7 @@ func monitorGPU(deviceInfo deviceinfo.Provider, gpuID int) *Info {
 			return &Info{
 				dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: deviceInfo.GPU(i).DeviceInfo.GPU},
 				deviceInfo.GPU(i).DeviceInfo,
+				nil,
 				nil,
 				PARENT_ID_IGNORED,
 				dcgm.FE_NONE,
@@ -275,6 +385,7 @@ func monitorGPUInstance(deviceInfo deviceinfo.Provider, gpuInstanceID int) *Info
 					dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: uint(gpuInstanceID)},
 					deviceInfo.GPU(i).DeviceInfo,
 					&instance,
+					nil,
 					PARENT_ID_IGNORED,
 					dcgm.FE_GPU,
 				}

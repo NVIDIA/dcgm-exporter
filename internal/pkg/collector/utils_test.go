@@ -17,11 +17,19 @@
 package collector
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"unsafe"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 )
 
 func Test_isInt64Blank(t *testing.T) {
@@ -97,6 +105,91 @@ func Test_isInt64Blank(t *testing.T) {
 			assert.Equal(t, tt.want, got, "isInt64Blank(%v)", tt.value)
 		})
 	}
+}
+
+func Test_logBlankValueSkipped(t *testing.T) {
+	buf := setupDebugLogCapture(t)
+
+	logBlankValueSkipped(
+		dcgm.DCGM_FI_DEV_XID_ERRORS,
+		"DCGM_FI_DEV_XID_ERRORS",
+		dcgm.FE_GPU,
+		3,
+	)
+
+	got := findLogRecord(t, buf, blankValueSkippedMessage)
+	assert.Equal(t, blankValueSkippedMessage, got["msg"])
+	assert.Equal(t, float64(dcgm.DCGM_FI_DEV_XID_ERRORS), got["fieldID"])
+	assert.Equal(t, "DCGM_FI_DEV_XID_ERRORS", got["fieldName"])
+	assert.Equal(t, dcgm.FE_GPU.String(), got["entityType"])
+	assert.Equal(t, float64(3), got["entityID"])
+}
+
+func setupDebugLogCapture(t *testing.T) *bytes.Buffer {
+	t.Helper()
+
+	var buf bytes.Buffer
+	previousLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	return &buf
+}
+
+func findLogRecord(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
+	t.Helper()
+
+	decoder := json.NewDecoder(bytes.NewReader(buf.Bytes()))
+	for {
+		var record map[string]any
+		err := decoder.Decode(&record)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		if record["msg"] == msg {
+			return record
+		}
+	}
+
+	require.Failf(t, "log record not found", "msg=%q logs=%s", msg, buf.String())
+	return nil
+}
+
+func Test_isDebugLoggingEnabled(t *testing.T) {
+	var buf bytes.Buffer
+	previousLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	assert.False(t, isDebugLoggingEnabled())
+
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	assert.True(t, isDebugLoggingEnabled())
+}
+
+func Test_expCollectorSourceFieldNameUsesSourceDCGMFieldIDs(t *testing.T) {
+	labelCounter := counters.Counter{
+		FieldID:   777,
+		FieldName: "DCGM_FI_DEV_DRIVER_VERSION",
+		PromType:  "label",
+	}
+	collector := expCollector{
+		baseExpCollector: baseExpCollector{
+			counter: counters.Counter{
+				FieldID:   dcgm.Short(counters.DCGMXIDErrorsCount),
+				FieldName: counters.DCGMExpXIDErrorsCount,
+			},
+			labelsCounters: []counters.Counter{labelCounter},
+		},
+		sourceFields: map[dcgm.Short]string{
+			dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
+		},
+	}
+
+	assert.Equal(t, "DCGM_FI_DEV_XID_ERRORS", collector.sourceFieldName(dcgm.DCGM_FI_DEV_XID_ERRORS))
+	assert.Equal(t, labelCounter.FieldName, collector.sourceFieldName(labelCounter.FieldID))
+	assert.Equal(t, unknownFieldName, collector.sourceFieldName(dcgm.Short(counters.DCGMXIDErrorsCount)))
 }
 
 func Test_isFloat64Blank(t *testing.T) {

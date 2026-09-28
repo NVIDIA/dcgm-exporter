@@ -34,7 +34,7 @@ func parseOutputEntry(entry string) outputEntry {
 	// Split the entry by spaces, taking care to not split the function call and its arguments.
 	fields := strings.Fields(entry)
 
-	if len(fields) > 2 {
+	if len(fields) > 3 {
 		// Parse the timestamp.
 		timestamp, err := time.Parse("2006-01-02 15:04:05.000", fields[0]+" "+fields[1])
 		if err != nil {
