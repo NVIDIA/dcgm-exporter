@@ -521,6 +521,75 @@ func TestChartProbeSettingsRenderContract(t *testing.T) {
 	}
 }
 
+func TestChartStartupProbeRenderContract(t *testing.T) {
+	testCases := []struct {
+		name             string
+		values           map[string]interface{}
+		wantStartupProbe *probe
+	}{
+		{
+			name: "defaults leave startup probe disabled",
+		},
+		{
+			name: "enabled startup probe renders default settings",
+			values: map[string]interface{}{
+				"startupProbe": map[string]interface{}{
+					"enabled": true,
+				},
+			},
+			wantStartupProbe: &probe{
+				PeriodSeconds:    intPointer(10),
+				FailureThreshold: intPointer(30),
+			},
+		},
+		{
+			name: "explicit probe settings render for startupProbe",
+			values: map[string]interface{}{
+				"startupProbe": map[string]interface{}{
+					"enabled":             true,
+					"initialDelaySeconds": 3,
+					"periodSeconds":       4,
+					"timeoutSeconds":      5,
+					"failureThreshold":    60,
+				},
+			},
+			wantStartupProbe: &probe{
+				InitialDelaySeconds: 3,
+				PeriodSeconds:       intPointer(4),
+				TimeoutSeconds:      intPointer(5),
+				FailureThreshold:    intPointer(60),
+			},
+		},
+		{
+			name: "explicit zero values are rendered for Kubernetes validation",
+			values: map[string]interface{}{
+				"startupProbe": map[string]interface{}{
+					"enabled":             true,
+					"initialDelaySeconds": 0,
+					"periodSeconds":       0,
+					"timeoutSeconds":      0,
+					"failureThreshold":    0,
+				},
+			},
+			wantStartupProbe: &probe{
+				InitialDelaySeconds: 0,
+				PeriodSeconds:       intPointer(0),
+				TimeoutSeconds:      intPointer(0),
+				FailureThreshold:    intPointer(0),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resources := renderChart(t, tc.values)
+			container := requireContainer(t, requireResourceKind(t, resources, "DaemonSet"), "exporter")
+
+			assert.Equal(t, tc.wantStartupProbe, container.StartupProbe)
+		})
+	}
+}
+
 func TestChartServiceMonitorRenderingContract(t *testing.T) {
 	resources := renderChart(t, map[string]interface{}{
 		"serviceMonitor": map[string]interface{}{
@@ -859,6 +928,7 @@ type container struct {
 	VolumeMounts   []volumeMount `yaml:"volumeMounts"`
 	LivenessProbe  probe         `yaml:"livenessProbe"`
 	ReadinessProbe probe         `yaml:"readinessProbe"`
+	StartupProbe   *probe        `yaml:"startupProbe"`
 }
 
 // toleration captures the pod toleration fields needed by render-contract tests.
