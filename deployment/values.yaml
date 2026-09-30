@@ -437,3 +437,11 @@ readinessProbe:
   # periodSeconds: 10
   # timeoutSeconds: 1
   # failureThreshold: 3
+
+startupProbe:
+  enabled: false
+  periodSeconds: 10
+  failureThreshold: 30
+  # initialDelaySeconds and timeoutSeconds use Kubernetes defaults when omitted.
+  # initialDelaySeconds: 0
+  # timeoutSeconds: 1

@@ -259,6 +259,30 @@ spec:
           {{- if hasKey .Values.readinessProbe "failureThreshold" }}
           failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
           {{- end }}
+        {{- if and .Values.startupProbe .Values.startupProbe.enabled }}
+        startupProbe:
+          {{- if not $.Values.basicAuth.users }}
+          httpGet:
+            path: /health
+            port: {{ .Values.service.port }}
+            scheme: {{ ternary "HTTPS" "HTTP" $.Values.tlsServerConfig.enabled }}
+          {{- else }}
+          tcpSocket:
+              port: {{ .Values.service.port }}
+          {{- end }}
+          {{- if hasKey .Values.startupProbe "initialDelaySeconds" }}
+          initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
+          {{- end }}
+          {{- if hasKey .Values.startupProbe "periodSeconds" }}
+          periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.startupProbe "timeoutSeconds" }}
+          timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if hasKey .Values.startupProbe "failureThreshold" }}
+          failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- end }}
+        {{- end }}
         {{- if .Values.resources }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
