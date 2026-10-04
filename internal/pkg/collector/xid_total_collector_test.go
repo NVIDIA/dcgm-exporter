@@ -480,7 +480,7 @@ func newTestXIDTotalCollectorWithFieldGroups(
 	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, gpuCount, nil)
 	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
 
-	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).
 		Return(groups, fieldGroups, cleanups, nil)
 
 	counterList := counters.CounterList{xidTotalCounter()}
@@ -502,7 +502,7 @@ func newTestXIDTotalCollectorWithGroups(
 	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
 
 	fieldGroup := testFieldHandle(1)
-	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).
 		Return(groups, []dcgm.FieldHandle{fieldGroup}, cleanups, nil)
 
 	counterList := counters.CounterList{xidTotalCounter()}

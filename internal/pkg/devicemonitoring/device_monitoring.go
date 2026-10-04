@@ -32,6 +32,14 @@ func GetMonitoredEntitiesIncludingComputeInstances(deviceInfo deviceinfo.Provide
 	return getMonitoredEntities(deviceInfo, true)
 }
 
+// GetMonitoredEntitiesAtAllGPUScopes returns selected GPUs and GPU instances,
+// their compute instances, and any parent GPUs not already selected. Each entity
+// appears once so historical fields can share one watch and collection cursor.
+func GetMonitoredEntitiesAtAllGPUScopes(deviceInfo deviceinfo.Provider) []Info {
+	monitoring := GetMonitoredEntitiesIncludingComputeInstances(deviceInfo)
+	return append(monitoring, appendMissingParentGPUs(monitoring)...)
+}
+
 // GetMonitoredEntitiesForComputeInstanceFields returns selected whole GPUs and
 // the compute instances belonging to selected GPU instances. DCGM exposes
 // compute-instance fields at both of those scopes, but not on GPU instances.

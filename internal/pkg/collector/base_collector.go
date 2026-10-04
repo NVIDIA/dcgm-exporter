@@ -61,6 +61,9 @@ func (c *baseExpCollector) createMetric(
 		m.MigProfile = ""
 		m.GPUInstanceID = ""
 	}
+	if mi.ComputeInstanceInfo != nil {
+		m.GPUComputeInstanceID = fmt.Sprint(mi.ComputeInstanceInfo.InstanceInfo.NvmlComputeInstanceId)
+	}
 	return m
 }
 

@@ -78,6 +78,12 @@ Every `DCGM_EXP_GPU_HEALTH_STATUS` sample includes `health_watch`,
 labels. PASS samples use `NONE` for severity and category; unrecognized DCGM
 metadata uses `UNKNOWN`.
 
+The XID exporter counters collect events from selected GPUs and GPU instances,
+child compute instances, and required parent GPUs. Compute-instance samples
+include `GPU_I_ID` and `GPU_CI_ID`, matching the direct XID metric; each entity's
+history is counted separately. The direct `DCGM_FI_DEV_XID_ERRORS` metric does
+not need to be enabled for the XID exporter counters to collect these events.
+
 The `_COUNT` counters describe events observed during the configured window.
 The `_TOTAL` counters are in-memory cumulative totals intended for Prometheus
 counter functions such as `increase()` and `rate()`. If reload, runtime swap,

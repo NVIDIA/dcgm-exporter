@@ -178,6 +178,7 @@ func (d *DeviceWatcher) WatchDeviceFields(
 		&updateFreqInUsec,
 		false,
 		false,
+		false,
 	)
 	if err != nil {
 		return groups, dcgm.FieldHandle{}, cleanups, err
@@ -205,7 +206,7 @@ func (d *DeviceWatcher) WatchDeviceFields(
 func (d *DeviceWatcher) WatchDeviceFieldGroups(
 	fieldWatchGroups []FieldWatchGroup, deviceInfo deviceinfo.Provider,
 ) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
-	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, false)
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, false, false)
 }
 
 // WatchDeviceFieldGroupsForComputeInstanceFields watches compute-instance
@@ -214,7 +215,7 @@ func (d *DeviceWatcher) WatchDeviceFieldGroupsForComputeInstanceFields(
 	fieldWatchGroups []FieldWatchGroup,
 	deviceInfo deviceinfo.Provider,
 ) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
-	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, true, false)
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, true, false, false)
 }
 
 // WatchDeviceFieldGroupsForParentGPUs watches fields only on parent GPUs that
@@ -223,7 +224,17 @@ func (d *DeviceWatcher) WatchDeviceFieldGroupsForParentGPUs(
 	fieldWatchGroups []FieldWatchGroup,
 	deviceInfo deviceinfo.Provider,
 ) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
-	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, true)
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, true, false)
+}
+
+// WatchDeviceFieldGroupsForAllGPUScopes watches selected GPUs and GPU instances,
+// their compute instances, and required parent GPUs in one group. Historical
+// collectors can read each entity once without overlapping watches.
+func (d *DeviceWatcher) WatchDeviceFieldGroupsForAllGPUScopes(
+	fieldWatchGroups []FieldWatchGroup,
+	deviceInfo deviceinfo.Provider,
+) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
+	return d.watchDeviceFieldGroups(fieldWatchGroups, deviceInfo, nil, false, false, true)
 }
 
 func (d *DeviceWatcher) watchDeviceFieldGroups(
@@ -232,6 +243,7 @@ func (d *DeviceWatcher) watchDeviceFieldGroups(
 	updateFreqInUsecOverride *int64,
 	computeInstanceFieldEntities bool,
 	parentGPUsOnly bool,
+	allGPUScopes bool,
 ) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
 	resources := &WatchResources{}
 
@@ -243,7 +255,7 @@ func (d *DeviceWatcher) watchDeviceFieldGroups(
 	case dcgm.FE_CPU_CORE:
 		resources.groups, err = d.createCPUCoreGroupsSimple(deviceInfo)
 	default:
-		resources.groups, err = d.createGroupsSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
+		resources.groups, err = d.createGroupsSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly, allGPUScopes)
 	}
 	if err != nil {
 		resources.Cleanup()
@@ -324,9 +336,12 @@ func (d *DeviceWatcher) createGenericGroup(
 	deviceInfo deviceinfo.Provider,
 	computeInstanceFieldEntities bool,
 	parentGPUsOnly bool,
+	allGPUScopes bool,
 ) (*dcgm.GroupHandle, func(), error) {
 	var monitoringInfo []devicemonitoring.Info
 	switch {
+	case allGPUScopes:
+		monitoringInfo = devicemonitoring.GetMonitoredEntitiesAtAllGPUScopes(deviceInfo)
 	case parentGPUsOnly:
 		monitoringInfo = devicemonitoring.GetParentGPUsForMonitoredGPUInstances(deviceInfo)
 	case computeInstanceFieldEntities:
@@ -492,8 +507,9 @@ func (d *DeviceWatcher) createGroupsSimple(
 	deviceInfo deviceinfo.Provider,
 	computeInstanceFieldEntities bool,
 	parentGPUsOnly bool,
+	allGPUScopes bool,
 ) ([]dcgm.GroupHandle, error) {
-	group, err := d.createGenericGroupSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
+	group, err := d.createGenericGroupSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly, allGPUScopes)
 	if err != nil {
 		return nil, err
 	}
@@ -517,8 +533,9 @@ func (d *DeviceWatcher) createGenericGroupSimple(
 	deviceInfo deviceinfo.Provider,
 	computeInstanceFieldEntities bool,
 	parentGPUsOnly bool,
+	allGPUScopes bool,
 ) (*dcgm.GroupHandle, error) {
-	group, _, err := d.createGenericGroup(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
+	group, _, err := d.createGenericGroup(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly, allGPUScopes)
 	return group, err
 }
 
