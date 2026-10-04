@@ -49,7 +49,7 @@ func NewXIDCollector(
 
 	collector := xidCollector{}
 	var err error
-	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+	deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 
 	collector.expCollector, err = newExpCollector(
 		counterList.LabelCounters(),

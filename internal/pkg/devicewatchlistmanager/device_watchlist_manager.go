@@ -26,6 +26,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
@@ -43,6 +44,7 @@ type WatchList struct {
 	deviceFields           []dcgm.Short
 	watchFields            []dcgm.Short
 	computeInstanceFields  []dcgm.Short
+	allGPUScopes           bool
 	fieldsAtMultipleScopes []dcgm.Short
 	fieldWatchGroups       []devicewatcher.FieldWatchGroup
 	deviceGroups           []dcgm.GroupHandle
@@ -137,6 +139,7 @@ func (d *WatchList) SetDeviceFields(deviceFields []dcgm.Short) {
 	d.deviceFields = deviceFields
 	d.computeInstanceFields = nil
 	d.fieldsAtMultipleScopes = nil
+	d.allGPUScopes = false
 	d.watchFields = buildWatchFields(d.deviceFields, d.labelDeviceFields)
 	d.fieldWatchGroups = d.fieldWatchGroupsForFields(d.watchFields)
 }
@@ -145,8 +148,26 @@ func (d *WatchList) SetDeviceFieldsWithoutLabelWatches(deviceFields []dcgm.Short
 	d.deviceFields = deviceFields
 	d.computeInstanceFields = nil
 	d.fieldsAtMultipleScopes = nil
+	d.allGPUScopes = false
 	d.watchFields = dedupeFields(d.deviceFields)
 	d.fieldWatchGroups = d.fieldWatchGroupsForFields(d.watchFields)
+}
+
+// SetDeviceFieldsForAllGPUScopes configures historical source fields at every
+// required GPU scope. Label fields remain available for latest-value reads, but
+// are excluded from the history watch.
+func (d *WatchList) SetDeviceFieldsForAllGPUScopes(deviceFields []dcgm.Short) {
+	d.SetDeviceFieldsWithoutLabelWatches(deviceFields)
+	d.allGPUScopes = true
+}
+
+// MonitoredEntities returns the same entities used by the watch so historical
+// collectors can emit values from compute instances and required parent GPUs.
+func (d *WatchList) MonitoredEntities() []devicemonitoring.Info {
+	if d.allGPUScopes {
+		return devicemonitoring.GetMonitoredEntitiesAtAllGPUScopes(d.deviceInfo)
+	}
+	return devicemonitoring.GetMonitoredEntities(d.deviceInfo)
 }
 
 func (d *WatchList) LabelDeviceFields() []dcgm.Short {
@@ -170,6 +191,16 @@ func (d *WatchList) IsEmpty() bool {
 }
 
 func (d *WatchList) Watch() ([]func(), error) {
+	if d.allGPUScopes {
+		groups, fieldGroups, cleanups, err := d.watcher.WatchDeviceFieldGroupsForAllGPUScopes(
+			d.fieldWatchGroups,
+			d.deviceInfo,
+		)
+		d.deviceGroups = groups
+		d.deviceFieldGroups = fieldGroups
+		return cleanups, err
+	}
+
 	if len(d.computeInstanceFields) == 0 {
 		groups, fieldGroups, cleanups, err := d.watcher.WatchDeviceFieldGroups(
 			d.fieldWatchGroups,

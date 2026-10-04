@@ -60,6 +60,12 @@ type Watcher interface {
 		[]FieldWatchGroup,
 		deviceinfo.Provider,
 	) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error)
+	// WatchDeviceFieldGroupsForAllGPUScopes watches each selected GPU, GPU instance,
+	// child compute instance, and required parent GPU once for historical collection.
+	WatchDeviceFieldGroupsForAllGPUScopes(
+		[]FieldWatchGroup,
+		deviceinfo.Provider,
+	) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error)
 	// WatchDeviceFieldGroupsForParentGPUs watches only unselected parent GPUs for multi-scope fields.
 	WatchDeviceFieldGroupsForParentGPUs(
 		[]FieldWatchGroup,

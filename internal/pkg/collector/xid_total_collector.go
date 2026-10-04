@@ -29,7 +29,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
@@ -56,7 +55,7 @@ type xidTotalCollector struct {
 func (c *xidTotalCollector) GetMetrics() (MetricsByCounter, error) {
 	totals := c.snapshotTotals()
 	metrics := make(MetricsByCounter)
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
+	monitoringInfo := c.deviceWatchList.MonitoredEntities()
 
 	uuid := "UUID"
 	if c.config.UseOldNamespace {
@@ -169,7 +168,7 @@ func NewXIDTotalCollector(
 	}
 
 	initialSince := time.Now()
-	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+	deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 	expCollector, err := newExpCollector(
 		counterList.LabelCounters(),
 		hostname,

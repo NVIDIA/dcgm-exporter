@@ -88,6 +88,23 @@ func (mr *MockWatcherMockRecorder) WatchDeviceFieldGroups(arg0, arg1 any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchDeviceFieldGroups", reflect.TypeOf((*MockWatcher)(nil).WatchDeviceFieldGroups), arg0, arg1)
 }
 
+// WatchDeviceFieldGroupsForAllGPUScopes mocks base method.
+func (m *MockWatcher) WatchDeviceFieldGroupsForAllGPUScopes(arg0 []devicewatcher.FieldWatchGroup, arg1 deviceinfo.Provider) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WatchDeviceFieldGroupsForAllGPUScopes", arg0, arg1)
+	ret0, _ := ret[0].([]dcgm.GroupHandle)
+	ret1, _ := ret[1].([]dcgm.FieldHandle)
+	ret2, _ := ret[2].([]func())
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
+}
+
+// WatchDeviceFieldGroupsForAllGPUScopes indicates an expected call of WatchDeviceFieldGroupsForAllGPUScopes.
+func (mr *MockWatcherMockRecorder) WatchDeviceFieldGroupsForAllGPUScopes(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchDeviceFieldGroupsForAllGPUScopes", reflect.TypeOf((*MockWatcher)(nil).WatchDeviceFieldGroupsForAllGPUScopes), arg0, arg1)
+}
+
 // WatchDeviceFieldGroupsForComputeInstanceFields mocks base method.
 func (m *MockWatcher) WatchDeviceFieldGroupsForComputeInstanceFields(arg0 []devicewatcher.FieldWatchGroup, arg1 deviceinfo.Provider) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
 	m.ctrl.T.Helper()

@@ -27,7 +27,6 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
@@ -85,7 +84,7 @@ func (c *expCollector) getMetrics() (MetricsByCounter, error) {
 		}
 	}
 
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
+	monitoringInfo := c.deviceWatchList.MonitoredEntities()
 	metrics := make(MetricsByCounter)
 	useOld := c.config.UseOldNamespace
 	uuid := "UUID"

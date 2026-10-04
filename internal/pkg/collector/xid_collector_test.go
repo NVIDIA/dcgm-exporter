@@ -155,7 +155,7 @@ func TestNewXIDCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+				watcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).Return(nil,
 					nil,
 					sampleCleanups, fmt.Errorf("some error"))
 			},
@@ -181,7 +181,7 @@ func TestNewXIDCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+				watcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).Return(nil,
 					nil,
 					sampleCleanups, nil)
 			},
@@ -189,7 +189,7 @@ func TestNewXIDCollector(t *testing.T) {
 				hostname string, config *appconfig.Config,
 				deviceWatchList devicewatchlistmanager.WatchList,
 			) Collector {
-				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+				deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 				return &xidCollector{
 					expCollector{
 						baseExpCollector: baseExpCollector{
@@ -222,7 +222,7 @@ func TestNewXIDCollector(t *testing.T) {
 					mockDeviceWatcher, sampleCollectorInterval),
 			},
 			conditions: func(watcher *mockdevicewatcher.MockWatcher) {
-				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return(nil,
+				watcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).Return(nil,
 					nil,
 					sampleCleanups, nil)
 			},
@@ -230,7 +230,7 @@ func TestNewXIDCollector(t *testing.T) {
 				hostname string, config *appconfig.Config,
 				deviceWatchList devicewatchlistmanager.WatchList,
 			) Collector {
-				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+				deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 				return &xidCollector{
 					expCollector{
 						baseExpCollector: baseExpCollector{
@@ -419,7 +419,7 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{gpu2Value}},
 				}
 
-				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+				watcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
 					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
@@ -473,7 +473,7 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, Value: [4096]byte{xidErr2}},
 				}
 
-				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+				watcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
 					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
@@ -536,7 +536,7 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 					{EntityGroupId: dcgm.FE_GPU, EntityID: gpuID2, FieldID: dcgm.DCGM_FI_DEV_XID_ERRORS, FieldType: dcgm.DCGM_FT_INT64, Value: blankValue},
 				}
 
-				watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
+				watcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).Return([]dcgm.GroupHandle{mockGroupHandle1},
 					[]dcgm.FieldHandle{mockFieldGroupHandle},
 					mockCleanups, nil)
 
@@ -612,7 +612,7 @@ func Test_xidCollector_GetMetricsReadsAllDeviceFieldGroups(t *testing.T) {
 	slowFieldGroup := dcgm.FieldHandle{}
 	slowFieldGroup.SetHandle(uintptr(3))
 
-	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).
 		Return(
 			[]dcgm.GroupHandle{groupHandle},
 			[]dcgm.FieldHandle{fastFieldGroup, slowFieldGroup},
@@ -713,7 +713,7 @@ func Test_xidCollector_GetMetricsUsesConfiguredWindow(t *testing.T) {
 			fieldGroupHandle := dcgm.FieldHandle{}
 			fieldGroupHandle.SetHandle(uintptr(1))
 
-			mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+			mockDeviceWatcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).
 				Return([]dcgm.GroupHandle{groupHandle}, []dcgm.FieldHandle{fieldGroupHandle}, nil, nil)
 
 			deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, 1)
@@ -767,7 +767,7 @@ func Test_xidCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
 	mockFieldGroupHandle := dcgm.FieldHandle{}
 	mockFieldGroupHandle.SetHandle(uintptr(1))
 
-	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).
 		Return([]dcgm.GroupHandle{mockGroupHandle}, []dcgm.FieldHandle{mockFieldGroupHandle}, nil, nil)
 
 	counterList := counters.CounterList{
@@ -827,7 +827,7 @@ func Test_xidCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
 	groupHandle.SetHandle(uintptr(1))
 	fieldGroupHandle := dcgm.FieldHandle{}
 	fieldGroupHandle.SetHandle(uintptr(1))
-	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroupsForAllGPUScopes(gomock.Any(), gomock.Any()).
 		Return([]dcgm.GroupHandle{groupHandle}, []dcgm.FieldHandle{fieldGroupHandle}, nil, nil)
 
 	deviceWatchList := devicewatchlistmanager.NewWatchList(

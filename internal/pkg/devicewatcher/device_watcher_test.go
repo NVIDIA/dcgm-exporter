@@ -1406,7 +1406,7 @@ func TestDeviceWatcher_createGenericGroupWithoutComputeInstances(t *testing.T) {
 			defer f()
 
 			d := &DeviceWatcher{}
-			gotGroupID, gotFunc, err := d.createGenericGroup(mockDeviceInfo, false, false)
+			gotGroupID, gotFunc, err := d.createGenericGroup(mockDeviceInfo, false, false, false)
 			gotFunc() // Ensure DestroyGroup function gets called
 
 			if !tt.wantErr {
