@@ -148,3 +148,128 @@ func TestFileWatcher_WatchReturnsDirectoryError(t *testing.T) {
 		t.Fatalf("expected directory watch error, got %q", got)
 	}
 }
+
+func TestFileWatcher_WatchReportsAtomicReplacement(t *testing.T) {
+	for _, projected := range []bool{false, true} {
+		name := "regular file"
+		if projected {
+			name = "projected ConfigMap"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			file := filepath.Join(dir, "metrics.csv")
+			stamp := time.Unix(1700000000, 0)
+			write := func(name, content string) {
+				t.Helper()
+				if err := os.WriteFile(name, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if projected {
+					stamp = time.Now()
+				}
+				if err := os.Chtimes(name, stamp, stamp); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if projected {
+				if err := os.Mkdir(filepath.Join(dir, "..old"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				write(filepath.Join(dir, "..old", "metrics.csv"), "before")
+				if err := os.Symlink("..old", filepath.Join(dir, "..data")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("..data/metrics.csv", file); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				write(file, "before")
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			changed := make(chan string, 8)
+			done := make(chan error, 1)
+			go func() {
+				done <- NewFileWatcher(file, WithDebounceDelay(10*time.Millisecond)).Watch(ctx, func() {
+					data, err := os.ReadFile(file)
+					if err != nil {
+						changed <- err.Error()
+						return
+					}
+					changed <- string(data)
+				})
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case err := <-done:
+					if !errors.Is(err, context.Canceled) {
+						t.Errorf("expected context cancellation, got %v", err)
+					}
+				case <-time.After(time.Second):
+					t.Error("file watcher did not stop")
+				}
+			})
+			time.Sleep(50 * time.Millisecond)
+
+			for _, version := range []string{"after", "latest"} {
+				if projected {
+					generation := ".." + version
+					if err := os.Mkdir(filepath.Join(dir, generation), 0o700); err != nil {
+						t.Fatal(err)
+					}
+					write(filepath.Join(dir, generation, "metrics.csv"), version)
+					if err := os.Symlink(generation, filepath.Join(dir, "..data_tmp")); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Rename(filepath.Join(dir, "..data_tmp"), filepath.Join(dir, "..data")); err != nil {
+						t.Fatal(err)
+					}
+					old := "..old"
+					if version == "latest" {
+						old = "..after"
+					}
+					if err := os.RemoveAll(filepath.Join(dir, old)); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					write(filepath.Join(dir, "replacement"), version)
+					if err := os.Rename(filepath.Join(dir, "replacement"), file); err != nil {
+						t.Fatal(err)
+					}
+				}
+				select {
+				case got := <-changed:
+					if got != version {
+						t.Fatalf("expected updated contents %q, got %q", version, got)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("file watcher did not report the replacement")
+				}
+			}
+
+			if err := os.WriteFile(filepath.Join(dir, "unrelated"), []byte("ignored"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-changed:
+				t.Fatalf("unrelated directory event triggered reload: %q", got)
+			case <-time.After(50 * time.Millisecond):
+			}
+
+			if err := os.Remove(file); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(50 * time.Millisecond)
+			write(file, "recreated")
+			select {
+			case got := <-changed:
+				if got != "recreated" {
+					t.Fatalf("expected recreated contents, got %q", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("file watcher did not recover after recreation")
+			}
+		})
+	}
+}

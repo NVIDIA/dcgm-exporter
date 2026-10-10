@@ -90,16 +90,10 @@ func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 		return fmt.Errorf("failed to watch directory %s: %w", dir, err)
 	}
 
-	// Initialize lastModTime with current file timestamp to avoid spurious reload on startup
-	// We want to detect file CHANGES, not the initial state
+	// Keep the initial target's identity as well as its timestamp. Atomic
+	// replacements can preserve the timestamp while changing the file itself.
 	filePath := filepath.Join(dir, file)
-	var lastModTime time.Time
-	if info, err := os.Stat(filePath); err == nil {
-		lastModTime = info.ModTime()
-		slog.Debug("Initialized file watcher with current timestamp",
-			slog.String("file", fw.filePath),
-			slog.Time("initial_modtime", lastModTime))
-	}
+	lastInfo, _ := os.Stat(filePath)
 
 	var (
 		debounceTimer *time.Timer
@@ -116,14 +110,13 @@ func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 			return ctx.Err()
 
 		case <-timerCh:
-			// Debounce timer expired, check if file was actually modified
-			info, err := os.Stat(filepath.Join(dir, file))
-			if err == nil {
-				modTime := info.ModTime()
-				if modTime != lastModTime {
-					lastModTime = modTime
-					onChange()
-				}
+			info, err := os.Stat(filePath)
+			if os.IsNotExist(err) {
+				lastInfo = nil
+			} else if err == nil && (lastInfo == nil || !os.SameFile(lastInfo, info) ||
+				!info.ModTime().Equal(lastInfo.ModTime())) {
+				lastInfo = info
+				onChange()
 			}
 			timerCh = nil
 
@@ -132,7 +125,10 @@ func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 				return fmt.Errorf("watcher events channel closed")
 			}
 
-			if event.Op&fw.eventMask != 0 && filepath.Base(event.Name) == file {
+			// Projected ConfigMaps update the ..data symlink, leaving the CSV
+			// symlink unchanged. Check the target after directory events; the
+			// identity/timestamp comparison ignores unrelated file changes.
+			if event.Op&fw.eventMask != 0 {
 				// Reset or create debounce timer
 				if debounceTimer == nil {
 					debounceTimer = time.NewTimer(fw.debounceDelay)
