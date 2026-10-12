@@ -273,7 +273,6 @@ func (p *PodMapper) createPerProcessMetrics(
 	if len(devicePods) == 0 {
 		return nil, nil
 	}
-
 	data := dataMap.metrics[metricsKey]
 	podValues := buildPodValueMap(dataMap.pidToPod, data, counter.FieldName)
 	maps.Copy(podValues, buildIdlePodValues(podValues, devicePods))
@@ -304,6 +303,7 @@ func (p *PodMapper) createPerProcessMetrics(
 		if podInfo.VGPU != "" {
 			metric.Attributes[vgpuAttribute] = podInfo.VGPU
 		}
+		setDRAAttributes(metric.Attributes, podInfo.DynamicResources)
 		if len(podInfo.Labels) > 0 {
 			copyPodLabels(&metric, podInfo.Labels, getMetricGroup())
 		}
@@ -431,6 +431,11 @@ func (p *PodMapper) getMappings(deviceInfo deviceinfo.Provider) (map[string][]Po
 
 	if p.Config.KubernetesEnableDRA {
 		deviceToPodsDRA = p.toDeviceToPodsDRA(pods, deviceInfo)
+		if p.Config.KubernetesVirtualGPUs && p.ResourceSliceManager != nil {
+			// Add DRA pods so the sharing branch also attributes their usage.
+			mergeDRAIntoSharingPods(deviceToPods, deviceToPodsDRA,
+				getGPUUUIDToDeviceID(deviceInfo, p.Config.KubernetesGPUIdType))
+		}
 	}
 
 	return deviceToPods, deviceToPod, deviceToPodsDRA, nil
@@ -472,7 +477,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 			client:    nvmlprovider.Client(),
 			pidMapper: newPIDToPodMapper(),
 		}
-		perProcessData := processCollector.Collect(gpuUUIDToDeviceID, deviceToPods, deviceInfo)
+		perProcessData := processCollector.Collect(gpuUUIDToDeviceID, filterPerProcessCandidates(deviceToPods), deviceInfo)
 
 		for counter := range metrics {
 			var newmetrics []collector.Metric
@@ -506,6 +511,7 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 					if pi.VGPU != "" {
 						metric.Attributes[vgpuAttribute] = pi.VGPU
 					}
+					setDRAAttributes(metric.Attributes, pi.DynamicResources)
 					if len(pi.Labels) > 0 {
 						copyPodLabels(&metric, pi.Labels, getMetricGroup())
 					}
@@ -561,33 +567,49 @@ func (p *PodMapper) Process(metrics collector.MetricsByCounter, deviceInfo devic
 		if deviceToPodsDRA != nil {
 			slog.Debug(fmt.Sprintf("Device to pod mapping for DRA: %+v", deviceToPodsDRA))
 
+			// DRA mappings are keyed by GPU UUID (or GPU instance identifier),
+			// regardless of the configured GPU id type.
+			draProcessCollector := &perProcessCollector{
+				client:    nvmlprovider.Client(),
+				pidMapper: newPIDToPodMapper(),
+			}
+			draPerProcessData := draProcessCollector.Collect(
+				getGPUUUIDToDeviceID(deviceInfo, appconfig.GPUUID),
+				filterPerProcessCandidates(deviceToPodsDRA),
+				deviceInfo,
+			)
+
 			for counter := range metrics {
 				var newmetrics []collector.Metric
 				for j, val := range metrics[counter] {
-					deviceID, err := val.GetIDOfType(p.Config.KubernetesGPUIdType)
+					lookupKey, err := val.GetIDOfType(appconfig.GPUUID)
 					if err != nil {
 						return err
 					}
 
-					podInfos := deviceToPodsDRA[deviceID]
+					podInfos := deviceToPodsDRA[lookupKey]
 					if podInfos != nil {
+						if isPerProcessMetric(counter.FieldName) {
+							perProcessMetrics, err := p.createPerProcessMetrics(
+								val,
+								counter,
+								metrics[counter][j],
+								draPerProcessData,
+								getMetricGroup,
+							)
+							if err != nil {
+								return err
+							}
+							if perProcessMetrics != nil {
+								newmetrics = append(newmetrics, metrics[counter][j]) // original device-level metric
+								newmetrics = append(newmetrics, perProcessMetrics...)
+								continue
+							}
+						}
 						for _, pi := range podInfos {
 							metric := cloneMetric(metrics[counter][j])
 							p.addPodIdentityAttributes(&metric, pi)
-							if dr := pi.DynamicResources; dr != nil {
-								metric.Attributes[draClaimName] = dr.ClaimName
-								metric.Attributes[draClaimNamespace] = dr.ClaimNamespace
-								metric.Attributes[draDriverName] = dr.DriverName
-								metric.Attributes[draPoolName] = dr.PoolName
-								metric.Attributes[draDeviceName] = dr.DeviceName
-
-								if migInfo := dr.MIGInfo; migInfo != nil {
-									metric.Attributes[draMigProfile] = migInfo.Profile
-									if migInfo.MIGDeviceUUID != "" {
-										metric.Attributes[draMigDeviceUUID] = migInfo.MIGDeviceUUID
-									}
-								}
-							}
+							setDRAAttributes(metric.Attributes, pi.DynamicResources)
 							if len(pi.Labels) > 0 {
 								copyPodLabels(&metric, pi.Labels, getMetricGroup())
 							}
@@ -632,6 +654,50 @@ func (p *PodMapper) addPodIdentityAttributes(metric *collector.Metric, podInfo P
 
 	if p.Config.KubernetesEnablePodUID {
 		metric.Attributes[uidAttribute] = podInfo.UID
+	}
+}
+
+// setDRAAttributes adds DRA claim attributes; a no-op for non-DRA pods.
+func setDRAAttributes(attrs map[string]string, dr *DynamicResourceInfo) {
+	if dr == nil {
+		return
+	}
+	attrs[draClaimName] = dr.ClaimName
+	attrs[draClaimNamespace] = dr.ClaimNamespace
+	attrs[draDriverName] = dr.DriverName
+	attrs[draPoolName] = dr.PoolName
+	attrs[draDeviceName] = dr.DeviceName
+	if migInfo := dr.MIGInfo; migInfo != nil {
+		attrs[draMigProfile] = migInfo.Profile
+		if migInfo.MIGDeviceUUID != "" {
+			attrs[draMigDeviceUUID] = migInfo.MIGDeviceUUID
+		}
+	}
+}
+
+// mergeDRAIntoSharingPods adds DRA pods to the sharing map, remapping
+// whole-GPU UUID keys to the configured GPU id type. A pod and container
+// already present under the key (e.g. via the device plugin) is not added again.
+func mergeDRAIntoSharingPods(sharing, dra map[string][]PodInfo, uuidToDeviceID map[string]string) {
+	for key, podInfos := range dra {
+		targetKey := key
+		if deviceID, ok := uuidToDeviceID[key]; ok {
+			targetKey = deviceID
+		}
+		existing := sharing[targetKey]
+		for _, podInfo := range podInfos {
+			duplicate := false
+			for _, entry := range existing {
+				if samePod(entry, podInfo) && entry.Container == podInfo.Container {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				existing = append(existing, podInfo)
+			}
+		}
+		sharing[targetKey] = existing
 	}
 }
 

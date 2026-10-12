@@ -125,6 +125,19 @@ func (c *perProcessCollector) processMIGEnabledGPU(
 	gpuUUID := gpu.DeviceInfo.UUID
 	gpuIndex := gpu.DeviceInfo.GPU
 
+	// Skip the NVML query when no instance on this GPU has pods.
+	hasInstancePods := false
+	for _, instance := range gpu.GPUInstances {
+		migDeviceID := fmt.Sprintf("%d-%d", gpuIndex, instance.Info.NvmlInstanceId)
+		if len(deviceToPods[migDeviceID]) > 0 {
+			hasInstancePods = true
+			break
+		}
+	}
+	if !hasInstancePods {
+		return nil, nil, nil
+	}
+
 	allMIGProcessMemory, err := c.client.GetAllMIGDevicesProcessMemory(gpuUUID)
 	if err != nil {
 		slog.Debug("Failed to get MIG device process memory", "gpuUUID", gpuUUID, "error", err)
@@ -188,4 +201,38 @@ func (c *perProcessCollector) Collect(gpuDeviceMap map[string]string, deviceToPo
 	}
 
 	return result
+}
+
+// needsPerProcessAttribution returns false when a single DRA pod owns the
+// device, whose device-level value then is the per-pod value.
+func needsPerProcessAttribution(pods []PodInfo) bool {
+	if len(pods) == 0 {
+		return false
+	}
+	for _, podInfo := range pods {
+		if podInfo.DynamicResources == nil || !samePod(podInfo, pods[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+// samePod compares pods by UID, falling back to namespace and name when a UID
+// is not populated yet (the informer cache may lag behind the kubelet).
+func samePod(a, b PodInfo) bool {
+	if a.UID != "" && b.UID != "" {
+		return a.UID == b.UID
+	}
+	return a.Namespace == b.Namespace && a.Name == b.Name
+}
+
+// filterPerProcessCandidates drops devices that need no per-process collection.
+func filterPerProcessCandidates(deviceToPods map[string][]PodInfo) map[string][]PodInfo {
+	filtered := make(map[string][]PodInfo, len(deviceToPods))
+	for key, pods := range deviceToPods {
+		if needsPerProcessAttribution(pods) {
+			filtered[key] = pods
+		}
+	}
+	return filtered
 }
