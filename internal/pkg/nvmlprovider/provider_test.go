@@ -17,6 +17,7 @@
 package nvmlprovider
 
 import (
+	"errors"
 	"math"
 	"testing"
 
@@ -660,4 +661,36 @@ func TestGetMIGDeviceInfoByID_EdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// stubNVMLSymbolMissing simulates an NVML library from an older driver that does not export name.
+func stubNVMLSymbolMissing(t *testing.T, name string) {
+	t.Helper()
+	original := lookupNVMLSymbol
+	t.Cleanup(func() { lookupNVMLSymbol = original })
+	lookupNVMLSymbol = func(symbol string) error {
+		if symbol == name {
+			return errors.New("undefined symbol: " + symbol)
+		}
+		return nil
+	}
+}
+
+func TestGetGPUInstanceProfileName_When_Symbol_Missing(t *testing.T) {
+	stubNVMLSymbolMissing(t, gpuInstanceProfileInfoByIDVSymbol)
+	provider := nvmlProvider{initialized: true}
+
+	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", 9)
+
+	require.Error(t, err)
+	assert.Empty(t, result)
+	assert.Contains(t, err.Error(), gpuInstanceProfileInfoByIDVSymbol)
+}
+
+func TestGPUInstanceProfileInfoByID_When_Symbol_Missing(t *testing.T) {
+	stubNVMLSymbolMissing(t, gpuInstanceProfileInfoByIDVSymbol)
+
+	_, ret := goNVMLGPUInstanceAPI{}.gpuInstanceProfileInfoByID(nil, 9)
+
+	assert.Equal(t, nvml.ERROR_FUNCTION_NOT_FOUND, ret)
 }

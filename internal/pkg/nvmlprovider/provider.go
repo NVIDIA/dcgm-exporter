@@ -42,6 +42,15 @@ type gpuInstanceAPI interface {
 	gpuInstanceInfo(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return)
 }
 
+// gpuInstanceProfileInfoByIDVSymbol is not exported by every supported driver's NVML library.
+const gpuInstanceProfileInfoByIDVSymbol = "nvmlDeviceGetGpuInstanceProfileInfoByIdV"
+
+// lookupNVMLSymbol reports whether the loaded NVML library exports a symbol. It is a variable so
+// tests can simulate an older driver.
+var lookupNVMLSymbol = func(name string) error {
+	return nvml.Extensions().LookupSymbol(name)
+}
+
 // goNVMLGPUInstanceAPI adapts package-level go-nvml calls to gpuInstanceAPI.
 // Package-level calls share the nvml.Init and nvml.Shutdown lifecycle owned by nvmlProvider.
 type goNVMLGPUInstanceAPI struct{}
@@ -66,6 +75,9 @@ func (goNVMLGPUInstanceAPI) gpuInstanceProfileInfoByID(
 	device nvml.Device,
 	profileID int,
 ) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+	if err := lookupNVMLSymbol(gpuInstanceProfileInfoByIDVSymbol); err != nil {
+		return nvml.GpuInstanceProfileInfo_v2{}, nvml.ERROR_FUNCTION_NOT_FOUND
+	}
 	return nvml.DeviceGetGpuInstanceProfileInfoByIdV(device, profileID).V2()
 }
 
@@ -171,6 +183,12 @@ func (n nvmlProvider) GetGPUInstanceProfileName(parentGPUUUID string, profileID 
 
 	if profileID > uint(math.MaxInt) {
 		return "", fmt.Errorf("GPU instance profile ID %d exceeds maximum int value %d", profileID, math.MaxInt)
+	}
+
+	// Older drivers do not export this symbol; calling it would abort the process with an
+	// undefined-symbol error, so return an error and let the caller use the DCGM profile name.
+	if err := lookupNVMLSymbol(gpuInstanceProfileInfoByIDVSymbol); err != nil {
+		return "", fmt.Errorf("failed to get GPU instance profile name: %w", err)
 	}
 
 	device, ret := nvml.DeviceGetHandleByUUID(parentGPUUUID)
