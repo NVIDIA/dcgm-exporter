@@ -310,14 +310,21 @@ When debug dumps are enabled, files are stored on the host filesystem at the spe
    ```
 
 2. **From within the pod:**
+
+   The default `-distroless` image does not include `ls`, `cat`, or `tar`.
+   Use the shell's file name expansion to list the files:
+
    ```bash
-   kubectl exec -n <namespace> <pod-name> -- ls -la /tmp/dcgm-exporter-debug/
+   kubectl exec -n <namespace> <pod-name> -- \
+     bash -c 'shopt -s nullglob; printf "%s\n" /tmp/dcgm-exporter-debug/*'
    ```
 
-3. **Copy files from pod:**
-   ```bash
-   kubectl cp <namespace>/<pod-name>:/tmp/dcgm-exporter-debug/ ./debug-files/
-   ```
+3. **Copy files:**
+
+   `kubectl cp` runs `tar` inside the container, so it fails with the
+   `-distroless` image (`exec: "tar": executable file not found in $PATH`).
+   The dump directory is a `hostPath` volume, so copy the files from the
+   node instead (see item 1).
 
 #### Example Usage
 
@@ -340,7 +347,8 @@ debugDump:
 helm install dcgm-exporter ./deployment -f my-debug-values.yaml
 
 # Check if debug files are being created (adjust path based on your configuration)
-kubectl exec -n dcgm-exporter <pod-name> -- ls -la /var/log/dcgm-exporter-debug/
+kubectl exec -n dcgm-exporter <pod-name> -- \
+  bash -c 'shopt -s nullglob; printf "%s\n" /var/log/dcgm-exporter-debug/*'
 ```
 
 **Or use default configuration:**
@@ -350,7 +358,8 @@ kubectl exec -n dcgm-exporter <pod-name> -- ls -la /var/log/dcgm-exporter-debug/
 helm install dcgm-exporter ./deployment --set debugDump.enabled=true
 
 # Check if debug files are being created (using default directory)
-kubectl exec -n dcgm-exporter <pod-name> -- ls -la /tmp/dcgm-exporter-debug/
+kubectl exec -n dcgm-exporter <pod-name> -- \
+  bash -c 'shopt -s nullglob; printf "%s\n" /tmp/dcgm-exporter-debug/*'
 ```
 
 ### Other Configuration Options
