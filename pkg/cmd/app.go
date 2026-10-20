@@ -114,6 +114,8 @@ const (
 	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
 	CLIEnablePprof                      = "enable-pprof"
+	CLIDaemon                           = "daemon"
+	CLIDaemonLogFile                    = "daemon-log-file"
 )
 
 var (
@@ -438,6 +440,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			Usage:   "Enable /debug/pprof/ HTTP endpoints for profiling and debugging",
 			EnvVars: []string{"DCGM_EXPORTER_ENABLE_PPROF"},
 		},
+		&cli.BoolFlag{
+			Name:    CLIDaemon,
+			Value:   false,
+			Usage:   "Start dcgm-exporter in the background in a new session and exit. Not for containers or service managers, which expect the process to stay in the foreground.",
+			EnvVars: []string{"DCGM_EXPORTER_DAEMON"},
+		},
+		&cli.StringFlag{
+			Name:    CLIDaemonLogFile,
+			Value:   "",
+			Usage:   "File that receives the output of the background process started by --daemon. The output is discarded when empty.",
+			EnvVars: []string{"DCGM_EXPORTER_DAEMON_LOG_FILE"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -474,6 +488,10 @@ func newOSWatcher(sigs ...os.Signal) (chan os.Signal, func()) {
 }
 
 func action(c *cli.Context) error {
+	if c.Bool(CLIDaemon) && os.Getenv(daemonChildEnv) == "" {
+		return startDaemon(os.Args, c.String(CLIDaemonLogFile))
+	}
+
 	return stdout.Capture(context.Background(), func() (err error) {
 		// The purpose of this function is to capture any panic that may occur
 		// during initialization and return an error.
