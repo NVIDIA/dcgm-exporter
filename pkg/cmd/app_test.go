@@ -411,6 +411,8 @@ func TestNewApp_ConfiguresVersionFlagsAndAction(t *testing.T) {
 		CLIEnableExporterMetrics,
 		CLIEnableGPUBindUnbindWatch,
 		CLIGPUBindUnbindPollInterval,
+		CLIDaemon,
+		CLIDaemonLogFile,
 	} {
 		assert.Truef(t, names[name], "expected flag %q to be registered", name)
 	}
@@ -477,6 +479,8 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 		assert.Equal(t, defaults.EnableGPUBindUnbindWatch, c.Bool(CLIEnableGPUBindUnbindWatch))
 		assert.Equal(t, defaults.GPUBindUnbindPollInterval.String(), c.String(CLIGPUBindUnbindPollInterval))
 		assert.Equal(t, defaults.EnablePprof, c.Bool(CLIEnablePprof))
+		assert.False(t, c.Bool(CLIDaemon))
+		assert.Empty(t, c.String(CLIDaemonLogFile))
 
 		cfg, err = contextToConfig(c)
 		return err
