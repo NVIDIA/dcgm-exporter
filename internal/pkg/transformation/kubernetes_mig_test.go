@@ -22,15 +22,18 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc"
 
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
 
+	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
@@ -1163,4 +1166,118 @@ func (s *CustomMockPodResourcesServer) GetAllocatableResources(
 	ctx context.Context, req *podresourcesapi.AllocatableResourcesRequest,
 ) (*podresourcesapi.AllocatableResourcesResponse, error) {
 	return &podresourcesapi.AllocatableResourcesResponse{}, nil
+}
+
+// TestPodMapperProcess_MIGPodNotAttributedToNonGPUMetrics covers the
+// switch, CPU and CPU core entity groups. Their device info has no GPUs, so the
+// MIG parent cannot be resolved and the pod must not be keyed under an empty
+// GPU instance identifier that matches every metric without a GPU UUID.
+func TestPodMapperProcess_MIGPodNotAttributedToNonGPUMetrics(t *testing.T) {
+	testutils.RequireLinux(t)
+
+	const podResources = `{
+  "pod_resources": [
+    {
+      "name": "mig-pod",
+      "namespace": "team-a",
+      "containers": [
+        {
+          "name": "trainer",
+          "devices": [
+            {
+              "resource_name": "nvidia.com/mig-1g.10gb",
+              "device_ids": ["MIG-2ce7a541-c516-5dbc-a76e-26cc100d9b55"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`
+
+	tmpDir, cleanup := testutils.CreateTmpDir(t)
+	defer cleanup()
+	socketPath := tmpDir + "/kubelet.sock"
+
+	server := grpc.NewServer()
+	podresourcesapi.RegisterPodResourcesListerServer(server, &CustomMockPodResourcesServer{sampleData: podResources})
+	cleanupServer := testutils.StartMockServer(t, server, socketPath)
+	defer cleanupServer()
+
+	ctrl := gomock.NewController(t)
+	mockNVMLProvider := mocknvmlprovider.NewMockNVML(ctrl)
+	mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(&nvmlprovider.MIGDeviceInfo{
+		ParentUUID:    "GPU-be839661-c0f5-7452-284b-b875666df60c",
+		GPUInstanceID: 3,
+	}, nil).AnyTimes()
+	nvmlprovider.SetClient(mockNVMLProvider)
+
+	switchCounter := counters.Counter{
+		FieldID: dcgm.DCGM_FI_DEV_NVSWITCH_TEMP_CELSIUS, FieldName: "DCGM_FI_DEV_NVSWITCH_TEMP_CELSIUS", PromType: "gauge",
+	}
+	cpuCounter := counters.Counter{
+		FieldID: dcgm.DCGM_FI_DEV_CPU_UTIL_RATIO, FieldName: "DCGM_FI_DEV_CPU_UTIL_RATIO", PromType: "gauge",
+	}
+	cpuCoreCounter := counters.Counter{
+		FieldID: dcgm.DCGM_FI_DEV_CPU_CLOCK_CURRENT, FieldName: "DCGM_FI_DEV_CPU_CLOCK_CURRENT", PromType: "gauge",
+	}
+
+	tests := []struct {
+		name       string
+		entityType dcgm.Field_Entity_Group
+		counter    counters.Counter
+		metric     collector.Metric
+	}{
+		{
+			name:       "nvswitch",
+			entityType: dcgm.FE_SWITCH,
+			counter:    switchCounter,
+			metric: collector.Metric{
+				Counter: switchCounter, Value: "40", UUID: "UUID", NvSwitch: "nvswitch0", Hostname: "node1",
+			},
+		},
+		{
+			name:       "cpu",
+			entityType: dcgm.FE_CPU,
+			counter:    cpuCounter,
+			metric: collector.Metric{
+				Counter: cpuCounter, Value: "0.12", UUID: "UUID", GPU: "0", GPUDevice: "0", Hostname: "node1",
+			},
+		},
+		{
+			name:       "cpu core",
+			entityType: dcgm.FE_CPU_CORE,
+			counter:    cpuCoreCounter,
+			metric: collector.Metric{
+				Counter: cpuCoreCounter, Value: "2100", UUID: "UUID", GPU: "3", GPUDevice: "0", Hostname: "node1",
+			},
+		},
+	}
+
+	for _, virtualGPUs := range []bool{false, true} {
+		for _, tc := range tests {
+			t.Run(fmt.Sprintf("%s/virtualGPUs=%t", tc.name, virtualGPUs), func(t *testing.T) {
+				deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+				deviceInfo.EXPECT().InfoType().Return(tc.entityType).AnyTimes()
+				deviceInfo.EXPECT().GPUCount().Return(uint(0)).AnyTimes()
+				deviceInfo.EXPECT().GPUs().Return(nil).AnyTimes()
+
+				podMapper := NewPodMapper(&appconfig.Config{
+					KubernetesGPUIdType:       appconfig.GPUUID,
+					PodResourcesKubeletSocket: socketPath,
+					KubernetesVirtualGPUs:     virtualGPUs,
+				})
+				defer podMapper.Stop()
+
+				metrics := collector.MetricsByCounter{tc.counter: {tc.metric}}
+				require.NoError(t, podMapper.Process(metrics, deviceInfo))
+
+				require.Len(t, metrics[tc.counter], 1)
+				got := metrics[tc.counter][0]
+				require.Empty(t, got.Attributes[podAttribute])
+				require.Empty(t, got.Attributes[namespaceAttribute])
+				require.Empty(t, got.Attributes[containerAttribute])
+			})
+		}
+	}
 }

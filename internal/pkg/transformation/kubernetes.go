@@ -1063,7 +1063,11 @@ func (p *PodMapper) toDeviceToSharingPods(devicePods *podresourcesapi.ListPodRes
 					if migDevice.GPUInstanceID >= 0 {
 						giIdentifier := deviceinfo.GetGPUInstanceIdentifier(deviceInfo, migDevice.ParentUUID,
 							uint(migDevice.GPUInstanceID)) //nolint:gosec // G115: bounds checked above
-						deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+						// An empty identifier means the parent GPU is not in this entity group's
+						// device info; mapping it would match every metric without a GPU UUID.
+						if giIdentifier != "" {
+							deviceToPodsMap[giIdentifier] = append(deviceToPodsMap[giIdentifier], podInfo)
+						}
 					}
 				}
 				gpuUUID := migUUID[len(appconfig.MIG_UUID_PREFIX):]
@@ -1206,7 +1210,9 @@ func (p *PodMapper) toDeviceToPod(
 									"resourceName", resourceName,
 									"deviceIds", device.GetDeviceIds(),
 								)
-								deviceToPodMap[giIdentifier] = podInfo
+								if giIdentifier != "" {
+									deviceToPodMap[giIdentifier] = podInfo
+								}
 							}
 						} else {
 							slog.Debug(
