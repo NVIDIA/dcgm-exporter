@@ -310,6 +310,14 @@ func (c *DCGMCollector) latestValuesForFields(
 	mi devicemonitoring.Info,
 	fields []dcgm.Short,
 ) ([]dcgm.FieldValue_v1, error) {
+	switch mi.Entity.EntityGroupId {
+	case dcgm.FE_GPU, dcgm.FE_GPU_I, dcgm.FE_GPU_CI:
+		// DCP fields are watched per GPU model; requesting one that was not
+		// watched for this model returns DCGM_ST_NOT_WATCHED and would trigger
+		// the profiling watch repair loop.
+		fields = devicewatcher.FilterUnwatchedDCPFields(mi.DeviceInfo, fields)
+	}
+
 	values := make([]dcgm.FieldValue_v1, 0, len(fields))
 	for start := 0; start < len(fields); start += maxLatestValueFieldBatch {
 		end := min(start+maxLatestValueFieldBatch, len(fields))

@@ -2173,6 +2173,7 @@ func TestRunDCGMExporter_ShutdownCleansCurrentDCGMClient(t *testing.T) {
 	initialDCGM := mockdcgmprovider.NewMockDCGM(ctrl)
 	currentDCGM := mockdcgmprovider.NewMockDCGM(ctrl)
 	initialDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
+	initialDCGM.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no gpus")).AnyTimes()
 	initialDCGM.EXPECT().Cleanup().Times(0)
 	currentDCGM.EXPECT().Cleanup().Times(1)
 	dcgmprovider.SetClient(initialDCGM)
@@ -2513,6 +2514,9 @@ func withMockDCGMClient(t *testing.T) *mockdcgmprovider.MockDCGM {
 	prev := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(prev) })
 	dcgmprovider.SetClient(mock)
+	// DCP discovery enumerates GPUs to query one per model; by default report
+	// none so it falls back to the GPU 0 answer each test mocks.
+	mock.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no gpus")).AnyTimes()
 	return mock
 }
 

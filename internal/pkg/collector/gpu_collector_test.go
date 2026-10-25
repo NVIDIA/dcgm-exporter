@@ -2152,3 +2152,123 @@ func TestToString(t *testing.T) {
 		})
 	}
 }
+
+// TestLatestValuesSkipsDCPFieldsNotWatchedForModel verifies a scrape never
+// requests a DCP field the entity's GPU model was not watched for, which DCGM
+// would answer with DCGM_ST_NOT_WATCHED and trigger the repair loop.
+func TestLatestValuesSkipsDCPFieldsNotWatchedForModel(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	const a30, rtx = "NVIDIA A30", "NVIDIA RTX 2000 Ada Generation"
+	fp64 := dcgm.Short(dcgm.DCGM_FI_PROF_PIPE_FP64_ACTIVE)
+	temp := dcgm.Short(dcgm.DCGM_FI_DEV_GPU_TEMP)
+	mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(2), nil)
+	mockDCGM.EXPECT().GetDeviceInfo(uint(0)).Return(dcgm.Device{GPU: 0, Identifiers: dcgm.DeviceIdentifiers{Model: a30}}, nil)
+	mockDCGM.EXPECT().GetDeviceInfo(uint(1)).Return(dcgm.Device{GPU: 1, Identifiers: dcgm.DeviceIdentifiers{Model: rtx}}, nil)
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return([]dcgm.MetricGroup{{FieldIds: []uint{uint(fp64)}}}, nil)
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(1)).Return(nil, nil)
+	_, _, err := devicewatcher.RefreshDCPSupport()
+	require.NoError(t, err)
+	t.Cleanup(devicewatcher.ResetDCPSupport)
+
+	entity := func(id uint, model string) devicemonitoring.Info {
+		return devicemonitoring.Info{
+			Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: id},
+			DeviceInfo: dcgm.Device{GPU: id, Identifiers: dcgm.DeviceIdentifiers{Model: model}},
+		}
+	}
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{temp, fp64}).Return(nil, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{temp}).Return(nil, nil)
+
+	c := &DCGMCollector{}
+	_, err = c.latestValuesForFields(entity(0, a30), []dcgm.Short{temp, fp64})
+	require.NoError(t, err)
+	_, err = c.latestValuesForFields(entity(1, rtx), []dcgm.Short{temp, fp64})
+	require.NoError(t, err)
+}
+
+// TestDCGMCollectorGetMetricsOnMixedModelNode scrapes a node mixing an A30
+// (supports FP64 profiling) and an RTX 2000 (does not) end to end: each GPU is
+// read only for the DCP fields watched for its model, both models' metrics are
+// returned, and no profiling watch repair is triggered.
+func TestDCGMCollectorGetMetricsOnMixedModelNode(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+	t.Cleanup(devicewatcher.ResetDCPSupport)
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+
+	const a30, rtx = "NVIDIA A30", "NVIDIA RTX 2000 Ada Generation"
+	a30Device := dcgm.Device{GPU: 0, UUID: "GPU-0", Identifiers: dcgm.DeviceIdentifiers{Model: a30}}
+	rtxDevice := dcgm.Device{GPU: 1, UUID: "GPU-1", Identifiers: dcgm.DeviceIdentifiers{Model: rtx}}
+
+	fp64 := counters.Counter{FieldID: dcgm.DCGM_FI_PROF_PIPE_FP64_ACTIVE, FieldName: "DCGM_FI_PROF_PIPE_FP64_ACTIVE", PromType: "gauge"}
+	grEngine := testProfilingCounter()
+	temp := counters.Counter{FieldID: dcgm.DCGM_FI_DEV_GPU_TEMP, FieldName: "DCGM_FI_DEV_GPU_TEMP", PromType: "gauge"}
+	fields := []dcgm.Short{fp64.FieldID, grEngine.FieldID, temp.FieldID}
+
+	// DCP discovery: the A30 supports both profiling fields, the RTX 2000 only GR_ENGINE.
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).
+		Return([]dcgm.MetricGroup{{FieldIds: []uint{uint(fp64.FieldID), uint(grEngine.FieldID)}}}, nil)
+	mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(2), nil)
+	mockDCGM.EXPECT().GetDeviceInfo(uint(0)).Return(a30Device, nil)
+	mockDCGM.EXPECT().GetDeviceInfo(uint(1)).Return(rtxDevice, nil)
+	mockDCGM.EXPECT().GetSupportedMetricGroups(uint(1)).
+		Return([]dcgm.MetricGroup{{FieldIds: []uint{uint(grEngine.FieldID)}}}, nil)
+	_, _, err := devicewatcher.RefreshDCPSupport()
+	require.NoError(t, err)
+
+	deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+	deviceInfo.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
+	deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{MajorRange: []int{-1}}).AnyTimes()
+	deviceInfo.EXPECT().GPUCount().Return(uint(2)).AnyTimes()
+	deviceInfo.EXPECT().GPU(uint(0)).Return(deviceinfo.GPUInfo{DeviceInfo: a30Device}).AnyTimes()
+	deviceInfo.EXPECT().GPU(uint(1)).Return(deviceinfo.GPUInfo{DeviceInfo: rtxDevice}).AnyTimes()
+
+	// Watched once at construction; a repair would call it again and fail the test.
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), deviceInfo).Return(nil, nil, nil, nil).Times(1)
+	watchList := *devicewatchlistmanager.NewWatchListWithGroups(
+		deviceInfo,
+		fields,
+		nil,
+		[]devicewatcher.FieldWatchGroup{{Name: "default", Fields: fields, IntervalMSec: 1000}},
+		watcher,
+		1000,
+	)
+	collector, err := NewDCGMCollector([]counters.Counter{fp64, grEngine, temp}, "host-a", &appconfig.Config{}, watchList)
+	require.NoError(t, err)
+	t.Cleanup(collector.Cleanup)
+
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), fields).Return([]dcgm.FieldValue_v1{
+		profilingFieldValue(fp64.FieldID, dcgm.DCGM_ST_OK, 100, 7),
+		profilingFieldValue(grEngine.FieldID, dcgm.DCGM_ST_OK, 100, 8),
+		int64FieldValue(temp.FieldID, 40),
+	}, nil)
+	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{grEngine.FieldID, temp.FieldID}).
+		Return([]dcgm.FieldValue_v1{
+			profilingFieldValue(grEngine.FieldID, dcgm.DCGM_ST_OK, 100, 9),
+			int64FieldValue(temp.FieldID, 41),
+		}, nil)
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+
+	gpusFor := func(counter counters.Counter) []string {
+		var gpus []string
+		for _, metric := range got[counter] {
+			gpus = append(gpus, metric.GPU)
+		}
+		return gpus
+	}
+	assert.Equal(t, []string{"0"}, gpusFor(fp64), "FP64 only on the A30")
+	assert.ElementsMatch(t, []string{"0", "1"}, gpusFor(grEngine))
+	assert.ElementsMatch(t, []string{"0", "1"}, gpusFor(temp))
+}

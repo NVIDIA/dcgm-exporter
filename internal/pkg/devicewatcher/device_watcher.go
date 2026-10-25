@@ -39,7 +39,15 @@ type DeviceWatcher struct{}
 type WatchResources struct {
 	groups      []dcgm.GroupHandle
 	fieldGroups []dcgm.FieldHandle
-	hasWatch    bool // tracks if WatchFields was called
+	watches     []fieldWatch // attempted WatchFields calls, in order
+	hasWatch    bool         // tracks if WatchFields was called
+}
+
+// fieldWatch is one field group watched on one group. Not every field group is
+// watched on every group: per-GPU-model groups each watch their own field groups.
+type fieldWatch struct {
+	group      dcgm.GroupHandle
+	fieldGroup dcgm.FieldHandle
 }
 
 // Cleanup releases all DCGM resources in the correct order
@@ -53,17 +61,15 @@ func (r *WatchResources) Cleanup() {
 		return
 	}
 
-	// 1. Unwatch all fields for all groups
+	// 1. Unwatch each field group on the groups it was watched on
 	if r.hasWatch {
-		for _, group := range r.groups {
-			for _, fieldGroup := range r.fieldGroups {
-				if unwatchErr := client.UnwatchFields(fieldGroup, group); unwatchErr != nil {
-					// Ignore benign errors that happen when DCGM shuts down before our cleanup
-					errMsg := unwatchErr.Error()
-					if !strings.Contains(errMsg, DCGM_ST_NOT_CONFIGURED) &&
-						!strings.Contains(errMsg, DCGM_ST_FIELD_NOT_WATCHED) {
-						slog.Warn("Failed to unwatch fields", slog.String(ErrorKey, errMsg))
-					}
+		for _, watch := range r.watches {
+			if unwatchErr := client.UnwatchFields(watch.fieldGroup, watch.group); unwatchErr != nil {
+				// Ignore benign errors that happen when DCGM shuts down before our cleanup
+				errMsg := unwatchErr.Error()
+				if !strings.Contains(errMsg, DCGM_ST_NOT_CONFIGURED) &&
+					!strings.Contains(errMsg, DCGM_ST_FIELD_NOT_WATCHED) {
+					slog.Warn("Failed to unwatch fields", slog.String(ErrorKey, errMsg))
 				}
 			}
 		}
@@ -236,12 +242,22 @@ func (d *DeviceWatcher) watchDeviceFieldGroups(
 	resources := &WatchResources{}
 
 	// Create groups based on device type
+	var partitions []watchPartition
 	var err error
 	switch deviceInfo.InfoType() {
 	case dcgm.FE_LINK:
 		resources.groups, err = d.createNVLinkGroupsSimple(deviceInfo)
 	case dcgm.FE_CPU_CORE:
 		resources.groups, err = d.createCPUCoreGroupsSimple(deviceInfo)
+	case dcgm.FE_GPU:
+		if anyDCPField(fieldWatchGroups) {
+			// See dcpSupport: DCP fields need one group per GPU model.
+			partitions, err = d.createGroupsPerGPUModel(
+				resources, deviceInfo, fieldWatchGroups, computeInstanceFieldEntities, parentGPUsOnly,
+			)
+			break
+		}
+		resources.groups, err = d.createGroupsSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
 	default:
 		resources.groups, err = d.createGroupsSimple(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly)
 	}
@@ -251,66 +267,29 @@ func (d *DeviceWatcher) watchDeviceFieldGroups(
 	} else if len(resources.groups) == 0 {
 		return nil, nil, nil, nil
 	}
+	if partitions == nil {
+		partitions = []watchPartition{{groups: resources.groups}}
+	}
 
 	for _, fieldWatchGroup := range fieldWatchGroups {
-		fields := dedupeFields(fieldWatchGroup.Fields)
-		if len(fields) == 0 {
+		allFields := dedupeFields(fieldWatchGroup.Fields)
+		if len(allFields) == 0 {
 			continue
 		}
 
-		keepAge, keepSamples := retentionWithCompatibilityDefault(
-			fieldWatchGroup.MaxKeepAge,
-			fieldWatchGroup.MaxKeepSamples,
-		)
-		updateFreqInUsec := fieldWatchGroup.IntervalMSec * 1000
-		if updateFreqInUsecOverride != nil {
-			updateFreqInUsec = *updateFreqInUsecOverride
-		}
-
-		fieldChunks := chunkFields(fields, maxFieldIDsPerFieldGroup)
-		chunkCount := len(fieldChunks)
-		fieldOffset := 0
-		for chunkIndex, chunk := range fieldChunks {
-			logSplitFieldWatchGroup(fieldWatchGroup.Name, len(fields), chunkIndex+1, chunkCount, len(chunk))
-
-			fieldGroup, err := newFieldGroupSimple(chunk)
-			if err != nil {
-				resources.Cleanup()
-				return nil, nil, nil, fieldGroupCreateError(
-					fieldWatchGroup.Name,
-					chunkIndex+1,
-					chunkCount,
-					fieldOffset+1,
-					fieldOffset+len(chunk),
-					err,
-				)
+		for _, partition := range partitions {
+			fields := allFields
+			if partition.dcpSupported != nil {
+				fields = filterFieldsForModel(allFields, partition.dcpSupported)
 			}
-			resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
-			fieldOffset += len(chunk)
-
-			for _, group := range resources.groups {
-				logWatchFieldsCall(deviceInfo, group, fieldGroup, chunk)
-				err = watchFieldGroupSimple(
-					group,
-					fieldGroup,
-					updateFreqInUsec,
-					keepAge,
-					keepSamples,
-				)
-				if err != nil {
-					logWatchFieldsFailure(deviceInfo, group, fieldGroup, chunk, err)
-					resources.Cleanup()
-					return nil, nil, nil, fmt.Errorf(
-						"watch fields for logical group %q chunk %d/%d (group_handle=%d, field_group_handle=%d): %w",
-						fieldWatchGroup.Name,
-						chunkIndex+1,
-						chunkCount,
-						group.GetHandle(),
-						fieldGroup.GetHandle(),
-						err,
-					)
-				}
-				resources.hasWatch = true
+			if len(fields) == 0 {
+				continue
+			}
+			if err := d.watchFieldsOnGroups(
+				resources, deviceInfo, fieldWatchGroup, fields, partition.groups, updateFreqInUsecOverride,
+			); err != nil {
+				resources.Cleanup()
+				return nil, nil, nil, err
 			}
 		}
 	}
@@ -320,20 +299,147 @@ func (d *DeviceWatcher) watchDeviceFieldGroups(
 	return resources.groups, resources.fieldGroups, []func(){cleanup}, nil
 }
 
+// watchPartition is a set of DCGM groups that watch the same fields. A non-nil
+// dcpSupported limits which DCP fields the partition watches.
+type watchPartition struct {
+	groups       []dcgm.GroupHandle
+	dcpSupported map[dcgm.Short]bool
+}
+
+// createGroupsPerGPUModel creates one DCGM group per GPU model among the
+// monitored entities, recording each group in resources as it is created. A
+// model gets no group when none of its fields survive DCP filtering.
+func (d *DeviceWatcher) createGroupsPerGPUModel(
+	resources *WatchResources,
+	deviceInfo deviceinfo.Provider,
+	fieldWatchGroups []FieldWatchGroup,
+	computeInstanceFieldEntities bool,
+	parentGPUsOnly bool,
+) ([]watchPartition, error) {
+	models, byModel := partitionMonitoredEntitiesByModel(
+		monitoredEntitiesForGroup(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly),
+	)
+
+	partitions := make([]watchPartition, 0, len(models))
+	for _, model := range models {
+		entities := byModel[model]
+		supported := dcpSupportForModel(model, entities[0].DeviceInfo.GPU)
+		if !anyFieldToWatch(fieldWatchGroups, supported) {
+			slog.Debug("No fields to watch for GPU model; skipping its DCGM group",
+				slog.String("gpu_model", model))
+			continue
+		}
+
+		groupID, _, err := createGroupFromEntities(entities)
+		if err != nil {
+			return nil, err
+		}
+		resources.groups = append(resources.groups, *groupID)
+		partitions = append(partitions, watchPartition{
+			groups:       []dcgm.GroupHandle{*groupID},
+			dcpSupported: supported,
+		})
+	}
+	return partitions, nil
+}
+
+// watchFieldsOnGroups watches fields on every group, splitting them into
+// field groups of at most maxFieldIDsPerFieldGroup IDs.
+func (d *DeviceWatcher) watchFieldsOnGroups(
+	resources *WatchResources,
+	deviceInfo deviceinfo.Provider,
+	fieldWatchGroup FieldWatchGroup,
+	fields []dcgm.Short,
+	groups []dcgm.GroupHandle,
+	updateFreqInUsecOverride *int64,
+) error {
+	keepAge, keepSamples := retentionWithCompatibilityDefault(
+		fieldWatchGroup.MaxKeepAge,
+		fieldWatchGroup.MaxKeepSamples,
+	)
+	updateFreqInUsec := fieldWatchGroup.IntervalMSec * 1000
+	if updateFreqInUsecOverride != nil {
+		updateFreqInUsec = *updateFreqInUsecOverride
+	}
+
+	fieldChunks := chunkFields(fields, maxFieldIDsPerFieldGroup)
+	chunkCount := len(fieldChunks)
+	fieldOffset := 0
+	for chunkIndex, chunk := range fieldChunks {
+		logSplitFieldWatchGroup(fieldWatchGroup.Name, len(fields), chunkIndex+1, chunkCount, len(chunk))
+
+		fieldGroup, err := newFieldGroupSimple(chunk)
+		if err != nil {
+			return fieldGroupCreateError(
+				fieldWatchGroup.Name,
+				chunkIndex+1,
+				chunkCount,
+				fieldOffset+1,
+				fieldOffset+len(chunk),
+				err,
+			)
+		}
+		resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
+		fieldOffset += len(chunk)
+
+		for _, group := range groups {
+			logWatchFieldsCall(deviceInfo, group, fieldGroup, chunk)
+			// Record before watching: a failed call may still leave a partial watch.
+			resources.watches = append(resources.watches, fieldWatch{group: group, fieldGroup: fieldGroup})
+			err = watchFieldGroupSimple(
+				group,
+				fieldGroup,
+				updateFreqInUsec,
+				keepAge,
+				keepSamples,
+			)
+			if err != nil {
+				logWatchFieldsFailure(deviceInfo, group, fieldGroup, chunk, err)
+				return fmt.Errorf(
+					"watch fields for logical group %q chunk %d/%d (group_handle=%d, field_group_handle=%d): %w",
+					fieldWatchGroup.Name,
+					chunkIndex+1,
+					chunkCount,
+					group.GetHandle(),
+					fieldGroup.GetHandle(),
+					err,
+				)
+			}
+			resources.hasWatch = true
+		}
+	}
+
+	return nil
+}
+
 func (d *DeviceWatcher) createGenericGroup(
 	deviceInfo deviceinfo.Provider,
 	computeInstanceFieldEntities bool,
 	parentGPUsOnly bool,
 ) (*dcgm.GroupHandle, func(), error) {
-	var monitoringInfo []devicemonitoring.Info
+	return createGroupFromEntities(
+		monitoredEntitiesForGroup(deviceInfo, computeInstanceFieldEntities, parentGPUsOnly),
+	)
+}
+
+// monitoredEntitiesForGroup selects the entities a generic watch group covers.
+func monitoredEntitiesForGroup(
+	deviceInfo deviceinfo.Provider,
+	computeInstanceFieldEntities bool,
+	parentGPUsOnly bool,
+) []devicemonitoring.Info {
 	switch {
 	case parentGPUsOnly:
-		monitoringInfo = devicemonitoring.GetParentGPUsForMonitoredGPUInstances(deviceInfo)
+		return devicemonitoring.GetParentGPUsForMonitoredGPUInstances(deviceInfo)
 	case computeInstanceFieldEntities:
-		monitoringInfo = devicemonitoring.GetMonitoredEntitiesForComputeInstanceFields(deviceInfo)
+		return devicemonitoring.GetMonitoredEntitiesForComputeInstanceFields(deviceInfo)
 	default:
-		monitoringInfo = devicemonitoring.GetMonitoredEntities(deviceInfo)
+		return devicemonitoring.GetMonitoredEntities(deviceInfo)
 	}
+}
+
+// createGroupFromEntities creates one DCGM group containing exactly monitoringInfo.
+func createGroupFromEntities(monitoringInfo []devicemonitoring.Info) (*dcgm.GroupHandle, func(), error) {
 	if len(monitoringInfo) == 0 {
 		return nil, doNothing, nil
 	}

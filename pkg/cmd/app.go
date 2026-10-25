@@ -1459,7 +1459,9 @@ func (r *reloadCoordinator) queryDCPMetrics(cfg *appconfig.Config, reloadID uint
 		r.dcp = newDCPCapabilities(cfg)
 	}()
 
-	groups, err := dcgmprovider.Client().GetSupportedMetricGroups(0)
+	// Query one GPU per model so a mixed-model node offers every DCP field some
+	// model supports; watches then filter fields per model.
+	groups, gpuModels, err := devicewatcher.RefreshDCPSupport()
 	if err != nil {
 		cfg.CollectDCP = false
 		cfg.MetricGroups = nil
@@ -1467,17 +1469,10 @@ func (r *reloadCoordinator) queryDCPMetrics(cfg *appconfig.Config, reloadID uint
 		return
 	}
 
-	gpuModel := "unknown"
-	if gpuCount, err := dcgmprovider.Client().GetAllDeviceCount(); err == nil && gpuCount > 0 {
-		if gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(0); err == nil {
-			gpuModel = gpuInfo.Identifiers.Model
-		}
-	}
-
 	slog.Info("Successfully queried DCGM profiling metric groups",
 		slog.Uint64("reload_id", reloadID),
 		slog.Int("count", len(groups)),
-		slog.String("gpu_model", gpuModel))
+		slog.String("gpu_model", strings.Join(gpuModels, ", ")))
 
 	cfg.MetricGroups = groups
 	cfg.CollectDCP = true

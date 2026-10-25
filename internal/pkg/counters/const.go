@@ -27,3 +27,9 @@ const (
 	DCGMExpXIDErrorsTotal   = "DCGM_EXP_XID_ERRORS_TOTAL"
 	DCGMExpClockEventsTotal = "DCGM_EXP_CLOCK_EVENTS_TOTAL"
 )
+
+// IsDCPField reports whether fieldID is in the DCP/profiling field ID range
+// (DCGM_FI_PROF_*).
+func IsDCPField(fieldID uint) bool {
+	return fieldID >= dcpFieldsStart && fieldID < cpuFieldsStart
+}

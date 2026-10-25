@@ -211,7 +211,7 @@ func retiredPCIeFieldReplacement(fieldID dcgm.Short) (string, bool) {
 }
 
 func fieldIsSupported(fieldID uint, c *appconfig.Config) bool {
-	if fieldID < dcpFieldsStart || fieldID >= cpuFieldsStart {
+	if !IsDCPField(fieldID) {
 		return true
 	}
 
