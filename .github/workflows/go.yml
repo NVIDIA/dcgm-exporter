@@ -26,6 +26,7 @@ jobs:
         configFile: .devcontainer/ci/devcontainer.json
         runCmd: |
           set -euo pipefail
+          git config --global --add safe.directory "$PWD"
           BAZEL_TARGETS=//cmd/dcgm-exporter:dcgm-exporter task bazel:build
           task fmt:check
           task test:unit COVERAGE=true REPORTS=true
