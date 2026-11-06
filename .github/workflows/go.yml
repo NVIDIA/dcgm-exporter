@@ -23,7 +23,7 @@ jobs:
     - name: Build and test in the devcontainer
       uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
       with:
-        configFile: .devcontainer/ci.json
+        configFile: .devcontainer/ci/devcontainer.json
         runCmd: |
           set -euo pipefail
           BAZEL_TARGETS=//cmd/dcgm-exporter:dcgm-exporter task bazel:build

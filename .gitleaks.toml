@@ -8,3 +8,8 @@ useDefault = true
 [[allowlists]]
 description = "Throwaway TLS key for the host test web server"
 paths = ['''^tests/host/testdata/tlsCertificate\.key\.fixture$''']
+
+[[allowlists]]
+description = "End-to-end scenario names, such as k8s/serviceAccess, that look like keys"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/e2e/scenario/requirements_test\.go$''']
