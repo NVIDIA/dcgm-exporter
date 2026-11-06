@@ -172,6 +172,7 @@ func (c Contract) Validate() error {
 	return errors.Join(errs...)
 }
 
+// validateSample requires exact switch/link labels identifying the declared entity and parent.
 func validateSample(sample Sample) error {
 	if sample.EntityGroup != EntityGroupSwitch && sample.EntityGroup != EntityGroupLink {
 		return fmt.Errorf("entity group %q is unsupported", sample.EntityGroup)
@@ -269,6 +270,7 @@ func ValidateFamilies(families map[string]*dto.MetricFamily, metrics []Metric) e
 	return errors.Join(errs...)
 }
 
+// matchingSample finds an unused sample with exactly the expected label set.
 func matchingSample(metrics []*dto.Metric, expected map[string]string, matched []bool) int {
 	for index, metric := range metrics {
 		if matched[index] {
@@ -292,6 +294,7 @@ func matchingSample(metrics []*dto.Metric, expected map[string]string, matched [
 	return -1
 }
 
+// labelsByName indexes emitted sample labels for exact identity matching.
 func labelsByName(metric *dto.Metric) map[string]string {
 	labels := make(map[string]string, len(metric.GetLabel()))
 	for _, pair := range metric.GetLabel() {
@@ -300,6 +303,7 @@ func labelsByName(metric *dto.Metric) map[string]string {
 	return labels
 }
 
+// saneValue rejects nonfinite values and DCGM blank or error sentinel ranges.
 func saneValue(value float64) bool {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return false
@@ -313,6 +317,7 @@ func saneValue(value float64) bool {
 	return value < fp64Blank || value > fp64Blank+3
 }
 
+// canonicalLabels sorts and quotes labels for stable sample identity and diagnostics.
 func canonicalLabels(labels map[string]string) string {
 	names := make([]string, 0, len(labels))
 	for name := range labels {

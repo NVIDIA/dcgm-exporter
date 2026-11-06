@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+filegroup(
+    name = "source_files",
+    srcs = glob(["*.go"]),
+    visibility = ["//tests/static:__pkg__"],
+)
+
+go_library(
+    name = "nvsdmmock",
+    srcs = ["contract.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/internal/nvsdmmock",
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//model",
+    ],
+)
+
+go_test(
+    name = "nvsdmmock_test",
+    srcs = ["contract_test.go"],
+    embed = [":nvsdmmock"],
+    deps = ["@com_github_prometheus_client_model//go"],
+)

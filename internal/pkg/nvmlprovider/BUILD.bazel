@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "nvmlprovider",
+    srcs = [
+        "provider.go",
+        "types.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider",
+    visibility = ["//:__subpackages__"],
+    deps = ["@com_github_nvidia_go_nvml//pkg/nvml"],
+)
+
+go_test(
+    name = "nvmlprovider_test",
+    srcs = ["provider_test.go"],
+    embed = [":nvmlprovider"],
+    deps = [
+        "@com_github_nvidia_go_nvml//pkg/nvml",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

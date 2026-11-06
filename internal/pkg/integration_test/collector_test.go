@@ -43,6 +43,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/rendermetrics"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
+	testdcgm "github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils/dcgm"
 )
 
 var deviceWatcher = devicewatcher.NewDeviceWatcher()
@@ -58,6 +59,7 @@ var expectedCPUMetrics = map[string]bool{
 	testutils.SampleCPUUtilTotalCounter.FieldName: true,
 }
 
+// setupTest initializes DCGM and returns the callback that releases the process client.
 func setupTest(t *testing.T) func() {
 	config := &appconfig.Config{
 		EnableDCGMLog: true,
@@ -69,14 +71,15 @@ func setupTest(t *testing.T) func() {
 		},
 	}
 
-	// Use SmartDCGMInit instead of regular Initialize
-	dcgmprovider.SmartDCGMInit(t, config)
+	// Test initialization falls back to a local standalone host engine.
+	testdcgm.Initialize(t, config)
 
 	return func() {
 		defer dcgmprovider.Client().Cleanup()
 	}
 }
 
+// runOnlyWithLiveGPUs skips integration checks when DCGM reports no supported GPU.
 func runOnlyWithLiveGPUs(t *testing.T) {
 	t.Helper()
 	gpus, err := dcgmprovider.Client().GetSupportedDevices()
@@ -86,6 +89,7 @@ func runOnlyWithLiveGPUs(t *testing.T) {
 	}
 }
 
+// TestClockEventsCollector_NewClocksThrottleReasonsCollector checks required exporter counters and accepts repeated configured entries.
 func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	config := &appconfig.Config{
 		GPUDeviceOptions: appconfig.DeviceOptions{
@@ -114,7 +118,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 		records := [][]string{
 			{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 		}
-		cc, err := counters.ExtractCounters(records, config)
+		cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 		require.NoError(t, err)
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
@@ -137,7 +141,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 			{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 			{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 		}
-		cc, err := counters.ExtractCounters(records, config)
+		cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 		require.NoError(t, err)
 		for i := range cc.DCGMCounters {
 			if cc.DCGMCounters[i].PromType == "label" {
@@ -150,6 +154,7 @@ func TestClockEventsCollector_NewClocksThrottleReasonsCollector(t *testing.T) {
 	})
 }
 
+// TestClockEventsCollector_Gather checks repeated sampled reason counts and window labels across fake GPUs.
 func TestClockEventsCollector_Gather(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest()
@@ -171,7 +176,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
-	cc, err := counters.ExtractCounters(records, config)
+	cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, cc.ExporterCounters, 1)
 	require.Len(t, cc.DCGMCounters, 1)
@@ -280,6 +285,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	clockEventCollector, err := collector.NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
+	// Release this collector before the outer DCGM client teardown.
 	defer func() {
 		clockEventCollector.Cleanup()
 	}()
@@ -293,7 +299,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
 
 	metricValues = getFakeGPUMetrics(metricValues, gpuIDs)
-	// We expect 9 records, because we have 3 fake GPU and each GPU experienced 3 CLOCK_EVENTS
+	// Three fake GPUs each expose three sampled reason counts, producing nine series
 	require.Len(t, metricValues, 9)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
@@ -308,6 +314,7 @@ func TestClockEventsCollector_Gather(t *testing.T) {
 	}
 }
 
+// TestClockEventsCollector_Gather_AllTheThings checks all nine configured clock-reason bits from one injected sample.
 func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest()
@@ -322,7 +329,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 		ClockEventsCountWindowSize: int(time.Duration(5) * time.Minute),
-		UseFakeGPUs:                true, // Use only fake GPUs for hardware-independent testing
+		UseFakeGPUs:                true, // Select fake entities; DCGM initialization and a supported GPU are still required
 	}
 
 	records := [][]string{
@@ -330,7 +337,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
-	cc, err := counters.ExtractCounters(records, config)
+	cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, cc.ExporterCounters, 1)
 	require.Len(t, cc.DCGMCounters, 1)
@@ -419,6 +426,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	clockEventCollector, err := collector.NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
+	// Release this collector before the outer DCGM client teardown.
 	defer func() {
 		clockEventCollector.Cleanup()
 	}()
@@ -433,7 +441,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 
 	metricValues = getFakeGPUMetrics(metricValues, gpuIDs)
 
-	// Expected 9 metric values, because we injected 9 reasons
+	// One sample with nine reason bits produces nine reason series
 	require.Len(t, metricValues, 9)
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
@@ -448,6 +456,7 @@ func TestClockEventsCollector_Gather_AllTheThings(t *testing.T) {
 	}
 }
 
+// TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels checks all clock-reason series without driver-version label counters.
 func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest()
@@ -462,14 +471,14 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 		ClockEventsCountWindowSize: int(time.Duration(5) * time.Minute),
-		UseFakeGPUs:                true, // Use only fake GPUs for hardware-independent testing
+		UseFakeGPUs:                true, // Select fake entities; DCGM initialization and a supported GPU are still required
 	}
 
 	records := [][]string{
 		{"DCGM_EXP_CLOCK_EVENTS_COUNT", "gauge", ""},
 	}
 
-	cc, err := counters.ExtractCounters(records, config)
+	cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, cc.ExporterCounters, 1)
 	require.Len(t, cc.DCGMCounters, 0)
@@ -534,6 +543,7 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	clockEventCollector, err := collector.NewClockEventsCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
+	// Release this collector before the outer DCGM client teardown.
 	defer func() {
 		clockEventCollector.Cleanup()
 	}()
@@ -547,10 +557,11 @@ func TestClockEventsCollector_Gather_AllTheThings_WhenNoLabels(t *testing.T) {
 	metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
 	// Exclude the real GPU from the test
 	metricValues = getFakeGPUMetrics(metricValues, gpuIDs)
-	// Expected 9 metric values, because we injected 9 reasons
+	// One sample with nine reason bits produces nine reason series
 	require.Len(t, metricValues, 9)
 }
 
+// getFakeGPUMetrics removes metrics with parsed GPU IDs outside the injected fixture inventory.
 func getFakeGPUMetrics(metricValues []collector.Metric, gpuIDs []uint) []collector.Metric {
 	for i := len(metricValues) - 1; i >= 0; i-- {
 		gpuID, err := strconv.ParseUint(metricValues[i].GPU, 10, 64)
@@ -563,6 +574,7 @@ func getFakeGPUMetrics(metricValues []collector.Metric, gpuIDs []uint) []collect
 	return metricValues
 }
 
+// TestXIDCollector_Gather_Encode checks XID series updates, Prometheus metadata, and rendered label order.
 func TestXIDCollector_Gather_Encode(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest()
@@ -577,7 +589,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 		XIDCountWindowSize: int(time.Duration(5) * time.Minute),
-		UseFakeGPUs:        true, // Use only fake GPUs for hardware-independent testing
+		UseFakeGPUs:        true, // Select fake entities; DCGM initialization and a supported GPU are still required
 	}
 
 	records := [][]string{
@@ -589,7 +601,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 	}
 
-	cc, err := counters.ExtractCounters(records, config)
+	cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 	require.NoError(t, err)
 	require.Len(t, cc.ExporterCounters, 1)
 	require.Len(t, cc.DCGMCounters, 1)
@@ -677,6 +689,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	xidCollector, err := collector.NewXIDCollector(cc.ExporterCounters, hostname, config, item)
 	require.NoError(t, err)
 
+	// Release this collector before the outer DCGM client teardown.
 	defer func() {
 		xidCollector.Cleanup()
 	}()
@@ -694,6 +707,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 		fakeGPUIDMap[fmt.Sprint(fakeGPUID)] = struct{}{}
 	}
 
+	// The predicate limits renderer assertions to entities created by this test.
 	conditionFakeGPUOnly := func(m collector.Metric) bool {
 		_, exists := fakeGPUIDMap[m.GPU]
 		return exists
@@ -719,7 +733,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Wait for 1 second
+	// Allow the cumulative poller to observe the newly injected sample
 	time.Sleep(1 * time.Second)
 
 	metrics, err = xidCollector.GetMetrics()
@@ -735,7 +749,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	// We update metrics with slice, that doesn't contain physical GPU
 	metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)] = metricValues
 
-	// We have 3 fake GPU and each GPU experienced 3 XID errors: 42, 46, 19 to GPU0
+	// Each fake GPU has XID 42 and 46 series; the first fake GPU also has the new XID 19 series
 	require.Len(t, metricValues, 1+(len(fakeGPUIDs)*2))
 	for _, val := range metricValues {
 		require.Contains(t, val.Labels, "window_size_in_ms")
@@ -759,7 +773,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	assert.Equal(t, "Count of XID Errors within user-specified time window (see xid-count-window-size param).",
 		*metricFamily.Help)
 	assert.Equal(t, io_prometheus_client.MetricType_GAUGE, *metricFamily.Type)
-	// We have 3 fake GPU and each GPU, except the one experienced XID errors: 42, 46, 19
+	// The renderer retains two XID series per fake GPU plus the first fake GPU's XID 19 series
 	require.Len(t, metricFamily.Metric, 1+(len(fakeGPUIDs)*2))
 	for _, mv := range metricFamily.Metric {
 		require.NotNil(t, mv.Gauge.Value)
@@ -786,6 +800,7 @@ func TestXIDCollector_Gather_Encode(t *testing.T) {
 	}
 }
 
+// TestXIDCollector_NewXIDCollector checks missing XID counter errors and accepts repeated configured entries.
 func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	teardownTest := setupTest(t)
 	defer teardownTest()
@@ -818,7 +833,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 		records := [][]string{
 			{"DCGM_FI_DRIVER_VERSION", "label", "Driver Version"},
 		}
-		cc, err := counters.ExtractCounters(records, config)
+		cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 		require.NoError(t, err)
 		require.Len(t, cc.ExporterCounters, 0)
 		require.Len(t, cc.DCGMCounters, 1)
@@ -854,7 +869,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 				"Count of XID Errors within user-specified time window (see xid-count-window-size param).",
 			},
 		}
-		cc, err := counters.ExtractCounters(records, config)
+		cc, err := counters.ExtractCounters(records, counters.DCPCapabilities{})
 		require.NoError(t, err)
 		for i := range cc.DCGMCounters {
 			if cc.DCGMCounters[i].PromType == "label" {
@@ -867,6 +882,7 @@ func TestXIDCollector_NewXIDCollector(t *testing.T) {
 	})
 }
 
+// filterMetrics keeps samples accepted by the caller-supplied inventory predicate.
 func filterMetrics(metricValues []collector.Metric, condition func(metric collector.Metric) bool) []collector.Metric {
 	var result []collector.Metric
 	for _, metricValue := range metricValues {
@@ -877,6 +893,7 @@ func filterMetrics(metricValues []collector.Metric, condition func(metric collec
 	return result
 }
 
+// TestDCGMCollector checks injected GPU metrics and CPU metrics when the DCGM CPU module is available.
 func TestDCGMCollector(t *testing.T) {
 	config := &appconfig.Config{
 		UseRemoteHE: false,
@@ -886,7 +903,7 @@ func TestDCGMCollector(t *testing.T) {
 			MinorRange: []int{-1},
 		},
 	}
-	dcgmprovider.SmartDCGMInit(t, config)
+	testdcgm.Initialize(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
 	dcgmCollector := testDCGMGPUCollector(t, testutils.SampleCounters)
@@ -899,6 +916,7 @@ func TestDCGMCollector(t *testing.T) {
 	}
 }
 
+// testDCGMGPUCollector injects GPU values and checks the exact family inventory and device identity.
 func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.DCGMCollector {
 	dOpt := appconfig.DeviceOptions{
 		Flex:       true,
@@ -909,11 +927,11 @@ func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.
 		GPUDeviceOptions: dOpt,
 		NoHostname:       false,
 		UseOldNamespace:  false,
-		UseFakeGPUs:      true, // Always use fake GPUs for consistent, sandbox-friendly tests
+		UseFakeGPUs:      true, // Use injected entities for stable values after native DCGM initialization
 		CollectInterval:  1,
 	}
 
-	// Always create fake GPU for consistent, hardware-independent tests
+	// Create a fake GPU for stable injected values; this still uses the DCGM client
 	entityList := []dcgm.MigHierarchyInfo{
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU}},
 	}
@@ -1020,16 +1038,17 @@ func testDCGMGPUCollector(t *testing.T, counters []counters.Counter) *collector.
 	return g
 }
 
+// testDCGMCPUCollectorIfAvailable checks injected CPU utilization, returning nil when fake CPU creation is unavailable.
 func testDCGMCPUCollectorIfAvailable(t *testing.T, counters []counters.Counter) *collector.DCGMCollector {
 	dOpt := appconfig.DeviceOptions{Flex: true, MajorRange: []int{-1}, MinorRange: []int{-1}}
 	config := appconfig.Config{
 		CPUDeviceOptions: dOpt,
 		NoHostname:       false,
 		UseOldNamespace:  false,
-		UseFakeGPUs:      true, // Allow graceful handling of device errors during initialization
+		UseFakeGPUs:      true, // Permit fake entities during device discovery
 	}
 
-	// Try to use fake CPU for consistent, hardware-independent tests
+	// Try a fake CPU through the initialized native DCGM client
 	// Create fake CPU entity (skip if CPU module is not loaded)
 	entityList := []dcgm.MigHierarchyInfo{
 		{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU, EntityId: 0}},
@@ -1089,6 +1108,7 @@ func testDCGMCPUCollectorIfAvailable(t *testing.T, counters []counters.Counter) 
 	return c
 }
 
+// TestGPUCollector_GetMetrics checks the configured SM clock family for the fake-GPU inventory.
 func TestGPUCollector_GetMetrics(t *testing.T) {
 	config := &appconfig.Config{
 		GPUDeviceOptions: appconfig.DeviceOptions{
@@ -1098,10 +1118,10 @@ func TestGPUCollector_GetMetrics(t *testing.T) {
 		},
 		NoHostname:      false,
 		UseOldNamespace: false,
-		UseFakeGPUs:     true, // Use only fake GPUs for hardware-independent testing
+		UseFakeGPUs:     true, // Select fake entities; DCGM initialization and a supported GPU are still required
 	}
 
-	dcgmprovider.SmartDCGMInit(t, config)
+	testdcgm.Initialize(t, config)
 	runOnlyWithLiveGPUs(t)
 
 	// Create fake GPU

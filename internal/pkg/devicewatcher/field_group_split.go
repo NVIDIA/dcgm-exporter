@@ -46,6 +46,8 @@ func chunkFields(fields []dcgm.Short, limit int) [][]dcgm.Short {
 	return chunks
 }
 
+// logSplitFieldWatchGroup logs one chunk of a watch group that had to be split
+// into several DCGM field groups. It logs nothing when there is one chunk.
 func logSplitFieldWatchGroup(logicalGroup string, totalFields, chunkIndex, chunkCount, chunkFieldCount int) {
 	if chunkCount <= 1 {
 		return
@@ -64,12 +66,26 @@ func logSplitFieldWatchGroup(logicalGroup string, totalFields, chunkIndex, chunk
 	)
 }
 
-func fieldGroupCreateError(
+// fieldGroupCreateError marks an error from creating a DCGM field group, the
+// step where the hostengine refuses a watched field.
+type fieldGroupCreateError struct {
+	err error
+}
+
+// Error returns the wrapped error's message.
+func (f *fieldGroupCreateError) Error() string { return f.err.Error() }
+
+// Unwrap returns the wrapped error.
+func (f *fieldGroupCreateError) Unwrap() error { return f.err }
+
+// newFieldGroupCreateError describes which chunk of a watch group failed to
+// become a DCGM field group.
+func newFieldGroupCreateError(
 	logicalGroup string,
 	chunkIndex, chunkCount, fieldStart, fieldEnd int,
 	err error,
 ) error {
-	return fmt.Errorf(
+	return &fieldGroupCreateError{err: fmt.Errorf(
 		"create physical field group for logical group %q chunk %d/%d (fields %d-%d, capacity %d): %w",
 		logicalGroup,
 		chunkIndex,
@@ -78,5 +94,5 @@ func fieldGroupCreateError(
 		fieldEnd,
 		maxFieldIDsPerFieldGroup,
 		err,
-	)
+	)}
 }

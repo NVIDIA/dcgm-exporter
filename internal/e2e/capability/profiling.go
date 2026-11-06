@@ -20,11 +20,11 @@ package capability
 func profilingCapability(output string) Capability {
 	switch {
 	case profilingEvidence(output):
-		return hostCapability("profiling", StatusSupported, "DCGM container profile --list", "DCGM reported profiling metric groups", firstLine(output))
+		return hostCapability("profiling", StatusSupported, "dcgmi profile --list", "DCGM reported profiling metric groups", firstLine(output))
 	case dcgmProbeUnavailable(output):
-		return hostCapability("profiling", StatusUnknown, "DCGM container profile --list", dcgmProbeUnavailableReason("profiling", output), firstLine(output))
+		return hostCapability("profiling", StatusUnknown, "dcgmi profile --list", dcgmProbeUnavailableReason("profiling", output), firstLine(output))
 	default:
-		return hostCapability("profiling", StatusUnsupported, "DCGM container profile --list", "DCGM did not report profiling metric groups", firstLine(output))
+		return hostCapability("profiling", StatusUnsupported, "dcgmi profile --list", "DCGM did not report profiling metric groups", firstLine(output))
 	}
 }
 

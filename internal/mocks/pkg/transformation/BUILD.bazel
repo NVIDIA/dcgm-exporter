@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "transformation",
+    srcs = ["mock_transformer.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/transformation",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/collector",
+        "//internal/pkg/deviceinfo",
+        "@org_uber_go_mock//gomock",
+    ],
+)

@@ -1,0 +1,13 @@
+{{- $configFile := include "dcgm-exporter.configFile" . }}
+{{- if $configFile }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dcgm-exporter.fullname" . }}-config
+  namespace: {{ include "dcgm-exporter.namespace" . }}
+  labels:
+    {{- include "dcgm-exporter.labels" . | nindent 4 }}
+data:
+  {{ (include "dcgm-exporter.configMap" . | fromJson).key | quote }}: |
+    {{- $configFile | nindent 4 }}
+{{- end }}

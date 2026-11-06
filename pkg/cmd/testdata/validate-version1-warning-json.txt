@@ -1,0 +1,37 @@
+exit 0
+--- stdout ---
+{
+  "format_version": 1,
+  "command": "config.validate",
+  "data": {
+    "path": "testdata/version1.yaml",
+    "valid": true,
+    "diagnostics": [
+      {
+        "severity": "warning",
+        "source": {
+          "kind": "file",
+          "file": "testdata/version1.yaml",
+          "line": 1,
+          "column": 10,
+          "path": "version"
+        },
+        "summary": "config version 1 is deprecated and will be removed in 4.10; see the version 2 migration table in the 4.9.0 documentation"
+      }
+    ],
+    "checked": [
+      "configuration settings",
+      "inline metric definitions"
+    ],
+    "not_checked": [
+      "gpus",
+      "dcgm",
+      "field_support",
+      "kubelet_socket",
+      "workload_labels",
+      "listener",
+      "directories"
+    ]
+  }
+}
+--- stderr ---

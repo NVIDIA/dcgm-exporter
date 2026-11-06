@@ -1,8 +1,10 @@
 // Read here https://containers.dev/implementors/json_reference/
 {
   "name": "dcgm-exporter-container",
+  "remoteUser": "developer",
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "context": ".."
   },
   "privileged": true,
   "runArgs": [
@@ -17,6 +19,5 @@
     "--security-opt",
     "seccomp=unconfined",
     "--gpus=all"
-    ],
-  "postStartCommand": "docker run --privileged --rm tonistiigi/binfmt --install all"
+  ]
 }

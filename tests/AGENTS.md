@@ -1,5 +1,7 @@
 # tests - Agent Instructions
 
+The root `AGENTS.md` still applies. This file adds rules for `tests/`.
+
 The test tree contains multiple layers with different prerequisites. Pick the
 lowest layer that proves the behavior.
 
@@ -10,9 +12,11 @@ lowest layer that proves the behavior.
   no live infrastructure.
 - `tests/host`: GPU/DCGM-backed exporter behavior on the host.
 - `tests/container`: container startup, metrics, health, and runtime checks;
-  requires local images or pullable images plus Docker/GPU access.
-- `tests/k8s`: Kubernetes/Helm deployment flows; requires a GPU-capable
-  Kubernetes cluster or the local e2e k3d commands.
+  requires `--tags=container` plus local images or pullable images and
+  Docker/GPU access. Without the tag, `go test ./tests/container` finds no tests.
+- `tests/k8s`: Kubernetes/Helm deployment flows; live specs require
+  `--tags=k8s` and a GPU-capable cluster or local k3d. Without the tag, only
+  untagged helper unit tests compile.
 - `tests/internal`: reusable test-only contracts and helpers.
 
 ## Guidance
@@ -22,5 +26,3 @@ lowest layer that proves the behavior.
 - Keep setup and teardown in the infrastructure-specific category, and move
   reusable exporter assertions to `tests/internal`.
 - Prefer readiness probes and explicit scrape/health checks over fixed sleeps.
-- When GPU, Docker, or Kubernetes prerequisites are unavailable, report the
-  skipped gate and the missing prerequisite.

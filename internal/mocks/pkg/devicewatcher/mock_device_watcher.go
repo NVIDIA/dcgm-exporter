@@ -27,7 +27,6 @@ import (
 	reflect "reflect"
 
 	counters "github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
-	deviceinfo "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	devicewatcher "github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	dcgm "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	gomock "go.uber.org/mock/gomock"
@@ -69,72 +68,4 @@ func (m *MockWatcher) GetDeviceFields(arg0 []counters.Counter, arg1 dcgm.Field_E
 func (mr *MockWatcherMockRecorder) GetDeviceFields(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDeviceFields", reflect.TypeOf((*MockWatcher)(nil).GetDeviceFields), arg0, arg1)
-}
-
-// WatchDeviceFieldGroups mocks base method.
-func (m *MockWatcher) WatchDeviceFieldGroups(arg0 []devicewatcher.FieldWatchGroup, arg1 deviceinfo.Provider) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WatchDeviceFieldGroups", arg0, arg1)
-	ret0, _ := ret[0].([]dcgm.GroupHandle)
-	ret1, _ := ret[1].([]dcgm.FieldHandle)
-	ret2, _ := ret[2].([]func())
-	ret3, _ := ret[3].(error)
-	return ret0, ret1, ret2, ret3
-}
-
-// WatchDeviceFieldGroups indicates an expected call of WatchDeviceFieldGroups.
-func (mr *MockWatcherMockRecorder) WatchDeviceFieldGroups(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchDeviceFieldGroups", reflect.TypeOf((*MockWatcher)(nil).WatchDeviceFieldGroups), arg0, arg1)
-}
-
-// WatchDeviceFieldGroupsForComputeInstanceFields mocks base method.
-func (m *MockWatcher) WatchDeviceFieldGroupsForComputeInstanceFields(arg0 []devicewatcher.FieldWatchGroup, arg1 deviceinfo.Provider) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WatchDeviceFieldGroupsForComputeInstanceFields", arg0, arg1)
-	ret0, _ := ret[0].([]dcgm.GroupHandle)
-	ret1, _ := ret[1].([]dcgm.FieldHandle)
-	ret2, _ := ret[2].([]func())
-	ret3, _ := ret[3].(error)
-	return ret0, ret1, ret2, ret3
-}
-
-// WatchDeviceFieldGroupsForComputeInstanceFields indicates an expected call of WatchDeviceFieldGroupsForComputeInstanceFields.
-func (mr *MockWatcherMockRecorder) WatchDeviceFieldGroupsForComputeInstanceFields(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchDeviceFieldGroupsForComputeInstanceFields", reflect.TypeOf((*MockWatcher)(nil).WatchDeviceFieldGroupsForComputeInstanceFields), arg0, arg1)
-}
-
-// WatchDeviceFieldGroupsForParentGPUs mocks base method.
-func (m *MockWatcher) WatchDeviceFieldGroupsForParentGPUs(arg0 []devicewatcher.FieldWatchGroup, arg1 deviceinfo.Provider) ([]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WatchDeviceFieldGroupsForParentGPUs", arg0, arg1)
-	ret0, _ := ret[0].([]dcgm.GroupHandle)
-	ret1, _ := ret[1].([]dcgm.FieldHandle)
-	ret2, _ := ret[2].([]func())
-	ret3, _ := ret[3].(error)
-	return ret0, ret1, ret2, ret3
-}
-
-// WatchDeviceFieldGroupsForParentGPUs indicates an expected call of WatchDeviceFieldGroupsForParentGPUs.
-func (mr *MockWatcherMockRecorder) WatchDeviceFieldGroupsForParentGPUs(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchDeviceFieldGroupsForParentGPUs", reflect.TypeOf((*MockWatcher)(nil).WatchDeviceFieldGroupsForParentGPUs), arg0, arg1)
-}
-
-// WatchDeviceFields mocks base method.
-func (m *MockWatcher) WatchDeviceFields(arg0 []dcgm.Short, arg1 deviceinfo.Provider, arg2 int64) ([]dcgm.GroupHandle, dcgm.FieldHandle, []func(), error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WatchDeviceFields", arg0, arg1, arg2)
-	ret0, _ := ret[0].([]dcgm.GroupHandle)
-	ret1, _ := ret[1].(dcgm.FieldHandle)
-	ret2, _ := ret[2].([]func())
-	ret3, _ := ret[3].(error)
-	return ret0, ret1, ret2, ret3
-}
-
-// WatchDeviceFields indicates an expected call of WatchDeviceFields.
-func (mr *MockWatcherMockRecorder) WatchDeviceFields(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WatchDeviceFields", reflect.TypeOf((*MockWatcher)(nil).WatchDeviceFields), arg0, arg1, arg2)
 }

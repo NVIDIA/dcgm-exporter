@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "marker",
+    srcs = ["marker.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/marker",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "marker_test",
+    srcs = ["marker_test.go"],
+    embed = [":marker"],
+)

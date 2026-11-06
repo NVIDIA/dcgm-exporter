@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "utils",
+    srcs = ["utils.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/utils",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "utils_test",
+    srcs = ["utils_test.go"],
+    embed = [":utils"],
+    deps = [
+        "//internal/pkg/testutils",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

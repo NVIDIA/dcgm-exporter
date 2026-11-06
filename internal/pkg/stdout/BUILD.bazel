@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "stdout",
+    srcs = [
+        "capture.go",
+        "stdoutprocessor.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "stdout_test",
+    srcs = [
+        "capture_cgo_test.go",
+        "capture_process_test.go",
+        "stdoutprocessor_test.go",
+    ],
+    embed = [":stdout"],
+    deps = [
+        "//internal/pkg/stdout/internal/testhelper",
+        "//internal/pkg/testutils/childcover",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

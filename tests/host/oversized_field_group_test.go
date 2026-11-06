@@ -31,6 +31,7 @@ const (
 	oversizedGPUWatchFields       = 131
 )
 
+// TestHasOversizedFieldGroupLog matches the expected first and second chunk records without accepting wrong sizes.
 func TestHasOversizedFieldGroupLog(t *testing.T) {
 	output := strings.Join([]string{
 		`time=2026-07-27T12:00:00Z level=INFO msg="split oversized watch group into physical DCGM field groups" logical_group=batching-1 total_fields=131 chunk_index=1 chunk_count=2 chunk_fields=127 capacity=127`,
@@ -52,7 +53,7 @@ func runOversizedFieldGroup(t testing.TB) {
 	configPath := writeLatestValueBatchingConfig(t, latestValueBatchingFields)
 	port := getRandomAvailablePort(t)
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
-	process, _ := startExporterAndWait(
+	process, _ := startFastExporterAndWait(
 		t,
 		metricsURL,
 		"--config-file", configPath,
@@ -81,6 +82,7 @@ func runOversizedFieldGroup(t testing.TB) {
 	require.NoError(t, process.running())
 }
 
+// hasOversizedFieldGroupLog reports whether output contains a complete record for the requested physical chunk.
 func hasOversizedFieldGroupLog(output string, chunkIndex int, chunkFields int) bool {
 	expected := []string{
 		oversizedFieldGroupLogMessage,

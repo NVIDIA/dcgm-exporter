@@ -41,18 +41,28 @@ func IsDCGMExpP2PStatusEnabled(counterList counters.CounterList) bool {
 	})
 }
 
+// p2pStatusCollector reads the current GPU peer-to-peer matrix with the
+// client captured by its registry-generation factory.
 type p2pStatusCollector struct {
 	baseExpCollector
 	deviceInfoProvider deviceinfo.Provider
 }
 
+// GetMetrics reads P2P status through the captured client and returns its
+// Prometheus metric family for the active registry generation.
 func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
-	p2pStatus, err := dcgmprovider.Client().GetNvLinkP2PStatus()
+	p2pStatus, err := c.dcgmClient().GetNvLinkP2PStatus()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get P2P status: %v", err)
 	}
 
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceInfoProvider)
+	monitoringInfo := c.p2pMonitoringInfo()
+	observed := c.currentTime().UnixMicro()
+
+	var sourceGPUs []deviceinfo.GPUInfo
+	if c.config.EnableOTLP {
+		sourceGPUs = c.deviceInfoProvider.GPUs()
+	}
 
 	metrics := make(MetricsByCounter)
 	metrics[c.counter] = make([]Metric, 0)
@@ -64,16 +74,17 @@ func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
 	}
 
 	for i, status := range p2pStatus.Gpus {
-		labels := map[string]string{}
-		if len(status) > 1 && len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
-			err := c.getLabelsFromCounters(monitoringInfo[i], labels)
-			if err != nil {
-				return nil, err
-			}
+		monitored, exists := monitoringInfo[uint(i)]
+		if !exists {
+			continue
+		}
+		labels, err := c.p2pLabels(monitored, len(status))
+		if err != nil {
+			return nil, err
 		}
 
 		for j, link := range status {
-			if i == j {
+			if _, exists := monitoringInfo[uint(j)]; i == j || !exists {
 				continue
 			}
 
@@ -82,7 +93,8 @@ func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
 			metricValueLabels[LinkStatusLabel] = p2pStatusToString(uint64(link))
 			// Safe conversion from link to int, assuming link values are small
 			linkValue := int(uint64(link)) //nolint:gosec // link values are small in practice
-			m := c.createMetric(metricValueLabels, monitoringInfo[i], uuid, linkValue)
+			m := c.createMetric(metricValueLabels, monitored, uuid, linkValue, c.deviceInfoProvider, observed)
+			preservePeerIdentity(m.Source, monitored.DeviceInfo, uint(j), sourceGPUs)
 			metrics[c.counter] = append(metrics[c.counter], m)
 		}
 	}
@@ -90,6 +102,38 @@ func (c *p2pStatusCollector) GetMetrics() (MetricsByCounter, error) {
 	return metrics, nil
 }
 
+// p2pMonitoringInfo returns every attached GPU keyed by its physical GPU ID,
+// which is the row and column index of DCGM's peer-to-peer matrix.
+func (c *p2pStatusCollector) p2pMonitoringInfo() map[uint]devicemonitoring.Info {
+	// DCGM's all-GPU matrix uses physical GPU IDs as row and column indexes,
+	// retaining slots for detached GPUs. Selection must not compact those IDs.
+	monitoringInfo := make(map[uint]devicemonitoring.Info)
+	for i := uint(0); i < c.deviceInfoProvider.GPUCount(); i++ {
+		gpu := c.deviceInfoProvider.GPU(i)
+		if gpu.Status == dcgm.EntityStatusDetached {
+			continue
+		}
+		monitoringInfo[gpu.DeviceInfo.GPU] = devicemonitoring.Info{
+			Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: gpu.DeviceInfo.GPU},
+			DeviceInfo: gpu.DeviceInfo,
+		}
+	}
+	return monitoringInfo
+}
+
+// p2pLabels returns the label-counter labels for one GPU. It reads them only
+// when the GPU has more than one peer slot and label fields are watched.
+func (c *p2pStatusCollector) p2pLabels(monitored devicemonitoring.Info, peerSlots int) (map[string]string, error) {
+	labels := map[string]string{}
+	if peerSlots > 1 && len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
+		if err := c.getLabelsFromCounters(monitored, labels); err != nil {
+			return nil, err
+		}
+	}
+	return labels, nil
+}
+
+// p2pStatusToString maps a DCGM peer-to-peer status value to its metric label.
 func p2pStatusToString(status uint64) string {
 	switch status {
 	case 0:
@@ -111,8 +155,21 @@ func p2pStatusToString(status uint64) string {
 	}
 }
 
-// NewP2PStatusCollector creates a new P2P status collector
+// NewP2PStatusCollector creates a P2P status collector with the current
+// process client. Registry factories use the client-specific helper below.
 func NewP2PStatusCollector(
+	counterList counters.CounterList,
+	hostname string,
+	config *appconfig.Config,
+	deviceWatchList devicewatchlistmanager.WatchList,
+) (Collector, error) {
+	return newP2PStatusCollectorWithClient(dcgmprovider.Client(), counterList, hostname, config, deviceWatchList)
+}
+
+// newP2PStatusCollectorWithClient creates a P2P status collector bound to the
+// client that owns its registry generation.
+func newP2PStatusCollectorWithClient(
+	client dcgmprovider.DCGM,
 	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
@@ -136,6 +193,7 @@ func NewP2PStatusCollector(
 
 	return &p2pStatusCollector{
 		baseExpCollector: baseExpCollector{
+			client: client,
 			counter: counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
 				return c.FieldName == counters.DCGMExpP2PStatus
 			})],

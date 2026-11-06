@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "config",
+    srcs = [
+        "bootstrap_components.go",
+        "config.go",
+        "feature_mode.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/config",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "config_test",
+    srcs = [
+        "bootstrap_components_test.go",
+        "feature_mode_test.go",
+    ],
+    deps = [":config"],
+)

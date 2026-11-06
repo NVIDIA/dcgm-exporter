@@ -3,11 +3,11 @@
 # DCGM FIELD, Prometheus metric type, help message
 
 # Base metrics
-DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
-DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
-DCGM_FI_DEV_POWER_USAGE,   gauge, Power draw (in W).
-DCGM_FI_DEV_FB_USED,       gauge, Framebuffer memory used (in MiB).
-DCGM_FI_DRIVER_VERSION,    label, Driver Version.
+DCGM_FI_DEV_GPU_UTIL_RATIO,    gauge, GPU utilization as a ratio.
+DCGM_FI_DEV_MEMORY_UTIL_RATIO, gauge, Memory utilization as a ratio.
+DCGM_FI_DEV_BOARD_POWER_WATTS, gauge, Power draw (in W).
+DCGM_FI_DEV_FB_USED_BYTES,     gauge, Used framebuffer memory in bytes.
+DCGM_FI_DRIVER_VERSION,        label, Driver Version.
 
 # DCP metrics
 DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.

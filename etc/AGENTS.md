@@ -1,5 +1,7 @@
 # etc - Agent Instructions
 
+The root `AGENTS.md` still applies. This file adds rules for `etc/`.
+
 `etc/` contains shipped metric CSV files. These files are user-facing contracts.
 
 ## Metric CSV Contract
@@ -20,7 +22,7 @@ Run at least:
 
 ```bash
 go test ./internal/pkg/counters
-make test-main
+task test:unit
 ```
 
-If version examples or derived files change, also run `make validate-versions`.
+If version examples or derived files change, also run `task deps:sync:check`.

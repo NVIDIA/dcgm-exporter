@@ -36,9 +36,9 @@ const (
 )
 
 var latestValueBoundaryFields = [...]string{
-	"DCGM_FI_DEV_GPU_TEMP",
-	"DCGM_FI_DEV_POWER_USAGE",
-	"DCGM_FI_DEV_FB_USED",
+	"DCGM_FI_DEV_GPU_TEMP_CELSIUS",
+	"DCGM_FI_DEV_BOARD_POWER_WATTS",
+	"DCGM_FI_DEV_FB_USED_BYTES",
 }
 
 var oversizedFieldGroupFields = [...]string{
@@ -59,10 +59,10 @@ var latestValueComputeInstanceOnlyFields = map[string]struct{}{
 	"DCGM_FI_DEV_BAR1_USED":     {},
 	"DCGM_FI_DEV_BAR1_FREE":     {},
 	"DCGM_FI_DEV_FB_TOTAL":      {},
-	"DCGM_FI_DEV_FB_FREE":       {},
+	"DCGM_FI_DEV_FB_FREE_BYTES": {},
 	"DCGM_FI_DEV_FB_RESERVED":   {},
 	"DCGM_FI_DEV_FB_USED_RATIO": {},
-	"DCGM_FI_DEV_FB_USED":       {},
+	"DCGM_FI_DEV_FB_USED_BYTES": {},
 }
 
 // TestLatestValueBatchingFixtureContract guards the request-boundary shape even
@@ -136,16 +136,17 @@ func writeLatestValueBatchingConfig(t testing.TB, groupSizes ...int) string {
 	require.NoError(t, err)
 
 	var config strings.Builder
-	fmt.Fprintf(&config, "version: 2\nmetrics:\n  file: %q\ncollections:\n  - name: scrape\n    every: 1s\n    metrics:\n      include: [\"*\"]\n", fixturePath)
+	fmt.Fprintf(&config, "version: 2\nmetrics:\n  - name: gpu\n    file: %q\n    every: 1s\n    enrichment: {kubernetes: false, container: false, hpc_jobs: false}\n    overrides:\n", fixturePath)
 
 	offset := 0
 	for index, size := range groupSizes {
-		fmt.Fprintf(&config, "  - name: batching-%d\n    every: 1s\n    metrics:\n      include:\n", index+1)
+		fmt.Fprintf(&config, "      - name: batching-%d\n        every: 1s\n        match:\n", index+1)
 		for _, field := range fields[offset : offset+size] {
-			fmt.Fprintf(&config, "        - %s\n", field)
+			fmt.Fprintf(&config, "          - %s\n", field)
 		}
 		offset += size
 	}
+	config.WriteString("outputs:\n  prometheus:\n    type: prometheus\n    schema: dcgm/v1\n")
 
 	configPath := filepath.Join(t.TempDir(), "dcgm-exporter.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte(config.String()), 0o600))
@@ -162,7 +163,7 @@ func runLatestValueBatching(t testing.TB) {
 	configPath := writeLatestValueBatchingConfig(t, 127, 12)
 	port := getRandomAvailablePort(t)
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
-	process, _ := startExporterAndWait(
+	process, _ := startFastExporterAndWait(
 		t,
 		metricsURL,
 		"--config-file", configPath,

@@ -25,6 +25,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
@@ -36,10 +37,13 @@ func IsDCGMExpClockEventsCountEnabled(counterList counters.CounterList) bool {
 		})
 }
 
+// clockEventsCollector counts, for each clock-event reason, the sampled
+// observations in the configured window that had that reason's bit set.
 type clockEventsCollector struct {
 	expCollector
 }
 
+// clockEventBitmask holds the DCGM clock-event reason bits of one sample.
 type clockEventBitmask int64
 
 // Source of the const values: https://github.com/NVIDIA/DCGM/blob/master/dcgmlib/dcgm_fields.h
@@ -54,7 +58,7 @@ const (
 	DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN clockEventBitmask = 0x0000000000000008
 	// DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST Sync Boost
 	DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST clockEventBitmask = 0x0000000000000010
-	// SW Thermal Slowdown
+	// DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL indicates software thermal slowdown.
 	DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL clockEventBitmask = 0x0000000000000020
 	// DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL HW Thermal Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
 	DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL clockEventBitmask = 0x0000000000000040
@@ -77,11 +81,12 @@ var clockEventToString = map[clockEventBitmask]string{
 	DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS: "display_clocks",
 }
 
-// String method to convert the enum value to a string
+// String returns the clock_event label value for one reason bit.
 func (enm clockEventBitmask) String() string {
 	return clockEventToString[enm]
 }
 
+// parseClockEventReasons returns the known reason bits set in one DCGM sample.
 func parseClockEventReasons(value int64) []clockEventBitmask {
 	var reasons []clockEventBitmask
 
@@ -95,11 +100,27 @@ func parseClockEventReasons(value int64) []clockEventBitmask {
 	return reasons
 }
 
+// GetMetrics returns, per entity and reason, the number of sampled observations
+// in the current window that had the reason set.
 func (c *clockEventsCollector) GetMetrics() (MetricsByCounter, error) {
 	return c.expCollector.getMetrics()
 }
 
+// NewClockEventsCollector creates the windowed clock-event collector with the
+// current process client for direct callers.
 func NewClockEventsCollector(
+	counterList counters.CounterList,
+	hostname string,
+	config *appconfig.Config,
+	deviceWatchList devicewatchlistmanager.WatchList,
+) (Collector, error) {
+	return newClockEventsCollectorWithClient(dcgmprovider.Client(), counterList, hostname, config, deviceWatchList)
+}
+
+// newClockEventsCollectorWithClient creates the windowed clock-event collector
+// with client so its metrics and watch cleanup stay in one DCGM generation.
+func newClockEventsCollectorWithClient(
+	client dcgmprovider.DCGM,
 	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
@@ -110,11 +131,18 @@ func NewClockEventsCollector(
 		return nil, fmt.Errorf(counters.DCGMExpClockEventsCount + " collector is disabled")
 	}
 
-	collector := clockEventsCollector{}
-	var err error
-	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
+	source, err := countSource(counters.DCGMExpClockEventsCount)
+	if err != nil {
+		return nil, err
+	}
 
-	collector.expCollector, err = newExpCollector(
+	collector := clockEventsCollector{}
+	// DCGM declares the clock event reasons field at GPU level, so it is
+	// watched and reported on physical GPUs, never on MIG instances.
+	deviceWatchList.SetDeviceFieldsForPhysicalGPUs([]dcgm.Short{source.FieldID})
+
+	collector.expCollector, err = newExpCollectorWithClient(
+		client,
 		counterList.LabelCounters(),
 		hostname,
 		config,
@@ -123,16 +151,14 @@ func NewClockEventsCollector(
 	if err != nil {
 		return nil, err
 	}
-	collector.sourceFields = map[dcgm.Short]string{
-		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
-	}
+	collector.sourceFields = map[dcgm.Short]string{source.FieldID: source.Name}
 
 	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
 		return c.FieldName == counters.DCGMExpClockEventsCount
 	})]
 
 	collector.labelFiller = func(metricValueLabels map[string]string, entityValue int64) {
-		metricValueLabels["clock_event"] = clockEventBitmask(entityValue).String()
+		metricValueLabels[ClockEventLabel] = clockEventBitmask(entityValue).String()
 	}
 
 	collector.windowSize = config.ClockEventsCountWindowSize

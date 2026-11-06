@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestParseOutputEntry checks that the capture reader keeps raw text and extracts structured log fields.
 func TestParseOutputEntry(t *testing.T) {
 	parsed := parseOutputEntry("2024-02-07 18:01:05.641 INFO [1:1] Linux driver started")
 	assert.False(t, parsed.IsRawString)

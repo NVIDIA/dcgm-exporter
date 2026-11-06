@@ -1,0 +1,690 @@
+version: "3"
+
+silent: true
+set: [e]
+
+dotenv:
+  - hack/versions.env
+
+vars:
+  # Host architecture as Bazel and the release artifacts name it.
+  HOST_ARCH:
+    sh: |
+      case "$(uname -m)" in
+        x86_64) echo amd64 ;;
+        aarch64 | arm64) echo arm64 ;;
+        *) echo "$(uname -m)" ;;
+      esac
+  # Target architecture of the build and staging tasks: amd64 or arm64.
+  # task <name> ARCH=arm64 picks it; the default is the host's.
+  ARCH: '{{.HOST_ARCH}}'
+  # An environment variable or a command-line variable of the same name wins.
+  BAZEL_PLATFORM_CONFIG: '{{.BAZEL_PLATFORM_CONFIG | default (printf "linux-%s" .ARCH)}}'
+  BAZEL_TARGETS: '{{.BAZEL_TARGETS | default "//cmd/... //hack/... //internal/... //packaging/... //pkg/... //tests/..."}}'
+  # Bazel's event log of the last task test:unit run. test:reports reads it
+  # to find the targets that run tested.
+  BAZEL_TEST_EVENTS: '{{.BAZEL_TEST_EVENTS | default ".cache/bazel-test-events.json"}}'
+  # The e2e bundle that task build:e2e writes and the test:e2e tasks run.
+  E2E_BUNDLE_ROOT: '{{.E2E_BUNDLE_ROOT | default (printf "dist/e2e-bundle/linux-%s" .ARCH)}}'
+  # The image that task build:image:local tags when IMAGE_REF is not set.
+  LOCAL_IMAGE_REF: '{{.REGISTRY | default "nvidia"}}/dcgm-exporter:{{.EXPORTER_VERSION}}'
+
+tasks:
+  default:
+    desc: Show supported commands
+    cmds:
+      - task --list
+
+  deps:install:
+    desc: Install the locked development tools
+    cmds:
+      - mise install --locked
+
+  deps:check:
+    desc: Check the locked development tools and canonical tool versions
+    cmds:
+      - bash hack/task/check-deps.sh
+
+  deps:go:download:
+    desc: Download Go module dependencies
+    cmds:
+      - go mod download
+
+  deps:go:verify:
+    desc: Verify downloaded Go module dependencies
+    cmds:
+      - go mod verify
+
+  deps:fetch:
+    desc: Download and verify Go dependencies
+    cmds:
+      - task: deps:go:download
+      - task: deps:go:verify
+
+  deps:lock:
+    desc: Refresh mise.lock for the configured tool versions
+    cmds:
+      - mise lock
+
+  deps:sync:
+    desc: Synchronize files derived from hack/versions.env
+    cmds:
+      - uv run --script hack/versions.py sync --verbose
+
+  deps:sync:check:
+    desc: Check files derived from hack/versions.env
+    cmds:
+      - uv run --script hack/versions.py sync --check
+
+  deps:check:all:
+    desc: Test the version tool, then check files derived from hack/versions.env
+    cmds:
+      - task: deps:test
+      - task: deps:sync:check
+
+  deps:update:
+    desc: Report available dependency updates without changing files
+    cmds:
+      - uv run --script hack/versions.py check {{.CLI_ARGS}}
+
+  deps:update:strict:
+    desc: Fail when selectable dependency updates or freshness errors are found
+    cmds:
+      - uv run --script hack/versions.py check --strict {{.CLI_ARGS}}
+
+  deps:update:apply:
+    desc: Apply supported dependency and Go module updates
+    cmds:
+      - uv run --script hack/versions.py apply {{.CLI_ARGS}}
+
+  deps:test:
+    desc: Test version-management tools
+    cmds:
+      - uv run --script hack/versions.py test
+
+  bazel:fetch:
+    desc: Fetch dependencies for the normal Bazel build and test graph
+    cmds:
+      - |
+        bash hack/bazel/run.sh fetch --config=ci --config={{.BAZEL_PLATFORM_CONFIG}} \
+          --build_tag_filters=-manual ${BAZEL_FETCH_FLAGS:-} {{.BAZEL_TARGETS}}
+
+  bazel:build:
+    desc: Build Bazel targets
+    cmds:
+      - |
+        bash hack/bazel/run.sh build --config=ci --config={{.BAZEL_PLATFORM_CONFIG}} \
+          --build_tag_filters=-manual ${BAZEL_BUILD_FLAGS:-} {{.BAZEL_TARGETS}}
+
+  build:
+    desc: Build the distroless runtime image (same as build:image:distroless)
+    cmds:
+      - task: build:image:distroless
+
+  build:binary:
+    desc: Build and materialize the dcgm-exporter binary
+    cmds:
+      - bash hack/bazel/stage-artifacts.sh {{.ARCH}} product
+      - install -m 0755 dist/staged/linux-{{.ARCH}}/bin/dcgm-exporter cmd/dcgm-exporter/dcgm-exporter
+
+  build:e2e:
+    desc: Build and materialize the e2e validation bundle for ARCH (amd64 or arm64; default the host)
+    env:
+      E2E_BUNDLE_ROOT: '{{.E2E_BUNDLE_ROOT}}'
+    cmds:
+      - |
+        staged_artifact_root="${STAGED_ARTIFACT_ROOT:-${E2E_BUNDLE_ROOT}}"
+        STAGED_ARTIFACT_ROOT="${staged_artifact_root}" bash hack/bazel/stage-artifacts.sh {{.ARCH}} e2e-bundle
+        mkdir -p bin
+        install -m 0755 "${staged_artifact_root}/bin/e2e" bin/e2e
+
+  build:image:distroless:
+    desc: Build the distroless runtime image
+    cmds:
+      - task: internal:build-image
+        vars:
+          BUILD_TARGET: runtime-distroless
+
+  build:image:local:
+    desc: Build the distroless runtime image for ARCH (amd64 or arm64; default the host) and load it into Docker
+    # The build runs in a new Task process, which sees only environment
+    # variables, so pass it the resolved tag.
+    env:
+      IMAGE_REF: '{{.IMAGE_REF | default .LOCAL_IMAGE_REF}}'
+    cmds:
+      - |
+        case "${CONTAINER:-distroless}" in
+          distroless) PLATFORMS=linux/{{.ARCH}} OUTPUT=type=docker task build:image:distroless ;;
+          *) echo "error: CONTAINER must be distroless" >&2; exit 2 ;;
+        esac
+
+  build:image:verify:
+    desc: Check a built image's architecture, labels and that --version runs; IMAGE_REF names it (default the image that task build:image:local tags) and SOURCE_REVISION the commit it must record (default HEAD)
+    vars:
+      IMAGE_REF: '{{.IMAGE_REF | default .LOCAL_IMAGE_REF}}'
+      SOURCE_REVISION: '{{.SOURCE_REVISION | default ""}}'
+    env:
+      ARCH: '{{.ARCH}}'
+      IMAGE_REF: '{{.IMAGE_REF}}'
+      SOURCE_REVISION: '{{.SOURCE_REVISION}}'
+    cmds:
+      - bash hack/task/verify-image.sh
+
+  internal:build-image:
+    internal: true
+    env:
+      LOCAL_IMAGE_REF: '{{.LOCAL_IMAGE_REF}}'
+    cmds:
+      - |
+        platforms="${PLATFORMS:-linux/amd64,linux/arm64}"
+        output="${OUTPUT:-type=oci,dest=/dev/null}"
+        source_revision="${SOURCE_REVISION:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+        image_ref="${IMAGE_REF:-${LOCAL_IMAGE_REF}}"
+        for platform in $(printf '%s' "${platforms}" | tr ',' ' '); do
+          bash hack/bazel/stage-artifacts.sh "${platform##*/}" product
+        done
+        set --
+        if [ -n "${IMAGE_METADATA_FILE:-}" ]; then
+          set -- --metadata-file "${IMAGE_METADATA_FILE}"
+        fi
+        docker --debug buildx build "$@" --pull --provenance=false --output "${output}" --progress=plain \
+          ${DOCKER_NO_CACHE---no-cache} --platform "${platforms}" --target "{{.BUILD_TARGET}}" \
+          --build-arg "DCGM_VERSION=${DCGM_VERSION}" --build-arg "VERSION=${EXPORTER_VERSION}" \
+          --build-arg "SOURCE_REVISION=${source_revision}" --tag "${image_ref}" --file docker/Dockerfile .
+
+  build:package:
+    desc: Build package artifacts for amd64 and arm64
+    cmds:
+      - task: build:package:amd64
+      - task: build:package:arm64
+
+  build:package:amd64:
+    desc: Build the amd64 package artifact
+    cmds:
+      - |
+        DIST_PREFIX="${DIST_PREFIX:-}" PACKAGE_VERSION="${PACKAGE_VERSION:-${EXPORTER_VERSION}}" \
+          PACKAGE_VALIDATOR_IMAGE="${PACKAGE_VALIDATOR_IMAGE:-${UBI8_IMAGE_REPOSITORY}:${UBI8_IMAGE_TAG}@${UBI8_IMAGE_DIGEST}}" \
+          DOCKER_NO_CACHE="${DOCKER_NO_CACHE---no-cache}" bash hack/package/export-archive.sh amd64
+
+  build:package:arm64:
+    desc: Build the arm64 package artifact
+    cmds:
+      - |
+        DIST_PREFIX="${DIST_PREFIX:-}" PACKAGE_VERSION="${PACKAGE_VERSION:-${EXPORTER_VERSION}}" \
+          PACKAGE_VALIDATOR_IMAGE="${PACKAGE_VALIDATOR_IMAGE:-${UBI8_IMAGE_REPOSITORY}:${UBI8_IMAGE_TAG}@${UBI8_IMAGE_DIGEST}}" \
+          DOCKER_NO_CACHE="${DOCKER_NO_CACHE---no-cache}" bash hack/package/export-archive.sh arm64
+
+  build:package:check:
+    desc: Inspect package tarballs
+    cmds:
+      - bash hack/package/test.sh inspect
+
+  helm:package:
+    desc: Build a self-contained Helm chart archive
+    cmds:
+      - |
+        set -eu
+        chart_stage="$(mktemp -d)"
+        trap 'rm -rf "${chart_stage}"' EXIT
+
+        chart_dir="${chart_stage}/dcgm-exporter"
+        mkdir -p "${chart_dir}/templates" "${chart_dir}/files"
+        cp deployment/Chart.yaml deployment/README.md deployment/values.yaml deployment/.helmignore "${chart_dir}/"
+        cp -R deployment/templates/. "${chart_dir}/templates/"
+        cp etc/default-counters.csv "${chart_dir}/files/"
+
+        helm package "${chart_dir}" --destination "${chart_stage}" >/dev/null
+        set -- "${chart_stage}"/dcgm-exporter-*.tgz
+        test "$#" -eq 1
+        test -f "$1"
+        mkdir -p dist
+        cp "$1" dist/dcgm-exporter.tgz
+
+  install:
+    desc: Install the exporter binary and default counters
+    deps: [build:binary]
+    cmds:
+      - install -m 755 -D cmd/dcgm-exporter/dcgm-exporter "${DESTDIR:-}/usr/bin/dcgm-exporter"
+      - install -m 644 -D etc/default-counters.csv "${DESTDIR:-}/etc/dcgm-exporter/default-counters.csv"
+      - install -m 644 -D etc/config.yaml "${DESTDIR:-}/etc/dcgm-exporter/config.yaml"
+
+  test:
+    desc: Run the default CPU-safe test set
+    cmds:
+      - task: test:unit
+      - task: test:static
+
+  test:unit:
+    desc: Run the unit tests under Bazel; COVERAGE=true measures coverage and REPORTS=true writes the reports
+    aliases: [bazel:test]
+    vars:
+      COVERAGE: '{{.COVERAGE | default "false"}}'
+      REPORTS: '{{.REPORTS | default "false"}}'
+    cmds:
+      # Runs after any failure below so the reports still get written; a
+      # failure of this call is ignored, and the explicit step covers a pass.
+      - defer:
+          task: test:reports:failed
+          vars:
+            FAILED_EXIT_CODE: "{{.EXIT_CODE}}"
+            REPORTS: "{{.REPORTS}}"
+      - |
+        set -eu
+        flags="--build_tag_filters=-manual --test_tag_filters=-manual"
+        verb=test
+        if [ "{{.COVERAGE}}" = true ]; then
+          verb=coverage
+        # Reports read the test logs, which minimal downloads do not keep.
+        elif [ "{{.REPORTS}}" != true ]; then
+          flags="--remote_download_outputs=minimal ${flags}"
+        fi
+        # A run that stops before Bazel starts must not leave the last run's log.
+        rm -f "{{.BAZEL_TEST_EVENTS}}"
+        mkdir -p "$(dirname "{{.BAZEL_TEST_EVENTS}}")"
+        bash hack/bazel/run.sh "${verb}" --config=ci --config={{.BAZEL_PLATFORM_CONFIG}} \
+          --build_event_json_file="{{.BAZEL_TEST_EVENTS}}" ${flags} ${BAZEL_TEST_FLAGS:-} {{.BAZEL_TARGETS}}
+      - task: test:reports
+        if: '{{eq .REPORTS "true"}}'
+
+  test:reports:failed:
+    internal: true
+    desc: Write the test reports after a failed test run
+    cmds:
+      - task: test:reports
+        if: '{{and (ne .FAILED_EXIT_CODE "") (eq .REPORTS "true")}}'
+
+  test:reports:
+    desc: Write test-reports/*.xml, test_results.json, tests.cov and coverage.xml from the last task test:unit run
+    cmds:
+      - |
+        set -eu
+        rm -rf test-reports tests.cov test_results.json coverage.xml
+        mkdir -p test-reports
+        work="$(mktemp -d)"
+        trap 'rm -rf "${work}"' EXIT
+
+        events="{{.BAZEL_TEST_EVENTS}}"
+        if [ ! -s "${events}" ]; then
+          echo "error: ${events} not found; run task test:unit first" >&2
+          exit 1
+        fi
+
+        # Read only the results of the last run, from Bazel's own record of
+        # where each one is. The testlogs folders also keep logs of earlier
+        # runs, such as those of a target that failed to build this time, and a
+        # target built with other settings, such as Go tags, logs elsewhere.
+        # Print the label and test.xml of each shard, last attempt only.
+        jq -r 'select(.id.testResult) | .id.testResult as $id
+          | (.testResult.testActionOutput[] | select(.name == "test.xml") | .uri) as $xml
+          | [$id.label, $id.run, $id.shard, $id.attempt, $xml] | @tsv' "${events}" \
+          | sort -t "$(printf '\t')" -k1,1 -k2,2n -k3,3n -k4,4nr \
+          | awk -F '\t' '!seen[$1 FS $2 FS $3]++ { print $1 "\t" $5 }' > "${work}"/results
+        if [ ! -s "${work}"/results ]; then
+          echo "error: ${events} lists no test results; run task test:unit first" >&2
+          exit 1
+        fi
+        bash hack/bazel/run.sh query "kind(go_test, set($(cut -f1 "${work}"/results | sort -u | tr '\n' ' ')))" \
+          > "${work}"/go_tests
+
+        : > "${work}"/profiles
+        : > test_results.json
+        while IFS="$(printf '\t')" read -r label uri; do
+          case "${uri}" in
+            file://*) xml="${uri#file://}" ;;
+            *)
+              echo "error: ${label}: test.xml is not a local file: ${uri}" >&2
+              exit 1
+              ;;
+          esac
+          dir="$(dirname "${xml}")"
+          # A sharded target has one folder per shard; the path keeps names apart.
+          cp "${xml}" "test-reports/$(printf '%s' "${dir#*/testlogs/}" | tr / _).xml"
+          # Skip files with no profile, such as the shell test's.
+          if grep -q '^mode:' "${dir}/coverage.dat" 2>/dev/null; then
+            cat "${dir}/coverage.dat" >> "${work}"/profiles
+          fi
+          if grep -qxF "${label}" "${work}"/go_tests; then
+            pkg="${label#//}"
+            go tool test2json -p "github.com/NVIDIA/dcgm-exporter/${pkg%%:*}" < "${dir}/test.log" >> test_results.json
+          fi
+        done < "${work}"/results
+
+        if [ -z "$(ls -A test-reports)" ]; then
+          echo "error: no Bazel test results found; run task test:unit first" >&2
+          exit 1
+        fi
+
+        if [ ! -s "${work}"/profiles ]; then
+          # A coverage run that left no profile lost its coverage; only a
+          # plain test run may skip the coverage reports.
+          run_command="$(jq -r 'select(.id.started) | .started.command' "${events}")"
+          if [ "${run_command}" = coverage ]; then
+            echo "error: ${events} records a coverage run, but no test wrote a coverage profile" >&2
+            exit 1
+          fi
+          echo "note: no coverage profiles found; skipping tests.cov and coverage.xml (run task test:unit COVERAGE=true)"
+          exit 0
+        fi
+
+        # Each profile also lists blocks of packages it instruments, so the
+        # same block appears in many files: sum the counts per block.
+        {
+          echo "mode: atomic"
+          grep -v '^mode:' "${work}"/profiles | awk '{ n[$1 " " $2] += $3 } END { for (k in n) print k, n[k] }' | sort
+        } | grep -v -E 'mock_|cmd/dcgm-exporter/main\.go|internal/pkg/dcgmprovider/(dcgm|smart_init)\.go' > tests.cov
+        go tool cover -func=tests.cov | tail -n 1
+        # The k8s tag lets the converter resolve the tagged pod-mapping source file.
+        GOFLAGS=-tags=k8s gocover-cobertura < tests.cov > coverage.xml
+
+  test:static:
+    desc: Run static repository tests
+    deps: [helm:package]
+    cmds:
+      - DCGM_EXPORTER_CHART_ARCHIVE="$(pwd)/dist/dcgm-exporter.tgz" go test ./tests/static
+
+  test:fuzz:
+    desc: Run bounded Go fuzz tests
+    cmds:
+      - go test ./internal/pkg/appconfig -run='^$' -fuzz='^FuzzParseYAMLConfig$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+      - go test ./internal/pkg/counters -run='^$' -fuzz='^FuzzExtractCountersFromCSV$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+      - go test ./internal/pkg/devicewatchlistmanager -run='^$' -fuzz='^FuzzValidateWatchGroups$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+      - go test ./internal/pkg/hostname -run='^$' -fuzz='^FuzzParseRemoteHostname$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+      - go test ./pkg/cmd -run='^$' -fuzz='^FuzzParseDeviceOptions$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+      - go test ./internal/pkg/rendermetrics -run='^$' -fuzz='^FuzzRenderGroup$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+      - go test ./internal/pkg/transformation -run='^$' -fuzz='^FuzzContainerGPUKeys$' -fuzztime="${FUZZ_TIME:-10s}" -fuzzminimizetime="${FUZZ_MINIMIZE_TIME:-5s}" -parallel="${FUZZ_PARALLEL:-2}" -timeout="${FUZZ_TIMEOUT:-2m}"
+
+  test:host:
+    desc: Run GPU and DCGM host integration tests
+    cmds:
+      - task: generate
+      - |
+        rm -rf .coverdata/integration_binary
+        mkdir -p .coverdata/integration_binary
+        # Instrument main so exporter exits write GOCOVERDIR data.
+        CGO_ENABLED=1 go build -buildvcs=false -cover -covermode=atomic -coverpkg=./cmd/dcgm-exporter,./internal/...,./pkg/... -trimpath \
+          -ldflags "-X main.BuildVersion=${EXPORTER_VERSION}" -o .coverdata/integration_binary/dcgm-exporter ./cmd/dcgm-exporter
+        CGO_ENABLED=1 go test -race -c -o .coverdata/integration_binary/host.test ./tests/host/
+        repo_root="$PWD"
+        (cd tests/host && GOCOVERDIR="$repo_root/.coverdata/integration_binary" \
+          "$repo_root/.coverdata/integration_binary/host.test" \
+          -test.count=1 -test.timeout=5m -test.v ${TEST_ARGS:-} \
+          -exporter-binary="$repo_root/.coverdata/integration_binary/dcgm-exporter")
+        go tool covdata textfmt -i="$PWD/.coverdata/integration_binary" -o=integration_binary.cov.tmp
+        grep -v 'mock_' integration_binary.cov.tmp > integration_binary.cov
+        rm integration_binary.cov.tmp
+        go tool cover -func=integration_binary.cov > integration_binary.cov.func.txt
+        cat integration_binary.cov.func.txt
+
+  test:container:
+    desc: Run container integration tests
+    cmds:
+      - bash hack/task/test-container.sh all
+
+  test:container:distroless:
+    desc: Run container integration tests (same as test:container)
+    cmds:
+      - bash hack/task/test-container.sh distroless
+
+  test:container:verbose:
+    desc: Run container tests with verbose Ginkgo output
+    cmds:
+      - bash hack/task/test-container.sh verbose
+
+  test:container:focus:
+    desc: Run focused container tests; set FOCUS to a Ginkgo pattern
+    cmds:
+      - bash hack/task/test-container.sh focus
+
+  test:k8s:
+    desc: Run the Kubernetes tests through the e2e CLI; narrow with task test:k8s -- --scenario k8s/tls
+    cmds:
+      - go run ./cmd/e2e tests --suite k8s ${KUBECONFIG:+--kubeconfig "$KUBECONFIG"} {{.CLI_ARGS}}
+
+  test:package:
+    desc: Test package artifacts in supported container images
+    cmds:
+      - bash hack/package/test.sh install
+
+  test:e2e:
+    desc: Build local prerequisites and run end-to-end validation
+    env:
+      E2E_BUNDLE_ROOT: '{{.E2E_BUNDLE_ROOT}}'
+    cmds:
+      - |
+        e2e_bundle_root="${E2E_BUNDLE_ROOT}"
+        STAGED_ARTIFACT_ROOT="${e2e_bundle_root}" task build:e2e ARCH={{.ARCH}}
+        base_image="${E2E_LOCAL_EXPORTER_BASE_IMAGE:-nvidia/dcgm-exporter:${EXPORTER_VERSION}-local-$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
+        PLATFORMS=linux/{{.ARCH}} OUTPUT=type=docker IMAGE_REF="${base_image}" task build:image:distroless
+        image_id="$(docker image inspect --format '{{"{{.Id}}"}}' "${base_image}")"
+        image_suffix="${image_id#sha256:}"
+        image_suffix="$(printf '%s' "${image_suffix}" | cut -c1-12)"
+        final_image="${base_image}-${image_suffix}"
+        docker tag "${base_image}" "${final_image}"
+        E2E_EXPORTER_IMAGE="${final_image}" "${e2e_bundle_root}/bin/e2e" tests --prebuilt-binaries \
+          --tools-dir "${e2e_bundle_root}/bin" --exporter-binary "${e2e_bundle_root}/bin/dcgm-exporter"
+
+  test:e2e:smoke:
+    desc: Run the static/paths scenario from the e2e bundle; needs no GPU (run task build:e2e first)
+    env: &e2e_bundle_env
+      E2E_BUNDLE_ROOT: '{{.E2E_BUNDLE_ROOT}}'
+    cmds:
+      - task: internal:e2e-bundle-check
+      - |
+        bundle="$(cd "${E2E_BUNDLE_ROOT}" && pwd -P)"
+        "${bundle}/bin/e2e" tests --prebuilt-binaries --tools-dir "${bundle}/bin" --scenario static/paths
+
+  test:e2e:host:
+    desc: Run the host e2e scenarios on a GPU host with DCGM against an exporter built with coverage; writes integration_binary.cov (run task build:e2e first)
+    env: *e2e_bundle_env
+    cmds:
+      - task: internal:e2e-bundle-check
+      - bash hack/task/test-e2e-host.sh
+
+  test:e2e:mocks:
+    desc: Run the host e2e scenarios under NVML injection and NVSDM mock fixtures, no GPU; needs a DCGM development build with NVML injection, and NVML_INJECTION_DIR and NVSDM_MOCK_DIR set to fixtures that match DCGM_VERSION (run task build:e2e first)
+    requires:
+      vars: [NVML_INJECTION_DIR, NVSDM_MOCK_DIR]
+    env:
+      E2E_BUNDLE_ROOT: '{{.E2E_BUNDLE_ROOT}}'
+      NVML_INJECTION_DIR: '{{.NVML_INJECTION_DIR}}'
+      NVSDM_MOCK_DIR: '{{.NVSDM_MOCK_DIR}}'
+    cmds:
+      - task: internal:e2e-bundle-check
+      - bash hack/task/test-e2e-mocks.sh
+
+  test:e2e:container:
+    desc: Build the exporter image and run the container e2e suite against it; needs Docker and a GPU (run task build:e2e first)
+    env:
+      E2E_BUNDLE_ROOT: '{{.E2E_BUNDLE_ROOT}}'
+      # The image that task build:image:local tags (IMAGE_REF when set).
+      E2E_EXPORTER_IMAGE: '{{.IMAGE_REF | default .LOCAL_IMAGE_REF}}'
+    cmds:
+      - task: internal:e2e-bundle-check
+      - task: build:image:local
+      - |
+        bundle="$(cd "${E2E_BUNDLE_ROOT}" && pwd -P)"
+        E2E_DCGM_IMAGE="${DCGM_E2E_IMAGE_REPOSITORY}:${DCGM_VERSION}-${DCGM_IMAGE_TAG_SUFFIX}@${DCGM_E2E_IMAGE_DIGEST}" \
+          "${bundle}/bin/e2e" tests \
+            --prebuilt-binaries \
+            --tools-dir "${bundle}/bin" \
+            --exporter-binary "${bundle}/bin/dcgm-exporter" \
+            --suite container \
+            --dcgm-version "${DCGM_VERSION}"
+
+  internal:e2e-bundle-check:
+    internal: true
+    env: *e2e_bundle_env
+    cmds:
+      - |
+        if [ ! -x "${E2E_BUNDLE_ROOT}/bin/e2e" ]; then
+          echo "error: ${E2E_BUNDLE_ROOT}/bin/e2e not found; run task build:e2e first" >&2
+          exit 1
+        fi
+
+  lint:
+    desc: Run all portable lint checks
+    cmds:
+      - task: lint:go
+      - task: lint:shell
+      - task: lint:docker
+
+  lint:go:
+    desc: Run Go lint against changed code
+    cmds:
+      - |
+        mkdir -p .cache/golangci-lint-tmp .cache/golangci-lint-cache
+        TMPDIR="$PWD/.cache/golangci-lint-tmp" GOLANGCI_LINT_CACHE="$PWD/.cache/golangci-lint-cache" \
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 GOGC=50 golangci-lint run ./cmd/... ./hack/... ./internal/... ./pkg/... ./tests/... \
+          --timeout "${GOLANGCILINT_TIMEOUT:-10m}" --new-from-rev="${LINT_BASE_REV:-HEAD~1}" --concurrency=2
+
+  lint:shell:
+    desc: Run ShellCheck over repository scripts; EXTRA_SHELL_SCRIPTS adds more paths or globs
+    vars:
+      EXTRA_SHELL_SCRIPTS: '{{.EXTRA_SHELL_SCRIPTS | default ""}}'
+    cmds:
+      # Left unquoted so the shell expands globs in EXTRA_SHELL_SCRIPTS.
+      # ShellCheck takes each script's shell from its first line.
+      - shellcheck -x hack/utils.sh hack/ci/e2e-image.sh hack/ci/mirror-dockerhub.sh hack/ci/retry.sh hack/ci/security-*.sh internal/e2e/capability/dcgmi_probe.sh hack/bazel/*.sh hack/package/*.sh hack/licenses/stage-container-runtime.sh hack/task/*.sh docker/dcgm-exporter-entrypoint.sh bootstrap.sh {{.EXTRA_SHELL_SCRIPTS}}
+
+  lint:docker:
+    desc: Run Hadolint over Dockerfiles
+    cmds:
+      - hadolint docker/Dockerfile docker/package-validation.Dockerfile .devcontainer/Dockerfile
+
+  fmt:
+    desc: Format Go source files
+    cmds:
+      - bash hack/task/fmt.sh format
+
+  fmt:check:
+    desc: Check Go formatting and import order
+    cmds:
+      - bash hack/task/fmt.sh check
+
+  generate:
+    desc: Generate code and mocks
+    cmds:
+      - go generate ./cmd/... ./hack/... ./internal/... ./pkg/... ./tests/...
+
+  generate:check:
+    desc: Fail when task generate changes the checked-in code or mocks
+    cmds:
+      - |
+        set -eu
+        # Record the tree's contents, including local edits and untracked
+        # files, as a Git tree in a scratch index, so local edits are not
+        # mistaken for generated changes and changes to edited files still show.
+        index="$(mktemp)"
+        trap 'rm -f "${index}"' EXIT
+        snapshot() {
+          cp "$(git rev-parse --git-path index)" "${index}"
+          GIT_INDEX_FILE="${index}" git add --all
+          GIT_INDEX_FILE="${index}" git write-tree
+        }
+
+        before="$(snapshot)"
+        task generate
+        after="$(snapshot)"
+        if [ "${before}" != "${after}" ]; then
+          echo "error: generated files are out of date; run task generate and commit the result" >&2
+          git diff --stat "${before}" "${after}"
+          exit 1
+        fi
+
+  validate:
+    desc: Run portable repository validation
+    cmds:
+      - task: validate:modules
+      - task: lint:docker
+      - task: fmt:check
+      - task: validate:notices
+
+  validate:modules:
+    desc: Verify Go modules are complete and tidy
+    cmds:
+      - |
+        before="$(mktemp)"
+        after="$(mktemp)"
+        trap 'rm -f "${before}" "${after}"' EXIT
+        git diff --no-ext-diff --binary -- go.mod go.sum >"${before}"
+        go mod verify
+        go mod tidy
+        git diff --no-ext-diff --binary -- go.mod go.sum >"${after}"
+        if ! cmp --silent "${before}" "${after}"; then
+          echo "error: go mod tidy changed go.mod or go.sum" >&2
+          exit 1
+        fi
+
+  validate:container-metadata-links:
+    desc: Check that the source, documentation and URL links in the image labels open
+    cmds:
+      - |
+        set -eu
+        dockerfile=docker/Dockerfile
+        # Each label must appear exactly once; check every label before any link.
+        urls=""
+        for label in source documentation url; do
+          values="$(sed -nE "s/^LABEL org[.]opencontainers[.]image[.]${label}=\"(https:[^\"]+)\"\$/\1/p" "${dockerfile}")"
+          count="$(printf '%s' "${values}" | grep -c . || true)"
+          if [ "${count}" -ne 1 ]; then
+            echo "error: expected one org.opencontainers.image.${label} label with an https link in ${dockerfile}, found ${count}" >&2
+            exit 1
+          fi
+          urls="${urls} ${values}"
+        done
+        for url in ${urls}; do
+          echo "Checking ${url}"
+          curl --fail --location --max-time 30 --retry 3 --silent --show-error --output /dev/null "${url}"
+        done
+
+  validate:vulns:
+    desc: Scan reachable Go code for known vulnerabilities
+    cmds:
+      - mise exec -- bash hack/ci/security-source.sh {{.CLI_ARGS}}
+
+  validate:vulns:image:
+    desc: Scan a built image for known vulnerabilities and unsafe file metadata
+    cmds:
+      - mise exec -- bash hack/ci/security-image.sh {{.CLI_ARGS}}
+
+  validate:notices:
+    desc: Verify third-party notices are current
+    cmds:
+      - |
+        notices_tmp="$(mktemp)"
+        trap 'rm -f "${notices_tmp}"' EXIT
+        # The generator runs on this machine, so it uses the host platform whatever ARCH is.
+        bash hack/bazel/run.sh run --config=linux-{{.HOST_ARCH}} //hack/licenses:notice_generator -- \
+          -package "${GO_NOTICE_PACKAGE:-./cmd/dcgm-exporter}" -targets "${GO_NOTICE_TARGETS:-linux/amd64,linux/arm64}" -notices "${notices_tmp}"
+        cmp --silent "${notices_tmp}" "${THIRD_PARTY_NOTICES_FILE:-THIRD_PARTY_NOTICES}" || {
+          echo "error: THIRD_PARTY_NOTICES is out of date; run task generate:notices" >&2
+          exit 1
+        }
+
+  generate:notices:
+    desc: Generate third-party notices
+    cmds:
+      - |
+        notices_file="${THIRD_PARTY_NOTICES_FILE:-$PWD/THIRD_PARTY_NOTICES}"
+        case "${notices_file}" in
+          /*) ;;
+          *) notices_file="$PWD/${notices_file}" ;;
+        esac
+        # The generator runs on this machine, so it uses the host platform whatever ARCH is.
+        bash hack/bazel/run.sh run --config=linux-{{.HOST_ARCH}} //hack/licenses:notice_generator -- \
+          -package "${GO_NOTICE_PACKAGE:-./cmd/dcgm-exporter}" -targets "${GO_NOTICE_TARGETS:-linux/amd64,linux/arm64}" -notices "${notices_file}"
+
+  dev:go-dcgm:use:
+    desc: Use a local go-dcgm checkout in Go and Bazel builds
+    cmds:
+      - bash hack/task/use-local-go-dcgm.sh
+
+  release:image:push:
+    desc: Build and push the distroless runtime image
+    cmds:
+      - OUTPUT=type=registry task build:image:distroless
+
+  release:mirror-dockerhub:
+    desc: Mirror an approved production image to Docker Hub
+    cmds:
+      - bash hack/ci/mirror-dockerhub.sh

@@ -1,0 +1,47 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_cross_binary", "go_library", "go_test")
+
+go_library(
+    name = "dcgm-exporter_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/cmd/dcgm-exporter",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//internal/pkg/configinspect",
+        "//pkg/cmd",
+    ],
+)
+
+go_test(
+    name = "dcgm-exporter_test",
+    srcs = ["main_test.go"],
+    embed = [":dcgm-exporter_lib"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_binary(
+    name = "dcgm-exporter",
+    out = "dcgm-exporter",
+    embed = [":dcgm-exporter_lib"],
+    pure = "off",
+    visibility = ["//visibility:public"],
+    x_defs = {"main.BuildVersion": "{STABLE_BUILD_VERSION}"},
+)
+
+# OCI indexes need both binaries in one Bazel graph. These transitions reuse
+# the registered CGO toolchains, so no Docker or Buildx compiler is involved.
+go_cross_binary(
+    name = "dcgm-exporter_linux_amd64",
+    platform = "//build/toolchains:linux_amd64_cgo",
+    target = ":dcgm-exporter",
+    visibility = ["//visibility:public"],
+)
+
+go_cross_binary(
+    name = "dcgm-exporter_linux_arm64",
+    platform = "//build/toolchains:linux_arm64_cgo",
+    target = ":dcgm-exporter",
+    visibility = ["//visibility:public"],
+)

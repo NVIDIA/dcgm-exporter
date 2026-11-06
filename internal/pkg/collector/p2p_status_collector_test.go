@@ -18,7 +18,9 @@ package collector
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -26,6 +28,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
+	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
@@ -35,6 +38,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
+// TestIsDCGMExpP2PStatusEnabled checks that the helper returns true when the P2P status counter is in the
+// list, and false for an empty list or a list of unrelated counters.
 func TestIsDCGMExpP2PStatusEnabled(t *testing.T) {
 	tests := []struct {
 		name string
@@ -70,6 +75,7 @@ func TestIsDCGMExpP2PStatusEnabled(t *testing.T) {
 	}
 }
 
+// TestP2PStatusToString maps known P2P link statuses to names and unknown codes to the unknown label.
 func TestP2PStatusToString(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -92,6 +98,66 @@ func TestP2PStatusToString(t *testing.T) {
 	}
 }
 
+func TestP2PStatusPreservesGPUIdentityWhenDetached(t *testing.T) {
+	for _, detached := range []int{-1, 0, 1, 2, 3} {
+		t.Run(fmt.Sprintf("detached_%d", detached), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mockdcgm.NewMockDCGM(ctrl)
+			info := mockdeviceinfo.NewMockProvider(ctrl)
+			info.EXPECT().GPUCount().Return(uint(3)).AnyTimes()
+			var gpus []deviceinfo.GPUInfo
+			for id := uint(0); id < 3; id++ {
+				status := dcgm.EntityStatusOk
+				if detached == int(id) || detached == 3 {
+					status = dcgm.EntityStatusDetached
+				}
+				gpu := deviceinfo.GPUInfo{
+					Status:       status,
+					DeviceInfo:   dcgm.Device{GPU: id, UUID: fmt.Sprintf("GPU-%d", id)},
+					GPUInstances: []deviceinfo.GPUInstanceInfo{{EntityId: 100 + id}},
+				}
+				gpus = append(gpus, gpu)
+				info.EXPECT().GPU(id).Return(gpu).AnyTimes()
+			}
+			info.EXPECT().GPUs().Return(gpus).AnyTimes()
+			client.EXPECT().GetNvLinkP2PStatus().Return(dcgm.NvLinkP2PStatus{Gpus: [][]dcgm.Link_State{
+				{0, 1, 2}, {3, 0, 4}, {5, 6, 0},
+			}}, nil)
+			counter := counters.Counter{FieldName: counters.DCGMExpP2PStatus}
+			collector := &p2pStatusCollector{
+				baseExpCollector:   baseExpCollector{client: client, counter: counter, config: &appconfig.Config{EnableOTLP: true}},
+				deviceInfoProvider: info,
+			}
+			metrics, err := collector.GetMetrics()
+			require.NoError(t, err)
+			wantCount := 2
+			switch detached {
+			case -1:
+				wantCount = 6
+			case 3:
+				wantCount = 0
+			}
+			require.Len(t, metrics[counter], wantCount)
+			wantValues := map[string]string{"0:1": "1", "0:2": "2", "1:0": "3", "1:2": "4", "2:0": "5", "2:1": "6"}
+			seen := make(map[string]bool)
+			for _, metric := range metrics[counter] {
+				pair := metric.GPU + ":" + metric.Labels[PeerGPULabel]
+				require.False(t, seen[pair], "duplicate P2P sample")
+				seen[pair] = true
+				require.Equal(t, wantValues[pair], metric.Value, "matrix row and column must retain their GPU IDs")
+				require.NotEqual(t, fmt.Sprint(detached), metric.GPU)
+				require.NotEqual(t, fmt.Sprint(detached), metric.Labels[PeerGPULabel])
+				require.Equal(t, "GPU-"+metric.GPU, metric.GPUUUID)
+				require.NotNil(t, metric.Source)
+				require.Equal(t, "GPU-"+metric.Labels[PeerGPULabel], metric.Source.PeerGPUUUID)
+				require.Empty(t, metric.GPUInstanceID, "P2P rows describe physical GPUs")
+			}
+		})
+	}
+}
+
+// TestNewP2PStatusCollector checks that construction fails and returns no collector for an empty counter
+// list, and returns a collector without error when the P2P status counter is present.
 func TestNewP2PStatusCollector(t *testing.T) {
 	counter := counters.Counter{FieldID: 1, FieldName: counters.DCGMExpP2PStatus}
 	counterList := counters.CounterList{counter}
@@ -103,6 +169,7 @@ func TestNewP2PStatusCollector(t *testing.T) {
 
 	// Set up mock DCGM provider
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGM.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 	realDCGM := dcgmprovider.Client()
 	defer func() {
 		dcgmprovider.SetClient(realDCGM)
@@ -144,14 +211,17 @@ func TestNewP2PStatusCollector(t *testing.T) {
 	})
 }
 
+// fakeP2PStatus supplies a deterministic peer-to-peer matrix to collector tests.
 type fakeP2PStatus struct {
 	Gpus [][]dcgm.Link_State
 }
 
+// toDCGM converts the test matrix into the shape returned by DCGM.
 func (f fakeP2PStatus) toDCGM() dcgm.NvLinkP2PStatus {
 	return dcgm.NvLinkP2PStatus{Gpus: f.Gpus}
 }
 
+// TestP2PStatusCollector_GetMetrics exports off-diagonal link statuses and returns DCGM query errors.
 func TestP2PStatusCollector_GetMetrics(t *testing.T) {
 	counter := counters.Counter{FieldID: 1, FieldName: counters.DCGMExpP2PStatus}
 	counterList := counters.CounterList{counter}
@@ -163,6 +233,7 @@ func TestP2PStatusCollector_GetMetrics(t *testing.T) {
 
 	// Set up mock DCGM provider
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGM.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 	realDCGM := dcgmprovider.Client()
 	defer func() {
 		dcgmprovider.SetClient(realDCGM)
@@ -223,9 +294,12 @@ func TestP2PStatusCollector_GetMetrics(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestP2PStatusCollector_GetMetricsIsolatesLabelsPerEntity gives two GPUs different values for the same label
+// field and checks that each GPU's P2P metric carries only its own GPU's value.
 func TestP2PStatusCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGM.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -277,5 +351,50 @@ func TestP2PStatusCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
 
 	for _, metric := range got[counter] {
 		assert.Equal(t, "gpu"+metric.GPU+"-label", metric.Labels[labelName])
+	}
+}
+
+// TestP2PSourceIdentityUsesOwnSnapshot verifies UUID provenance and peer identity follow the P2P device snapshot.
+func TestP2PSourceIdentityUsesOwnSnapshot(t *testing.T) {
+	for _, synthetic := range []bool{false, true} {
+		t.Run(fmt.Sprintf("P2P synthetic=%v", synthetic), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			provider := func(synthetic bool) *mockdeviceinfo.MockProvider {
+				p := mockdeviceinfo.NewMockProvider(ctrl)
+				gpus := []deviceinfo.GPUInfo{
+					{DeviceInfo: dcgm.Device{GPU: 0, UUID: "GPU-0"}, SyntheticGPUUUID: synthetic},
+					{DeviceInfo: dcgm.Device{GPU: 1, UUID: "GPU-1"}, SyntheticGPUUUID: synthetic},
+				}
+				p.EXPECT().GPUCount().Return(uint(2)).AnyTimes()
+				p.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+				p.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
+				p.EXPECT().GPUs().Return(gpus).AnyTimes()
+				for i := range gpus {
+					p.EXPECT().GPU(uint(i)).Return(gpus[i]).AnyTimes()
+				}
+				return p
+			}
+			watchSnapshot := provider(!synthetic)
+			p2pSnapshot := provider(synthetic)
+			list := devicewatchlistmanager.NewWatchList(watchSnapshot, nil, nil, nil, 1000)
+			client := mockdcgm.NewMockDCGM(ctrl)
+			client.EXPECT().GetNvLinkP2PStatus().Return(dcgm.NvLinkP2PStatus{Gpus: [][]dcgm.Link_State{{0, 1}, {1, 0}}}, nil)
+			counter := counters.Counter{FieldName: counters.DCGMExpP2PStatus}
+			c := p2pStatusCollector{baseExpCollector: baseExpCollector{client: client, config: &appconfig.Config{EnableOTLP: true}, counter: counter, deviceWatchList: *list}, deviceInfoProvider: p2pSnapshot}
+			c.now = func() time.Time { return time.UnixMicro(123) }
+			metrics, err := c.GetMetrics()
+			require.NoError(t, err)
+			require.Len(t, metrics[counter], 2)
+			for _, m := range metrics[counter] {
+				require.NotNil(t, m.Source)
+				assert.Equal(t, int64(123), m.Timestamp)
+				assert.Equal(t, synthetic, m.Source.SyntheticGPUUUID, "provenance must follow the metric's own discovery snapshot")
+				if synthetic {
+					assert.Empty(t, m.Source.PeerGPUUUID)
+				} else {
+					assert.NotEmpty(t, m.Source.PeerGPUUUID)
+				}
+			}
+		})
 	}
 }

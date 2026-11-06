@@ -29,7 +29,7 @@ import (
 )
 
 // runClusterUp creates or repairs the owned local k3d cluster without deploying workloads.
-func runClusterUp(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.Tests) error {
+func runClusterUp(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.TestOptions) error {
 	if _, err := detectArtifactMode(root); err != nil {
 		return setupFailure(err)
 	}
@@ -46,7 +46,7 @@ func runClusterUp(ctx context.Context, stdout io.Writer, root string, runner e2e
 }
 
 // runClusterDeploy ensures the target cluster exists and deploys dcgm-exporter to it.
-func runClusterDeploy(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.Tests) error {
+func runClusterDeploy(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.TestOptions) error {
 	mode, err := detectArtifactMode(root)
 	if err != nil {
 		return setupFailure(err)
@@ -55,9 +55,10 @@ func runClusterDeploy(ctx context.Context, stdout io.Writer, root string, runner
 		if mode == artifactModePackage {
 			return setupFailure(fmt.Errorf("package environment does not define a valid E2E_EXPORTER_IMAGE: %w", err))
 		}
-		return setupFailure(fmt.Errorf("e2e cluster deploy requires --exporter-image or E2E_EXPORTER_IMAGE; source runs should use make e2e-k3d-deploy: %w", err))
+		return setupFailure(fmt.Errorf("e2e cluster deploy requires --exporter-image or E2E_EXPORTER_IMAGE; source runs should use task test:e2e: %w", err))
 	}
 	cfg := clusterConfig(root, opts)
+	deployedImage := opts.ExporterImage
 	if cfg.LocalK3D() {
 		local, err := localClusterConfig(root, cfg, opts)
 		if err != nil {
@@ -74,7 +75,11 @@ func runClusterDeploy(ctx context.Context, stdout io.Writer, root string, runner
 		if err := ensureDockerImageAvailable(ctx, stdout, runner, opts, exporterImage(opts)); err != nil {
 			return setupFailure(err)
 		}
-		if err := cluster.ImportImageIfPresent(ctx, runner, stdout, cfg, exporterImage(opts)); err != nil {
+		if err := tagLocalK3dImage(ctx, runner, stdout, opts); err != nil {
+			return setupFailure(err)
+		}
+		deployedImage = localK3dExporterImage(opts)
+		if err := cluster.ImportImageIfPresent(ctx, runner, stdout, cfg, deployedImage); err != nil {
 			return setupFailure(err)
 		}
 	}
@@ -83,7 +88,7 @@ func runClusterDeploy(ctx context.Context, stdout io.Writer, root string, runner
 	}
 	return setupFailure(cluster.DeployExporter(ctx, runner, stdout, cfg, cluster.ExporterConfig{
 		Chart:             filepath.Join(root, "deployment"),
-		Image:             opts.ExporterImage,
+		Image:             deployedImage,
 		ImagePullSecret:   opts.K8sImagePullSecret,
 		RuntimeClass:      runtimeClassFor(opts, cfg),
 		NodeSelectorKey:   nodeSelectorKeyFor(opts, cfg),
@@ -93,7 +98,7 @@ func runClusterDeploy(ctx context.Context, stdout io.Writer, root string, runner
 }
 
 // runClusterDeployDCGM deploys standalone DCGM for remote-DCGM validation scenarios.
-func runClusterDeployDCGM(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.Tests) error {
+func runClusterDeployDCGM(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.TestOptions) error {
 	if _, err := detectArtifactMode(root); err != nil {
 		return setupFailure(err)
 	}
@@ -111,6 +116,9 @@ func runClusterDeployDCGM(ctx context.Context, stdout io.Writer, root string, ru
 	}
 	cfg := clusterConfig(root, opts)
 	if cfg.LocalK3D() {
+		if err := ensureDockerImageAvailable(ctx, stdout, runner, opts, dcgmImageRef); err != nil {
+			return setupFailure(err)
+		}
 		local, err := localClusterConfig(root, cfg, opts)
 		if err != nil {
 			return setupFailure(err)
@@ -118,6 +126,12 @@ func runClusterDeployDCGM(ctx context.Context, stdout io.Writer, root string, ru
 		if _, err := cluster.EnsureLocal(ctx, runner, stdout, local); err != nil {
 			return setupFailure(err)
 		}
+		image, err := ensureLocalDCGMImageImport(ctx, stdout, runner, cfg, opts)
+		if err != nil {
+			return setupFailure(err)
+		}
+		opts.DCGMImage = image
+		dcgmImageRef = image
 	}
 	if err := cluster.EnsureManagedNamespace(ctx, runner, stdout, cfg, cfg.DCGMNamespace); err != nil {
 		return setupFailure(err)

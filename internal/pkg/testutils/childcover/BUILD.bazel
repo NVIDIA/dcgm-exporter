@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "childcover",
+    srcs = ["childcover.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils/childcover",
+    testonly = True,
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "childcover_test",
+    srcs = ["childcover_test.go"],
+    embed = [":childcover"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

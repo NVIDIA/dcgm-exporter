@@ -1,0 +1,19 @@
+version: 2
+metrics:
+  - name: gpu
+    every: 1s
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+    enrichment:
+      container: false
+      hpc_jobs: false
+      kubernetes: ${KUBERNETES_MODE}
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1
+sources:
+  kubernetes:
+    pod_resources_socket: ${KUBELET_SOCKET}

@@ -35,6 +35,7 @@ type DCGMConfig struct {
 	Name              string
 	Port              string
 	WaitTimeout       string
+	IPv6Only          bool
 }
 
 // DefaultDCGMConfig returns defaults aligned with the k8s suite flags.
@@ -85,9 +86,9 @@ func DeployDCGM(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg Con
 	return runRequired(ctx, runner, w, "kubectl_rollout_dcgm", kubectl(cfg, "-n", cfg.DCGMNamespace, "rollout", "status", "deployment/"+dcgm.Name, "--timeout="+dcgm.WaitTimeout))
 }
 
-// DeleteDCGM removes the standalone DCGM namespace.
-func DeleteDCGM(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg Config) {
-	_ = cleanupManagedNamespace(ctx, runner, w, cfg, cfg.DCGMNamespace, "kubectl_delete_dcgm_namespace")
+// DeleteDCGM removes the standalone DCGM namespace and reports cleanup failures.
+func DeleteDCGM(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg Config) error {
+	return cleanupManagedNamespace(ctx, runner, w, cfg, cfg.DCGMNamespace, "kubectl_delete_dcgm_namespace")
 }
 
 // dcgmManifest renders the standalone nv-hostengine Deployment and Service YAML.
@@ -97,6 +98,15 @@ func dcgmManifest(cfg Config, dcgm DCGMConfig) string {
 		imagePullSecret = fmt.Sprintf(`      imagePullSecrets:
       - name: %s
 `, dcgm.ImagePullSecret)
+	}
+	bindAddress := "ALL"
+	serviceIPFamily := ""
+	if dcgm.IPv6Only {
+		bindAddress = "::"
+		serviceIPFamily = `  ipFamilyPolicy: SingleStack
+  ipFamilies:
+  - IPv6
+`
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -129,7 +139,7 @@ spec:
         args:
         - "-n"
         - "-b"
-        - "ALL"
+        - "%[9]s"
         - "-p"
         - "%[7]s"
         - "-f"
@@ -160,12 +170,12 @@ metadata:
     app.kubernetes.io/instance: %[2]s
 spec:
   type: ClusterIP
-  selector:
+%[10]s  selector:
     app.kubernetes.io/name: dcgm
     app.kubernetes.io/instance: %[2]s
   ports:
   - name: dcgm
     port: %[7]s
     targetPort: dcgm
-`, cfg.DCGMNamespace, dcgm.Name, dcgm.RuntimeClass, dcgm.NodeSelectorKey, dcgm.NodeSelectorValue, dcgm.Image, dcgm.Port, imagePullSecret)
+`, cfg.DCGMNamespace, dcgm.Name, dcgm.RuntimeClass, dcgm.NodeSelectorKey, dcgm.NodeSelectorValue, dcgm.Image, dcgm.Port, imagePullSecret, bindAddress, serviceIPFamily)
 }

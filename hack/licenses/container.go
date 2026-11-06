@@ -68,7 +68,9 @@ type packageMetadata struct {
 // packageDatabase resolves helper-stage file ownership and retrieves the exact
 // installed package versions used by the image build.
 type packageDatabase interface {
+	// Owner identifies the installed package that supplied a staged runtime file.
 	Owner(path string) (string, error)
+	// Metadata supplies exact binary/source versions for notice attribution.
 	Metadata(binaryPackage string) (packageMetadata, error)
 }
 
@@ -240,6 +242,7 @@ func readRuntimeManifest(path string) ([]runtimeManifestEntry, error) {
 	if len(entries) == 0 {
 		return nil, errors.New("runtime manifest is empty")
 	}
+	// Destination order makes provenance traversal independent of manifest entry order.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Destination < entries[j].Destination })
 	return entries, nil
 }
@@ -472,7 +475,9 @@ func sortedLegalDocuments(documents map[string]*legalDocument) []*legalDocument 
 	for _, document := range documents {
 		result = append(result, document)
 	}
+	// Order documents by attribution first, using hashes to break identical display keys.
 	sort.Slice(result, func(i, j int) bool {
+		// A document key uses its first package identity, or its legal paths if unattributed.
 		key := func(document *legalDocument) string {
 			components := sortedComponents(document.Components)
 			if len(components) > 0 {
@@ -497,6 +502,7 @@ func sortedCommonLicenseDocuments(documents map[string]*commonLicenseDocument) [
 	for _, document := range documents {
 		result = append(result, document)
 	}
+	// Logical path order keeps duplicate common-license text deterministic across packages.
 	sort.Slice(result, func(i, j int) bool {
 		left := strings.Join(sortedSet(result[i].Paths), "\x00")
 		right := strings.Join(sortedSet(result[j].Paths), "\x00")
@@ -515,6 +521,7 @@ func sortedComponents(components map[string]*noticeComponent) []*noticeComponent
 	for _, component := range components {
 		result = append(result, component)
 	}
+	// Package name and version order keeps each document's attribution deterministic.
 	sort.Slice(result, func(i, j int) bool { return result[i].key() < result[j].key() })
 	return result
 }

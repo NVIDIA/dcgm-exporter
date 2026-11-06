@@ -70,89 +70,184 @@ This repository includes guidance for AI-assisted work:
   review checklists. They are guidance only; they do not grant permissions or
   install automatic hooks.
 
-Agents and humans should treat the current code, tests, Makefile, CI config,
+Agents and humans should treat the current code, tests, Taskfile.yml, CI config,
 `hack/versions.env`, metric CSV files, and Helm chart as the source of truth.
+
+## Build binaries, images, and packages
+
+Use the root Taskfile.yml for common development commands. Run `bootstrap.sh`
+once to install the required Task version. If it asks you to update `PATH`,
+do so and open a new shell. Then install the locked tools and list the tasks.
+Task runs Bazel where needed.
+
+```bash
+./bootstrap.sh
+task deps:install
+task --list
+```
+
+```bash
+# Build binaries for the current architecture.
+task build:binary
+task build:e2e
+
+# Build the distroless runtime image; task build and task build:image:distroless do the same.
+task build
+task build:image:distroless
+
+# Load the image for the current architecture into the local Docker daemon,
+# then check its architecture, labels and that `--version` runs.
+task build:image:local
+task build:image:verify
+
+# Build package archives for both architectures, or select one architecture.
+task build:package
+task build:package:amd64
+task build:package:arm64
+```
+
+`task build:binary`, the image tasks, and the package tasks all get the
+exporter binary from Bazel. Dockerfiles and package scripts assemble that
+binary; they do not run a second Go compilation path.
+
+## Vulnerability scans
+
+```bash
+task validate:vulns
+task validate:vulns:image -- --image "$IMAGE_REF" --arch amd64
+```
+
+Both tasks write reports under `dist/security/`. The source scan fails on any
+reachable finding; the image scan fails on fixable High or Critical package
+findings, on any vulnerability govulncheck finds in the exporter binary, and on
+file metadata violations.
+Pass `-- --help` to either task for its options.
 
 ## Bumping a dependency
 
-All pinned versions live in a single file: `hack/versions.env`. This covers
-the Go toolchain, Go tools (golangci-lint, goimports, gofumpt, gotestsum,
-gocover-cobertura), uv, container base image tags (CUDA, distroless, ubuntu),
-e2e helper images, and the DCGM/exporter release version.
+`hack/versions.env` is the canonical source for non-module versions, checksums,
+Action SHAs, image tags, and image manifest digests. `hack/versions.py`
+defines the immutable schema, freshness source or manual rationale, update
+policy, companion values, cross-key relationships, upstream resolvers, and
+transactional commands. Duplicate, missing, unknown, empty, or malformed keys
+are errors.
 
-### Workflow
+Go module versions remain exclusively in `go.mod` and `go.sum`. Compatibility
+floors, schema versions, and values used only as test fixtures stay with their
+owning code or test.
 
-1. **See what's outdated:**
+### Version command
 
-   ```bash
-   make check-versions
-   ```
-
-   This queries upstream sources (go.dev, GitHub releases) and shows a table
-   of current vs. latest versions. Requires network; optionally set
-   `GITHUB_TOKEN` to avoid rate limits.
-
-2. **Bump a version** — edit `hack/versions.env` directly, or use the apply
-   subcommand for auto-checkable packages:
-
-   ```bash
-   make check-versions-apply       # updates versions.env
-   ```
-
-3. **Propagate to derived files:**
-
-   ```bash
-   make sync-versions
-   ```
-
-   This rewrites static files that can't read `versions.env` at runtime:
-   the `go.mod` toolchain directive, Dockerfile `FROM` lines, `.gitlab-ci.yml`
-   variables and `.gitlab/ci/dependencies.yml` Go SHA256s when those files are
-   present, the Helm chart, raw YAML artifacts, and fenced version examples in
-   the READMEs.
-
-4. **Verify nothing drifted:**
-
-   ```bash
-   make validate-versions
-   ```
-
-   This exits non-zero if any derived file is out of sync. It also refreshes
-   the pinned Go tarball SHA256s from `dl.google.com`, so it requires network
-   access. CI runs this automatically on every push.
-
-### Go module dependencies
-
-Go module dependencies (in `go.mod`) are **not** managed by `versions.env`.
-Bump them with the standard Go toolchain:
+Install the locked development tools with `task deps:install`. All version
+maintenance then uses the same `hack/versions.py` command:
 
 ```bash
-go get google.golang.org/grpc@v1.79.3
-go mod tidy
+task deps:install
+task deps:update
+task deps:update:strict
+task deps:update:apply
+task deps:sync
+task deps:lock
+task deps:sync:check
+task deps:check:all
 ```
 
-### Package revisions
+`task deps:update` queries upstream releases, tags, Action refs, artifact
+checksums, OCI manifests, and Go's native module update data without modifying
+the worktree. It reports both graph changes selected by
+`go get -u -t ./...` and newer transitive releases that Go leaves constrained
+by the selected graph. It returns `0` for a complete report. The strict form
+returns `1` for applicable updates and `2` when a source is incomplete or
+fails.
 
-`PACKAGE_REVISION` in `hack/versions.env` is a three-digit, package-only
-revision. Package operations derive `PACKAGE_VERSION` as
-`<EXPORTER_VERSION>.<PACKAGE_REVISION>`; binaries, containers, Helm artifacts,
-and the public application version continue to use `EXPORTER_VERSION`.
+OCI authentication, pagination, and redirects stay on the configured registry's
+HTTPS origin. Docker Hub also permits its token service at `auth.docker.io`.
+The Docker Hub tags API stays on `hub.docker.com`. Other destinations, embedded
+URL credentials, and HTTPS downgrades fail dependency discovery. A registry
+that requires a separate token service needs an explicit trusted origin in
+the OCI resolver before it can be used.
 
-Start each new exporter version at `001`. If package bytes must be rebuilt
-without changing the exporter version, increment the revision to `002`, `003`,
-and so on. Existing package artifacts are immutable: an upload retry is allowed
-only when its checksum matches. Never derive `PACKAGE_REVISION` from a Git tag,
-pipeline ID, or an external release-system identifier. `PACKAGE_RELEASE`
-remains the separate DEB/RPM release field and defaults to `1`.
+The checker honors retry and rate-limit headers. Set `GITHUB_TOKEN` to increase
+GitHub API limits. If the unauthenticated GitHub API is rate-limited, release
+discovery follows GitHub's public latest-stable-release redirect so prereleases
+remain excluded. Tag and Action commit discovery falls back to Git tag refs.
+
+`task deps:update:apply` resolves the complete update set, including official
+artifact checksums, Action commits, and OCI manifest digests, validates the
+proposed registry, upgrades the compatible Go module graph with
+`go get -u -t ./...` and `go mod tidy`, preflights all derived files, and
+commits one transactional write plan. Network, Go, validation, anchor, or write
+failures leave the worktree unchanged. Major-version module path migrations and
+manual-policy pins still require maintainer review.
+
+`task deps:sync` copies versions from `hack/versions.env` to files that need
+them. It does not check for newer releases. After changing a Mise tool version,
+run `task deps:lock` to update the lock file for each platform. Sync checks
+every location before writing and restores the original files if a write fails.
+`task deps:sync:check` checks for drift without writing. The version tool
+exits `0` when the files match, `1` when they differ, and `2` when an input or
+file is invalid; Task reports any failure as its own exit status unless run
+with `--exit-code`. `task deps:check:all` runs `task deps:test` and then
+`task deps:sync:check`, as CI does.
+
+The root Taskfile.yml and repository shell scripts load `versions.env`.
+Consumers that cannot load it before evaluation remain synchronized: `go.mod`,
+Dockerfile defaults and `FROM` references, GitHub Action refs, Helm and raw
+manifests, devcontainer metadata, and exact documentation defaults.
+`task deps:sync` also applies updates from any `version-sync-targets.py` in a
+top-level `*/ci/` directory, which defines `updates(values)` returning
+`AnchoredUpdate` items.
+
+Image pins in `hack/versions.env` keep a readable tag and the multi-platform
+manifest digest. When a tag is intentionally moving, such as `latest`, the
+digest is still refreshed and reviewed. Do not substitute an
+architecture-specific child-manifest digest.
+Every external image repository is also declared in `hack/versions.env`.
+The CI image source defaults to `docker.io`. Override `CI_IMAGE_MIRROR` with a
+reachable mirror when needed; the mirror hostname is CI configuration, not
+version data. The synchronizer derives each image path from its canonical
+Docker Hub repository in `versions.env`; no duplicate mirror repository is
+maintained.
+Repository locations must not be embedded independently in the Python tooling.
+
+The rootless Docker-in-Docker service is the one tag-only exception: CI runners
+can allow privileges only for an exact service tag, and a digest-qualified
+reference would start without the privileges rootlesskit requires.
+`CI_DIND_IMAGE_MIRROR` selects the registry for that service.
+Other external image references use an immutable digest, usually rendered as
+`repository:tag@sha256:...`. The distroless base, helper, and package-validator
+UBI8 `FROM` references use `repository@sha256:...`; their readable tags remain
+in `hack/versions.env`.
+
+Manual-policy entries are not hidden from freshness reports. CUDA/Ubuntu
+combinations, compatibility matrices, and DCGM/exporter release identity appear
+with the rationale that requires a maintainer decision.
+BuildKit is also a compatibility pin. It is held on purpose and reviewed by
+hand.
+
+CI runs version tests and validation on every pipeline. Strict freshness checks
+run when a change touches version values or tooling, and on a weekly schedule;
+they are advisory, so upstream drift does not block pipelines.
+
+### Release artifact versions
+
+`EXPORTER_VERSION` in `hack/versions.env` is the base version for published
+artifacts. Candidate CI derives `PACKAGE_VERSION` as
+`<EXPORTER_VERSION>.<CI_PIPELINE_IID>`. See [RELEASE.md](RELEASE.md) for the
+resulting archive, package, Helm, and container versions.
 
 ### Prerequisites
 
-- **uv** (Python runner): `make install-uv` installs the pinned version. All
-  Python scripts in this repo use `#!/usr/bin/env -S uv run --script` so
-  dependencies are installed automatically on first run.
+- **Python 3.12+** runs the version command.
+- **uv** installs the dependencies declared by the PEP 723 metadata in
+  `hack/versions.py` as needed. `task deps:install` installs the pinned uv
+  version; the script dependencies are resolved by uv at execution time.
 
 ### Intentional exceptions
 
-- `.github/workflows/go.yml` pins `go-version: 1.24` (major.minor only) so
-  GitHub Actions uses the latest patch automatically. This file is not touched
-  by `make sync-versions`.
+- The `go` directive is rendered from `GO_VERSION`. Builds and CI install that
+  same toolchain; there is no separate language-floor pin.
+- `.github/workflows/go.yml` runs in the devcontainer, where Mise installs the
+  locked Go toolchain; its Action revisions are pinned to full commit SHAs.
+- Go module versions, compatibility floors, schema versions, and test-fixture
+  values are intentionally not duplicated into `versions.env`.

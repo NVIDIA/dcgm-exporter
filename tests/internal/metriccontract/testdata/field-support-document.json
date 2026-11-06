@@ -1,0 +1,6 @@
+{
+  "supported": ["DCGM_FI_DEV_GPU_UTIL_RATIO", "DCGM_FI_SYSTEM_DRIVER_VERSION"],
+  "unsupported": {
+    "DCGM_FI_DEV_XID_ERROR": "DCGM returned no value (N/A) on every GPU during the probe (dcgmi dmon -e 230, field 230, 3 samples, 24 GPU sample lines)"
+  }
+}

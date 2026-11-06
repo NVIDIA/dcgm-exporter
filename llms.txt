@@ -1,8 +1,14 @@
 # DCGM Exporter Metrics and Deployment Authoring Contract
 
+> Authoring contract, not a repository map: the verified rules for writing
+> DCGM Exporter metric CSVs, CLI and environment settings, Helm values, and
+> deployment examples. Agent working rules live in `AGENTS.md`.
+
 This file is for LLMs and agents generating or modifying DCGM Exporter metrics,
 configuration, deployment examples, and validation plans. Current repository
-code and checked-in artifacts are the mechanical source of truth.
+code and checked-in artifacts are the mechanical source of truth for behavior.
+The official DCGM Exporter guide is authoritative for user-guide prose, and
+the official DCGM field reference is authoritative for field semantics.
 
 Do not invent flags, environment variables, metric labels, DCGM field names,
 exporter-owned counter names, Helm values, or package behavior. If required
@@ -13,30 +19,43 @@ material.
 
 Use this order:
 
-1. `pkg/cmd/app.go` defines CLI flags, environment variables, defaults, startup
+1. `pkg/cmd/app.go` defines CLI flags, environment variables, startup
    behavior, web config, pprof, logging, and runtime reload wiring.
+   `internal/pkg/appconfig` defines the defaults (`DefaultConfig`), the flag-name
+   strings, and the checks on configuration values.
 2. `internal/pkg/counters/const.go` and `internal/pkg/counters/exporter_counters.go`
    define exporter-owned metric names.
-3. `etc/default-counters.csv` defines the default shipped metric list.
+3. `etc/default-counters.csv` defines the default shipped metric list, and
+   `etc/config.yaml` is the default configuration file that images and packages load.
 4. `deployment/values.yaml` and `deployment/templates/` define Helm behavior.
-5. `README.md`, `deployment/README.md`, and test READMEs document user-facing
-   workflows and prerequisites.
-6. Tests under `internal/pkg/`, `tests/helm`, `tests/docker`,
-   `tests/integration`, and `tests/ci` define executable contracts.
+5. Tests under `internal/pkg/`, `tests/static`, `tests/host`,
+   `tests/container`, and `tests/k8s` define executable contracts.
+6. `README.md`, `deployment/README.md`, and test READMEs document
+   repository-specific workflows and prerequisites. Keep the root README thin
+   and link to the official guide for full user documentation.
 
 Before handing off a metrics or deployment change, run the lowest applicable
 checks:
 
 - `go test ./internal/pkg/counters`
-- `make test-main`
-- `make lint`
-- `make check-fmt`
-- `make validate`
-- `make validate-versions` when version-derived artifacts change
-- `make generate` when generated mocks or `go:generate` inputs change
-- `make test-images` when Docker image behavior changes and prerequisites exist
-- `make test-integration` or `make test-e2e-k8s-gpu` only when GPU/Kubernetes
-  prerequisites exist
+- `task test:static`
+- `task test:unit`
+- `task lint`
+- `task fmt:check`
+- `task validate`
+- `task deps:sync:check` when version-derived artifacts change
+- `task generate` when generated mocks or `go:generate` inputs change
+- `task test:host` when host GPU/DCGM prerequisites exist
+- `task build:e2e`, then `task test:e2e:smoke` (no GPU), `task test:e2e:host`
+  (GPU and DCGM) or `task test:e2e:mocks` (root, a DCGM development build with
+  NVML injection, `nv-hostengine` and `dcgmi`, and fixtures matching
+  `DCGM_VERSION` in `NVML_INJECTION_DIR` and `NVSDM_MOCK_DIR`)
+- `task build:image:local` and `task build:image:verify` when image labels or
+  contents change
+- `task test:container` when Docker and GPU prerequisites exist
+- `task test:k8s` when a suitable Kubernetes cluster exists
+- `task test:e2e` when the complete Docker, Kubernetes, DCGM, and GPU toolchain
+  is available
 
 Document GPU, Docker, Kubernetes, or DCGM prerequisites that prevent a gate from
 running. Do not report skipped hardware-backed gates as passing.
@@ -58,17 +77,31 @@ Rules:
 - Supported scalar metric types are `counter`, `gauge`, and `untyped`.
 - `label` rows are static label sources and are not rendered as standalone
   scalar metric families.
-- Custom metrics supplied through Helm `customMetrics` or mounted files are
+- On MIG GPUs with MIG instances selected, fields that DCGM declares at GPU
+  level (for example power, temperature, clocks, utilization, and the PCIe,
+  NVLink, and cycle-count profiling fields) are watched and read on the
+  physical GPU and reported once per GPU, without `GPU_I_ID`, `GPU_I_PROFILE`,
+  or `GPU_CI_ID` labels. These series carry no pod, container, or HPC job
+  labels from the GPU's MIG instances; a pod or job that owns the whole GPU
+  still gets them. GPU-level `label` fields still appear on instance series,
+  with the physical GPU's value.
+- Custom metrics supplied through Helm `config.metrics[].fields`, the deprecated
+  Helm `customMetrics`, or mounted files are
   complete replacements for the default list, not additive overlays.
 - Keep HELP text stable and clear; Prometheus families with the same name must
   not have conflicting HELP or TYPE metadata.
 - Do not emit non-finite values or negative counter values.
+- The exporter does not force a DCGM refresh when it starts watching fields.
+  Fields that a DCGM module updates, such as profiling, NVSwitch and CPU
+  fields, appear once the module first reports them, so early scrapes after a
+  start or reload can lack them.
 
 Exporter-owned counters:
 
 - `DCGM_EXP_CLOCK_EVENTS_COUNT`
 - `DCGM_EXP_XID_ERRORS_COUNT`
 - `DCGM_EXP_GPU_HEALTH_STATUS`
+- `DCGM_EXP_SYSTEM_HEALTH_STATUS`
 - `DCGM_EXP_P2P_STATUS`
 - `DCGM_EXP_XID_ERRORS_TOTAL`
 - `DCGM_EXP_CLOCK_EVENTS_TOTAL`
@@ -76,30 +109,83 @@ Exporter-owned counters:
 Every `DCGM_EXP_GPU_HEALTH_STATUS` sample includes `health_watch`,
 `health_error_code`, `health_error_severity`, and `health_error_category`
 labels. PASS samples use `NONE` for severity and category; unrecognized DCGM
-metadata uses `UNKNOWN`.
+metadata uses `UNKNOWN`. GPU DRIVER recovery error 142 uses
+`health_error_code="DCGM_FR_GPU_RECOVERY_IMEX_DOMAIN"`, not
+`DCGM_FR_UNKNOWN(142)`; alert rules that match `DCGM_FR_UNKNOWN(142)` must
+use this symbolic name instead.
+A failing sample has value `20` (`DCGM_HEALTH_RESULT_FAIL`) and keeps its GPU
+attribution and `health_error_severity`/`health_error_category` labels.
 
-The `_COUNT` counters describe events observed during the configured window.
+`DCGM_EXP_SYSTEM_HEALTH_STATUS` is opt-in and reports DCGM's host-level
+health, as opposed to the per-GPU `DCGM_EXP_GPU_HEALTH_STATUS`. Today the only
+host-level health watch DCGM has is IMEX, so the metric reports IMEX only and
+emits one series with `health_watch="IMEX"`. A host-level watch DCGM adds later
+would appear as another `health_watch` value on this metric, not as a new
+metric. The series has no GPU or other device labels. Its only labels are `hostname`,
+`health_watch`, `health_error_code`, `health_error_severity`, and
+`health_error_category`; it has no workload, MIG, link, switch, or CPU identity
+labels either. When DCGM reports no host-level IMEX incident, including when IMEX data
+is missing or not watched, the series reports PASS (value `0`) with
+`health_error_code="DCGM_FR_OK"` and `NONE` severity and category. If this
+metric is configured and the DCGM hostengine does not support the IMEX health
+watch, the exporter fails to start. DCGM reports its supported health watches
+only from DCGM 4.7.1, so on DCGM 4.7.0 the exporter cannot confirm IMEX support
+and fails to start when this metric is configured.
+
+The `_COUNT` counters describe sampled observations during the configured
+window, not unique events or state transitions. `DCGM_EXP_XID_ERRORS_COUNT`
+counts sampled XID observations, including samples whose value is `0`.
+`DCGM_EXP_CLOCK_EVENTS_COUNT` counts samples in which each reason is active.
 The `_TOTAL` counters are in-memory cumulative totals intended for Prometheus
-counter functions such as `increase()` and `rate()`. If reload, runtime swap,
-hot reload, or process restart behavior changes, document whether cumulative
-state is reset or preserved and add tests.
+counter functions such as `increase()` and `rate()`.
+`DCGM_EXP_XID_ERRORS_TOTAL` excludes XID value `0`.
+`DCGM_EXP_CLOCK_EVENTS_TOTAL` increments on an inactive-to-active transition.
+Publishing replacement collectors resets both totals to empty, and their
+series are absent until a new event is counted. A configuration reload that
+fails before replacement keeps the current collectors and their totals. Once
+replacement collectors are published, or GPU lifecycle recovery clears the
+registry, the old totals are no longer available even if retirement or
+recovery subsequently fails.
+A new `_TOTAL` series first appears with every event counted before its first
+scrape, so `increase()` and `rate()` do not include those events. For alerts
+that must see every XID, use `DCGM_EXP_XID_ERRORS_COUNT{xid!="0"} > 0`.
+If reload, runtime swap, hot reload, or process restart behavior changes,
+document whether cumulative state is reset or preserved and add tests.
+
+The XID exporter counters read selected GPUs and GPU instances, their compute
+instances, and required parent GPUs. Clock-event counters read physical GPUs
+only, including the parent GPUs of selected GPU instances. Compute-instance
+samples include `GPU_I_ID` and `GPU_CI_ID`. Each entity's history is counted separately; summing scopes does
+not count unique physical failures. The direct `DCGM_FI_DEV_XID_ERROR` gauge
+does not need to be enabled for either XID exporter counter to collect samples.
 
 ## CLI, Environment, And Runtime
 
-CLI and environment behavior comes from `pkg/cmd/app.go`.
+CLI and environment behavior comes from `pkg/cmd/app.go`; defaults and value
+checks come from `internal/pkg/appconfig`. The `config show`, `explain` and
+`validate` reports are built in `internal/pkg/configinspect`.
 
 Important contracts:
 
 - The default listen address is `:9400`.
 - The default collectors file is `/etc/dcgm-exporter/default-counters.csv`.
-- Remote hostengine values support `<HOST>:<PORT>`,
+- Remote DCGM hostengine values support `<HOST>:<PORT>`,
   `tcp://<HOST>:<PORT>`, `unix:///<SOCKET_PATH>`,
   `vsock://<CID>:<PORT>`, and bracketed IPv6 host:port values such as
   `[::1]:5555`.
 - TLS and basic auth use Prometheus exporter-toolkit through
   `--web-config-file`; do not invent a separate config format.
-- `--enable-pprof` exposes `/debug/pprof/` endpoints and should stay opt-in.
+- `--enable-pprof` exposes `/debug/pprof/` on the metrics port, stays opt-in, and
+  needs a web config file that turns on TLS or basic auth.
 - `--log-format` supports the formats declared by the CLI.
+- `sources.dcgm.cleanup_timeout` (`--dcgm-cleanup-timeout`,
+  `DCGM_EXPORTER_DCGM_CLEANUP_TIMEOUT`, default `5m`) is how long the exporter
+  waits for DCGM on reload or GPU reset recovery, at shutdown, after a failed
+  collector build, and when the GPU bind/unbind watch starts or stops. When the
+  timeout runs out, the exporter exits so it can restart with a clean DCGM
+  session. The
+  orchestrator's stop grace period (Kubernetes default 30s, the systemd stop
+  timeout) can end a shutdown wait first.
 - Startup validation should fail clearly when required DCGM or runtime
   prerequisites are missing, unless startup validation is explicitly disabled.
 
@@ -111,14 +197,30 @@ exist in `pkg/cmd/app.go`.
 Rules:
 
 - Keep Helm values, templates, raw YAML, and README examples aligned.
-- Service read/write timeouts and ServiceMonitor scrape timeout/interval should
-  remain coherent.
+- The chart takes exporter settings from its `config` value, a version 2 file
+  with snake_case keys. Do not add a chart value that sets an exporter setting
+  through an environment variable or flag; chart values with camelCase names
+  configure only Kubernetes objects.
+- The chart mounts its config files as directories under
+  `/etc/dcgm-exporter/chart/` (`config/`, `metrics/default-counters.csv`,
+  `web-config/web-config.yaml`), and TLS certificates at
+  `/etc/dcgm-exporter/tls`, never with `subPath`. The config mount holds only
+  the `configMap.key` file and the metrics mount only the `metrics` key, so other
+  keys of a `configMap.existingName` ConfigMap stay out of the pod. In chart examples, point
+  `config.metrics[].file` at `/etc/dcgm-exporter/chart/metrics/default-counters.csv`.
+- `config.server.write_timeout` and the ServiceMonitor scrape timeout/interval
+  should remain coherent.
 - Kubernetes pod labels and pod UID labels are emitted only when the matching
   Kubernetes options are enabled and RBAC permits the required reads.
 - DRA and virtual GPU behavior must be explicitly enabled and tested or
   documented as a prerequisite-dependent path.
 - Pod label allowlist regex values filter which pod labels are included in
-  metrics; an empty allowlist means include all labels.
+  metrics by their original Kubernetes keys. Pod labels require a non-empty
+  allowlist; `.*` selects all labels.
+- Prometheus pod label names are sanitized. When allowed keys normalize to the
+  same name, the lexicographically first original key keeps that name; others
+  receive `_conflictN` suffixes, skipping occupied names. Names are stable for
+  unchanged keys; adding or removing colliding keys can change suffix assignments.
 - Local GPU k3d validation requires Linux, NVIDIA driver, Docker, k3d,
   kubectl, Helm, NVIDIA Container Toolkit, and a usable GPU.
 
@@ -126,15 +228,29 @@ Rules:
 
 HPC job labels come from the HPC job mapping directory configured by the CLI or
 environment. Mapping files are named after GPU IDs or GPU/MIG identifiers, and
-each line contains job IDs for that GPU or MIG instance. Do not synthesize job
-IDs or mapping files in examples unless the user provides them.
+each line contains job IDs for that GPU or MIG instance. Each line is trimmed;
+blank lines, lines holding only `0` (Slurm epilog scripts write `0` when a job
+ends; Slurm job IDs start at 1), and repeated lines are ignored. Do not synthesize job
+IDs or mapping files in examples unless the user provides them. For MIG
+mappings, the filename suffix is the GPU instance ID exported as `GPU_I_ID`,
+not the `Device N` ordinal shown by `nvidia-smi -L`. Only files named after
+exported GPUs and MIG instances are opened; other files are ignored without a
+warning. Mapping files must be single-link regular files, and neither they nor
+the directory's final component may be symlinks, so a ConfigMap volume must be
+copied into regular files first. `sources.hpc_jobs.max_file_bytes`,
+`max_job_id_bytes` and `max_jobs_per_file` (defaults 65536, 256 and 64; flags
+`--hpc-job-mapping-max-*`) bound each file; a file over a limit adds no job
+labels and keeps the GPU's samples.
+When Kubernetes pod-label and HPC job enrichment are both enabled, the mapping
+job keeps the `hpc_job` label. A pod label with that sanitized name moves to
+`pod_label_hpc_job`, using the existing `_conflictN` suffix convention if that
+fallback is occupied. Unmapped GPU samples keep their pod-label name unchanged.
 
 ## Docker, Packages, And systemd
 
 Docker images and packages are user-visible release artifacts.
 
-- `docker/Dockerfile` defines Ubuntu support/debug and distroless runtime image
-  behavior.
+- `docker/Dockerfile` defines the distroless runtime image behavior.
 - `packaging/config-files/systemd/nvidia-dcgm-exporter.service` defines host
   systemd defaults.
 - The package-managed systemd unit should not be edited in-place by users;
@@ -142,4 +258,7 @@ Docker images and packages are user-visible release artifacts.
 - Release and CI scripts must preserve checksum/signature verification and
   should not mask verification failures with `|| true`.
 - Version-derived files are updated through `hack/versions.env` plus
-  `make sync-versions`, then checked with `make validate-versions`.
+  `task deps:sync`, then checked with `task deps:sync:check`.
+- Container and package releases pair a DCGM version with an exporter version.
+  Treat mismatched pairs as untested and unsupported; recommend updating to the
+  latest paired release first when troubleshooting.

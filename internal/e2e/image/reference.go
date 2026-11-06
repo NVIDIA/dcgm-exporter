@@ -19,6 +19,7 @@ package image
 
 import (
 	_ "crypto/sha256"
+	_ "crypto/sha512"
 	"fmt"
 	"strings"
 

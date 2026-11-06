@@ -7,10 +7,10 @@ Libraries supplied dynamically by the target host are outside the standalone bin
 Regenerate it after changing the production Go dependency closure:
 
 ```bash
-make third-party-notices
+task generate:notices
 ```
 
-`make check-third-party-notices` regenerates the file in a temporary location and fails if the checked-in file differs. It is part of `make validate`.
+`task validate:notices` regenerates the file in a temporary location and fails if the checked-in file differs. It is part of `task validate`.
 
 The Go collector disables workspace overrides, uses `go list -deps` for both shipped Linux architectures (`amd64` and `arm64`), verifies the module cache against `go.sum`, and preserves the discovered legal-file bytes. It excludes NVIDIA-authored modules and the Go standard library. A third-party module without a top-level legal file is a generation failure.
 

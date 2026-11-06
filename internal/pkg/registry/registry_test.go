@@ -18,7 +18,10 @@ package registry
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -28,10 +31,45 @@ import (
 
 	collectorpkg "github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 )
 
 type mockCollector struct {
 	mock.Mock
+}
+
+// delayedCleanupCollector models a collector whose Cleanup request returns
+// before a native worker has released its resources. Registry retirement uses
+// its CleanupComplete signal to prove that provider teardown must still wait.
+type delayedCleanupCollector struct {
+	cleanupStarted chan struct{}
+	cleanupRelease chan struct{}
+	cleanupDone    chan struct{}
+	cleanupOnce    sync.Once
+}
+
+// GetMetrics makes this test collector usable by the registry without adding
+// unrelated scrape behavior to a retirement-focused test.
+func (c *delayedCleanupCollector) GetMetrics() (collectorpkg.MetricsByCounter, error) {
+	return collectorpkg.MetricsByCounter{}, nil
+}
+
+// Cleanup starts delayed cleanup exactly once, matching a poller that has
+// asked a native call to stop but cannot yet release its field handles.
+func (c *delayedCleanupCollector) Cleanup() {
+	c.cleanupOnce.Do(func() {
+		close(c.cleanupStarted)
+		go func() {
+			<-c.cleanupRelease
+			close(c.cleanupDone)
+		}()
+	})
+}
+
+// CleanupComplete reports when this test collector has released its simulated
+// native handles, which is the contract Registry.Retire waits for.
+func (c *delayedCleanupCollector) CleanupComplete() <-chan struct{} {
+	return c.cleanupDone
 }
 
 func (m *mockCollector) GetMetrics() (collectorpkg.MetricsByCounter, error) {
@@ -41,6 +79,76 @@ func (m *mockCollector) GetMetrics() (collectorpkg.MetricsByCounter, error) {
 
 func (m *mockCollector) Cleanup() {
 	m.Called()
+}
+
+// TestRegistryRetireWaitsForDeferredCollectorCleanup proves a registry does
+// not report completion while a collector's cleanup worker still owns native
+// resources.
+func TestRegistryRetireWaitsForDeferredCollectorCleanup(t *testing.T) {
+	reg := NewRegistry()
+	delayed := &delayedCleanupCollector{
+		cleanupStarted: make(chan struct{}),
+		cleanupRelease: make(chan struct{}),
+		cleanupDone:    make(chan struct{}),
+	}
+	tuple := collectorpkg.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	tuple.SetCollector(delayed)
+	require.NoError(t, reg.Register(tuple))
+
+	done := reg.Retire()
+	select {
+	case <-delayed.cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("registry did not request collector cleanup")
+	}
+
+	select {
+	case <-done:
+		t.Fatal("registry retired before deferred collector cleanup finished")
+	default:
+	}
+	require.ErrorIs(t, reg.Register(tuple), ErrRegistryShuttingDown)
+
+	close(delayed.cleanupRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("registry did not complete after collector cleanup finished")
+	}
+	require.NoError(t, reg.RetirementError())
+}
+
+// TestRegistryGatherAdmittedUsesExistingAdmission verifies a request admitted
+// before retirement can finish gathering without trying to enter a second time.
+func TestRegistryGatherAdmittedUsesExistingAdmission(t *testing.T) {
+	reg := NewRegistry()
+	collector := new(mockCollector)
+	collector.On("GetMetrics").Return(collectorpkg.MetricsByCounter{}, nil).Once()
+	collector.On("Cleanup").Return().Once()
+	tuple := collectorpkg.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	tuple.SetCollector(collector)
+	require.NoError(t, reg.Register(tuple))
+	require.NoError(t, reg.BeginUse())
+
+	retired := reg.Retire()
+	require.Eventually(t, func() bool {
+		reg.mtx.Lock()
+		defer reg.mtx.Unlock()
+		return reg.shuttingDown
+	}, time.Second, time.Millisecond)
+
+	_, err := reg.GatherAdmitted()
+	require.NoError(t, err)
+	reg.EndUse()
+
+	select {
+	case <-retired:
+	case <-time.After(time.Second):
+		t.Fatal("registry did not retire after its admitted gather finished")
+	}
+	collector.AssertExpectations(t)
 }
 
 func TestRegistry_Gather(t *testing.T) {
@@ -112,7 +220,7 @@ func TestRegistry_Gather(t *testing.T) {
 			newEntityCollectorTuple := collectorpkg.EntityCollectorTuple{}
 			newEntityCollectorTuple.SetEntity(dcgm.FE_GPU)
 			newEntityCollectorTuple.SetCollector(collector)
-			reg.Register(newEntityCollectorTuple)
+			require.NoError(t, reg.Register(newEntityCollectorTuple))
 			mockCall := tc.collectorState()
 			got, err := reg.Gather()
 			tc.assert(got, err)
@@ -120,6 +228,37 @@ func TestRegistry_Gather(t *testing.T) {
 			reg.Cleanup()
 		})
 	}
+}
+
+// TestRegistryGatherReturnsEveryCollectorError verifies a terminal DCGM error
+// cannot be hidden when another collector fails first.
+func TestRegistryGatherReturnsEveryCollectorError(t *testing.T) {
+	reg := NewRegistry()
+	nonfatalErr := errors.New("collector without permission")
+	fatalErr := &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID}
+	nonfatalStarted := make(chan struct{})
+	nonfatalCollector := new(mockCollector)
+	nonfatalCollector.On("GetMetrics").Run(func(mock.Arguments) {
+		close(nonfatalStarted)
+	}).Return(collectorpkg.MetricsByCounter{}, nonfatalErr).Once()
+	fatalCollector := new(mockCollector)
+	fatalCollector.On("GetMetrics").Run(func(mock.Arguments) {
+		<-nonfatalStarted
+	}).Return(collectorpkg.MetricsByCounter{}, fatalErr).Once()
+
+	for _, c := range []collectorpkg.Collector{nonfatalCollector, fatalCollector} {
+		tuple := collectorpkg.EntityCollectorTuple{}
+		tuple.SetEntity(dcgm.FE_GPU)
+		tuple.SetCollector(c)
+		require.NoError(t, reg.Register(tuple))
+	}
+
+	_, err := reg.Gather()
+	require.ErrorIs(t, err, nonfatalErr)
+	require.ErrorIs(t, err, fatalErr)
+	assert.True(t, dcgmerrors.IsFatalScrapeError(err))
+	nonfatalCollector.AssertExpectations(t)
+	fatalCollector.AssertExpectations(t)
 }
 
 func TestRegistry_GatherMergesMetricsFromCollectorsForSameCounter(t *testing.T) {
@@ -159,7 +298,7 @@ func TestRegistry_GatherMergesMetricsFromCollectorsForSameCounter(t *testing.T) 
 		newEntityCollectorTuple := collectorpkg.EntityCollectorTuple{}
 		newEntityCollectorTuple.SetEntity(dcgm.FE_GPU)
 		newEntityCollectorTuple.SetCollector(c)
-		reg.Register(newEntityCollectorTuple)
+		require.NoError(t, reg.Register(newEntityCollectorTuple))
 	}
 	t.Cleanup(func() {
 		reg.Cleanup()
@@ -213,7 +352,7 @@ func TestRegistryGatherDetachesCollectorSlices(t *testing.T) {
 			entityCollector := collectorpkg.EntityCollectorTuple{}
 			entityCollector.SetEntity(dcgm.FE_GPU)
 			entityCollector.SetCollector(collector)
-			reg.Register(entityCollector)
+			require.NoError(t, reg.Register(entityCollector))
 			t.Cleanup(func() {
 				reg.Cleanup()
 				collector.AssertExpectations(t)
@@ -240,8 +379,80 @@ func TestRegistry_Register_Accepts_Duplicates_(t *testing.T) {
 	newEntityCollectorTuple2.SetEntity(dcgm.FE_GPU)
 	newEntityCollectorTuple2.SetCollector(collector)
 
-	reg.Register(newEntityCollectorTuple1)
-	reg.Register(newEntityCollectorTuple2)
+	require.NoError(t, reg.Register(newEntityCollectorTuple1))
+	require.NoError(t, reg.Register(newEntityCollectorTuple2))
 	assert.Len(t, reg.collectorGroups, 1)
 	assert.Len(t, reg.collectorGroupsSeen, 1)
+}
+
+// eventCollector records its Cleanup in a shared event log.
+type eventCollector struct {
+	name   string
+	events *[]string
+}
+
+// GetMetrics returns no metrics.
+func (c *eventCollector) GetMetrics() (collectorpkg.MetricsByCounter, error) {
+	return collectorpkg.MetricsByCounter{}, nil
+}
+
+// Cleanup records the collector's name.
+func (c *eventCollector) Cleanup() {
+	*c.events = append(*c.events, c.name)
+}
+
+// pollerCollector is an eventCollector with a background worker that is done
+// as soon as Cleanup returns.
+type pollerCollector struct {
+	eventCollector
+	done chan struct{}
+}
+
+// Cleanup records the collector's name and finishes its worker.
+func (c *pollerCollector) Cleanup() {
+	c.eventCollector.Cleanup()
+	close(c.done)
+}
+
+// CleanupComplete closes when the worker is done.
+func (c *pollerCollector) CleanupComplete() <-chan struct{} {
+	return c.done
+}
+
+// TestRegistryRetireRestoresOnceForAllCollectors retires a registry with a
+// background poller and five other collectors, and expects the poller to stop
+// first, then every other collector to be cleaned up inside one deferred
+// restore scope, so DCGM restores surviving watches once.
+func TestRegistryRetireRestoresOnceForAllCollectors(t *testing.T) {
+	var events []string
+	previous := deferRestores
+	deferRestores = func() func() {
+		events = append(events, "begin restore scope")
+		return func() { events = append(events, "restore once") }
+	}
+	t.Cleanup(func() { deferRestores = previous })
+
+	reg := NewRegistry()
+	poller := &pollerCollector{eventCollector: eventCollector{name: "poller", events: &events}, done: make(chan struct{})}
+	register := func(c collectorpkg.Collector) {
+		tuple := collectorpkg.EntityCollectorTuple{}
+		tuple.SetEntity(dcgm.FE_GPU)
+		tuple.SetCollector(c)
+		require.NoError(t, reg.Register(tuple))
+	}
+
+	register(poller)
+	for i := range 5 {
+		register(&eventCollector{name: fmt.Sprintf("collector %d", i), events: &events})
+	}
+
+	<-reg.Retire()
+
+	require.NoError(t, reg.RetirementError())
+	assert.Equal(t, []string{
+		"poller",
+		"begin restore scope",
+		"collector 0", "collector 1", "collector 2", "collector 3", "collector 4",
+		"restore once",
+	}, events)
 }

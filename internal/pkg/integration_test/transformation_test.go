@@ -58,7 +58,7 @@ func TestProcessPodMapper(t *testing.T) {
 		DCGMLogLevel:  "DEBUG",
 		UseFakeGPUs:   true,
 	}
-	dcgmprovider.Initialize(config)
+	require.NoError(t, dcgmprovider.Initialize(config))
 	defer dcgmprovider.Client().Cleanup()
 
 	// Create a fake GPU for this test

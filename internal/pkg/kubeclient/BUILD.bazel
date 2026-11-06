@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "kubeclient",
+    srcs = ["client.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/kubeclient",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@io_k8s_client_go//kubernetes",
+        "@io_k8s_client_go//rest",
+    ],
+)
+
+go_test(
+    name = "kubeclient_test",
+    srcs = ["client_test.go"],
+    embed = [":kubeclient"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_k8s_client_go//kubernetes",
+        "@io_k8s_client_go//kubernetes/fake",
+        "@io_k8s_client_go//rest",
+    ],
+)

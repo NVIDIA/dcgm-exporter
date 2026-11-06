@@ -1,0 +1,12 @@
+# Do not silently reuse stale or corrupt advisory data after an update error.
+check-for-app-update: false
+only-fixed: true
+fail-on-severity: high
+output: [json]
+db:
+  validate-age: true
+  max-allowed-built-age: 24h
+  validate-by-hash-on-start: true
+  require-update-check: true
+  update-available-timeout: 30s
+  update-download-timeout: 5m

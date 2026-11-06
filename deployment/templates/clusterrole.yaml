@@ -1,4 +1,5 @@
-{{- if or (and (or .Values.kubernetes.enablePodLabels .Values.kubernetes.enablePodUID) .Values.kubernetes.rbac.create) .Values.kubernetesDRA.enabled }}
+{{- $access := include "dcgm-exporter.kubernetesAccess" . }}
+{{- if and $access .Values.kubernetes.rbac.create }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -6,7 +7,12 @@ metadata:
   labels:
     {{- include "dcgm-exporter.labels" . | nindent 4 }}
 rules:
-- apiGroups: ["", "resource.k8s.io"]
-  resources: ["pods", "resourceslices"]
+- apiGroups: [""]
+  resources: ["pods"]
   verbs: ["get", "list", "watch"]
+{{- if eq $access "resourceSlices" }}
+- apiGroups: ["resource.k8s.io"]
+  resources: ["resourceslices"]
+  verbs: ["get", "list", "watch"]
+{{- end }}
 {{- end }}

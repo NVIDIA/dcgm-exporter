@@ -22,13 +22,20 @@
 // These are gated behind the dcgm_uri_integration build tag because they drive
 // a real nv-hostengine per transport (which requires root or passwordless sudo
 // to start) and, for vsock, the vsock_loopback kernel module. They are NOT part
-// of the default `make test` / `make test-integration-host` runs.
+// of the default `task test` / `task test:host` runs.
 //
-// Run locally (host with an NVIDIA GPU + DCGM >= 4.5.0, vsock_loopback loaded):
+// Run TCP or Unix locally (host with an NVIDIA GPU + DCGM >= 4.5.0).
+// The harness exposes host/dcgmUri for TCP and host/dcgmUriUnix for Unix:
+//
+//	go test -count=1 -v -tags dcgm_uri_integration ./tests/host/ \
+//	    -args --ginkgo.label-filter='dcgmUri || dcgmUriUnix'
+//
+// VSOCK additionally needs the vsock_loopback kernel module:
 //
 //	sudo modprobe vsock_loopback
+//
 //	go test -count=1 -v -tags dcgm_uri_integration ./tests/host/ \
-//	    -args --ginkgo.label-filter=dcgmUri
+//	    -args --ginkgo.label-filter=dcgmUriVSOCK
 //
 // The tests start dedicated hostengine processes on random ports/sockets and
 // unique pid files; they do not stop nvidia-dcgm.service. On developer hosts a
@@ -38,16 +45,16 @@
 package host
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
-	"time"
 
-	"github.com/avast/retry-go/v4"
 	"github.com/stretchr/testify/require"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
 )
 
 // rootCommand returns a command that runs directly as root or through sudo.
@@ -77,6 +84,7 @@ func requireHostEngineEnv(t testing.TB) {
 	}
 }
 
+// requireOrSkipHostengine turns missing hostengine prerequisites into skips unless CI requires DCGM.
 func requireOrSkipHostengine(t testing.TB, msg string) {
 	t.Helper()
 	if os.Getenv("E2E_REQUIRE_DCGM") == "1" {
@@ -123,110 +131,81 @@ func startHostEngine(t testing.TB, args ...string) {
 	})
 }
 
-// runExporterServesMetricsOverRemoteDCGMURISchemes verifies that every
-// supported remote DCGM URI scheme can back an exporter scrape.
-func runExporterServesMetricsOverRemoteDCGMURISchemes(t testing.TB) {
+// runExporterServesMetricsOverRemoteDCGM checks one remote DCGM endpoint.
+func runExporterServesMetricsOverRemoteDCGM(t testing.TB, engineArgs []string, uri string) {
 	if testing.Short() {
 		t.Skip("skipping live integration test in short mode")
 	}
 	requireHostEngineEnv(t)
-
-	tcpPort := getRandomAvailablePort(t)
-	vsockPort := getRandomAvailablePort(t)
-	unixSocket := filepath.Join("/tmp", fmt.Sprintf("dcgm-he-%d.sock", getRandomAvailablePort(t)))
-
-	tests := []struct {
-		name       string
-		engineArgs []string
-		uri        string
-		preflight  func(t testing.TB)
-		postStart  func(t testing.TB)
-	}{
-		{
-			name:       "tcp",
-			engineArgs: []string{"-b", "127.0.0.1", "-p", fmt.Sprintf("%d", tcpPort)},
-			uri:        fmt.Sprintf("tcp://127.0.0.1:%d", tcpPort),
-		},
-		{
-			name:       "unix",
-			engineArgs: []string{"-d", unixSocket},
-			uri:        "unix://" + unixSocket,
-			postStart: func(t testing.TB) {
-				t.Cleanup(func() { _ = rootCommand("rm", "-f", unixSocket).Run() })
-			},
-		},
-		{
-			name:       "vsock",
-			engineArgs: []string{"-c", "1", "-p", fmt.Sprintf("%d", vsockPort)},
-			uri:        fmt.Sprintf("vsock://1:%d", vsockPort),
-			preflight:  requireVsock,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Logf("checking %s remote DCGM URI", tt.name)
-		if tt.preflight != nil {
-			tt.preflight(t)
-		}
-		startHostEngine(t, tt.engineArgs...)
-		if tt.postStart != nil {
-			tt.postStart(t)
-		}
-
-		metricsResp := scrapeExporterAgainstRemoteDCGM(t, tt.uri)
-		assertRemoteDCGMMetrics(t, metricsResp, tt.uri)
-	}
+	startHostEngine(t, engineArgs...)
+	assertRemoteDCGMMetrics(t, scrapeExporterAgainstRemoteDCGM(t, uri), uri)
 }
 
-// scrapeExporterAgainstRemoteDCGM runs dcgm-exporter against a remote DCGM URI.
+// runExporterServesMetricsOverRemoteDCGMTCP checks exporter metrics through a TCP host-engine URI.
+func runExporterServesMetricsOverRemoteDCGMTCP(t testing.TB) {
+	port := getRandomAvailablePort(t)
+	runExporterServesMetricsOverRemoteDCGM(
+		t,
+		[]string{"-b", "127.0.0.1", "-p", fmt.Sprintf("%d", port)},
+		fmt.Sprintf("tcp://127.0.0.1:%d", port),
+	)
+}
+
+// runExporterServesMetricsOverRemoteDCGMUnix checks exporter metrics through a Unix socket URI.
+func runExporterServesMetricsOverRemoteDCGMUnix(t testing.TB) {
+	socket := filepath.Join(t.TempDir(), "nv-hostengine.sock")
+	runExporterServesMetricsOverRemoteDCGM(t, []string{"-d", socket}, "unix://"+socket)
+}
+
+// scrapeExporterAgainstRemoteDCGM runs dcgm-exporter against a remote DCGM URI
+// and returns its first scrape that holds every default CSV row DCGM supports.
 func scrapeExporterAgainstRemoteDCGM(t testing.TB, uri string) string {
 	t.Helper()
 	httpPort := getRandomAvailablePort(t)
-	process := startExporterProcess(
+	process, metricsResp := startFastCSVExporterAndWait(
 		t,
-		"--collectors", "./testdata/default-counters.csv",
+		fmt.Sprintf("http://127.0.0.1:%d/metrics", httpPort),
+		defaultCollectorsFile(t),
 		"--address", fmt.Sprintf("127.0.0.1:%d", httpPort),
 		"--remote-hostengine-info", uri,
 	)
 	defer process.terminate(t)
 
-	metricsResp, err := retry.DoWithData(
-		func() (string, error) {
-			if err := process.running(); err != nil {
-				return "", err
-			}
-			body, _, err := httpGet(t, fmt.Sprintf("http://127.0.0.1:%d/metrics", httpPort))
-			if err != nil {
-				return "", err
-			}
-			if len(body) == 0 {
-				return "", errors.New("empty response")
-			}
-			return body, nil
-		},
-		retry.Attempts(10),
-		retry.MaxDelay(10*time.Second),
-	)
-
-	require.NoErrorf(t, err, "scrape exporter via %s\n%s", uri, process.output.String())
 	return metricsResp
 }
 
-// assertRemoteDCGMMetrics verifies a remote DCGM scrape has GPU metrics and sane labels.
+// assertRemoteDCGMMetrics checks a remote DCGM scrape against the same metric
+// contract as a direct host exporter, and checks that every hostname label is
+// the local host rather than the remote URI.
 func assertRemoteDCGMMetrics(t testing.TB, metricsResp string, uri string) {
 	t.Helper()
-	require.NotEmpty(t, metricsResp)
-	require.Contains(t, metricsResp, "DCGM_FI_DEV_", "expected GPU device metrics over vsock")
+	validateHostDefaultMetrics(t, metricsResp)
+
 	localHostname, err := os.Hostname()
 	require.NoError(t, err)
-	require.Contains(t, metricsResp, fmt.Sprintf(`hostname="%s"`, localHostname), "expected local hostname label over %s", uri)
-	require.NotContains(t, metricsResp, `hostname="vsock://`, "raw remote URI leaked into hostname label")
-	require.NotContains(t, metricsResp, `hostname="tcp://`, "raw remote URI leaked into hostname label")
-	require.NotContains(t, metricsResp, `hostname="unix://`, "raw remote URI leaked into hostname label")
+	families, err := metriccontract.ParseText([]byte(metricsResp))
+	require.NoError(t, err)
+
+	// Every sample that carries a hostname must name this host.
+	labeled := 0
+	for name, family := range families {
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if !slices.Contains(metriccontract.GPUHostnameLabels, label.GetName()) {
+					continue
+				}
+
+				labeled++
+				require.Equalf(t, localHostname, label.GetValue(),
+					"metric family %s hostname label over %s, want the local hostname", name, uri)
+			}
+		}
+	}
+	require.NotZerof(t, labeled, "no sample has a hostname label over %s", uri)
 }
 
-// runExporterServesMetricsOverVSOCKRemoteDCGM drives the exporter against a vsock DCGM endpoint.
-func runExporterServesMetricsOverVSOCKRemoteDCGM(t testing.TB) {
+// runExporterServesMetricsOverRemoteDCGMVSOCK drives the exporter against a VSOCK DCGM endpoint.
+func runExporterServesMetricsOverRemoteDCGMVSOCK(t testing.TB) {
 	if testing.Short() {
 		t.Skip("skipping live integration test in short mode")
 	}

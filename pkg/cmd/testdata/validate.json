@@ -1,0 +1,22 @@
+{
+  "format_version": 1,
+  "command": "config.validate",
+  "data": {
+    "path": "testdata/inspection.yaml",
+    "valid": true,
+    "diagnostics": [],
+    "checked": [
+      "configuration settings",
+      "inline metric definitions"
+    ],
+    "not_checked": [
+      "gpus",
+      "dcgm",
+      "field_support",
+      "kubelet_socket",
+      "workload_labels",
+      "listener",
+      "directories"
+    ]
+  }
+}

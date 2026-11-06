@@ -16,10 +16,7 @@
 
 package transformation
 
-import osinterface "github.com/NVIDIA/dcgm-exporter/internal/pkg/os"
-
-var os osinterface.OS = osinterface.RealOS{}
-
+// doNothing is the safe close callback returned when no connection was created.
 var doNothing = func() {
 	// This function is intentionally left blank
 }

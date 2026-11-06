@@ -32,6 +32,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 )
 
+// Test_isInt64Blank checks that the 32-bit and 64-bit blank, not-found, not-supported and not-permissioned
+// markers count as blank, and that 0, 42, a negative and a large value do not.
 func Test_isInt64Blank(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -107,6 +109,8 @@ func Test_isInt64Blank(t *testing.T) {
 	}
 }
 
+// Test_logBlankValueSkipped checks that the blank value debug log record carries the field ID, field name,
+// entity type, and entity ID.
 func Test_logBlankValueSkipped(t *testing.T) {
 	buf := setupDebugLogCapture(t)
 
@@ -125,6 +129,7 @@ func Test_logBlankValueSkipped(t *testing.T) {
 	assert.Equal(t, float64(3), got["entityID"])
 }
 
+// setupDebugLogCapture redirects the default logger to a buffer for assertions.
 func setupDebugLogCapture(t *testing.T) *bytes.Buffer {
 	t.Helper()
 
@@ -136,6 +141,7 @@ func setupDebugLogCapture(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+// findLogRecord returns the structured log record with the requested message.
 func findLogRecord(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
 	t.Helper()
 
@@ -156,6 +162,8 @@ func findLogRecord(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
 	return nil
 }
 
+// Test_isDebugLoggingEnabled checks that the helper reports false while the default logger is at info level
+// and true once it is at debug level.
 func Test_isDebugLoggingEnabled(t *testing.T) {
 	var buf bytes.Buffer
 	previousLogger := slog.Default()
@@ -168,6 +176,8 @@ func Test_isDebugLoggingEnabled(t *testing.T) {
 	assert.True(t, isDebugLoggingEnabled())
 }
 
+// Test_expCollectorSourceFieldNameUsesSourceDCGMFieldIDs checks that sourceFieldName returns the DCGM name for a
+// source field or a label field, and the unknown placeholder for the exporter's own field ID.
 func Test_expCollectorSourceFieldNameUsesSourceDCGMFieldIDs(t *testing.T) {
 	labelCounter := counters.Counter{
 		FieldID:   777,
@@ -192,6 +202,8 @@ func Test_expCollectorSourceFieldNameUsesSourceDCGMFieldIDs(t *testing.T) {
 	assert.Equal(t, unknownFieldName, collector.sourceFieldName(dcgm.Short(counters.DCGMXIDErrorsCount)))
 }
 
+// Test_isFloat64Blank checks that the blank, not-found, not-supported and not-permissioned double markers
+// count as blank, and that 0.0, 3.14 and a negative value do not.
 func Test_isFloat64Blank(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -242,6 +254,8 @@ func Test_isFloat64Blank(t *testing.T) {
 	}
 }
 
+// Test_isStringBlank checks that the blank, not-found, not-supported and not-permissioned string markers
+// count as blank, and that an empty string and ordinary text do not.
 func Test_isStringBlank(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -287,6 +301,8 @@ func Test_isStringBlank(t *testing.T) {
 	}
 }
 
+// Test_isBlankValue checks that integer, double and string samples holding a DCGM blank marker count as
+// blank, ordinary values of those types do not, and a binary sample is never treated as blank.
 func Test_isBlankValue(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -368,6 +384,7 @@ func Test_isBlankValue(t *testing.T) {
 
 // Helper functions to create byte arrays for testing
 
+// createInt64ByteArray encodes an int64 value in the DCGM field buffer format.
 func createInt64ByteArray(value int64) [4096]byte {
 	var arr [4096]byte
 	for i := 0; i < 8; i++ {
@@ -376,6 +393,7 @@ func createInt64ByteArray(value int64) [4096]byte {
 	return arr
 }
 
+// createFloat64ByteArray encodes a float64 value in the DCGM field buffer format.
 func createFloat64ByteArray(value float64) [4096]byte {
 	var arr [4096]byte
 	bits := *(*uint64)(unsafe.Pointer(&value))
@@ -385,6 +403,7 @@ func createFloat64ByteArray(value float64) [4096]byte {
 	return arr
 }
 
+// createStringByteArray copies a string into the DCGM field buffer format.
 func createStringByteArray(value string) [4096]byte {
 	var arr [4096]byte
 	copy(arr[:], value)

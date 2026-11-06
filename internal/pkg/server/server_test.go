@@ -17,8 +17,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +35,7 @@ import (
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/prometheus/exporter-toolkit/web"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -42,6 +47,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/debug"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
@@ -104,7 +111,7 @@ func newMetricsTestServer(
 	entityCollectorTuple := collector.EntityCollectorTuple{}
 	entityCollectorTuple.SetEntity(dcgm.FE_GPU)
 	entityCollectorTuple.SetCollector(testCollector)
-	reg.Register(entityCollectorTuple)
+	require.NoError(t, reg.Register(entityCollectorTuple))
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
@@ -221,8 +228,24 @@ func TestMetrics(t *testing.T) {
 			},
 		},
 		{
-			name:  "Returns 500 when group is unknown",
+			name:  "Returns 200 for unscoped collector metrics",
 			group: dcgm.FE_NONE,
+			collector: func() collector.Collector {
+				mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
+				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
+				return mockCollector
+			},
+			transformer: func() transformation.Transform {
+				return mocktransformation.NewMockTransform(ctrl)
+			},
+			assert: func(t *testing.T, recorder *httptest.ResponseRecorder) {
+				assert.Equal(t, http.StatusOK, recorder.Code)
+				assert.Equal(t, "# HELP TEST_METRIC \n# TYPE TEST_METRIC gauge\nTEST_METRIC{hostname=\"testhost\"} 42\n", recorder.Body.String())
+			},
+		},
+		{
+			name:  "Returns 500 when group is unknown",
+			group: dcgm.Field_Entity_Group(42),
 			collector: func() collector.Collector {
 				mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
 				mockCollector.EXPECT().GetMetrics().Return(metrics, nil).AnyTimes()
@@ -265,7 +288,7 @@ func TestMetrics(t *testing.T) {
 			entityCollectorTuple := collector.EntityCollectorTuple{}
 			entityCollectorTuple.SetEntity(tt.group)
 			entityCollectorTuple.SetCollector(tt.collector())
-			reg.Register(entityCollectorTuple)
+			require.NoError(t, reg.Register(entityCollectorTuple))
 
 			mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 			mockDeviceInfo.EXPECT().InfoType().Return(tt.group).AnyTimes()
@@ -300,6 +323,62 @@ func TestMetrics(t *testing.T) {
 				tt.assert(t, recorder)
 			}
 		})
+	}
+}
+
+// TestGatherAndRenderRetainsRegistryUntilRenderingCompletes verifies retirement
+// waits for the complete old-runtime scrape path, including transformations
+// after collector gathering has returned.
+func TestGatherAndRenderRetainsRegistryUntilRenderingCompletes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	metrics := getMetricsByCounterWithTestMetric()
+	testCollector := mockcollectorpkg.NewMockCollector(ctrl)
+	testCollector.EXPECT().GetMetrics().Return(metrics, nil).Times(1)
+	testCollector.EXPECT().Cleanup().Times(1)
+
+	renderStarted := make(chan struct{})
+	renderRelease := make(chan struct{})
+	transformer := mocktransformation.NewMockTransform(ctrl)
+	transformer.EXPECT().
+		Process(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(collector.MetricsByCounter, deviceinfo.Provider) error {
+			close(renderStarted)
+			<-renderRelease
+			return nil
+		})
+
+	metricServer := newMetricsTestServer(t, ctrl, testCollector, []transformation.Transform{transformer}, 1)
+	currentRegistry := metricServer.registry.Load()
+	recorded := bytes.Buffer{}
+	rendered := make(chan error, 1)
+	go func() {
+		rendered <- metricServer.gatherAndRenderMetrics(context.Background(), &recorded)
+	}()
+
+	select {
+	case <-renderStarted:
+	case <-time.After(time.Second):
+		t.Fatal("metric rendering did not start")
+	}
+
+	retired := currentRegistry.Retire()
+	select {
+	case <-retired:
+		t.Fatal("registry retired while an old-runtime response was still rendering")
+	default:
+	}
+
+	close(renderRelease)
+	select {
+	case err := <-rendered:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("metric rendering did not finish")
+	}
+	select {
+	case <-retired:
+	case <-time.After(time.Second):
+		t.Fatal("registry did not retire after rendering finished")
 	}
 }
 
@@ -721,7 +800,7 @@ func TestMetricsReturnsErrorWhenClientClosedConnection(t *testing.T) {
 	entityCollectorTuple := collector.EntityCollectorTuple{}
 	entityCollectorTuple.SetEntity(dcgm.FE_GPU)
 	entityCollectorTuple.SetCollector(mockCollector)
-	reg.Register(entityCollectorTuple)
+	require.NoError(t, reg.Register(entityCollectorTuple))
 
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_CPU).AnyTimes()
@@ -857,7 +936,9 @@ func TestNewMetricsServerConfiguresHTTPTimeouts(t *testing.T) {
 	assert.Equal(t, 45*time.Second, srv.server.WriteTimeout)
 }
 
-func TestNewMetricsServerDefaultsHTTPTimeouts(t *testing.T) {
+// TestNewMetricsServerDefaultsHTTPTimeoutsAndSkipsDisabledDumper checks that the
+// constructor supplies default timeouts without creating disabled debug support.
+func TestNewMetricsServerDefaultsHTTPTimeoutsAndSkipsDisabledDumper(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
 	cfg := &appconfig.Config{Address: ":0", MaxConcurrentScrapes: appconfig.DefaultMaxConcurrentScrapes}
@@ -865,6 +946,7 @@ func TestNewMetricsServerDefaultsHTTPTimeouts(t *testing.T) {
 	require.NoError(t, err)
 	defer cleanup()
 
+	assert.Nil(t, srv.fileDumper)
 	assert.Equal(t, appconfig.DefaultWebReadTimeout, srv.server.ReadTimeout)
 	assert.Equal(t, appconfig.DefaultWebWriteTimeout, srv.server.WriteTimeout)
 }
@@ -886,25 +968,25 @@ func TestShutdownTimeoutUsesEffectiveWriteTimeout(t *testing.T) {
 	}
 }
 
+// TestMetricsServerRunStartsAndStops checks that enabled debug dumping creates a runnable dumper.
 func TestMetricsServerRunStartsAndStops(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
 	cfg := &appconfig.Config{
 		Address:              "127.0.0.1:0",
 		MaxConcurrentScrapes: appconfig.DefaultMaxConcurrentScrapes,
-		DumpConfig: appconfig.DumpConfig{
-			Enabled:   true,
-			Directory: t.TempDir(),
-			Retention: 1,
-		},
+		DumpConfig:           appconfig.DefaultDumpConfig(),
 	}
+	cfg.DumpConfig.Enabled = true
+	cfg.DumpConfig.Directory = t.TempDir()
 	srv, cleanup, err := NewMetricsServer(cfg, mockManager, registry.NewRegistry())
 	require.NoError(t, err)
 	defer cleanup()
+	assert.NotNil(t, srv.fileDumper)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stop := make(chan interface{})
+	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -948,7 +1030,7 @@ func TestMetricsServerRunWaitsForDetachedScrape(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stop := make(chan interface{})
+	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -964,6 +1046,136 @@ func TestMetricsServerRunWaitsForDetachedScrape(t *testing.T) {
 
 	close(releaseProducer)
 	waitForSignal(t, done)
+}
+
+// TestMetricsServerMetricsReportsFatalDCGMError verifies that a fatal DCGM
+// scrape remains an HTTP error and reaches Run through its bounded error path.
+func TestMetricsServerMetricsReportsFatalDCGMError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
+	mockCollector.EXPECT().GetMetrics().Return(nil, &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID})
+
+	reg := registry.NewRegistry()
+	tuple := collector.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	tuple.SetCollector(mockCollector)
+	require.NoError(t, reg.Register(tuple))
+
+	metricsServer := &MetricsServer{
+		scrapes:        newScrapeCoordinator(1),
+		terminalErrors: make(chan error, 1),
+	}
+	metricsServer.registry.Store(reg)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+
+	metricsServer.Metrics(response, request)
+
+	assert.Equal(t, http.StatusInternalServerError, response.Code)
+	select {
+	case err := <-metricsServer.terminalErrors:
+		require.Error(t, err)
+		assert.True(t, dcgmerrors.IsFatalScrapeError(err))
+	default:
+		t.Fatal("fatal scrape error was not reported")
+	}
+}
+
+// TestMetricsServerReportsFatalDCGMErrorAfterRequestCancellation verifies the
+// producer reports a terminal DCGM failure even after its HTTP waiter leaves.
+func TestMetricsServerReportsFatalDCGMErrorAfterRequestCancellation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	producerStarted := make(chan struct{})
+	releaseProducer := make(chan struct{})
+	fatalErr := &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID}
+	mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
+	mockCollector.EXPECT().GetMetrics().DoAndReturn(func() (collector.MetricsByCounter, error) {
+		close(producerStarted)
+		<-releaseProducer
+		return nil, fatalErr
+	})
+
+	reg := registry.NewRegistry()
+	tuple := collector.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	tuple.SetCollector(mockCollector)
+	require.NoError(t, reg.Register(tuple))
+
+	metricsServer := &MetricsServer{
+		scrapes:        newScrapeCoordinator(1),
+		terminalErrors: make(chan error, 1),
+	}
+	metricsServer.registry.Store(reg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	responseDone := make(chan struct{})
+	go func() {
+		defer close(responseDone)
+		metricsServer.Metrics(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/metrics", nil).WithContext(ctx))
+	}()
+
+	waitForSignal(t, producerStarted)
+	cancel()
+	waitForSignal(t, responseDone)
+	close(releaseProducer)
+
+	select {
+	case err := <-metricsServer.terminalErrors:
+		require.ErrorIs(t, err, fatalErr)
+	case <-time.After(coordinatorTestTimeout):
+		t.Fatal("fatal scrape error was not reported after request cancellation")
+	}
+}
+
+// TestMetricsServerReportsOnlyFirstTerminalError verifies that concurrent
+// fatal scrapes cannot replace or queue a second application shutdown reason.
+func TestMetricsServerReportsOnlyFirstTerminalError(t *testing.T) {
+	first := errors.New("first fatal scrape")
+	metricsServer := &MetricsServer{terminalErrors: make(chan error, 1)}
+
+	metricsServer.reportTerminalError(first)
+	metricsServer.reportTerminalError(errors.New("second fatal scrape"))
+
+	require.ErrorIs(t, <-metricsServer.terminalErrors, first)
+	require.ErrorIs(t, metricsServer.TerminalError(), first)
+	select {
+	case err := <-metricsServer.terminalErrors:
+		t.Fatalf("unexpected second terminal error: %v", err)
+	default:
+	}
+}
+
+// TestMetricsServerRunRetainsTerminalErrorWhenStopIsReady verifies that a
+// shutdown signal cannot discard an already reported terminal failure.
+func TestMetricsServerRunRetainsTerminalErrorWhenStopIsReady(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	cfg := &appconfig.Config{Address: "127.0.0.1:0", MaxConcurrentScrapes: appconfig.DefaultMaxConcurrentScrapes}
+	srv, cleanup, err := NewMetricsServer(cfg, mockManager, registry.NewRegistry())
+	require.NoError(t, err)
+	defer cleanup()
+
+	fatalErr := fmt.Errorf("fatal metrics scrape: %w", &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID})
+	srv.reportTerminalError(fatalErr)
+	stop := make(chan struct{})
+	close(stop)
+
+	err = srv.Run(context.Background(), stop)
+
+	require.ErrorIs(t, err, fatalErr)
+}
+
+// TestJoinAvailableServerErrorRetainsListenerFailure verifies that a ready
+// stop signal cannot turn an already-reported listener startup failure into a
+// successful Run result.
+func TestJoinAvailableServerErrorRetainsListenerFailure(t *testing.T) {
+	listenerErr := errors.New("listen failed")
+	serverErrors := make(chan error, 1)
+	serverErrors <- listenerErr
+
+	err := joinAvailableServerError(nil, serverErrors)
+
+	require.ErrorIs(t, err, listenerErr)
 }
 
 func TestDumpMetricsToJSON(t *testing.T) {
@@ -986,7 +1198,7 @@ func TestDumpMetricsToJSON(t *testing.T) {
 		tuple := collector.EntityCollectorTuple{}
 		tuple.SetEntity(dcgm.FE_GPU)
 		tuple.SetCollector(mockCollector)
-		reg.Register(tuple)
+		require.NoError(t, reg.Register(tuple))
 
 		metricServer := &MetricsServer{}
 		metricServer.registry.Store(reg)
@@ -1007,7 +1219,7 @@ func TestDumpMetricsToJSON(t *testing.T) {
 		tuple := collector.EntityCollectorTuple{}
 		tuple.SetEntity(dcgm.FE_GPU)
 		tuple.SetCollector(mockCollector)
-		reg.Register(tuple)
+		require.NoError(t, reg.Register(tuple))
 
 		metricServer := &MetricsServer{}
 		metricServer.registry.Store(reg)
@@ -1034,12 +1246,12 @@ func TestMetricsWithRepeatedHPCJobIDs(t *testing.T) {
 		secondGPU.GPUUUID = "GPU-00000000-0000-0000-0000-000000000001"
 		metrics[getTestMetric()] = append(metrics[getTestMetric()], secondGPU)
 		return metrics, nil
-	}).Times(2)
+	}).Times(3)
 	reg := registry.NewRegistry()
 	tuple := collector.EntityCollectorTuple{}
 	tuple.SetEntity(dcgm.FE_GPU)
 	tuple.SetCollector(mockCollector)
-	reg.Register(tuple)
+	require.NoError(t, reg.Register(tuple))
 	mockDeviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
 	mockDeviceInfo.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
 	mockDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
@@ -1047,11 +1259,16 @@ func TestMetricsWithRepeatedHPCJobIDs(t *testing.T) {
 	mockDeviceInfo.EXPECT().GPUs().Return(nil).AnyTimes()
 	watchList := *devicewatchlistmanager.NewWatchList(mockDeviceInfo, []dcgm.Short{42}, nil, deviceWatcher, 1)
 	watchManager := mockdevicewatchlistmanager.NewMockManager(ctrl)
-	watchManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(watchList, true).Times(2)
+	watchManager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(watchList, true).Times(3)
 	metricServer := &MetricsServer{
 		deviceWatchListManager: watchManager,
-		transformations:        transformation.GetTransformations(&appconfig.Config{HPCJobMappingDir: mappingDir}),
-		scrapes:                newScrapeCoordinator(1),
+		transformations: transformation.GetTransformations(&appconfig.Config{
+			HPCJobMappingDir:            mappingDir,
+			HPCJobMappingMaxFileBytes:   appconfig.DefaultHPCJobMappingMaxFileBytes,
+			HPCJobMappingMaxJobIDBytes:  appconfig.DefaultHPCJobMappingMaxJobIDBytes,
+			HPCJobMappingMaxJobsPerFile: appconfig.DefaultHPCJobMappingMaxJobsPerFile,
+		}),
+		scrapes: newScrapeCoordinator(1),
 	}
 	metricServer.registry.Store(reg)
 	recorder := httptest.NewRecorder()
@@ -1067,4 +1284,238 @@ func TestMetricsWithRepeatedHPCJobIDs(t *testing.T) {
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `hpc_job="job1"`))
 	require.NotContains(t, recorder.Body.String(), `hpc_job="job2"`)
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), `hpc_job="job3"`))
+
+	// Invalid input removes attribution for that GPU without removing its sample.
+	marker := strings.Repeat("private-job", 30)
+	require.NoError(t, os.WriteFile(filepath.Join(mappingDir, "0"), []byte(marker), 0o600))
+
+	recorder = httptest.NewRecorder()
+	metricServer.Metrics(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, 2, strings.Count(recorder.Body.String(), "TEST_METRIC{"))
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `hpc_job="job1"`))
+	require.NotContains(t, recorder.Body.String(), `hpc_job="job3"`)
+	require.NotContains(t, recorder.Body.String(), marker)
+}
+
+// TestMetricsContinueAfterDumpStorageError checks that a scrape still returns
+// metrics when the dump directory is not writable.
+func TestMetricsContinueAfterDumpStorageError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires a non-root process to exercise filesystem permission denial")
+	}
+	ctrl := gomock.NewController(t)
+	reg := registry.NewRegistry()
+	tuple := collector.EntityCollectorTuple{}
+	tuple.SetEntity(dcgm.FE_GPU)
+	mockCollector := mockcollectorpkg.NewMockCollector(ctrl)
+	mockCollector.EXPECT().GetMetrics().Return(getMetricsByCounterWithTestMetric(), nil)
+	tuple.SetCollector(mockCollector)
+	require.NoError(t, reg.Register(tuple))
+	info := mockdeviceinfo.NewMockProvider(ctrl)
+	info.EXPECT().InfoType().Return(dcgm.FE_GPU).AnyTimes()
+	info.EXPECT().GOpts().Return(appconfig.DeviceOptions{}).AnyTimes()
+	info.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+	info.EXPECT().GPUs().Return(nil).AnyTimes()
+	list := *devicewatchlistmanager.NewWatchList(info, []dcgm.Short{42}, nil, deviceWatcher, 1)
+	manager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	manager.EXPECT().EntityWatchList(dcgm.FE_GPU).Return(list, true)
+	cfg := appconfig.DefaultDumpConfig()
+	cfg.Enabled = true
+	cfg.Directory = filepath.Join(t.TempDir(), "readonly")
+	require.NoError(t, os.Mkdir(cfg.Directory, 0o500))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(cfg.Directory, 0o700)) })
+	server := &MetricsServer{deviceWatchListManager: manager, scrapes: newScrapeCoordinator(1), fileDumper: debug.NewFileDumper(cfg)}
+	server.registry.Store(reg)
+	response := httptest.NewRecorder()
+	server.Metrics(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), "TEST_METRIC")
+	entries, err := os.ReadDir(cfg.Directory)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+// TestPagesSetSecurityHeadersThroughTheWebConfig checks the landing and health
+// page headers behind a real web config, which applies its own headers first.
+func TestPagesSetSecurityHeadersThroughTheWebConfig(t *testing.T) {
+	tests := []struct {
+		name          string
+		webConfig     string
+		wantPageCSP   string
+		wantPageFrame string
+		wantMetrics   http.Header
+	}{
+		{
+			name:          "defaults",
+			webConfig:     "{}\n",
+			wantPageCSP:   contentSecurityPolicy,
+			wantPageFrame: "DENY",
+			wantMetrics:   http.Header{},
+		},
+		{
+			name: "configured headers are kept",
+			webConfig: "http_server_config:\n" +
+				"  headers:\n" +
+				"    Content-Security-Policy: \"default-src 'self'\"\n" +
+				"    X-Frame-Options: sameorigin\n",
+			wantPageCSP:   "default-src 'self'",
+			wantPageFrame: "sameorigin",
+			wantMetrics: http.Header{
+				contentSecurityPolicyHeader: {"default-src 'self'"},
+				frameOptionsHeader:          {"sameorigin"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseURL := serveWithWebConfig(t, tt.webConfig)
+
+			for _, page := range []string{"/", "/health"} {
+				response := getForTest(t, baseURL+page)
+				assert.Equal(t, http.StatusOK, response.StatusCode, page)
+				assert.Equal(t, "nosniff", response.Header.Get(contentTypeOptionsHeader), page)
+				assert.Equal(t, tt.wantPageCSP, response.Header.Get(contentSecurityPolicyHeader), page)
+				assert.Equal(t, tt.wantPageFrame, response.Header.Get(frameOptionsHeader), page)
+			}
+
+			response := getForTest(t, baseURL+"/metrics")
+			assert.Equal(t, http.StatusOK, response.StatusCode)
+			assert.Equal(t, prometheusTextContentType, response.Header.Get("Content-Type"))
+			assert.Equal(t, "nosniff", response.Header.Get(contentTypeOptionsHeader))
+			assert.Equal(t, tt.wantMetrics.Values(contentSecurityPolicyHeader), response.Header.Values(contentSecurityPolicyHeader))
+			assert.Equal(t, tt.wantMetrics.Values(frameOptionsHeader), response.Header.Values(frameOptionsHeader))
+		})
+	}
+}
+
+// serveWithWebConfig serves a new metrics server through the exporter-toolkit
+// web config handler on a loopback port and returns its base URL.
+func serveWithWebConfig(t *testing.T, webConfig string) string {
+	t.Helper()
+
+	webConfigFile := filepath.Join(t.TempDir(), "web-config.yml")
+	require.NoError(t, os.WriteFile(webConfigFile, []byte(webConfig), 0o600))
+
+	ctrl := gomock.NewController(t)
+	cfg := &appconfig.Config{
+		Address:              "127.0.0.1:0",
+		MaxConcurrentScrapes: appconfig.DefaultMaxConcurrentScrapes,
+		WebConfigFile:        webConfigFile,
+	}
+	srv, cleanup, err := NewMetricsServer(cfg, mockdevicewatchlistmanager.NewMockManager(ctrl), registry.NewRegistry())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	served := make(chan error, 1)
+	go func() { served <- web.Serve(listener, srv.server, srv.webConfig, slog.Default()) }()
+	t.Cleanup(func() {
+		require.NoError(t, srv.server.Close())
+		assert.ErrorIs(t, <-served, http.ErrServerClosed)
+	})
+
+	return "http://" + listener.Addr().String()
+}
+
+// getForTest sends a GET request and returns the response with its body read.
+func getForTest(t *testing.T, url string) *http.Response {
+	t.Helper()
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	defer response.Body.Close()
+
+	_, err = io.Copy(io.Discard, response.Body)
+	require.NoError(t, err)
+
+	return response
+}
+
+// TestMetricsFENONEBypassesWatchListsAndTransformations checks that render
+// passes FE_NONE metrics straight to the output: the strict mocks fail the test
+// if a watch list or transformation is used.
+func TestMetricsFENONEBypassesWatchListsAndTransformations(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	manager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	transform := mocktransformation.NewMockTransform(ctrl)
+
+	counter := counters.Counter{
+		FieldName: counters.DCGMExpSystemHealthStatus,
+		PromType:  "gauge",
+		Help:      "Current DCGM-reported host-level health status; currently the IMEX health watch only.",
+	}
+	metrics := collector.MetricsByCounter{
+		counter: []collector.Metric{
+			{
+				Counter:  counter,
+				Value:    "0",
+				Hostname: "test-host",
+				Labels: map[string]string{
+					"health_watch":          "IMEX",
+					"health_error_code":     "DCGM_FR_OK",
+					"health_error_severity": "NONE",
+					"health_error_category": "NONE",
+				},
+				Attributes: map[string]string{},
+			},
+		},
+	}
+
+	metricServer := &MetricsServer{
+		deviceWatchListManager: manager,
+		transformations:        []transformation.Transform{transform},
+	}
+	var output bytes.Buffer
+	err := metricServer.render(
+		context.Background(),
+		&output,
+		manager,
+		registry.MetricsByCounterGroup{dcgm.FE_NONE: metrics},
+	)
+
+	require.NoError(t, err)
+	assert.Contains(t, output.String(), "DCGM_EXP_SYSTEM_HEALTH_STATUS")
+	assert.Contains(t, output.String(), "hostname=\"test-host\"")
+	assert.NotContains(t, output.String(), "gpu=\"")
+}
+
+// TestMetricsFENONEWritesMetricsDebugDump checks that render writes FE_NONE
+// metrics to a "metrics-Host-" debug file and writes no device info file.
+func TestMetricsFENONEWritesMetricsDebugDump(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	manager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	directory := t.TempDir()
+	dumpConfig := appconfig.DefaultDumpConfig()
+	dumpConfig.Enabled = true
+	dumpConfig.Directory = directory
+	dumpConfig.Compression = false
+	metricServer := &MetricsServer{
+		fileDumper: debug.NewFileDumper(dumpConfig),
+	}
+
+	var output bytes.Buffer
+	err := metricServer.render(
+		context.Background(),
+		&output,
+		manager,
+		registry.MetricsByCounterGroup{dcgm.FE_NONE: getMetricsByCounterWithTestMetric()},
+	)
+
+	require.NoError(t, err)
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.True(t, strings.HasPrefix(entries[0].Name(), "metrics-Host-"))
+
+	data, err := os.ReadFile(filepath.Join(directory, entries[0].Name()))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "TEST_METRIC")
 }

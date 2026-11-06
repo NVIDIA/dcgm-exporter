@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "os",
+    srcs = ["mock_os.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os",
+    visibility = ["//:__subpackages__"],
+    deps = ["@org_uber_go_mock//gomock"],
+)

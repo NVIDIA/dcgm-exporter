@@ -67,14 +67,14 @@ func TestNewLabelFilterCache(t *testing.T) {
 		{
 			name:                "InvalidPattern",
 			patterns:            []string{"[invalid"},
-			expectedEnabled:     false, // Should disable when all patterns fail
+			expectedEnabled:     true, // Invalid input must not disable filtering
 			expectedPatternsLen: 0,
 		},
 		{
 			name:                "MixedValidInvalid",
 			patterns:            []string{"^app$", "[invalid", "^tier$"},
-			expectedEnabled:     true, // Should keep valid patterns
-			expectedPatternsLen: 2,    // Only 2 valid patterns
+			expectedEnabled:     true, // Invalid input rejects the entire allowlist
+			expectedPatternsLen: 0,    // No partial allowlist
 		},
 		{
 			name:                "ComplexRegexPatterns",
@@ -128,6 +128,19 @@ func TestShouldIncludeLabel(t *testing.T) {
 			allowlistPatterns: []string{},
 			labelKey:          "app.kubernetes.io/name",
 			expectedIncluded:  true,
+		},
+
+		{
+			name:              "InvalidPattern_Excluded",
+			allowlistPatterns: []string{"[invalid"},
+			labelKey:          "any-label",
+			expectedIncluded:  false,
+		},
+		{
+			name:              "MixedInvalidPattern_Excluded",
+			allowlistPatterns: []string{".*", "[invalid"},
+			labelKey:          "any-label",
+			expectedIncluded:  false,
 		},
 
 		// Exact match patterns
@@ -267,7 +280,7 @@ func TestShouldIncludeLabel_Caching(t *testing.T) {
 	cache.mu.Lock()
 	elem, exists := cache.cache["app"]
 	cache.mu.Unlock()
-	assert.True(t, exists, "Result should be cached")
+	require.True(t, exists, "Result should be cached")
 	entry := elem.Value.(*labelCacheEntry)
 	assert.True(t, entry.value, "Cached value should be true")
 
@@ -281,7 +294,7 @@ func TestShouldIncludeLabel_Caching(t *testing.T) {
 	cache.mu.Lock()
 	elem2, exists2 := cache.cache["excluded-label"]
 	cache.mu.Unlock()
-	assert.True(t, exists2, "Exclusion should be cached")
+	require.True(t, exists2, "Exclusion should be cached")
 	entry2 := elem2.Value.(*labelCacheEntry)
 	assert.False(t, entry2.value, "Cached exclusion value should be false")
 }
@@ -311,6 +324,64 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 			},
 		},
 		{
+			name: "TwoNormalizationCollisions",
+			podLabels: map[string]string{
+				"app.kubernetes.io/name": "qualified",
+				"app_kubernetes_io_name": "plain",
+			},
+			expectedLabels: map[string]string{
+				"app_kubernetes_io_name":           "qualified",
+				"app_kubernetes_io_name_conflict1": "plain",
+			},
+		},
+		{
+			name: "ThreeNormalizationCollisions",
+			podLabels: map[string]string{
+				"team-name": "hyphen",
+				"team.name": "dot",
+				"team_name": "underscore",
+			},
+			expectedLabels: map[string]string{
+				"team_name":           "hyphen",
+				"team_name_conflict1": "dot",
+				"team_name_conflict2": "underscore",
+			},
+		},
+		{
+			name: "NormalizationCollisionsReserveRealSuffixes",
+			podLabels: map[string]string{
+				"team-name":                     "hyphen",
+				"team.name":                     "dot",
+				"team_name":                     "underscore",
+				"team_name.conflict1":           "dotted-suffix",
+				"team_name_conflict1":           "real-suffix",
+				"team_name_conflict2":           "next-suffix",
+				"team_name_conflict1_conflict1": "nested-suffix",
+			},
+			expectedLabels: map[string]string{
+				"team_name":                     "hyphen",
+				"team_name_conflict1":           "dotted-suffix",
+				"team_name_conflict2":           "next-suffix",
+				"team_name_conflict3":           "dot",
+				"team_name_conflict4":           "underscore",
+				"team_name_conflict1_conflict1": "nested-suffix",
+				"team_name_conflict1_conflict2": "real-suffix",
+			},
+		},
+		{
+			name:              "FilterBeforeResolvingNormalizationCollisions",
+			allowlistPatterns: []string{`^(app\.kubernetes\.io/name|app_kubernetes_io_name)$`},
+			podLabels: map[string]string{
+				"app.kubernetes.io/name":           "qualified",
+				"app_kubernetes_io_name":           "plain",
+				"app_kubernetes_io_name_conflict1": "excluded",
+			},
+			expectedLabels: map[string]string{
+				"app_kubernetes_io_name":           "qualified",
+				"app_kubernetes_io_name_conflict1": "plain",
+			},
+		},
+		{
 			name:              "FilterByExactMatch",
 			allowlistPatterns: []string{"^app$"},
 			podLabels: map[string]string{
@@ -330,6 +401,7 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 				"app.kubernetes.io/name":    "my-app",
 				"app.kubernetes.io/version": "1.0.0",
 				"build-id":                  "abc123",
+				"app_kubernetes_io_name":    "excluded-collision",
 			},
 			expectedLabels: map[string]string{
 				"app_kubernetes_io_name":    "my-app",
@@ -410,8 +482,11 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 			_, err := fakeClient.CoreV1().Pods("default").Create(context.Background(), pod, metav1.CreateOptions{})
 			require.NoError(t, err)
 
-			// Wait for informer sync
-			time.Sleep(100 * time.Millisecond)
+			// Initial sync precedes creation; wait for the watch to cache this pod.
+			require.Eventually(t, func() bool {
+				_, err := podMapper.podLister.Pods("default").Get("test-pod")
+				return err == nil
+			}, time.Second, 10*time.Millisecond)
 
 			// Create dummy PodResources input
 			podRes := &podresourcesapi.PodResources{
@@ -423,10 +498,11 @@ func TestGetPodMetadata_WithLabelFiltering(t *testing.T) {
 			}
 			containerRes := podRes.Containers[0]
 
-			podInfo := podMapper.createPodInfo(podRes, containerRes)
-
-			assert.Equal(t, "test-uid-123", podInfo.UID, "UID should match")
-			assert.Equal(t, tt.expectedLabels, podInfo.Labels)
+			for range 10 {
+				podInfo := podMapper.createPodInfo(podRes, containerRes)
+				assert.Equal(t, "test-uid-123", podInfo.UID, "UID should match")
+				require.Equal(t, tt.expectedLabels, podInfo.Labels)
+			}
 		})
 	}
 }

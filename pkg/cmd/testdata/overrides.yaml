@@ -1,0 +1,32 @@
+version: 2
+metrics:
+  - name: gpu
+    fields:
+      - name: DCGM_FI_DEV_SM_CLOCK
+        prometheus_type: gauge
+        help: SM clock frequency in MHz.
+      - name: DCGM_FI_DEV_BOARD_POWER_WATTS
+        prometheus_type: gauge
+        help: Power draw in watts.
+      - name: DCGM_FI_DEV_BOARD_POWER_LIMIT_ENFORCED_WATTS
+        prometheus_type: gauge
+        help: Enforced power limit in watts.
+      - name: DCGM_EXP_XID_ERRORS_COUNT
+        prometheus_type: gauge
+        help: XID errors in the window.
+    overrides:
+      - match: [DCGM_EXP_XID_ERRORS_COUNT]
+        window: 10m
+      - match: ["/^DCGM_FI_DEV_BOARD_POWER_.*$/"]
+        every: 1s
+      - name: clocks
+        match: [DCGM_FI_DEV_SM_CLOCK]
+        every: 5s
+outputs:
+  scrape:
+    type: prometheus
+    schema: dcgm/v1
+sources:
+  dcgm:
+    embedded_log:
+      level: debug

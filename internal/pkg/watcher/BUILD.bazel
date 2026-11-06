@@ -1,0 +1,37 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "watcher",
+    srcs = [
+        "file.go",
+        "gpu.go",
+        "restartable_gpu.go",
+        "watcher.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/watcher",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/dcgmprovider",
+        "@com_github_fsnotify_fsnotify//:fsnotify",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "watcher_test",
+    srcs = [
+        "file_test.go",
+        "gpu_test.go",
+        "restartable_gpu_test.go",
+    ],
+    embed = [":watcher"],
+    deps = [
+        "//internal/mocks/pkg/dcgmprovider",
+        "//internal/pkg/dcgmprovider",
+        "@com_github_fsnotify_fsnotify//:fsnotify",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

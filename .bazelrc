@@ -1,0 +1,35 @@
+try-import %workspace%/.bazelrc.local
+
+build --@rules_go//go/config:static=false
+build --jobs=auto
+build --workspace_status_command=hack/bazel/workspace-status.sh
+test --test_output=errors
+test --test_env=GOMODCACHE
+test --test_env=GOPATH
+test --test_env=GOPROXY
+test --test_env=GOSUMDB
+test --test_env=HOME
+
+# Every test case appears in its test.xml, and bazel coverage writes a Go cover
+# profile per test target; the CI reports are built from both. With a remote
+# cache, keep the test logs and profiles of cached tests downloadable.
+test --test_env=GO_TEST_WRAP_TESTV=1
+coverage --@rules_go//go/config:cover_format=go_cover
+coverage --remote_download_regex=.*/testlogs/.*
+
+# Each target platform gets its own output directory, so amd64 and arm64 builds
+# in one checkout cannot overwrite each other's binaries.
+build:linux-amd64 --platforms=//build/toolchains:linux_amd64_cgo
+build:linux-amd64 --platform_suffix=linux-amd64
+build:linux-arm64 --platforms=//build/toolchains:linux_arm64_cgo
+build:linux-arm64 --platform_suffix=linux-arm64
+
+build:release --stamp
+
+build:ci --verbose_failures
+build:ci --show_timestamps
+build:ci --incompatible_strict_action_env
+
+build:container-tests --@rules_go//go/config:tags=container
+build:e2e-tests --@rules_go//go/config:tags=e2e
+build:dcgm-uri-integration-tests --@rules_go//go/config:tags=dcgm_uri_integration

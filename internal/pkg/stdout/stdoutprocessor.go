@@ -21,7 +21,8 @@ import (
 	"time"
 )
 
-// outputEntry represents the structured form of the parsed log entry.
+// outputEntry holds the fields extracted from a captured DCGM log line.
+// parseOutputEntry returns it so the capture reader can send structured logs to slog and raw text to stdout.
 type outputEntry struct {
 	Timestamp   time.Time
 	Level       string
@@ -29,7 +30,8 @@ type outputEntry struct {
 	IsRawString bool
 }
 
-// parseOutputEntry takes a log entry string and returns a structured outputEntry object.
+// parseOutputEntry recognizes the DCGM log prefix and separates its fields from the message.
+// The capture reader uses its IsRawString result to preserve normal stdout text byte-for-byte.
 func parseOutputEntry(entry string) outputEntry {
 	// Split the entry by spaces, taking care to not split the function call and its arguments.
 	fields := strings.Fields(entry)

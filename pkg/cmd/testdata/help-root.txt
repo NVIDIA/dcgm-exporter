@@ -1,0 +1,342 @@
+NAME
+  dcgm-exporter - Generates GPU metrics in the prometheus format
+
+USAGE
+  dcgm-exporter [GLOBAL OPTIONS]
+  dcgm-exporter [GLOBAL OPTIONS] COMMAND
+
+COMMANDS
+  config
+    Inspect settings without starting the exporter
+  help, h
+    Show help for a command or topic
+
+CONFIGURATION OPTIONS
+  --config-file PATH
+    Read startup configuration from YAML PATH. Legacy flags and environment
+    variables explicitly set on startup override YAML values.
+    Environment: DCGM_EXPORTER_CONFIG_FILE
+
+DEVICES AND HOSTENGINE OPTIONS
+  --cpu-devices, -p SELECTOR
+    Select CPUs and CPU cores using SELECTOR (see device selectors below).
+    Default: "f"
+    Environment: DCGM_EXPORTER_CPU_DEVICES_STR
+
+  --remote-hostengine-info, -r ADDRESS
+    Connect to remote hostengine at ADDRESS (<HOST>:<PORT> or a DCGM URI)
+    (tcp://<HOST>:<PORT>, unix:///<SOCKET_PATH>, vsock://<CID>:<PORT>). For
+    IPv6, use "[<IPv6_ADDR>]:<PORT>" (e.g., "[::1]:5555")
+    Default: "localhost:5555"
+    Environment: DCGM_REMOTE_HOSTENGINE_INFO
+
+  --devices, -d SELECTOR
+    Select GPUs and MIG GPU instances using SELECTOR; i is unavailable unless
+    MIG mode is enabled.
+    Default: "f"
+    Environment: DCGM_EXPORTER_DEVICES_STR
+
+  --switch-devices, -s SELECTOR
+    Select switches and links using SELECTOR (see device selectors below).
+    Default: "f"
+    Environment: DCGM_EXPORTER_OTHER_DEVICES_STR
+
+  --fake-gpus
+    Accept GPUs that are fake, for testing purposes only
+    Default: false
+    Environment: DCGM_EXPORTER_USE_FAKE_GPUS
+
+  --enable-gpu-bind-unbind-watch
+    Enable watching for GPU bind/unbind events to trigger automatic reloads
+    (requires DCGM 4.5+)
+    Default: false
+    Environment: DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH
+
+  --gpu-bind-unbind-poll-interval DURATION
+    Poll GPU bind/unbind events every DURATION (DCGM recommends 1s).
+    Default: "1s"
+    Environment: DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL
+
+  --dcgm-cleanup-timeout DURATION
+    Wait up to DURATION for DCGM to release watches; if DCGM has not finished by
+    then, the exporter exits.
+    Default: 5m0s
+    Environment: DCGM_EXPORTER_DCGM_CLEANUP_TIMEOUT
+
+DIAGNOSTICS OPTIONS
+  --debug
+    Enable debug output
+    Default: false
+    Environment: DCGM_EXPORTER_DEBUG
+
+  --enable-dcgm-log
+    Enable writing DCGM logs to standard output (stdout). Embedded hostengine
+    only; not valid with --remote-hostengine-info.
+    Default: false
+    Environment: DCGM_EXPORTER_ENABLE_DCGM_LOG
+
+  --dcgm-log-level LEVEL
+    DCGM log verbosity LEVEL. This parameter is effective only when the
+    '--enable-dcgm-log' option is set to 'true'. Possible values: NONE, FATAL,
+    ERROR, WARN, INFO, DEBUG and VERB
+    Default: "NONE"
+    Environment: DCGM_EXPORTER_DCGM_LOG_LEVEL
+
+  --log-format FORMAT
+    Log output FORMAT. Possible values: text, json
+    Default: "text"
+    Environment: DCGM_EXPORTER_LOG_FORMAT
+
+  --dump-enabled
+    Enable file-based debugging dumps for troubleshooting
+    Default: false
+    Environment: DCGM_EXPORTER_DUMP_ENABLED
+
+  --dump-directory DIRECTORY
+    Store debug dump files in DIRECTORY
+    Default: "/tmp/dcgm-exporter-debug"
+    Environment: DCGM_EXPORTER_DUMP_DIRECTORY
+
+  --dump-retention HOURS
+    Retain debug dump files for HOURS (0 = no age cleanup; the size and count
+    limits still apply)
+    Default: 24
+    Environment: DCGM_EXPORTER_DUMP_RETENTION
+
+  --dump-compression
+    Use gzip compression for debug dump files
+    Default: true
+    Environment: DCGM_EXPORTER_DUMP_COMPRESSION
+
+  --dump-min-interval DURATION
+    Write at most one debug dump per DURATION for each dump kind and entity
+    group
+    Default: "1m0s"
+    Environment: DCGM_EXPORTER_DUMP_MIN_INTERVAL
+
+  --dump-max-file-bytes BYTES
+    Limit each debug dump file to BYTES on disk
+    Default: 16777216
+    Environment: DCGM_EXPORTER_DUMP_MAX_FILE_BYTES
+
+  --dump-max-total-bytes BYTES
+    Limit all debug dump files to BYTES in total; the oldest files are removed
+    first
+    Default: 268435456
+    Environment: DCGM_EXPORTER_DUMP_MAX_TOTAL_BYTES
+
+  --dump-max-files COUNT
+    Keep at most COUNT debug dump files; the oldest files are removed first
+    Default: 128
+    Environment: DCGM_EXPORTER_DUMP_MAX_FILES
+
+  --disable-startup-validate
+    Disable validation checks during startup. Can be useful for running in
+    minimal environments or testing
+    Default: false
+    Environment: DISABLE_STARTUP_VALIDATE
+
+GENERAL OPTIONS
+  --help, -h
+    Show help
+    Default: false
+
+  --version, -v
+    print the version
+    Default: false
+
+HTTP SERVER OPTIONS
+  --address, -a ADDRESS
+    Listen on ADDRESS (<HOST>:<PORT>). For IPv6, use "[<IPv6_ADDR>]:<PORT>"
+    (e.g., "[::]:9400")
+    Default: ":9400"
+    Environment: DCGM_EXPORTER_LISTEN
+
+  --web-read-timeout DURATION
+    Maximum DURATION for reading an HTTP request.
+    Default: "10s"
+    Environment: DCGM_EXPORTER_WEB_READ_TIMEOUT
+
+  --web-write-timeout DURATION
+    Maximum DURATION for generating and writing an HTTP response.
+    Default: "30s"
+    Environment: DCGM_EXPORTER_WEB_WRITE_TIMEOUT
+
+  --max-concurrent-scrapes COUNT
+    Admit up to COUNT concurrent scrape requests. Excess requests receive HTTP
+    503 while admitted overlapping requests are coalesced.
+    Default: 16
+    Environment: DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES
+
+  --web-config-file PATH
+    Web config file PATH following the exporter-toolkit spec:
+    https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.
+    Environment: DCGM_EXPORTER_WEB_CONFIG_FILE
+
+  --enable-pprof
+    Enable /debug/pprof/ HTTP endpoints on the metrics port; needs a web config
+    file with TLS or basic auth
+    Default: false
+    Environment: DCGM_EXPORTER_ENABLE_PPROF
+
+  --web-systemd-socket
+    Use systemd socket activation listeners instead of port listeners (Linux
+    only).
+    Default: false
+    Environment: DCGM_EXPORTER_SYSTEMD_SOCKET
+
+METRICS OPTIONS
+  --collectors, -f PATH
+    Read DCGM metric definitions from CSV PATH
+    Default: "/etc/dcgm-exporter/default-counters.csv"
+    Environment: DCGM_EXPORTER_COLLECTORS
+
+  --enable-exporter-metrics
+    Expose Go runtime, process, and HTTP handler metrics about dcgm-exporter
+    itself.
+    Default: false
+    Environment: DCGM_EXPORTER_ENABLE_EXPORTER_METRICS
+
+  --collect-interval, -c MILLISECONDS
+    Collect metrics every MILLISECONDS.
+    Default: 30000
+    Environment: DCGM_EXPORTER_INTERVAL
+
+  --watch-max-keep-age DURATION
+    Maximum DURATION of samples retained by DCGM field watches. Set to 0s to
+    disable the age limit when a sample limit is configured.
+    Default: 10m0s
+    Environment: DCGM_EXPORTER_WATCH_MAX_KEEP_AGE
+
+  --watch-max-keep-samples COUNT
+    Retain up to COUNT samples in DCGM field watches. Set to 0 for no
+    sample-count limit when an age limit is configured.
+    Default: 0
+    Environment: DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES
+
+  --use-old-namespace, -o
+    Use old 1.x namespace.
+    Default: false
+    Environment: DCGM_EXPORTER_USE_OLD_NAMESPACE
+
+  --configmap-data, -m NAMESPACE:NAME
+    Read metrics from ConfigMap NAMESPACE:NAME. Deprecated: still supported;
+    mount the ConfigMap as a file and pass its path with --collectors instead.
+    Default: "none"
+    Environment: DCGM_EXPORTER_CONFIGMAP_DATA
+
+  --no-hostname, -n
+    Omit the hostname information from the output, matching older versions.
+    Default: false
+    Environment: DCGM_EXPORTER_NO_HOSTNAME
+
+  --xid-count-window-size, -x MILLISECONDS
+    Window MILLISECONDS for counting sampled XID error observations in
+    DCGM_EXP_XID_ERRORS_COUNT. Must be greater than 0.
+    Default: 300000
+    Environment: DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE
+
+  --replace-blanks-in-model-name, --rbmn
+    Replace every blank space in the GPU model name with a dash, ensuring a
+    continuous, space-free identifier.
+    Default: false
+    Environment: DCGM_EXPORTER_REPLACE_BLANKS_IN_MODEL_NAME
+
+  --clock-events-count-window-size MILLISECONDS
+    Window MILLISECONDS for counting sampled clock-event observations in
+    DCGM_EXP_CLOCK_EVENTS_COUNT. Must be greater than 0.
+    Default: 300000
+    Environment: DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE
+
+WORKLOAD LABELS OPTIONS
+  --kubernetes, -k
+    Enable kubernetes mapping metrics to kubernetes pods
+    Default: false
+    Environment: DCGM_EXPORTER_KUBERNETES
+
+  --kubernetes-enable-pod-labels
+    Enable kubernetes pod labels in metrics. This parameter is effective only
+    when the '--kubernetes' option is set to 'true'.
+    Default: false
+    Environment: DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS
+
+  --kubernetes-enable-pod-uid
+    Enable kubernetes pod UID in metrics. This parameter is effective only when
+    the '--kubernetes' option is set to 'true'.
+    Default: false
+    Environment: DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID
+
+  --kubernetes-gpu-id-type TYPE
+    Map Kubernetes resources to pods using GPU ID TYPE. Possible values: 'uid',
+    'device-name'
+    Default: "uid"
+    Environment: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
+
+  --kubernetes-pod-label-allowlist-regex PATTERN
+    Include pod labels matching regex PATTERN (comma-separated). Required when
+    pod labels are enabled; use .* to include all labels. This parameter is
+    effective only when '--kubernetes-enable-pod-labels' is true.
+    Environment: DCGM_EXPORTER_KUBERNETES_POD_LABEL_ALLOWLIST_REGEX
+    May be repeated; comma-separated values are accepted.
+
+  --pod-resources-kubelet-socket PATH
+    Kubelet pod-resources socket PATH.
+    Default: "/var/lib/kubelet/pod-resources/kubelet.sock"
+    Environment: DCGM_POD_RESOURCES_KUBELET_SOCKET
+
+  --hpc-job-mapping-dir DIRECTORY
+    Read GPU to job mapping files from DIRECTORY.
+    Environment: DCGM_HPC_JOB_MAPPING_DIR
+
+  --hpc-job-mapping-max-file-bytes BYTES
+    Ignore an HPC job mapping file larger than BYTES.
+    Default: 65536
+    Environment: DCGM_HPC_JOB_MAPPING_MAX_FILE_BYTES
+
+  --hpc-job-mapping-max-job-id-bytes BYTES
+    Ignore an HPC job mapping file with a job ID longer than BYTES.
+    Default: 256
+    Environment: DCGM_HPC_JOB_MAPPING_MAX_JOB_ID_BYTES
+
+  --hpc-job-mapping-max-jobs-per-file COUNT
+    Ignore an HPC job mapping file with more than COUNT distinct jobs.
+    Default: 64
+    Environment: DCGM_HPC_JOB_MAPPING_MAX_JOBS_PER_FILE
+
+  --container-labels
+    Enable runtime container labels in metrics.
+    Default: false
+    Environment: DCGM_EXPORTER_CONTAINER_LABELS
+
+  --container-runtime-socket PATH
+    Container runtime socket PATH used for container labels. Empty means
+    /var/run/docker.sock when container labels are on.
+    Environment: DCGM_CONTAINER_RUNTIME_SOCKET
+
+  --nvidia-resource-names NAME
+    GPU resource NAME values such as nvidia.com/a100, nvidia.com/a10.
+    Environment: NVIDIA_RESOURCE_NAMES
+    May be repeated; comma-separated values are accepted.
+
+  --kubernetes-virtual-gpus
+    Capture metrics associated with virtual GPUs exposed by Kubernetes device
+    plugins when using GPU sharing strategies, e.g. time-sharing or MPS.
+    Default: false
+    Environment: KUBERNETES_VIRTUAL_GPUS
+
+  --kubernetes-enable-dra
+    Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource
+    Allocation (DRA) API.
+    Default: false
+    Environment: KUBERNETES_ENABLE_DRA
+
+VERSION
+  test
+
+DEVICE SELECTORS
+  Use f alone, g or i, or g+i. Add :0,2-4 to g or i for indexed selection.
+  GPU: g selects GPUs; i selects MIG GPU instances and requires MIG mode.
+  GPU f selects each GPU's MIG instances when present, otherwise the GPU.
+  CPU: g selects CPUs; i selects CPU cores; f selects both.
+  Switch: g selects switches; i selects links; f selects both.
+  f cannot be combined or indexed. Device indices are checked at runtime.

@@ -49,17 +49,21 @@ const (
 	resourceSliceNoChangeWindow       = 100 * time.Millisecond
 )
 
+// testDRADeviceMapping supplies the UUID and optional MIG metadata returned by a fixture lookup.
 type testDRADeviceMapping struct {
 	uuid string
 	mig  *DRAMigDeviceInfo
 }
 
+// newTestDRAManager creates a manager with no mapped devices and no informer.
 func newTestDRAManager() *DRAResourceSliceManager {
 	return newTestDRAManagerWithDevices(nil)
 }
 
+// newTestDRAManagerWithDevices looks up fixture UUIDs and MIG metadata by pool and device.
 func newTestDRAManagerWithDevices(devices map[string]testDRADeviceMapping) *DRAResourceSliceManager {
 	return &DRAResourceSliceManager{
+		// Resolve only fixture entries, returning the production empty result for a miss.
 		lookup: func(pool, device string) (string, *DRAMigDeviceInfo) {
 			mapping, ok := devices[draDeviceKey(pool, device)]
 			if !ok {
@@ -70,14 +74,17 @@ func newTestDRAManagerWithDevices(devices map[string]testDRADeviceMapping) *DRAR
 	}
 }
 
+// strAttr constructs a v1beta1 string attribute for fixture devices.
 func strAttr(value string) resourcev1beta1.DeviceAttribute {
 	return resourcev1beta1.DeviceAttribute{StringValue: &value}
 }
 
+// strAttrV1 constructs a v1 string attribute for fixture devices.
 func strAttrV1(value string) resourcev1.DeviceAttribute {
 	return resourcev1.DeviceAttribute{StringValue: &value}
 }
 
+// testResourceSlice constructs a v1beta1 pool fixture without object identity.
 func testResourceSlice(driver, pool string, devices ...resourcev1beta1.Device) *resourcev1beta1.ResourceSlice {
 	return &resourcev1beta1.ResourceSlice{
 		Spec: resourcev1beta1.ResourceSliceSpec{
@@ -88,12 +95,14 @@ func testResourceSlice(driver, pool string, devices ...resourcev1beta1.Device) *
 	}
 }
 
+// testResourceSliceWithName adds stable object identity to a v1beta1 pool fixture.
 func testResourceSliceWithName(name, driver, pool string, devices ...resourcev1beta1.Device) *resourcev1beta1.ResourceSlice {
 	slice := testResourceSlice(driver, pool, devices...)
 	slice.ObjectMeta = metav1.ObjectMeta{Name: name, UID: types.UID(name)}
 	return slice
 }
 
+// testResourceSliceV1WithName constructs a named v1 pool generation with one expected slice.
 func testResourceSliceV1WithName(name, driver, pool string, generation int64, devices ...resourcev1.Device) *resourcev1.ResourceSlice {
 	return &resourcev1.ResourceSlice{
 		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID(name)},
@@ -105,6 +114,7 @@ func testResourceSliceV1WithName(name, driver, pool string, generation int64, de
 	}
 }
 
+// testResourceSliceV1beta1WithName constructs a named v1beta1 pool generation with one expected slice.
 func testResourceSliceV1beta1WithName(name, driver, pool string, generation int64, devices ...resourcev1beta1.Device) *resourcev1beta1.ResourceSlice {
 	slice := testResourceSliceWithName(name, driver, pool, devices...)
 	slice.Spec.Pool.Generation = generation
@@ -112,6 +122,7 @@ func testResourceSliceV1beta1WithName(name, driver, pool string, generation int6
 	return slice
 }
 
+// testGPUDevice constructs a v1beta1 whole-GPU device with type and UUID attributes.
 func testGPUDevice(name, uuid string) resourcev1beta1.Device {
 	return resourcev1beta1.Device{
 		Name: name,
@@ -122,6 +133,7 @@ func testGPUDevice(name, uuid string) resourcev1beta1.Device {
 	}
 }
 
+// testGPUDeviceV1 constructs a v1 whole-GPU device with type and UUID attributes.
 func testGPUDeviceV1(name, uuid string) resourcev1.Device {
 	return resourcev1.Device{
 		Name: name,
@@ -132,6 +144,7 @@ func testGPUDeviceV1(name, uuid string) resourcev1.Device {
 	}
 }
 
+// testMigDevice constructs v1beta1 MIG attributes including parent UUID and profile.
 func testMigDevice(name, uuid, parentUUID, profile string) resourcev1beta1.Device {
 	return resourcev1beta1.Device{
 		Name: name,
@@ -144,6 +157,7 @@ func testMigDevice(name, uuid, parentUUID, profile string) resourcev1beta1.Devic
 	}
 }
 
+// testMigDeviceV1 constructs v1 MIG attributes including parent UUID and profile.
 func testMigDeviceV1(name, uuid, parentUUID, profile string) resourcev1.Device {
 	return resourcev1.Device{
 		Name: name,
@@ -156,6 +170,7 @@ func testMigDeviceV1(name, uuid, parentUUID, profile string) resourcev1.Device {
 	}
 }
 
+// newV1Indexer indexes v1 fixtures using the production device and pool indexes.
 func newV1Indexer(t *testing.T, slices ...*resourcev1.ResourceSlice) cache.Indexer {
 	t.Helper()
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
@@ -168,6 +183,7 @@ func newV1Indexer(t *testing.T, slices ...*resourcev1.ResourceSlice) cache.Index
 	return indexer
 }
 
+// newV1beta1Indexer indexes v1beta1 fixtures using the production device and pool indexes.
 func newV1beta1Indexer(t *testing.T, slices ...*resourcev1beta1.ResourceSlice) cache.Indexer {
 	t.Helper()
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{
@@ -180,16 +196,19 @@ func newV1beta1Indexer(t *testing.T, slices ...*resourcev1beta1.ResourceSlice) c
 	return indexer
 }
 
+// fakeClientWithResources exposes discovery resources without seeded Kubernetes objects.
 func fakeClientWithResources(resources ...*metav1.APIResourceList) *fake.Clientset {
 	return fakeClientWithResourcesAndObjects(resources)
 }
 
+// fakeClientWithResourcesAndObjects seeds discovery resources and tracked Kubernetes objects.
 func fakeClientWithResourcesAndObjects(resources []*metav1.APIResourceList, objects ...runtime.Object) *fake.Clientset {
 	client := fake.NewSimpleClientset(objects...)
 	client.Resources = resources
 	return client
 }
 
+// assertResourceSliceListUsesDriverFieldSelector requires a list action and checks every ResourceSlice list filters the NVIDIA driver.
 func assertResourceSliceListUsesDriverFieldSelector(t *testing.T, client *fake.Clientset) {
 	t.Helper()
 	expectedSelector := fields.OneTermEqualSelector("spec.driver", DRAGPUDriverName).String()
@@ -208,6 +227,7 @@ func assertResourceSliceListUsesDriverFieldSelector(t *testing.T, client *fake.C
 	require.True(t, foundList, "expected ResourceSlice list action")
 }
 
+// TestDetectResourceSliceAPIVersion checks v1 preference, beta fallback, and unsupported discovery results.
 func TestDetectResourceSliceAPIVersion(t *testing.T) {
 	v1GV := resourcev1.SchemeGroupVersion.String()
 	v1beta1GV := resourcev1beta1.SchemeGroupVersion.String()
@@ -267,6 +287,7 @@ func TestDetectResourceSliceAPIVersion(t *testing.T) {
 	}
 }
 
+// TestDRAResourceSliceManager_GetDeviceInfo_NilLookup checks a manager without a lookup returns no device.
 func TestDRAResourceSliceManager_GetDeviceInfo_NilLookup(t *testing.T) {
 	manager := &DRAResourceSliceManager{}
 	uuid, mig := manager.GetDeviceInfo("pool-a", "gpu-0")
@@ -274,6 +295,7 @@ func TestDRAResourceSliceManager_GetDeviceInfo_NilLookup(t *testing.T) {
 	assert.Nil(t, mig)
 }
 
+// TestNewDRAResourceSliceManager_UsesInformerCacheLookup checks discovered APIs populate GPU and MIG lookups using driver-filtered lists.
 func TestNewDRAResourceSliceManager_UsesInformerCacheLookup(t *testing.T) {
 	prevGetKubeClient := getKubeClientFunc
 	t.Cleanup(func() { getKubeClientFunc = prevGetKubeClient })
@@ -383,6 +405,7 @@ func TestNewDRAResourceSliceManager_UsesInformerCacheLookup(t *testing.T) {
 	}
 }
 
+// TestBuildDeviceMapping checks whole GPU, static/dynamic MIG, and unsupported device attributes.
 func TestBuildDeviceMapping(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -553,6 +576,7 @@ func TestParseDRAMigSpec(t *testing.T) {
 	}
 }
 
+// TestMakeV1Lookup checks v1 UUID/MIG resolution and missing or foreign device cases.
 func TestMakeV1Lookup(t *testing.T) {
 	indexer := newV1Indexer(
 		t,
@@ -646,6 +670,7 @@ func TestMakeV1Lookup(t *testing.T) {
 	}
 }
 
+// TestMakeV1beta1Lookup checks v1beta1 UUID/MIG resolution and missing device attributes.
 func TestMakeV1beta1Lookup(t *testing.T) {
 	indexer := newV1beta1Indexer(
 		t,
@@ -722,6 +747,7 @@ func TestMakeV1beta1Lookup(t *testing.T) {
 	}
 }
 
+// TestDRAResourceSliceIndexer_UpdateRemovesStaleMappings checks a beta slice update replaces old devices without removing another pool.
 func TestDRAResourceSliceIndexer_UpdateRemovesStaleMappings(t *testing.T) {
 	indexer := newV1beta1Indexer(
 		t,
@@ -756,6 +782,7 @@ func TestDRAResourceSliceIndexer_UpdateRemovesStaleMappings(t *testing.T) {
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_V1UpdateRemovesStaleMappings checks a v1 slice update replaces old devices without removing another pool.
 func TestDRAResourceSliceIndexer_V1UpdateRemovesStaleMappings(t *testing.T) {
 	indexer := newV1Indexer(
 		t,
@@ -790,6 +817,7 @@ func TestDRAResourceSliceIndexer_V1UpdateRemovesStaleMappings(t *testing.T) {
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_UpdateHandlesDeviceTypeChanges checks a beta device changing from GPU to MIG replaces its metadata.
 func TestDRAResourceSliceIndexer_UpdateHandlesDeviceTypeChanges(t *testing.T) {
 	indexer := newV1beta1Indexer(
 		t,
@@ -822,6 +850,7 @@ func TestDRAResourceSliceIndexer_UpdateHandlesDeviceTypeChanges(t *testing.T) {
 	}
 }
 
+// TestDRAResourceSliceIndexer_DeletePreservesOtherSliceMapping checks another beta slice retains a duplicate device after deletion.
 func TestDRAResourceSliceIndexer_DeletePreservesOtherSliceMapping(t *testing.T) {
 	sliceA := testResourceSliceV1beta1WithName(
 		"slice-a",
@@ -847,6 +876,7 @@ func TestDRAResourceSliceIndexer_DeletePreservesOtherSliceMapping(t *testing.T) 
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_PrefersNewestPoolGeneration checks beta lookup selects the complete newest pool generation.
 func TestDRAResourceSliceIndexer_PrefersNewestPoolGeneration(t *testing.T) {
 	indexer := newV1beta1Indexer(
 		t,
@@ -872,6 +902,7 @@ func TestDRAResourceSliceIndexer_PrefersNewestPoolGeneration(t *testing.T) {
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_V1PrefersNewestPoolGeneration checks v1 lookup selects the complete newest pool generation.
 func TestDRAResourceSliceIndexer_V1PrefersNewestPoolGeneration(t *testing.T) {
 	indexer := newV1Indexer(
 		t,
@@ -897,6 +928,7 @@ func TestDRAResourceSliceIndexer_V1PrefersNewestPoolGeneration(t *testing.T) {
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_PartialLatestGenerationReturnsEmpty checks beta lookup rejects incomplete newest generations without using older devices.
 func TestDRAResourceSliceIndexer_PartialLatestGenerationReturnsEmpty(t *testing.T) {
 	old1 := testResourceSliceV1beta1WithName(
 		"slice-old-1",
@@ -934,6 +966,7 @@ func TestDRAResourceSliceIndexer_PartialLatestGenerationReturnsEmpty(t *testing.
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_V1PartialLatestGenerationReturnsEmpty checks v1 lookup rejects incomplete newest generations without using older devices.
 func TestDRAResourceSliceIndexer_V1PartialLatestGenerationReturnsEmpty(t *testing.T) {
 	old1 := testResourceSliceV1WithName(
 		"slice-old-1",
@@ -971,6 +1004,7 @@ func TestDRAResourceSliceIndexer_V1PartialLatestGenerationReturnsEmpty(t *testin
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_IgnoresDeviceFromOlderPoolGeneration checks beta lookup excludes devices absent from the newest generation.
 func TestDRAResourceSliceIndexer_IgnoresDeviceFromOlderPoolGeneration(t *testing.T) {
 	indexer := newV1beta1Indexer(
 		t,
@@ -999,6 +1033,7 @@ func TestDRAResourceSliceIndexer_IgnoresDeviceFromOlderPoolGeneration(t *testing
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_V1IgnoresDeviceFromOlderPoolGeneration checks v1 lookup excludes devices absent from the newest generation.
 func TestDRAResourceSliceIndexer_V1IgnoresDeviceFromOlderPoolGeneration(t *testing.T) {
 	indexer := newV1Indexer(
 		t,
@@ -1027,6 +1062,7 @@ func TestDRAResourceSliceIndexer_V1IgnoresDeviceFromOlderPoolGeneration(t *testi
 	assert.Nil(t, mig)
 }
 
+// TestDRAResourceSliceIndexer_SameGenerationDuplicateUsesDeterministicSliceKey checks beta duplicate resolution consistently selects the later slice key.
 func TestDRAResourceSliceIndexer_SameGenerationDuplicateUsesDeterministicSliceKey(t *testing.T) {
 	indexer := newV1beta1Indexer(
 		t,
@@ -1052,6 +1088,7 @@ func TestDRAResourceSliceIndexer_SameGenerationDuplicateUsesDeterministicSliceKe
 	assert.Nil(t, mig)
 }
 
+// TestDRAGetAttrString checks both APIs return string attributes and reject missing/non-string values.
 func TestDRAGetAttrString(t *testing.T) {
 	assert.Equal(t, "gpu", getV1AttrString(map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
 		"type": strAttrV1("gpu"),
@@ -1070,12 +1107,14 @@ func TestDRAGetAttrString(t *testing.T) {
 	assert.Empty(t, getV1beta1AttrString(nil, "missing"))
 }
 
+// TestDRAResourceSliceManager_StopIsIdempotent checks repeated stop calls are safe without an informer.
 func TestDRAResourceSliceManager_StopIsIdempotent(t *testing.T) {
 	manager := newTestDRAManager()
 	manager.Stop()
 	manager.Stop()
 }
 
+// TestDRAResourceSliceManagerGenerationNotifications checks the initial baseline, incomplete generations, and duplicate generations do not notify.
 func TestDRAResourceSliceManagerGenerationNotifications(t *testing.T) {
 	var notifications int
 	initialSlice := testResourceSliceV1WithName(
@@ -1090,6 +1129,7 @@ func TestDRAResourceSliceManagerGenerationNotifications(t *testing.T) {
 		indexer:             indexer,
 		poolName:            v1ResourceSlicePoolName,
 		generationBaselines: make(map[string]int64),
+		// Read completeness from the real indexer while counting refresh callbacks below.
 		poolGeneration: func(pool string) (int64, bool) {
 			return latestV1PoolGeneration(indexer, pool)
 		},
@@ -1112,6 +1152,7 @@ func TestDRAResourceSliceManagerGenerationNotifications(t *testing.T) {
 	assert.Equal(t, 1, notifications, "a resync of the same generation must not refresh again")
 }
 
+// TestDRAResourceSliceManagerNotifiesAfterCompleteChangedGeneration checks v1 informer notifications follow complete changed generations and final pool removal.
 func TestDRAResourceSliceManagerNotifiesAfterCompleteChangedGeneration(t *testing.T) {
 	prevGetKubeClient := getKubeClientFunc
 	t.Cleanup(func() { getKubeClientFunc = prevGetKubeClient })
@@ -1127,8 +1168,9 @@ func TestDRAResourceSliceManagerNotifiesAfterCompleteChangedGeneration(t *testin
 	client := fakeClientWithResourcesAndObjects([]*metav1.APIResourceList{resources}, firstSlice, secondSlice)
 	getKubeClientFunc = func() (kubernetes.Interface, error) { return client, nil }
 
+	// Buffer refresh notifications so informer callbacks never wait for an assertion.
 	changes := make(chan struct{}, 2)
-	manager, err := newDRAResourceSliceManager(func() { changes <- struct{}{} })
+	manager, err := newDRAResourceSliceManager(context.Background(), func() { changes <- struct{}{} })
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
 
@@ -1234,8 +1276,9 @@ func TestDRAResourceSliceManagerNotifiesAfterCompleteChangedV1beta1Generation(t 
 	client := fakeClientWithResourcesAndObjects([]*metav1.APIResourceList{resources}, firstSlice, secondSlice)
 	getKubeClientFunc = func() (kubernetes.Interface, error) { return client, nil }
 
+	// Buffer refresh notifications so informer callbacks never wait for an assertion.
 	changes := make(chan struct{}, 2)
-	manager, err := newDRAResourceSliceManager(func() { changes <- struct{}{} })
+	manager, err := newDRAResourceSliceManager(context.Background(), func() { changes <- struct{}{} })
 	require.NoError(t, err)
 	t.Cleanup(manager.Stop)
 
@@ -1323,6 +1366,7 @@ func TestDRAResourceSliceManagerNotifiesAfterCompleteChangedV1beta1Generation(t 
 	}, resourceSliceInformerTimeout, resourceSliceInformerPollInterval, "deleting the last ResourceSlice did not refresh the registry")
 }
 
+// TestNewDRAResourceSliceManager checks client/discovery failures, both informer APIs, and timeout cleanup.
 func TestNewDRAResourceSliceManager(t *testing.T) {
 	prevGetKubeClient := getKubeClientFunc
 	prevWaitForCacheSync := waitForResourceSliceCacheSyncFunc
@@ -1404,10 +1448,12 @@ func TestNewDRAResourceSliceManager(t *testing.T) {
 		getKubeClientFunc = func() (kubernetes.Interface, error) {
 			return fakeClientWithResources(v1beta1Resources), nil
 		}
+		// Model a cache sync that stops only when the manager closes its stop channel.
 		waitForResourceSliceCacheSyncFunc = func(stopCh <-chan struct{}, _ ...cache.InformerSynced) bool {
 			<-stopCh
 			return false
 		}
+		// Record shutdown while still joining the real informer factory.
 		shutdownCalled := false
 		shutdownResourceSliceFactoryFunc = func(factory informers.SharedInformerFactory) {
 			shutdownCalled = true

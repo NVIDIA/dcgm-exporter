@@ -1,0 +1,20 @@
+NAME
+  dcgm-exporter config
+  Inspect settings without starting the exporter
+
+USAGE
+  dcgm-exporter config [OPTIONS]
+
+COMMANDS
+  show
+    Print the effective settings as a config file; does not read the files they
+    name
+  validate
+    Check the settings and the local files they name; exit 1 when invalid
+  explain
+    Explain where each setting came from and what will be collected
+
+GENERAL OPTIONS
+  --help, -h
+    Show command help
+    Default: false

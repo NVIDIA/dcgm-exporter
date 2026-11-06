@@ -14,12 +14,31 @@
   echo "Visit http://127.0.0.1:8080/metrics to use your application"
 {{- end }}
 
-{{- if .Values.debugDump.enabled }}
+{{- $dump := (include "dcgm-exporter.config" . | fromJson).debug_dump | default dict }}
+{{- if $dump.enabled }}
+{{- $directory := $dump.directory | default "/tmp/dcgm-exporter-debug" }}
 2. Debug dump functionality is enabled:
-   - Debug files are stored in: {{ .Values.debugDump.directory }}
-   - Retention period: {{ .Values.debugDump.retention }} hours
-   - Compression: {{ .Values.debugDump.compression }}
+   - Debug files are stored in: {{ $directory }}
+   {{- if include "dcgm-exporter.dumpVolumeDirectory" . }}
+   - Storage: emptyDir limited to {{ .Values.debugDump.sizeLimit }}; files are lost when the pod is replaced
+   {{- else }}
+   - Storage: the debug-dumps volume from values; mount it at {{ $directory }}
+   {{- end }}
    
-   To access debug files on a node:
-   kubectl exec -n {{ include "dcgm-exporter.namespace" . }} <pod-name> -- ls -la {{ .Values.debugDump.directory }}
+   To access debug files in a pod:
+   kubectl exec -n {{ include "dcgm-exporter.namespace" . }} <pod-name> -- ls -la {{ $directory }}
+{{- end }}
+
+{{- if and .Values.customMetrics (not (include "dcgm-exporter.config" . | fromJson)) }}
+
+customMetrics: the chart mounts it at {{ include "dcgm-exporter.metricsFilePath" . }}.
+The exporter reads it only if metrics[].file in your config file, a -f argument,
+or DCGM_EXPORTER_COLLECTORS names that path.
+{{- end }}
+
+{{- if and (include "dcgm-exporter.webConfigEnabled" .) (include "dcgm-exporter.configMap" . | fromJson).existingName }}
+
+Web config: the chart mounts it at {{ include "dcgm-exporter.webConfigPath" . }}.
+Set server.web_config_file to that path in your config file, or pass
+--web-config-file with it.
 {{- end }}
