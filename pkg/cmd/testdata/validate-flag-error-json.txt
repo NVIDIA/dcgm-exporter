@@ -1,0 +1,32 @@
+exit 1
+--- stdout ---
+{
+  "format_version": 1,
+  "command": "config.validate",
+  "data": {
+    "path": "testdata/inspection.yaml",
+    "valid": false,
+    "diagnostics": [
+      {
+        "severity": "error",
+        "source": {
+          "kind": "flag",
+          "name": "--xid-count-window-size"
+        },
+        "summary": "must be greater than 0, got 0"
+      }
+    ],
+    "checked": [],
+    "not_checked": [
+      "gpus",
+      "dcgm",
+      "field_support",
+      "kubelet_socket",
+      "workload_labels",
+      "listener",
+      "directories",
+      "local_files"
+    ]
+  }
+}
+--- stderr ---

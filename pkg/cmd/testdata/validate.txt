@@ -1,0 +1,6 @@
+testdata/inspection.yaml: valid (0 errors, 0 warnings)
+Checked: configuration settings
+Checked: inline metric definitions
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="logo-title logo-desc">
+  <title id="logo-title">nv-exporter</title>
+  <desc id="logo-desc">An isometric cube sliced into three units, one of them lit in NVIDIA Green,
+  with chevrons nested at the cube's outer corners. The doubled chevron at the bottom marks
+  where telemetry leaves. Everything sits on one 30 degree grid.</desc>
+
+  <!-- One light source, so tone follows the face normal, not the shape:
+       up-facing #4F4F4F / #94E800, front-left #3F3F3F / #76B900,
+       front-right #2B2B2B / #558500. -->
+
+  <polygon points="256,32.4 396.4,113.4 256,194.6 115.6,113.4" fill="#4F4F4F"/>
+
+  <polygon points="115.6,113.4 256,194.6 256,256.7 115.6,175.5" fill="#3F3F3F"/>
+  <polygon points="115.6,185 256,266.1 256,328.2 115.6,247.1" fill="#76B900"/>
+  <polygon points="115.6,256.5 256,337.7 256,399.8 115.6,318.6" fill="#3A3A3A"/>
+
+  <polygon points="396.4,113.4 256,194.6 256,256.7 396.4,175.5" fill="#2B2B2B"/>
+  <polygon points="396.4,185 256,266.1 256,328.2 396.4,247.1" fill="#558500"/>
+  <polygon points="396.4,256.5 256,337.7 256,399.8 396.4,318.6" fill="#262626"/>
+
+  <polygon points="199.4,43.4 96.8,102.6 75.9,90.5 178.5,31.2" fill="#94E800"/>
+  <polygon points="96.8,102.6 96.8,221.2 75.9,209 75.9,90.5" fill="#76B900"/>
+
+  <polygon points="415.2,221.2 415.2,102.6 436.1,90.5 436.1,209" fill="#558500"/>
+  <polygon points="415.2,102.6 312.6,43.4 333.5,31.2 436.1,90.5" fill="#94E800"/>
+
+  <polygon points="153.4,362.1 256,421.4 256,445.7 153.4,386.4" fill="#76B900"/>
+  <polygon points="256,421.4 358.6,362.1 358.6,386.4 256,445.7" fill="#558500"/>
+  <polygon points="188.5,422.9 256,461.9 256,480.8 188.5,441.8" fill="#76B900"/>
+  <polygon points="256,461.9 323.5,422.9 323.5,441.8 256,480.8" fill="#558500"/>
+</svg>

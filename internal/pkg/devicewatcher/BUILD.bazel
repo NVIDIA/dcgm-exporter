@@ -1,0 +1,48 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "devicewatcher",
+    srcs = [
+        "const.go",
+        "device_watcher.go",
+        "field_group_split.go",
+        "refused_fields.go",
+        "types.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/counters",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicemonitoring",
+        "//internal/pkg/logging",
+        "//internal/pkg/utils",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "devicewatcher_test",
+    srcs = [
+        "device_watcher_test.go",
+        "field_group_split_test.go",
+        "refused_fields_test.go",
+    ],
+    embed = [":devicewatcher"],
+    deps = [
+        "//internal/mocks/pkg/dcgmprovider",
+        "//internal/mocks/pkg/deviceinfo",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/counters",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/logging",
+        "//internal/pkg/testutils",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

@@ -1,0 +1,10 @@
+# Secret scan rules: gitleaks' default rules plus narrow allowances for test
+# data that is meant to look like a secret.
+title = "dcgm-exporter gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Throwaway TLS key for the host test web server"
+paths = ['''^tests/host/testdata/tlsCertificate\.key\.fixture$''']

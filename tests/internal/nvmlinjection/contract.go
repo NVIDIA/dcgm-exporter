@@ -46,7 +46,7 @@ const (
 	fp64Blank                   = 140737488355328.0
 )
 
-// Contract describes every field/entity sample DCGM exposes for one fixture.
+// Contract describes every scalar-exportable field/entity sample DCGM exposes for one fixture.
 type Contract struct {
 	Version              int           `json:"version"`
 	DeviceCount          int           `json:"deviceCount"`
@@ -171,6 +171,7 @@ func (c Contract) Batches() [][]Metric {
 	return appendBatches(batches, migProfiling, MIGProfilingBatchSize)
 }
 
+// contractHasMIGSamples selects profiling isolation when any sample belongs to a MIG instance.
 func contractHasMIGSamples(metrics []Metric) bool {
 	for _, metric := range metrics {
 		for _, sample := range metric.Samples {
@@ -223,6 +224,7 @@ func (c Contract) ValidateComputeInstanceSamples() error {
 	return errors.Join(errs...)
 }
 
+// appendBatches appends bounded consecutive field slices without reordering metrics.
 func appendBatches(dst [][]Metric, metrics []Metric, size int) [][]Metric {
 	for first := 0; first < len(metrics); first += size {
 		last := min(first+size, len(metrics))
@@ -301,6 +303,7 @@ func ValidateFamilies(families map[string]*dto.MetricFamily, metrics []Metric) e
 	return errors.Join(errs...)
 }
 
+// matchingSample finds an unused sample containing every expected entity label.
 func matchingSample(metrics []*dto.Metric, expected map[string]string, matched []bool) int {
 	for index, metric := range metrics {
 		if matched[index] {
@@ -322,6 +325,7 @@ func matchingSample(metrics []*dto.Metric, expected map[string]string, matched [
 	return -1
 }
 
+// saneValue rejects nonfinite values and DCGM blank or error sentinel ranges.
 func saneValue(value float64) bool {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return false
@@ -335,6 +339,7 @@ func saneValue(value float64) bool {
 	return value < fp64Blank || value > fp64Blank+3
 }
 
+// labelsByName indexes sample labels for identity matching.
 func labelsByName(metric *dto.Metric) map[string]string {
 	labels := make(map[string]string, len(metric.GetLabel()))
 	for _, pair := range metric.GetLabel() {
@@ -343,6 +348,7 @@ func labelsByName(metric *dto.Metric) map[string]string {
 	return labels
 }
 
+// canonicalLabels sorts and quotes labels to form a stable sample identity.
 func canonicalLabels(labels map[string]string) string {
 	names := make([]string, 0, len(labels))
 	for name := range labels {

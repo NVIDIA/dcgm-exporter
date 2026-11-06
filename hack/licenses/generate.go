@@ -156,6 +156,7 @@ func parseTargets(value string) ([]target, error) {
 		seen[target.String()] = struct{}{}
 		targets = append(targets, target)
 	}
+	// Compare the displayed target names so the notice header is stable across input order.
 	sort.Slice(targets, func(i, j int) bool { return targets[i].String() < targets[j].String() })
 	return targets, nil
 }
@@ -265,6 +266,11 @@ func listModules(packagePath string, target target) ([]module, error) {
 func newGoCommand(arguments ...string) *exec.Cmd {
 	command := exec.Command("go", arguments...)
 	command.Env = append(os.Environ(), "GOWORK=off")
+	if workspaceDirectory := os.Getenv("BUILD_WORKSPACE_DIRECTORY"); workspaceDirectory != "" {
+		// bazel run starts binaries from their runfiles tree. Go package paths in
+		// the notice generator deliberately resolve from the source workspace.
+		command.Dir = workspaceDirectory
+	}
 	return command
 }
 
@@ -292,6 +298,7 @@ func readNoticeFiles(directory string) ([]noticeFile, error) {
 	if len(files) == 0 {
 		return nil, errors.New("no top-level LICENSE, NOTICE, COPYRIGHT, COPYING, PATENTS, or UNLICENSE file found")
 	}
+	// Order legal files by their original names without normalizing their contents.
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 	return files, nil
 }

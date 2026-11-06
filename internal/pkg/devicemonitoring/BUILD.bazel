@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "devicemonitoring",
+    srcs = [
+        "const.go",
+        "device_monitoring.go",
+        "types.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/deviceinfo",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "devicemonitoring_test",
+    srcs = ["device_monitoring_test.go"],
+    embed = [":devicemonitoring"],
+    deps = [
+        "//internal/mocks/pkg/deviceinfo",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/testutils",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

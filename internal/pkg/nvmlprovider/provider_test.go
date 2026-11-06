@@ -17,6 +17,7 @@
 package nvmlprovider
 
 import (
+	"errors"
 	"math"
 	"testing"
 
@@ -24,6 +25,65 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestInitializeDoesNotCacheFailedProvider verifies a transient NVML setup
+// failure leaves the global client uninitialized so the next lifecycle retry
+// performs initialization again.
+func TestInitializeDoesNotCacheFailedProvider(t *testing.T) {
+	reset()
+	originalNewProvider := newNVMLProviderFunc
+	t.Cleanup(func() {
+		newNVMLProviderFunc = originalNewProvider
+		reset()
+	})
+
+	wantErr := errors.New("NVML is temporarily unavailable")
+	readyProvider := nvmlProvider{initialized: true}
+	attempts := 0
+	newNVMLProviderFunc = func() (NVML, error) {
+		attempts++
+		if attempts == 1 {
+			return nvmlProvider{initialized: false}, wantErr
+		}
+		return readyProvider, nil
+	}
+
+	require.ErrorIs(t, Initialize(), wantErr)
+	assert.Equal(t, nvmlProvider{initialized: false}, Client())
+
+	require.NoError(t, Initialize())
+	assert.Equal(t, readyProvider, Client())
+	assert.Equal(t, 2, attempts)
+}
+
+// stubNewNVMLProvider replaces and restores the provider constructor for a test.
+func stubNewNVMLProvider(t *testing.T, provider NVML, err error) {
+	t.Helper()
+
+	originalNewProvider := newNVMLProviderFunc
+	newNVMLProviderFunc = func() (NVML, error) {
+		return provider, err
+	}
+	t.Cleanup(func() { newNVMLProviderFunc = originalNewProvider })
+}
+
+// stubNVMLShutdown replaces and restores the NVML shutdown function for a test.
+func stubNVMLShutdown(t *testing.T, result nvml.Return) {
+	t.Helper()
+
+	originalShutdown := shutdownNVML
+	shutdownNVML = func() nvml.Return { return result }
+	t.Cleanup(func() { shutdownNVML = originalShutdown })
+}
+
+// stubNVMLInitialization replaces and restores NVML initialization for a test.
+func stubNVMLInitialization(t *testing.T, result nvml.Return) {
+	t.Helper()
+
+	originalInitialization := initNVML
+	initNVML = func() nvml.Return { return result }
+	t.Cleanup(func() { initNVML = originalInitialization })
+}
 
 // fakeGPUInstanceAPI provides configurable NVML behavior for placement-resolution tests.
 type fakeGPUInstanceAPI struct {
@@ -92,6 +152,8 @@ func newFakeGPUInstanceAPI(infos ...nvml.GpuInstanceInfo) *fakeGPUInstanceAPI {
 	}
 }
 
+// TestNewGPUInstanceAPIUsesPackageNVMLLifecycle replaces the package-level NVML lookup by UUID and checks
+// that the GPU instance API calls it with the parent GPU's UUID.
 func TestNewGPUInstanceAPIUsesPackageNVMLLifecycle(t *testing.T) {
 	originalDeviceGetHandleByUUID := nvml.DeviceGetHandleByUUID
 	t.Cleanup(func() {
@@ -112,6 +174,8 @@ func TestNewGPUInstanceAPIUsesPackageNVMLLifecycle(t *testing.T) {
 	assert.True(t, called, "GPU instance API did not use the initialized package-level NVML library")
 }
 
+// TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized expects an error for a valid MIG UUID
+// when NVML is not initialized.
 func TestGetMIGDeviceInfoByID_When_NVML_Not_Initialized(t *testing.T) {
 	validMIGUUID := "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5"
 	newNvmlProvider := nvmlProvider{}
@@ -258,15 +322,17 @@ func TestGetGPUInstanceIDByProfileAndPlacement(t *testing.T) {
 			}
 			provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
 
-			_, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
+			id, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
 
+			assert.Zero(t, id)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
 }
 
-// TestGetGPUInstanceIDByProfileAndPlacementRequiresInitializedProvider verifies the initialization guard.
+// TestGetGPUInstanceIDByProfileAndPlacementRequiresInitializedProvider expects an "NVML library not
+// initialized" error when NVML is not initialized.
 func TestGetGPUInstanceIDByProfileAndPlacementRequiresInitializedProvider(t *testing.T) {
 	provider := nvmlProvider{}
 
@@ -276,7 +342,8 @@ func TestGetGPUInstanceIDByProfileAndPlacementRequiresInitializedProvider(t *tes
 	assert.Contains(t, err.Error(), "NVML library not initialized")
 }
 
-// TestGetGPUInstanceIDByProfileAndPlacementRequiresGPUInstanceAPI verifies the API availability guard.
+// TestGetGPUInstanceIDByProfileAndPlacementRequiresGPUInstanceAPI expects a "GPU instance API is
+// unavailable" error when NVML is initialized but the GPU instance API is not set up.
 func TestGetGPUInstanceIDByProfileAndPlacementRequiresGPUInstanceAPI(t *testing.T) {
 	provider := nvmlProvider{initialized: true}
 
@@ -286,6 +353,8 @@ func TestGetGPUInstanceIDByProfileAndPlacementRequiresGPUInstanceAPI(t *testing.
 	assert.Contains(t, err.Error(), "GPU instance API is unavailable")
 }
 
+// TestGetDeviceProcessMemory_When_NVML_Not_Initialized expects a nil result and an error
+// when NVML is not initialized.
 func TestGetDeviceProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 	provider := nvmlProvider{}
 	result, err := provider.GetDeviceProcessMemory("GPU-test-uuid")
@@ -294,6 +363,8 @@ func TestGetDeviceProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get device process memory")
 }
 
+// TestGetDeviceProcessUtilization_When_NVML_Not_Initialized expects a nil result and an error
+// when NVML is not initialized.
 func TestGetDeviceProcessUtilization_When_NVML_Not_Initialized(t *testing.T) {
 	provider := nvmlProvider{}
 	result, err := provider.GetDeviceProcessUtilization("GPU-test-uuid")
@@ -302,6 +373,8 @@ func TestGetDeviceProcessUtilization_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get device process utilization")
 }
 
+// TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized expects a nil result and an error
+// when NVML is not initialized.
 func TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 	provider := nvmlProvider{}
 	result, err := provider.GetAllMIGDevicesProcessMemory("GPU-test-uuid")
@@ -310,6 +383,8 @@ func TestGetAllMIGDevicesProcessMemory_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get MIG device process memory")
 }
 
+// TestGetGPUInstanceProfileName_When_NVML_Not_Initialized expects an empty name and an error
+// when NVML is not initialized.
 func TestGetGPUInstanceProfileName_When_NVML_Not_Initialized(t *testing.T) {
 	provider := nvmlProvider{}
 	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", 9)
@@ -318,6 +393,7 @@ func TestGetGPUInstanceProfileName_When_NVML_Not_Initialized(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get GPU instance profile name")
 }
 
+// TestMigProfileNameFromBytes trims a null-terminated MIG profile name and rejects an empty value.
 func TestMigProfileNameFromBytes(t *testing.T) {
 	profileName, err := migProfileNameFromBytes([]int8{'7', 'g', '.', '8', '0', 'g', 'b', 0, 'x'})
 	require.NoError(t, err)
@@ -328,6 +404,8 @@ func TestMigProfileNameFromBytes(t *testing.T) {
 	assert.Empty(t, profileName)
 }
 
+// TestGetGPUInstanceProfileName_When_ProfileID_Exceeds_MaxInt expects an empty name and an
+// "exceeds maximum int value" error for a profile ID larger than the largest int.
 func TestGetGPUInstanceProfileName_When_ProfileID_Exceeds_MaxInt(t *testing.T) {
 	provider := nvmlProvider{initialized: true}
 	result, err := provider.GetGPUInstanceProfileName("GPU-test-uuid", uint(math.MaxInt)+1)
@@ -336,20 +414,17 @@ func TestGetGPUInstanceProfileName_When_ProfileID_Exceeds_MaxInt(t *testing.T) {
 	assert.Contains(t, err.Error(), "exceeds maximum int value")
 }
 
-func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
-	_ = Initialize()
-	assert.NotNil(t, Client(), "expected NVML Client to be not nil")
-	assert.True(t, Client().(nvmlProvider).initialized, "expected Client to be initialized")
-	defer Client().Cleanup()
-
+// TestGetMIGDeviceInfoForOldDriver parses legacy MIG UUID parent and instance IDs and rejects malformed UUIDs or IDs.
+func TestGetMIGDeviceInfoForOldDriver(t *testing.T) {
 	tests := []struct {
 		name            string
 		uuid            string
 		expectedMIGInfo *MIGDeviceInfo
 		expectedError   bool
+		errorContains   string
 	}{
 		{
-			name: "Successful Parsing",
+			name: "parses a valid old-driver UUID",
 			uuid: "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5",
 			expectedMIGInfo: &MIGDeviceInfo{
 				ParentUUID:        "GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5",
@@ -358,32 +433,64 @@ func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 			},
 		},
 		{
-			name:          "Fail, Missing MIG at the beginning of UUID",
+			name:          "rejects a missing MIG prefix",
 			uuid:          "GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5",
 			expectedError: true,
+			errorContains: "unable to parse",
 		},
 		{
-			name:          "Fail, Missing GPU at the beginning of GPU UUID",
+			name:          "rejects a missing GPU prefix",
 			uuid:          "MIG-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/5",
 			expectedError: true,
+			errorContains: "invalid MIG device UUID",
 		},
 		{
-			name:          "Fail, GI not parsable",
+			name:          "rejects an invalid GPU instance ID",
 			uuid:          "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/xx/5",
 			expectedError: true,
+			errorContains: "invalid GPU instance ID",
 		},
 		{
-			name:          "Fail, CI not a parsable",
+			name:          "rejects an invalid compute instance ID",
 			uuid:          "MIG-GPU-b8ea3855-276c-c9cb-b366-c6fa655957c5/1/xx",
 			expectedError: true,
+			errorContains: "invalid Compute instance ID",
+		},
+		{
+			name:          "rejects an empty UUID",
+			uuid:          "",
+			expectedError: true,
+			errorContains: "unable to parse",
+		},
+		{
+			name:          "rejects missing instance IDs",
+			uuid:          "MIG-GPU-test",
+			expectedError: true,
+			errorContains: "invalid MIG device UUID",
+		},
+		{
+			name:          "rejects a missing compute instance ID",
+			uuid:          "MIG-GPU-test/1",
+			expectedError: true,
+			errorContains: "invalid MIG device UUID",
+		},
+		{
+			name: "parses large instance IDs",
+			uuid: "MIG-GPU-test/9999/9999",
+			expectedMIGInfo: &MIGDeviceInfo{
+				ParentUUID:        "GPU-test",
+				GPUInstanceID:     9999,
+				ComputeInstanceID: 9999,
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			deviceInfo, err := Client().GetMIGDeviceInfoByID(tc.uuid)
+			deviceInfo, err := getMIGDeviceInfoForOldDriver(tc.uuid)
 			if tc.expectedError {
 				assert.Error(t, err, "uuid: %v, Device Info: %+v", tc.uuid, deviceInfo)
+				assert.ErrorContains(t, err, tc.errorContains)
 			} else {
 				assert.Nil(t, err, "err: %v, uuid: %v", err, tc.uuid)
 				assert.Equal(t, tc.expectedMIGInfo, deviceInfo, "MIG uuid '%v' parsed incorrectly", tc.uuid)
@@ -392,14 +499,17 @@ func TestGetMIGDeviceInfoByID_When_DriverVersion_Below_R470(t *testing.T) {
 	}
 }
 
-func Test_newNVMLProvider(t *testing.T) {
+// TestNewNVMLProvider checks that a fresh provider is initialized with a GPU instance API, that an already
+// initialized provider is returned as is, and that a failed NVML start returns the error and an uninitialized
+// provider.
+func TestNewNVMLProvider(t *testing.T) {
 	t.Run("initializes a new provider with the GPU instance API", func(t *testing.T) {
+		stubNVMLInitialization(t, nvml.SUCCESS)
+		stubNVMLShutdown(t, nvml.SUCCESS)
 		reset()
 		t.Cleanup(reset)
 		provider, err := newNVMLProvider()
-		if err != nil {
-			t.Skipf("NVML not available: %v", err)
-		}
+		require.NoError(t, err)
 		t.Cleanup(provider.Cleanup)
 
 		concrete, ok := provider.(nvmlProvider)
@@ -409,11 +519,11 @@ func Test_newNVMLProvider(t *testing.T) {
 	})
 
 	t.Run("returns the existing initialized provider", func(t *testing.T) {
+		stubNVMLInitialization(t, nvml.SUCCESS)
+		stubNVMLShutdown(t, nvml.SUCCESS)
 		reset()
 		t.Cleanup(reset)
-		if err := Initialize(); err != nil {
-			t.Skipf("NVML not available: %v", err)
-		}
+		require.NoError(t, Initialize())
 		existing := Client()
 		t.Cleanup(existing.Cleanup)
 
@@ -421,6 +531,18 @@ func Test_newNVMLProvider(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, existing, provider)
+	})
+
+	t.Run("returns a failed provider when initialization fails", func(t *testing.T) {
+		stubNVMLInitialization(t, nvml.ERROR_LIBRARY_NOT_FOUND)
+		reset()
+		t.Cleanup(reset)
+
+		provider, err := newNVMLProvider()
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "ERROR_LIBRARY_NOT_FOUND")
+		assert.Equal(t, nvmlProvider{initialized: false}, provider)
 	})
 }
 
@@ -463,94 +585,77 @@ func TestSetClient(t *testing.T) {
 
 // TestCleanup_WhenNotInitialized tests cleanup when NVML was never initialized
 func TestCleanup_WhenNotInitialized(t *testing.T) {
-	// Create a non-initialized provider
 	provider := nvmlProvider{initialized: false}
+	SetClient(provider)
+	t.Cleanup(reset)
 
-	// Should not panic and should log appropriately
 	provider.Cleanup()
 
-	// Verify it didn't crash (if we get here, test passes)
-	assert.True(t, true)
+	assert.Equal(t, provider, Client())
 }
 
 // TestCleanup_WhenInitialized tests cleanup when NVML is initialized
 func TestCleanup_WhenInitialized(t *testing.T) {
-	// Initialize NVML
-	err := Initialize()
-	assert.NoError(t, err)
+	stubNVMLShutdown(t, nvml.SUCCESS)
+	SetClient(nvmlProvider{initialized: true})
+	t.Cleanup(reset)
 
-	provider := Client()
-	assert.NotNil(t, provider)
+	Client().Cleanup()
 
-	// Cleanup should succeed
-	provider.Cleanup()
-
-	// After cleanup, nvmlInterface should be nil
-	// (we can't check internal state directly, but Client() should return non-nil safe provider)
 	client := Client()
-	assert.NotNil(t, client)
+	provider, ok := client.(nvmlProvider)
+	require.True(t, ok)
+	assert.False(t, provider.initialized)
 }
 
-// TestInitialize_ErrorHandling tests initialization error handling
-func TestInitialize_ErrorHandling(t *testing.T) {
-	// Reset state
-	reset()
+// TestNVMLInitializationError adds runtime setup guidance for a missing library and preserves other NVML error messages.
+func TestNVMLInitializationError(t *testing.T) {
+	t.Run("library not found explains container runtime setup", func(t *testing.T) {
+		err := nvmlInitializationError(nvml.ERROR_LIBRARY_NOT_FOUND)
 
-	// First initialization should work or fail gracefully
-	err := Initialize()
-	// We can't force an error without mocking nvml.Init(), but we can test the flow
-	// If it succeeds, err should be nil
-	// If it fails (no GPU), err should not be nil but should be handled
-	if err != nil {
-		assert.Error(t, err)
-	} else {
-		assert.NoError(t, err)
-		// Cleanup after successful init
-		defer Client().Cleanup()
-	}
+		assert.ErrorContains(t, err, "ERROR_LIBRARY_NOT_FOUND")
+		assert.ErrorContains(t, err, "libnvidia-ml.so.1")
+		assert.ErrorContains(t, err, "NVIDIA runtime")
+		assert.ErrorContains(t, err, "runtimeClassName")
+	})
+
+	t.Run("other NVML errors keep their original message", func(t *testing.T) {
+		assert.EqualError(t, nvmlInitializationError(nvml.ERROR_NOT_SUPPORTED), "ERROR_NOT_SUPPORTED")
+	})
 }
 
-// TestPreCheck tests the preCheck function indirectly through GetMIGDeviceInfoByID
+// TestPreCheck tests the initialization guard without requiring an NVIDIA driver.
 func TestPreCheck(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupFunc     func(t *testing.T)
+		provider      nvmlProvider
 		expectError   bool
 		errorContains string
 	}{
 		{
-			name: "Initialized provider",
-			setupFunc: func(t *testing.T) {
-				require.NoError(t, Initialize())
-			},
+			name:        "Initialized provider",
+			provider:    nvmlProvider{initialized: true},
 			expectError: false,
 		},
 		{
-			name: "Uninitialized provider",
-			setupFunc: func(t *testing.T) {
-				reset()
-			},
+			name:          "Uninitialized provider",
+			provider:      nvmlProvider{},
 			expectError:   true,
-			errorContains: "NVML not initialized",
+			errorContains: "NVML library not initialized",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.setupFunc(t)
-			defer reset()
-
-			client := Client()
-			_, err := client.GetMIGDeviceInfoByID("MIG-GPU-test/1/0")
+			err := tt.provider.preCheck()
 
 			if tt.expectError {
 				assert.Error(t, err)
 				if tt.errorContains != "" {
 					assert.Contains(t, err.Error(), tt.errorContains)
 				}
-			} else if err != nil {
-				// May error if no actual GPU, but shouldn't be initialization error
-				assert.NotContains(t, err.Error(), "NVML not initialized")
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
@@ -558,33 +663,26 @@ func TestPreCheck(t *testing.T) {
 
 // TestReset tests the reset function
 func TestReset(t *testing.T) {
-	// Initialize NVML
-	err := Initialize()
-	if err == nil {
-		// Only test if initialization succeeded
-		assert.NotNil(t, Client())
+	reset()
+	t.Cleanup(reset)
+	stubNewNVMLProvider(t, nvmlProvider{initialized: true}, nil)
+	require.NoError(t, Initialize())
 
-		// Reset
-		reset()
+	reset()
 
-		// After reset, Client() should still return non-nil (safe provider)
-		client := Client()
-		assert.NotNil(t, client)
-
-		// But it should be uninitialized
-		provider, ok := client.(nvmlProvider)
-		assert.True(t, ok)
-		assert.False(t, provider.initialized)
-	}
+	client := Client()
+	provider, ok := client.(nvmlProvider)
+	require.True(t, ok)
+	assert.False(t, provider.initialized)
 }
 
 // TestCleanup_MultipleCalls tests that calling Cleanup multiple times is safe
 func TestCleanup_MultipleCalls(t *testing.T) {
-	// Initialize NVML
-	err := Initialize()
-	if err != nil {
-		t.Skip("NVML not available, skipping test")
-	}
+	reset()
+	t.Cleanup(reset)
+	stubNewNVMLProvider(t, nvmlProvider{initialized: true}, nil)
+	stubNVMLShutdown(t, nvml.SUCCESS)
+	require.NoError(t, Initialize())
 
 	provider := Client()
 
@@ -594,70 +692,100 @@ func TestCleanup_MultipleCalls(t *testing.T) {
 	// Second cleanup should be safe (idempotent)
 	provider.Cleanup()
 
-	// Should not panic
-	assert.True(t, true)
+	client, ok := Client().(nvmlProvider)
+	require.True(t, ok)
+	assert.False(t, client.initialized)
 }
 
-// TestGetMIGDeviceInfoByID_EdgeCases tests edge cases in MIG UUID parsing
-func TestGetMIGDeviceInfoByID_EdgeCases(t *testing.T) {
-	err := Initialize()
-	if err != nil {
-		t.Skip("NVML not available")
+// TestProfileInfoMissingSymbol uses a nil device so entering native code would fail the process.
+func TestProfileInfoMissingSymbol(t *testing.T) {
+	originalLookup := lookupNVMLSymbol
+	t.Cleanup(func() { lookupNVMLSymbol = originalLookup })
+	lookupNVMLSymbol = func(symbol string) error {
+		require.Equal(t, "nvmlDeviceGetGpuInstanceProfileInfoByIdV", symbol)
+		return errors.New("missing symbol")
 	}
-	defer Client().Cleanup()
+	info, ret := (goNVMLGPUInstanceAPI{}).gpuInstanceProfileInfoByID(nil, 9)
+	assert.Equal(t, nvml.ERROR_FUNCTION_NOT_FOUND, ret)
+	assert.Equal(t, nvml.GpuInstanceProfileInfo_v2{}, info)
 
+	api := newFakeGPUInstanceAPI()
+	api.gpuInstanceProfileInfoByIDFunc = (goNVMLGPUInstanceAPI{}).gpuInstanceProfileInfoByID
+	provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+	name, err := provider.GetGPUInstanceProfileName("GPU-parent", 9)
+	require.ErrorContains(t, err, "UUID GPU-parent profile 9: "+nvml.ErrorString(nvml.ERROR_FUNCTION_NOT_FOUND))
+	assert.Empty(t, name)
+}
+
+// TestGetGPUInstanceProfileName covers canonical names and contextual lookup errors through the shared adapter.
+func TestGetGPUInstanceProfileName(t *testing.T) {
 	tests := []struct {
-		name          string
-		uuid          string
-		expectError   bool
-		errorContains string
+		name        string
+		result      nvml.Return
+		profileName [96]int8
+		wantName    string
+		wantErr     string
 	}{
-		{
-			name:          "Empty UUID",
-			uuid:          "",
-			expectError:   true,
-			errorContains: "unable to parse",
-		},
-		{
-			name:          "Invalid format - no slashes",
-			uuid:          "MIG-GPU-test",
-			expectError:   true,
-			errorContains: "invalid MIG device UUID",
-		},
-		{
-			name:          "Invalid format - only one slash",
-			uuid:          "MIG-GPU-test/1",
-			expectError:   true,
-			errorContains: "invalid MIG device UUID",
-		},
-		{
-			name:        "Invalid format - no MIG prefix",
-			uuid:        "GPU-test/1/2",
-			expectError: true,
-		},
-		{
-			name:          "Large integers",
-			uuid:          "MIG-GPU-test/9999/9999",
-			expectError:   false, // Should parse successfully even if device doesn't exist
-			errorContains: "",
-		},
+		{name: "canonical NVML name", result: nvml.SUCCESS, profileName: [96]int8{'7', 'g', '.', '8', '0', 'g', 'b'}, wantName: "7g.80gb"},
+		{name: "invalid profile", result: nvml.ERROR_INVALID_ARGUMENT, wantErr: "INVALID_ARGUMENT"},
+		{name: "missing symbol", result: nvml.ERROR_FUNCTION_NOT_FOUND, wantErr: "FUNCTION_NOT_FOUND"},
+		{name: "empty name", result: nvml.SUCCESS, wantErr: "profile name is empty"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := Client()
-			_, err := client.GetMIGDeviceInfoByID(tt.uuid)
-
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errorContains != "" {
-					assert.Contains(t, err.Error(), tt.errorContains)
-				}
-			} else if err != nil {
-				// For valid format but non-existent device, may still get an error
-				// from trying to access the actual device, which is fine
-				t.Logf("Got error (expected for non-existent device): %v", err)
+			api := newFakeGPUInstanceAPI()
+			api.gpuInstanceProfileInfoByIDFunc = func(_ nvml.Device, profileID int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+				require.Equal(t, 9, profileID)
+				info := nvml.GpuInstanceProfileInfo_v2{Name: tt.profileName}
+				return info, tt.result
 			}
+			provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+			name, err := provider.GetGPUInstanceProfileName("GPU-parent", 9)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				assert.Empty(t, name)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantName, name)
 		})
 	}
+}
+
+// TestPlacementMissingProfileSymbol requires a real instance ID and must stop before enumeration.
+func TestPlacementMissingProfileSymbol(t *testing.T) {
+	originalLookup := lookupNVMLSymbol
+	t.Cleanup(func() { lookupNVMLSymbol = originalLookup })
+	lookupNVMLSymbol = func(string) error { return errors.New("missing symbol") }
+	api := newFakeGPUInstanceAPI()
+	api.gpuInstanceProfileInfoByIDFunc = (goNVMLGPUInstanceAPI{}).gpuInstanceProfileInfoByID
+	api.gpuInstancesFunc = func(nvml.Device, *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return) {
+		t.Fatal("must not enumerate instances without profile metadata")
+		return nil, nvml.ERROR_UNKNOWN
+	}
+	provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+	id, err := provider.GetGPUInstanceIDByProfileAndPlacement("GPU-parent", 0, 19, 0)
+	require.ErrorContains(t, err, "FUNCTION_NOT_FOUND")
+	assert.Zero(t, id)
+}
+
+// TestProfileNameAdapterErrors preserves early errors before profile metadata is requested.
+func TestProfileNameAdapterErrors(t *testing.T) {
+	t.Run("API unavailable", func(t *testing.T) {
+		provider := nvmlProvider{initialized: true}
+		name, err := provider.GetGPUInstanceProfileName("GPU-parent", 9)
+		require.ErrorContains(t, err, "NVML GPU instance API is unavailable")
+		assert.Empty(t, name)
+	})
+	t.Run("parent lookup fails", func(t *testing.T) {
+		api := newFakeGPUInstanceAPI()
+		api.deviceHandleByUUIDFunc = func(uuid string) (nvml.Device, nvml.Return) {
+			require.Equal(t, "GPU-parent", uuid)
+			return nil, nvml.ERROR_NOT_FOUND
+		}
+		provider := nvmlProvider{initialized: true, gpuInstanceAPI: api}
+		name, err := provider.GetGPUInstanceProfileName("GPU-parent", 9)
+		require.ErrorContains(t, err, "failed to get parent device handle for UUID GPU-parent: "+nvml.ErrorString(nvml.ERROR_NOT_FOUND))
+		assert.Empty(t, name)
+	})
 }

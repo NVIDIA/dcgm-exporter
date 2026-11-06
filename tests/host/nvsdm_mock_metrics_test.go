@@ -40,6 +40,7 @@ const (
 	nvsdmMockMetricsPollInterval = 500 * time.Millisecond
 )
 
+// runNVSDMMockMetrics compares exporter batches with the direct-DCGM NVSDM mock contract.
 func runNVSDMMockMetrics(t testing.TB) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
@@ -67,10 +68,10 @@ func runNVSDMMockMetrics(t testing.TB) {
 	require.NoError(t, err)
 	if len(contract.Metrics) == 0 {
 		port := getRandomAvailablePort(t)
-		process, healthResp := startExporterAndWait(
+		process, healthResp := startFastExporterAndWaitForHealth(
 			t,
 			fmt.Sprintf("http://localhost:%d/health", port),
-			"--collectors", "./testdata/default-counters.csv",
+			"--collectors", defaultCollectorsFile(t),
 			"--address", fmt.Sprintf(":%d", port),
 			"--switch-devices", "f",
 		)
@@ -88,9 +89,11 @@ func runNVSDMMockMetrics(t testing.TB) {
 
 		port := getRandomAvailablePort(t)
 		metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
-		process, _ := startExporterAndWait(
+		process, _ := startExporterAndWaitForFamilies(
 			t,
 			metricsURL,
+			nil,
+			nil,
 			"--collectors", collectorsPath,
 			"--address", fmt.Sprintf(":%d", port),
 			"--collect-interval", "100",
@@ -103,6 +106,7 @@ func runNVSDMMockMetrics(t testing.TB) {
 		contract.SwitchCount, contract.LinkCount, len(contract.Metrics), len(contract.Unavailable), nvsdmUnavailableReasonSummary(contract.Unavailable))
 }
 
+// waitForNVSDMMockMetrics polls until one mock batch matches exported metric families or times out.
 func waitForNVSDMMockMetrics(metricsURL string, process *hostExporterProcess, batch []nvsdmmock.Metric) error {
 	deadline := time.Now().Add(nvsdmMockMetricsPollTimeout)
 	var lastErr error
@@ -132,6 +136,7 @@ func waitForNVSDMMockMetrics(metricsURL string, process *hostExporterProcess, ba
 	return fmt.Errorf("timed out waiting for NVSDM mock metrics: %w", lastErr)
 }
 
+// nvsdmUnavailableReasonSummary returns sorted counts for unavailable NVSDM fields.
 func nvsdmUnavailableReasonSummary(unavailable []nvsdmmock.Unavailable) string {
 	counts := map[string]int{}
 	for _, field := range unavailable {

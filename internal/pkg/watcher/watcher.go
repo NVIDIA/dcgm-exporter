@@ -22,11 +22,11 @@ package watcher
 
 import "context"
 
-// Watcher monitors a resource and triggers callback on changes.
-// Implementations must be context-aware and exit gracefully when context is cancelled.
+// Watcher monitors a resource and calls its callback when that resource changes.
+// Implementations observe context cancellation at their wait or read boundaries;
+// cancellation does not promise to interrupt an operation already in progress.
 type Watcher interface {
-	// Watch starts monitoring the resource and blocks until ctx is cancelled.
-	// Calls onChange() when the resource changes.
-	// Returns nil on clean shutdown, or an error if monitoring fails.
+	// Watch monitors until it observes cancellation or a monitoring error.
+	// It reports cancellation as ctx.Err() and returns other monitoring failures directly.
 	Watch(ctx context.Context, onChange func()) error
 }

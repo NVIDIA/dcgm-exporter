@@ -25,29 +25,37 @@ import (
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
-// outputRunner hides successful setup command chatter unless verbose output is enabled.
-type outputRunner struct {
+// commandOutputRunner hides successful setup command chatter unless verbose output is enabled.
+type commandOutputRunner struct {
 	base    e2eexec.Runner
 	stdout  io.Writer
 	verbose bool
 }
 
-// newOutputRunner adds e2e output policy around a lower-level command runner.
-func newOutputRunner(stdout io.Writer, runner e2eexec.Runner, verbose bool) e2eexec.Runner {
-	return outputRunner{base: runner, stdout: stdout, verbose: verbose}
+// newCommandOutputRunner controls which command output the E2E CLI prints.
+func newCommandOutputRunner(stdout io.Writer, runner e2eexec.Runner, verbose bool) e2eexec.Runner {
+	return commandOutputRunner{base: runner, stdout: stdout, verbose: verbose}
 }
 
 // Run executes a command with normal or verbose e2e output policy.
-func (r outputRunner) Run(ctx context.Context, command e2eexec.Command) e2eexec.Result {
+func (r commandOutputRunner) Run(ctx context.Context, command e2eexec.Command) e2eexec.Result {
 	label := commandLabel(command)
+	if command.SensitiveOutput {
+		command.Stdout = nil
+		command.Stderr = nil
+	}
 	if r.verbose {
 		fmt.Fprintf(r.stdout, "[e2e] verbose: command: %s\n", commandString(command))
-		fmt.Fprintf(r.stdout, "[e2e] ----- command output: %s -----\n", label)
-		if command.Stdout == nil {
-			command.Stdout = r.stdout
-		}
-		if command.Stderr == nil {
-			command.Stderr = r.stdout
+		if command.SensitiveOutput {
+			fmt.Fprintf(r.stdout, "[e2e] ----- sensitive command output withheld: %s -----\n", label)
+		} else {
+			fmt.Fprintf(r.stdout, "[e2e] ----- command output: %s -----\n", label)
+			if command.Stdout == nil {
+				command.Stdout = r.stdout
+			}
+			if command.Stderr == nil {
+				command.Stderr = r.stdout
+			}
 		}
 		result := r.base.Run(ctx, command)
 		fmt.Fprintf(r.stdout, "[e2e] ----- end command output: %s -----\n", label)
@@ -66,7 +74,7 @@ func (r outputRunner) Run(ctx context.Context, command e2eexec.Command) e2eexec.
 	return r.base.Run(ctx, command)
 }
 
-// writeSection prints a high-level e2e output boundary.
+// writeSection prints an E2E section heading.
 func writeSection(w io.Writer, name string) {
 	fmt.Fprintf(w, "[e2e] === %s ===\n", name)
 }
@@ -88,6 +96,10 @@ func writeCommandFailure(w io.Writer, label string, command e2eexec.Command, res
 	fmt.Fprintf(w, "[e2e] FAIL %s\n", label)
 	fmt.Fprintf(w, "[e2e] command: %s\n", commandString(command))
 	fmt.Fprintf(w, "[e2e] exit code: %d\n", result.ExitCode)
+	if command.SensitiveOutput {
+		fmt.Fprintln(w, "[e2e] command output withheld because it may contain sensitive data")
+		return
+	}
 	if result.Err != nil {
 		fmt.Fprintf(w, "[e2e] error: %v\n", result.Err)
 	}

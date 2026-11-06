@@ -366,6 +366,7 @@ inspect_metric_presets() {
 
     for metric_preset in \
         1.x-compatibility-metrics.csv \
+        config.yaml \
         dcp-metrics-included.csv \
         default-counters.csv; do
         metric_path="etc/dcgm-exporter/${metric_preset}"
@@ -382,7 +383,8 @@ inspect_metric_presets() {
     done
 }
 
-# assert_systemd_logging verifies that the unit leaves output with journald.
+# assert_systemd_logging rejects the legacy exporter log-file override so the
+# packaged unit can retain systemd's default journald output.
 assert_systemd_logging() {
     local systemd_unit="${1}"
     local logging_pattern
@@ -483,6 +485,15 @@ diagnose_payload_binary() {
 # write_rpm_spec writes the temporary CI RPM spec file.
 write_rpm_spec() {
     local spec_path="${1}"
+    local payload_etc_dir="${2}"
+    local config_lines=""
+    local config_file
+
+    # Every file under /etc/dcgm-exporter is a configuration file whose local
+    # edits an upgrade keeps. Listing the payload covers files added later.
+    while IFS= read -r config_file; do
+        config_lines+="%config(noreplace) %attr(0644,root,root) /etc/dcgm-exporter/${config_file}"$'\n'
+    done < <(find "${payload_etc_dir}" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 
     cat > "${spec_path}" <<EOF
 Name:           ${PACKAGE_NAME}
@@ -506,14 +517,14 @@ cp -a /payload/${PACKAGE_COMPONENT_DIR}/. %{buildroot}/
 %license /THIRD_PARTY_NOTICES
 /usr/bin/dcgm-exporter
 %dir %attr(0755,root,root) /etc/dcgm-exporter
-%attr(0644,root,root) /etc/dcgm-exporter/1.x-compatibility-metrics.csv
-%attr(0644,root,root) /etc/dcgm-exporter/dcp-metrics-included.csv
-%attr(0644,root,root) /etc/dcgm-exporter/default-counters.csv
+${config_lines%$'\n'}
 /lib/systemd/system/nvidia-dcgm-exporter.service
 EOF
 }
 
 # build_rpm builds a temporary RPM package from the unpacked tarball payload.
+# It also builds a second RPM with a higher version whose config.yaml differs,
+# written to out/newer, for the upgrade check in validate_rpm.
 build_rpm() {
     local platform="${1}"
     local rpm_arch="${2}"
@@ -524,20 +535,28 @@ build_rpm() {
     rm -rf "${context_dir}"
     mkdir -p "${context_dir}/payload"
     cp -a "${payload_dir}/${PACKAGE_COMPONENT_DIR}" "${context_dir}/payload/${PACKAGE_COMPONENT_DIR}"
-    write_rpm_spec "${context_dir}/package.spec"
+    write_rpm_spec "${context_dir}/package.spec" \
+        "${context_dir}/payload/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter"
+
+    mkdir -p "${context_dir}/payload-newer"
+    cp -a "${payload_dir}/${PACKAGE_COMPONENT_DIR}" "${context_dir}/payload-newer/${PACKAGE_COMPONENT_DIR}"
+    echo "# new default" >> "${context_dir}/payload-newer/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter/config.yaml"
+    sed -e 's/^Version:.*/&.1/' -e 's|cp -a /payload/|cp -a /payload-newer/|' \
+        "${context_dir}/package.spec" > "${context_dir}/package-newer.spec"
 
     # Buildx runs rpmbuild inside the target-platform container and exports
     # only the generated RPM file to the local output directory.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG RPM_BUILDER_IMAGE
+ARG RPM_BUILDER_IMAGE=scratch
 FROM ${RPM_BUILDER_IMAGE} AS package-build
 
 ARG PACKAGE_COMPONENT_DIR
 ARG RPM_ARCH
 
 WORKDIR /work
-COPY package.spec /work/package.spec
+COPY package.spec package-newer.spec /work/
 COPY payload /payload
+COPY payload-newer /payload-newer
 
 RUN set -eux; \
     dnf install -y --setopt=install_weak_deps=False cpio findutils gzip rpm-build tar; \
@@ -546,8 +565,14 @@ RUN set -eux; \
         --define "_topdir /work/rpmbuild" \
         --target "${RPM_ARCH}" \
         /work/package.spec; \
-    mkdir -p /out; \
-    cp /work/rpmbuild/RPMS/*/*.rpm /out/
+    mkdir -p /out/newer; \
+    cp /work/rpmbuild/RPMS/*/*.rpm /out/; \
+    rm -rf /work/rpmbuild/RPMS; \
+    rpmbuild -bb \
+        --define "_topdir /work/rpmbuild" \
+        --target "${RPM_ARCH}" \
+        /work/package-newer.spec; \
+    cp /work/rpmbuild/RPMS/*/*.rpm /out/newer/
 
 FROM scratch
 COPY --from=package-build /out/ /
@@ -603,7 +628,7 @@ build_deb() {
     # Buildx runs dpkg-deb inside the target-platform container and exports
     # only the generated DEB file to the local output directory.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG DEB_BUILDER_IMAGE
+ARG DEB_BUILDER_IMAGE=scratch
 FROM ${DEB_BUILDER_IMAGE} AS package-build
 
 ARG PACKAGE_COMPONENT_DIR
@@ -621,7 +646,9 @@ RUN set -eux; \
     mkdir -p /work/pkg/DEBIAN /out; \
     cp -a "/payload/${PACKAGE_COMPONENT_DIR}/." /work/pkg/; \
     cp /work/control /work/pkg/DEBIAN/control; \
+    (cd /work/pkg && find etc/dcgm-exporter -type f | LC_ALL=C sort | sed "s|^|/|") > /work/pkg/DEBIAN/conffiles; \
     chmod 0755 /work/pkg/DEBIAN; \
+    chmod 0644 /work/pkg/DEBIAN/conffiles; \
     dpkg-deb --build --root-owner-group /work/pkg "/out/${PACKAGE_FILE}"
 
 FROM scratch
@@ -648,6 +675,7 @@ validate_rpm() {
     local platform="${1}"
     local image="${2}"
     local rpm_file="${3}"
+    local newer_rpm_file="${4}"
     local context_dir
 
     log_info "==> Installing $(basename "${rpm_file}") on ${image} (${platform})"
@@ -656,28 +684,35 @@ validate_rpm() {
 
     context_dir="$(mktemp -d "${PACKAGE_CLEANUP_DIR}/rpm-validate.XXXXXX")"
     cp "${rpm_file}" "${context_dir}/package.rpm"
+    cp "${newer_rpm_file}" "${context_dir}/newer.rpm"
 
     # Buildx is the cross-arch execution environment. If this image build
     # succeeds, every RPM install and smoke-test RUN step passed.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG TEST_IMAGE
+ARG TEST_IMAGE=scratch
 FROM ${TEST_IMAGE}
 
 ARG PACKAGE_NAME
 ARG EXPECTED_VERSION
 COPY package.rpm /pkg/package.rpm
+COPY newer.rpm /pkg/newer.rpm
 
 RUN set -eux; \
     rpm -qpi /pkg/package.rpm; \
     rpm -qpl /pkg/package.rpm; \
     rpm -qp --requires /pkg/package.rpm || true; \
+    rpm -qp --configfiles /pkg/package.rpm | LC_ALL=C sort | tee /tmp/configfiles; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        grep -Fx "/etc/dcgm-exporter/${preset}" /tmp/configfiles; \
+    done; \
+    test "$(wc -l < /tmp/configfiles)" = 4; \
     dnf install -y --setopt=install_weak_deps=False file binutils findutils; \
     dnf install -y /pkg/package.rpm; \
     rpm -q "${PACKAGE_NAME}"; \
     rpm -ql "${PACKAGE_NAME}" | sort; \
     rpm -ql "${PACKAGE_NAME}" | grep -Fx /etc/dcgm-exporter; \
     test -x /usr/bin/dcgm-exporter; \
-    for preset in 1.x-compatibility-metrics.csv dcp-metrics-included.csv default-counters.csv; do \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
         test -f "/etc/dcgm-exporter/${preset}"; \
         test "$(stat -c '%a:%u:%g' "/etc/dcgm-exporter/${preset}")" = 644:0:0; \
     done; \
@@ -690,7 +725,14 @@ RUN set -eux; \
     readelf -W --version-info /usr/bin/dcgm-exporter 2>/dev/null \
         | sed -n "/Name: /p" \
         | sort -u || true; \
-    test "$(/usr/bin/dcgm-exporter --version)" = "DCGM Exporter version ${EXPECTED_VERSION}"
+    test "$(/usr/bin/dcgm-exporter --version)" = "DCGM Exporter version ${EXPECTED_VERSION}"; \
+    echo "# local edit" >> /etc/dcgm-exporter/config.yaml; \
+    rpm -U /pkg/newer.rpm; \
+    grep -Fx "# local edit" /etc/dcgm-exporter/config.yaml; \
+    ! grep -Fx "# new default" /etc/dcgm-exporter/config.yaml; \
+    ls /etc/dcgm-exporter/; \
+    grep -Fx "# new default" /etc/dcgm-exporter/config.yaml.rpmnew; \
+    echo "upgrade kept the edited config.yaml and left the new default beside it"
 EOF
 
     docker_buildx_build \
@@ -720,7 +762,7 @@ validate_deb() {
     # Buildx is the cross-arch execution environment. If this image build
     # succeeds, every DEB install and smoke-test RUN step passed.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG TEST_IMAGE
+ARG TEST_IMAGE=scratch
 FROM ${TEST_IMAGE}
 
 ARG PACKAGE_NAME
@@ -731,9 +773,14 @@ COPY package.deb /pkg/package.deb
 RUN set -eux; \
     dpkg-deb -I /pkg/package.deb; \
     dpkg-deb -c /pkg/package.deb; \
+    dpkg-deb -I /pkg/package.deb conffiles | tee /tmp/conffiles; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        grep -Fx "/etc/dcgm-exporter/${preset}" /tmp/conffiles; \
+    done; \
+    test "$(wc -l < /tmp/conffiles)" = 4; \
     mkdir -p /tmp/package-contents; \
     dpkg-deb -x /pkg/package.deb /tmp/package-contents; \
-    for preset in 1.x-compatibility-metrics.csv dcp-metrics-included.csv default-counters.csv; do \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
         test -f "/tmp/package-contents/etc/dcgm-exporter/${preset}"; \
         test "$(stat -c '%a:%u:%g' "/tmp/package-contents/etc/dcgm-exporter/${preset}")" = 644:0:0; \
     done; \
@@ -743,7 +790,7 @@ RUN set -eux; \
     dpkg -s "${PACKAGE_NAME}"; \
     dpkg -L "${PACKAGE_NAME}" | sort; \
     test -x /usr/bin/dcgm-exporter; \
-    for preset in 1.x-compatibility-metrics.csv dcp-metrics-included.csv default-counters.csv; do \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
         test -f "/etc/dcgm-exporter/${preset}"; \
         test "$(stat -c '%a:%u:%g' "/etc/dcgm-exporter/${preset}")" = 644:0:0; \
     done; \
@@ -756,7 +803,18 @@ RUN set -eux; \
     readelf -W --version-info /usr/bin/dcgm-exporter 2>/dev/null \
         | sed -n "/Name: /p" \
         | sort -u || true; \
-    test "$(/usr/bin/dcgm-exporter --version)" = "DCGM Exporter version ${EXPECTED_VERSION}"
+    test "$(/usr/bin/dcgm-exporter --version)" = "DCGM Exporter version ${EXPECTED_VERSION}"; \
+    echo "# local edit" >> /etc/dcgm-exporter/config.yaml; \
+    dpkg-deb -R /pkg/package.deb /tmp/newer; \
+    echo "# new default" >> /tmp/newer/etc/dcgm-exporter/config.yaml; \
+    sed -i "s/^Version: .*/&.1/" /tmp/newer/DEBIAN/control; \
+    dpkg-deb --build --root-owner-group /tmp/newer /tmp/newer.deb; \
+    dpkg -i --force-confdef --force-confold /tmp/newer.deb; \
+    grep -Fx "# local edit" /etc/dcgm-exporter/config.yaml; \
+    ! grep -Fx "# new default" /etc/dcgm-exporter/config.yaml; \
+    ls /etc/dcgm-exporter/; \
+    grep -Fx "# new default" /etc/dcgm-exporter/config.yaml.dpkg-dist; \
+    echo "upgrade kept the edited config.yaml and left the new default beside it"
 EOF
 
     docker_buildx_build \
@@ -781,6 +839,7 @@ validate_tarball() {
     local rpm_dir
     local deb_dir
     local rpm_file
+    local newer_rpm_file
     local deb_file
     local image
     local -a rpm_images=()
@@ -807,13 +866,15 @@ validate_tarball() {
     build_rpm "${platform}" "${rpm_arch}" "${payload_dir}" "${rpm_dir}"
     build_deb "${platform}" "${deb_arch}" "${payload_dir}" "${deb_dir}"
 
-    rpm_file="$(find "${rpm_dir}/out" -type f -name '*.rpm' | sort | head -n1)"
+    rpm_file="$(find "${rpm_dir}/out" -maxdepth 1 -type f -name '*.rpm' | sort | head -n1)"
+    newer_rpm_file="$(find "${rpm_dir}/out/newer" -type f -name '*.rpm' | sort | head -n1)"
     deb_file="$(find "${deb_dir}/out" -type f -name '*.deb' | sort | head -n1)"
     [[ -n "${rpm_file}" ]] || die "No RPM package was built for ${tarball_name}"
+    [[ -n "${newer_rpm_file}" ]] || die "No newer RPM package was built for ${tarball_name}"
     [[ -n "${deb_file}" ]] || die "No DEB package was built for ${tarball_name}"
 
     for image in "${rpm_images[@]}"; do
-        validate_rpm "${platform}" "${image}" "${rpm_file}"
+        validate_rpm "${platform}" "${image}" "${rpm_file}" "${newer_rpm_file}"
     done
 
     for image in "${deb_images[@]}"; do

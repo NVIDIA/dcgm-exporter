@@ -27,18 +27,24 @@ import (
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
 
+// MIGDeviceInfo identifies a MIG device within its parent GPU.
 type MIGDeviceInfo struct {
 	ParentUUID        string
 	GPUInstanceID     int
 	ComputeInstanceID int
 }
 
-// gpuInstanceAPI isolates the NVML calls needed to resolve a dynamic DRA MIG placement.
+// gpuInstanceAPI isolates NVML profile discovery and dynamic DRA MIG placement calls.
 type gpuInstanceAPI interface {
+	// deviceHandleByUUID returns the NVML device handle for a UUID.
 	deviceHandleByUUID(string) (nvml.Device, nvml.Return)
+	// deviceMinorNumber returns the device node minor associated with a GPU handle.
 	deviceMinorNumber(nvml.Device) (int, nvml.Return)
+	// gpuInstanceProfileInfoByID returns the version 2 metadata for a profile ID.
 	gpuInstanceProfileInfoByID(nvml.Device, int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return)
+	// gpuInstances lists the live instances that match one profile.
 	gpuInstances(nvml.Device, *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return)
+	// gpuInstanceInfo returns the profile and placement of one live instance.
 	gpuInstanceInfo(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return)
 }
 
@@ -61,11 +67,19 @@ func (goNVMLGPUInstanceAPI) deviceMinorNumber(device nvml.Device) (int, nvml.Ret
 	return nvml.DeviceGetMinorNumber(device)
 }
 
-// gpuInstanceProfileInfoByID returns version 2 profile metadata for an explicit profile ID.
+// lookupNVMLSymbol checks the library owned by the current provider session.
+// Keep it replaceable so missing-symbol tests never enter the unsafe native call.
+var lookupNVMLSymbol = nvml.Extensions().LookupSymbol
+
+// gpuInstanceProfileInfoByID guards the optional native entry point before requesting version 2 metadata.
 func (goNVMLGPUInstanceAPI) gpuInstanceProfileInfoByID(
 	device nvml.Device,
 	profileID int,
 ) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+	if err := lookupNVMLSymbol("nvmlDeviceGetGpuInstanceProfileInfoByIdV"); err != nil {
+		return nvml.GpuInstanceProfileInfo_v2{}, nvml.ERROR_FUNCTION_NOT_FOUND
+	}
+
 	return nvml.DeviceGetGpuInstanceProfileInfoByIdV(device, profileID).V2()
 }
 
@@ -84,13 +98,23 @@ func (goNVMLGPUInstanceAPI) gpuInstanceInfo(instance nvml.GpuInstance) (nvml.Gpu
 
 var nvmlInterface NVML
 
+// newNVMLProviderFunc keeps Initialize deterministic in package tests without
+// changing the production NVML adapter selection.
+var newNVMLProviderFunc = newNVMLProvider
+
+// initNVML and shutdownNVML keep lifecycle tests independent of a live NVIDIA driver.
+var (
+	initNVML     = nvml.Init
+	shutdownNVML = nvml.Shutdown
+)
+
 // Initialize sets up the Singleton NVML interface.
 func Initialize() error {
-	var err error
-	nvmlInterface, err = newNVMLProvider()
+	provider, err := newNVMLProviderFunc()
 	if err != nil {
 		return err
 	}
+	nvmlInterface = provider
 	return nil
 }
 
@@ -120,17 +144,19 @@ type nvmlProvider struct {
 	gpuInstanceAPI gpuInstanceAPI
 }
 
+// newNVMLProvider returns the already published NVML client when present, or
+// creates the concrete adapter for a new process session. It checks the stored
+// interface directly so tests and future adapters need not be nvmlProvider.
 func newNVMLProvider() (NVML, error) {
-	// Check if a NVML client already exists and return it if so.
-	if Client() != nil && Client().(nvmlProvider).initialized {
+	if nvmlInterface != nil {
 		slog.Info("NVML already initialized.")
-		return Client(), nil
+		return nvmlInterface, nil
 	}
 
 	slog.Info("Attempting to initialize NVML library.")
-	ret := nvml.Init()
+	ret := initNVML()
 	if ret != nvml.SUCCESS {
-		err := errors.New(nvml.ErrorString(ret))
+		err := nvmlInitializationError(ret)
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
 		return nvmlProvider{initialized: false}, err
 	}
@@ -141,6 +167,16 @@ func newNVMLProvider() (NVML, error) {
 	}, nil
 }
 
+// nvmlInitializationError adds driver-library guidance to NVML initialization failures.
+func nvmlInitializationError(ret nvml.Return) error {
+	if ret == nvml.ERROR_LIBRARY_NOT_FOUND {
+		return fmt.Errorf("%s: libnvidia-ml.so.1 is unavailable; ensure the NVIDIA driver is installed and accessible; in a container, configure the NVIDIA runtime to inject driver libraries (for Helm, set runtimeClassName to the cluster's NVIDIA RuntimeClass)", nvml.ErrorString(ret))
+	}
+
+	return errors.New(nvml.ErrorString(ret))
+}
+
+// preCheck returns an error unless NVML was initialized for this provider.
 func (n nvmlProvider) preCheck() error {
 	if !n.initialized {
 		return errors.New("NVML library not initialized")
@@ -173,13 +209,17 @@ func (n nvmlProvider) GetGPUInstanceProfileName(parentGPUUUID string, profileID 
 		return "", fmt.Errorf("GPU instance profile ID %d exceeds maximum int value %d", profileID, math.MaxInt)
 	}
 
-	device, ret := nvml.DeviceGetHandleByUUID(parentGPUUUID)
+	if n.gpuInstanceAPI == nil {
+		return "", errors.New("failed to get GPU instance profile name: NVML GPU instance API is unavailable")
+	}
+
+	device, ret := n.gpuInstanceAPI.deviceHandleByUUID(parentGPUUUID)
 	if ret != nvml.SUCCESS {
 		return "", fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentGPUUUID, nvml.ErrorString(ret))
 	}
 
 	profileIDInt := int(profileID)
-	infoV2, ret := device.GetGpuInstanceProfileInfoByIdV(profileIDInt).V2()
+	infoV2, ret := n.gpuInstanceAPI.gpuInstanceProfileInfoByID(device, profileIDInt)
 	if ret != nvml.SUCCESS {
 		return "", fmt.Errorf("failed to get GPU instance profile info for UUID %s profile %d: %s",
 			parentGPUUUID, profileID, nvml.ErrorString(ret))
@@ -188,6 +228,7 @@ func (n nvmlProvider) GetGPUInstanceProfileName(parentGPUUUID string, profileID 
 	return migProfileNameFromBytes(infoV2.Name[:])
 }
 
+// migProfileNameFromBytes decodes a null-terminated NVML profile name.
 func migProfileNameFromBytes[T ~int8 | ~uint8](name []T) (string, error) {
 	var builder strings.Builder
 	for _, b := range name {
@@ -506,7 +547,7 @@ func (n nvmlProvider) Cleanup() {
 	}
 
 	slog.Info("Attempting to shutdown NVML library")
-	ret := nvml.Shutdown()
+	ret := shutdownNVML()
 	if ret != nvml.SUCCESS {
 		slog.Error(fmt.Sprintf("Failed to shutdown NVML library: %v", nvml.ErrorString(ret)))
 	}

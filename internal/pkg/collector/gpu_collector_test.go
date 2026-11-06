@@ -19,6 +19,7 @@ package collector
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -31,16 +32,19 @@ import (
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mockdeviceinfo "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/deviceinfo"
 	mockdevicewatcher "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatcher"
-	mockos "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/os"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/signalcatalog"
 )
 
+// TestToMetric converts one GPU temperature sample and checks the value, UUID and PCI bus ID on the single
+// metric, and that blanks in the model name become dashes only when that option is on.
 func TestToMetric(t *testing.T) {
 	fieldValue := [4096]byte{}
 	fieldValue[0] = 42
@@ -72,6 +76,7 @@ func TestToMetric(t *testing.T) {
 		},
 	}
 
+	// testCase pairs the model-name spacing option with its expected label value.
 	type testCase struct {
 		replaceBlanksInModelName bool
 		expectedGPUModelName     string
@@ -91,7 +96,8 @@ func TestToMetric(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("When replaceBlanksInModelName is %t", tc.replaceBlanksInModelName), func(t *testing.T) {
 			metrics := make(map[counters.Counter][]Metric)
-			toMetric(metrics, values, c, mi, false, "", tc.replaceBlanksInModelName)
+			collector := &DCGMCollector{counters: c, replaceBlanksInModelName: tc.replaceBlanksInModelName}
+			collector.toMetric(metrics, values, mi, 0, nil)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
@@ -104,6 +110,32 @@ func TestToMetric(t *testing.T) {
 	}
 }
 
+// TestDCGMCollectorUsesCreatingClient verifies a collector does not send old
+// registry handles to a replacement global client after a lifecycle reset.
+func TestDCGMCollectorUsesCreatingClient(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	creatingClient := mockdcgm.NewMockDCGM(ctrl)
+	replacementClient := mockdcgm.NewMockDCGM(ctrl)
+	previousClient := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(previousClient) })
+
+	creatingClient.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP}).
+		Return(nil, nil)
+	collector := &DCGMCollector{client: creatingClient}
+	dcgmprovider.SetClient(replacementClient)
+
+	values, err := collector.latestValuesForFields(
+		devicemonitoring.Info{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0}},
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP},
+	)
+
+	require.NoError(t, err)
+	assert.Empty(t, values)
+}
+
+// TestToMetricLogsBlankValue passes a blank integer sample and checks that no metric is made and a debug
+// record names the field ID, field name, entity type and entity ID.
 func TestToMetricLogsBlankValue(t *testing.T) {
 	buf := setupDebugLogCapture(t)
 
@@ -124,8 +156,9 @@ func TestToMetricLogsBlankValue(t *testing.T) {
 		},
 	}
 	metrics := MetricsByCounter{}
+	collector := &DCGMCollector{counters: []counters.Counter{counter}, hostname: "host-a"}
 
-	toMetric(metrics, values, []counters.Counter{counter}, mi, false, "host-a", false)
+	collector.toMetric(metrics, values, mi, 0, nil)
 
 	assert.Empty(t, metrics)
 
@@ -137,6 +170,9 @@ func TestToMetricLogsBlankValue(t *testing.T) {
 	assert.Equal(t, float64(0), got["entityID"])
 }
 
+// TestToMetricHonorsDCGMStatusBeforeValue checks that a sample with a non-OK status is skipped and logged
+// with its status even when its value looks valid, that an OK zero is emitted as "0", and that an OK value of
+// an unsupported type is skipped as blank.
 func TestToMetricHonorsDCGMStatusBeforeValue(t *testing.T) {
 	mi := devicemonitoring.Info{
 		Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0},
@@ -193,15 +229,16 @@ func TestToMetricHonorsDCGMStatusBeforeValue(t *testing.T) {
 				PromType:  "gauge",
 			}
 			metrics := MetricsByCounter{}
+			collector := &DCGMCollector{counters: []counters.Counter{counter}, hostname: "host-a"}
 
-			toMetric(metrics, []dcgm.FieldValue_v1{
+			collector.toMetric(metrics, []dcgm.FieldValue_v1{
 				{
 					FieldID:   test.fieldID,
 					FieldType: test.fieldType,
 					Status:    test.status,
 					Value:     test.value,
 				},
-			}, []counters.Counter{counter}, mi, false, "host-a", false)
+			}, mi, 0, nil)
 
 			if test.wantValue != "" {
 				require.Len(t, metrics[counter], 1)
@@ -220,6 +257,9 @@ func TestToMetricHonorsDCGMStatusBeforeValue(t *testing.T) {
 	}
 }
 
+// TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField converts XID samples of 0, a known code and an unknown code,
+// and checks that each metric carries the code as err_code and the matching text, or the unknown text, as
+// err_msg.
 func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 	c := []counters.Counter{
 		{
@@ -242,6 +282,7 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 		},
 	}
 
+	// testCase pairs each XID value with the expected human-readable error label.
 	type testCase struct {
 		name        string
 		fieldValue  byte
@@ -279,7 +320,8 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 			}
 
 			metrics := make(map[counters.Counter][]Metric)
-			toMetric(metrics, values, c, mi, false, "", false)
+			collector := &DCGMCollector{counters: c}
+			collector.toMetric(metrics, values, mi, 0, nil)
 			assert.Len(t, metrics, 1)
 			// We get metric value with 0 index
 			metricValues := metrics[reflect.ValueOf(metrics).MapKeys()[0].Interface().(counters.Counter)]
@@ -295,51 +337,54 @@ func TestToMetricWhenDCGM_FI_DEV_XID_ERRORSField(t *testing.T) {
 	}
 }
 
+// TestDCGMCollectorGetMetricsHandlesActionableDCGMErrors checks that a failed field read returns an error and no
+// metrics, and only connection, setup, and library-loading DCGM errors are marked fatal; permission, version,
+// and non-DCGM errors stay ordinary scrape errors.
 func TestDCGMCollectorGetMetricsHandlesActionableDCGMErrors(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		wantExit bool
+		name      string
+		err       error
+		wantFatal bool
 	}{
 		{
-			name:     "connection not valid exits",
-			err:      &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID},
-			wantExit: true,
+			name:      "connection not valid is terminal",
+			err:       &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID},
+			wantFatal: true,
 		},
 		{
-			name:     "uninitialized status exits",
-			err:      &dcgm.Error{Code: dcgm.DCGM_ST_UNINITIALIZED},
-			wantExit: true,
+			name:      "uninitialized status is terminal",
+			err:       &dcgm.Error{Code: dcgm.DCGM_ST_UNINITIALIZED},
+			wantFatal: true,
 		},
 		{
-			name:     "library not found exits",
-			err:      &dcgm.Error{Code: dcgm.DCGM_ST_LIBRARY_NOT_FOUND},
-			wantExit: true,
+			name:      "library not found is terminal",
+			err:       &dcgm.Error{Code: dcgm.DCGM_ST_LIBRARY_NOT_FOUND},
+			wantFatal: true,
 		},
 		{
-			name:     "init error exits",
-			err:      &dcgm.Error{Code: dcgm.DCGM_ST_INIT_ERROR},
-			wantExit: true,
+			name:      "init error is terminal",
+			err:       &dcgm.Error{Code: dcgm.DCGM_ST_INIT_ERROR},
+			wantFatal: true,
 		},
 		{
-			name:     "nvml not loaded exits",
-			err:      &dcgm.Error{Code: dcgm.DCGM_ST_NVML_NOT_LOADED},
-			wantExit: true,
+			name:      "nvml not loaded is terminal",
+			err:       &dcgm.Error{Code: dcgm.DCGM_ST_NVML_NOT_LOADED},
+			wantFatal: true,
 		},
 		{
-			name: "no permission returns error without exit",
+			name: "no permission remains a scrape error",
 			err:  &dcgm.Error{Code: dcgm.DCGM_ST_NO_PERMISSION},
 		},
 		{
-			name: "requires root returns error without exit",
+			name: "requires root remains a scrape error",
 			err:  &dcgm.Error{Code: dcgm.DCGM_ST_REQUIRES_ROOT},
 		},
 		{
-			name: "version mismatch returns error without exit",
+			name: "version mismatch remains a scrape error",
 			err:  &dcgm.Error{Code: dcgm.DCGM_ST_VER_MISMATCH},
 		},
 		{
-			name: "non dcgm error returns error without exit",
+			name: "non DCGM error remains a scrape error",
 			err:  assert.AnError,
 		},
 	}
@@ -349,18 +394,9 @@ func TestDCGMCollectorGetMetricsHandlesActionableDCGMErrors(t *testing.T) {
 			realDCGM := dcgmprovider.Client()
 			t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
 
-			realOS := os
-			t.Cleanup(func() { os = realOS })
-
 			ctrl := gomock.NewController(t)
 			mockDCGM := mockdcgm.NewMockDCGM(ctrl)
 			dcgmprovider.SetClient(mockDCGM)
-
-			mockOS := mockos.NewMockOS(ctrl)
-			os = mockOS
-			if tc.wantExit {
-				mockOS.EXPECT().Exit(1)
-			}
 
 			counter := counters.Counter{FieldID: 150, FieldName: "DCGM_FI_DEV_GPU_TEMP", PromType: "gauge"}
 			deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
@@ -391,11 +427,13 @@ func TestDCGMCollectorGetMetricsHandlesActionableDCGMErrors(t *testing.T) {
 			got, err := collector.GetMetrics()
 
 			require.Error(t, err)
+			assert.Equal(t, tc.wantFatal, dcgmerrors.IsFatalScrapeError(err))
 			assert.Nil(t, got)
 		})
 	}
 }
 
+// int64FieldValue builds a successful DCGM sample with an int64 value.
 func int64FieldValue(fieldID dcgm.Short, v byte) dcgm.FieldValue_v1 {
 	fieldValue := [4096]byte{}
 	fieldValue[0] = v
@@ -431,28 +469,34 @@ func testGPUDeviceInfo(ctrl *gomock.Controller) *mockdeviceinfo.MockProvider {
 	return deviceInfo
 }
 
-// newTestProfilingCollector creates a watched collector with one profiling field.
+// newTestProfilingCollector creates a watched profiling collector with optional additional fields.
 func newTestProfilingCollector(
 	t *testing.T,
 	deviceInfo deviceinfo.Provider,
-	watcher devicewatcher.Watcher,
+	watcher devicewatcher.WatchInstaller,
 	interval time.Duration,
+	additionalCounters ...counters.Counter,
 ) *DCGMCollector {
 	t.Helper()
 	counter := testProfilingCounter()
+	selectedCounters := append([]counters.Counter{counter}, additionalCounters...)
+	fields := make([]dcgm.Short, len(selectedCounters))
+	for i, selected := range selectedCounters {
+		fields[i] = selected.FieldID
+	}
 	watchList := *devicewatchlistmanager.NewWatchListWithGroups(
 		deviceInfo,
-		[]dcgm.Short{counter.FieldID},
+		fields,
 		nil,
 		[]devicewatcher.FieldWatchGroup{{
 			Name:         "profiling",
-			Fields:       []dcgm.Short{counter.FieldID},
+			Fields:       fields,
 			IntervalMSec: interval.Milliseconds(),
 		}},
 		watcher,
 		interval.Milliseconds(),
 	)
-	collector, err := NewDCGMCollector([]counters.Counter{counter}, "host-a", &appconfig.Config{}, watchList)
+	collector, err := NewDCGMCollector(selectedCounters, "host-a", &appconfig.Config{}, watchList)
 	require.NoError(t, err)
 	return collector
 }
@@ -475,6 +519,12 @@ func TestResolveProfilingStaleWindows(t *testing.T) {
 			watchedFields:   []dcgm.Short{150, 151},
 			fieldWatchGroup: []devicewatcher.FieldWatchGroup{{Fields: []dcgm.Short{150, 151}, IntervalMSec: 75}},
 			want:            map[dcgm.Short]time.Duration{150: 150 * time.Millisecond},
+		},
+		{
+			name:        "shared field does not mark slower scope stale",
+			counterList: []counters.Counter{profilingCounter}, watchedFields: []dcgm.Short{150},
+			fieldWatchGroup: []devicewatcher.FieldWatchGroup{{Fields: []dcgm.Short{150}, IntervalMSec: 30000}, {Fields: []dcgm.Short{150}, IntervalMSec: 5000}},
+			want:            map[dcgm.Short]time.Duration{150: time.Minute},
 		},
 		{
 			name:            "non-profiling field ignores invalid interval",
@@ -660,19 +710,22 @@ func TestDCGMCollectorRepairsOnlyWatchLifecycleAPIErrors(t *testing.T) {
 	}
 }
 
+// stringFieldValue builds a successful DCGM sample with a string value.
 func stringFieldValue(fieldID dcgm.Short, v string) dcgm.FieldValue_v1 {
 	fieldValue := [4096]byte{}
 	copy(fieldValue[:], v)
 	return dcgm.FieldValue_v1{FieldID: fieldID, FieldType: dcgm.DCGM_FT_STRING, Value: fieldValue}
 }
 
+// TestDCGMCollectorCleanupRunsAllCleanups checks that Cleanup runs each watch cleanup once, even when Cleanup is
+// called twice.
 func TestDCGMCollectorCleanupRunsAllCleanups(t *testing.T) {
 	var calls int
 	c := &DCGMCollector{
-		cleanups: []func(){
+		watchResult: watchResultFromCleanups([]func(){
 			func() { calls++ },
 			func() { calls++ },
-		},
+		}),
 	}
 
 	c.Cleanup()
@@ -787,50 +840,64 @@ func TestDCGMCollectorRepairsFrozenProfilingTimestampAndRetries(t *testing.T) {
 	deviceInfo := testGPUDeviceInfo(ctrl)
 	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
 	counter := testProfilingCounter()
+	temperatureCounter := counters.Counter{FieldID: dcgm.DCGM_FI_DEV_GPU_TEMP, FieldName: "DCGM_FI_DEV_GPU_TEMP", PromType: "gauge"}
+	fields := []dcgm.Short{counter.FieldID, temperatureCounter.FieldID}
 	var cleanupCalls int
 
 	watcher.EXPECT().
 		WatchDeviceFieldGroups(gomock.Any(), deviceInfo).
 		Return(nil, nil, []func(){func() { cleanupCalls++ }}, nil)
-	collector := newTestProfilingCollector(t, deviceInfo, watcher, time.Second)
+	collector := newTestProfilingCollector(t, deviceInfo, watcher, time.Second, temperatureCounter)
 	now := time.Unix(100, 0)
 	collector.now = func() time.Time { return now }
 
 	// Establish an initial zero-valued sample as the freshness baseline.
 	staleValue := profilingFieldValue(counter.FieldID, dcgm.DCGM_ST_OK, 10, 0)
+	staleValues := []dcgm.FieldValue_v1{staleValue, int64FieldValue(temperatureCounter.FieldID, 42)}
 	mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{counter.FieldID}).
-		Return([]dcgm.FieldValue_v1{staleValue}, nil)
+		EntityGetLatestValues(dcgm.FE_GPU, uint(0), fields).
+		Return(staleValues, nil)
 	_, err := collector.GetMetrics()
 	require.NoError(t, err)
 
 	// At the stale threshold, rewatch and return only the retry's fresh sample.
 	now = now.Add(2 * time.Second)
 	staleRead := mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{counter.FieldID}).
-		Return([]dcgm.FieldValue_v1{staleValue}, nil)
+		EntityGetLatestValues(dcgm.FE_GPU, uint(0), fields).
+		Return(staleValues, nil)
 	rewatch := watcher.EXPECT().
 		WatchDeviceFieldGroups(gomock.Any(), deviceInfo).
 		DoAndReturn(func([]devicewatcher.FieldWatchGroup, deviceinfo.Provider) (
 			[]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error,
 		) {
 			assert.Equal(t, 1, cleanupCalls)
+			now = now.Add(time.Second)
 			return nil, nil, []func(){func() { cleanupCalls++ }}, nil
 		})
 	update := mockDCGM.EXPECT().UpdateAllFields().Return(nil)
 	freshRead := mockDCGM.EXPECT().
-		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{counter.FieldID}).
-		Return([]dcgm.FieldValue_v1{profilingFieldValue(counter.FieldID, dcgm.DCGM_ST_OK, 11, 0)}, nil)
+		EntityGetLatestValues(dcgm.FE_GPU, uint(0), fields).
+		Return([]dcgm.FieldValue_v1{
+			profilingFieldValue(counter.FieldID, dcgm.DCGM_ST_OK, 11, 0),
+			int64FieldValue(temperatureCounter.FieldID, 43),
+		}, nil)
 	gomock.InOrder(staleRead, rewatch, update, freshRead)
 
 	got, err := collector.GetMetrics()
 	require.NoError(t, err)
 	require.Len(t, got[counter], 1)
 	assert.Equal(t, "0", got[counter][0].Value)
+	assert.Equal(t, int64(11), got[counter][0].Timestamp)
+	require.Len(t, got[temperatureCounter], 1)
+	assert.Equal(t, "43", got[temperatureCounter][0].Value)
+	assert.Equal(t, int64(103_000_000), got[temperatureCounter][0].Timestamp)
 	collector.Cleanup()
 	assert.Equal(t, 2, cleanupCalls)
 }
 
+// TestDCGMCollectorRejectsSameTimestampAfterRepair checks that when a profiling value stays on the same
+// timestamp past the stale limit, the collector rewatches, refreshes, and retries once, and drops the value if
+// the retry still returns that timestamp.
 func TestDCGMCollectorRejectsSameTimestampAfterRepair(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -873,6 +940,9 @@ func TestDCGMCollectorRejectsSameTimestampAfterRepair(t *testing.T) {
 	collector.Cleanup()
 }
 
+// TestDCGMCollectorPreservesHealthyMetricsWhenRepairFails checks that when the rewatch for a not-watched
+// profiling field fails, the profiling series is dropped but the temperature series from the same read is kept
+// with the scrape time taken before the repair.
 func TestDCGMCollectorPreservesHealthyMetricsWhenRepairFails(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -889,23 +959,10 @@ func TestDCGMCollectorPreservesHealthyMetricsWhenRepairFails(t *testing.T) {
 		PromType:  "gauge",
 	}
 	fields := []dcgm.Short{profilingCounter.FieldID, temperatureCounter.FieldID}
-	watchList := *devicewatchlistmanager.NewWatchListWithGroups(
-		deviceInfo,
-		fields,
-		nil,
-		[]devicewatcher.FieldWatchGroup{{Name: "default", Fields: fields, IntervalMSec: 1000}},
-		watcher,
-		1000,
-	)
-
 	watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), deviceInfo).Return(nil, nil, nil, nil)
-	collector, err := NewDCGMCollector(
-		[]counters.Counter{profilingCounter, temperatureCounter},
-		"host-a",
-		&appconfig.Config{},
-		watchList,
-	)
-	require.NoError(t, err)
+	collector := newTestProfilingCollector(t, deviceInfo, watcher, time.Second, temperatureCounter)
+	now := time.Unix(100, 123_456_789)
+	collector.now = func() time.Time { return now }
 
 	mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), fields).Return([]dcgm.FieldValue_v1{
 		profilingFieldValue(profilingCounter.FieldID, dcgm.DCGM_ST_NOT_WATCHED, 10, 0),
@@ -913,14 +970,130 @@ func TestDCGMCollectorPreservesHealthyMetricsWhenRepairFails(t *testing.T) {
 	}, nil)
 	watcher.EXPECT().
 		WatchDeviceFieldGroups(gomock.Any(), deviceInfo).
-		Return(nil, nil, nil, assert.AnError)
+		DoAndReturn(func([]devicewatcher.FieldWatchGroup, deviceinfo.Provider) (
+			[]dcgm.GroupHandle, []dcgm.FieldHandle, []func(), error,
+		) {
+			now = now.Add(time.Second)
+			return nil, nil, nil, assert.AnError
+		})
 
 	got, err := collector.GetMetrics()
 	require.NoError(t, err)
 	assert.Empty(t, got[profilingCounter])
 	require.Len(t, got[temperatureCounter], 1)
 	assert.Equal(t, "42", got[temperatureCounter][0].Value)
+	assert.Equal(t, int64(100_123_456), got[temperatureCounter][0].Timestamp)
 	collector.Cleanup()
+}
+
+// TestOTLPProfilingIsolation confines repair to Prometheus failures and preserves shared watches.
+func TestOTLPProfilingIsolation(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		otlpStatus     int
+		selectedStatus int
+		frozen         bool
+		watches        int
+		wantProfile    string
+	}{
+		{name: "not watched", otlpStatus: dcgm.DCGM_ST_NOT_WATCHED, watches: 1, wantProfile: "5"},
+		{name: "stale status", otlpStatus: dcgm.DCGM_ST_STALE_DATA, watches: 1, wantProfile: "5"},
+		{name: "frozen timestamp", frozen: true, watches: 1, wantProfile: "5"},
+		{name: "Prometheus failure repairs shared watches", selectedStatus: dcgm.DCGM_ST_NOT_WATCHED, watches: 2, wantProfile: "6"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			native := mockdcgm.NewMockDCGM(ctrl)
+			previous := dcgmprovider.Client()
+			// Each installed watch result is closed once: at repair or at cleanup.
+			dcgmprovider.SetClient(native)
+			t.Cleanup(func() { dcgmprovider.SetClient(previous) })
+
+			native.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+			native.EXPECT().GetDeviceInfo(uint(0)).Return(dcgm.Device{GPU: 0, UUID: "GPU-0"}, nil)
+			native.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+			native.EXPECT().GetNvLinkLinkStatus().Return(nil, nil)
+			native.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+			native.EXPECT().FieldGetByID(gomock.Any()).Return(dcgm.FieldMeta{EntityLevel: dcgm.FE_GPU}, nil).AnyTimes()
+
+			profile := counters.Counter{FieldID: dcgm.DCGM_FI_PROF_SM_ACTIVE, FieldName: "DCGM_FI_PROF_SM_ACTIVE", PromType: "gauge"}
+			temperature := counters.Counter{FieldID: dcgm.DCGM_FI_DEV_GPU_TEMP, FieldName: "DCGM_FI_DEV_GPU_TEMP", PromType: "gauge"}
+			selected := counters.CounterList{profile, temperature}
+			sources, err := signalcatalog.WatchSourcesFor("gpu.memory_interface.utilization", signalcatalog.ProfileNVIDIA)
+			require.NoError(t, err)
+			config := &appconfig.Config{
+				EnableOTLP: true, GPUDeviceOptions: appconfig.DeviceOptions{Flex: true},
+				OTLPWatchCollections: []appconfig.OTLPWatchCollection{{Name: "telemetry", Sources: sources, Interval: 1000}},
+			}
+			manager := devicewatchlistmanager.NewWatchListManager(selected, config)
+			require.NoError(t, manager.CreateEntityWatchList(dcgm.FE_GPU, devicewatcher.NewDeviceWatcherWithClient(native), 1000))
+			list, exists := manager.EntityWatchList(dcgm.FE_GPU)
+			require.True(t, exists)
+			require.True(t, list.HasOTLPWatches())
+			reads, err := list.Reads()
+			require.NoError(t, err)
+			require.Len(t, reads, 1)
+			require.ElementsMatch(t, []dcgm.Short{
+				profile.FieldID, temperature.FieldID, dcgm.DCGM_FI_PROF_DRAM_ACTIVE,
+				dcgm.DCGM_FI_DEV_PCIE_MAX_LINK_GEN, dcgm.DCGM_FI_DEV_PCIE_MAX_LINK_WIDTH,
+				dcgm.DCGM_FI_DEV_PCIE_LINK_GEN, dcgm.DCGM_FI_DEV_PCIE_LINK_WIDTH,
+			}, reads[0].Fields)
+
+			var lifecycle []any
+			for i := range tt.watches {
+				group, fieldGroup := dcgm.GroupHandle{}, dcgm.FieldHandle{}
+				group.SetHandle(uintptr(2*i + 1))
+				fieldGroup.SetHandle(uintptr(2*i + 2))
+				lifecycle = append(lifecycle,
+					native.EXPECT().CreateGroup(gomock.Any()).Return(group, nil),
+					native.EXPECT().AddEntityToGroup(group, dcgm.FE_GPU, uint(0)).Return(nil),
+					native.EXPECT().FieldGroupCreate(gomock.Any(), reads[0].Fields).Return(fieldGroup, nil),
+					native.EXPECT().WatchFieldsWithGroupExNoRefresh(fieldGroup, group, int64(1_000_000), 600.0, int32(0)).Return(nil),
+					native.EXPECT().UnwatchFields(fieldGroup, group).Return(nil),
+					native.EXPECT().FieldGroupDestroy(fieldGroup).Return(nil),
+					native.EXPECT().DestroyGroup(group).Return(nil),
+				)
+			}
+			gomock.InOrder(lifecycle...)
+
+			collector, err := NewDCGMCollector(selected, "", config, list)
+			require.NoError(t, err)
+			defer collector.Cleanup()
+
+			now := time.Unix(100, 0)
+			collector.now = func() time.Time { return now }
+			values := []dcgm.FieldValue_v1{
+				profilingFieldValue(dcgm.DCGM_FI_PROF_DRAM_ACTIVE, tt.otlpStatus, 10, 1),
+				profilingFieldValue(profile.FieldID, tt.selectedStatus, 10, 5),
+				int64FieldValue(temperature.FieldID, 42),
+			}
+
+			if tt.frozen {
+				native.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), reads[0].Fields).Return(values, nil)
+				_, err := collector.GetMetrics()
+				require.NoError(t, err)
+				now = now.Add(2 * time.Second)
+				values[1].TS = 11
+			}
+
+			firstRead := native.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), reads[0].Fields).Return(values, nil)
+			if tt.watches == 2 {
+				fresh := slices.Clone(values)
+				fresh[1] = profilingFieldValue(profile.FieldID, dcgm.DCGM_ST_OK, 11, 6)
+				refresh := native.EXPECT().UpdateAllFields().Return(nil)
+				retry := native.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), reads[0].Fields).Return(fresh, nil)
+				gomock.InOrder(firstRead, refresh, retry)
+			}
+
+			got, err := collector.GetMetrics()
+			require.NoError(t, err)
+			require.Len(t, got, 2)
+			require.Len(t, got[profile], 1)
+			require.Equal(t, tt.wantProfile, got[profile][0].Value)
+			require.Equal(t, "42", got[temperature][0].Value)
+			require.NotContains(t, collector.profilingStaleWindows, dcgm.Short(dcgm.DCGM_FI_PROF_DRAM_ACTIVE))
+		})
+	}
 }
 
 // TestDCGMCollectorRepairsProfilingLifecycleStatuses verifies immediate status-triggered repair.
@@ -961,7 +1134,110 @@ func TestDCGMCollectorRepairsProfilingLifecycleStatuses(t *testing.T) {
 	}
 }
 
-// TestDCGMCollectorDoesNotRepairNonLifecycleProfilingStatuses verifies excluded status behavior.
+// batchingDCGM is a mock DCGM client that also unwatches in batches, as the
+// client dcgmprovider.Client returns does.
+type batchingDCGM struct {
+	*mockdcgm.MockDCGM
+	*mockdcgm.MockFieldGroupUnwatcher
+}
+
+// TestDCGMCollectorRepairCostDoesNotGrowWithWatchCount repairs a profiling
+// watch whose fields need 1, 8 or 16 DCGM watches, through the real device
+// watcher. The repair's own UpdateAllFields runs once and the rewatch adds
+// none, each field group is rewatched once, and teardown unwatches all of the
+// old watches in one batch.
+func TestDCGMCollectorRepairCostDoesNotGrowWithWatchCount(t *testing.T) {
+	for _, watches := range []int{1, 8, 16} {
+		t.Run(fmt.Sprintf("%d watches", watches), func(t *testing.T) {
+			realDCGM := dcgmprovider.Client()
+			t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+			ctrl := gomock.NewController(t)
+			mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+			unwatcher := mockdcgm.NewMockFieldGroupUnwatcher(ctrl)
+			client := &batchingDCGM{MockDCGM: mockDCGM, MockFieldGroupUnwatcher: unwatcher}
+			dcgmprovider.SetClient(client)
+			deviceInfo := testGPUDeviceInfo(ctrl)
+			counter := testProfilingCounter()
+
+			// One field group holds at most 127 fields, so 127*(watches-1)
+			// more fields need exactly `watches` field groups on one GPU group.
+			var extra []counters.Counter
+			for i := range 127 * (watches - 1) {
+				fieldID := dcgm.Short(2000 + i)
+				extra = append(extra, counters.Counter{FieldID: fieldID, FieldName: fmt.Sprintf("FIELD_%d", fieldID), PromType: "gauge"})
+			}
+
+			group := dcgm.GroupHandle{}
+			group.SetHandle(1)
+			nextFieldGroup := uintptr(100)
+			var watchCalls, refreshes int
+			var watchedFieldGroups []dcgm.FieldHandle
+			var unwatchBatches [][]dcgmprovider.FieldGroupWatch
+			mockDCGM.EXPECT().CreateGroup(gomock.Any()).Return(group, nil).AnyTimes()
+			mockDCGM.EXPECT().AddEntityToGroup(group, dcgm.FE_GPU, uint(0)).Return(nil).AnyTimes()
+			mockDCGM.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).DoAndReturn(func(string, []dcgm.Short) (dcgm.FieldHandle, error) {
+				nextFieldGroup++
+				fieldGroup := dcgm.FieldHandle{}
+				fieldGroup.SetHandle(nextFieldGroup)
+				return fieldGroup, nil
+			}).AnyTimes()
+			mockDCGM.EXPECT().WatchFieldsWithGroupExNoRefresh(gomock.Any(), group, gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(fieldGroup dcgm.FieldHandle, _ dcgm.GroupHandle, _ int64, _ float64, _ int32) error {
+					watchCalls++
+					watchedFieldGroups = append(watchedFieldGroups, fieldGroup)
+					return nil
+				}).AnyTimes()
+			unwatcher.EXPECT().UnwatchFieldGroups(gomock.Any()).DoAndReturn(func(closed []dcgmprovider.FieldGroupWatch) error {
+				unwatchBatches = append(unwatchBatches, closed)
+				return nil
+			}).AnyTimes()
+			mockDCGM.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
+			mockDCGM.EXPECT().DestroyGroup(group).Return(nil).AnyTimes()
+			mockDCGM.EXPECT().UpdateAllFields().DoAndReturn(func() error {
+				refreshes++
+				return nil
+			}).AnyTimes()
+
+			collector := newTestProfilingCollector(t, deviceInfo, devicewatcher.NewDeviceWatcherWithClient(client), time.Second, extra...)
+			collector.now = func() time.Time { return time.Unix(100, 0) }
+			require.Equal(t, watches, watchCalls, "setup makes one watch call per field group")
+			require.Zero(t, refreshes, "setup adds no UpdateAllFields call")
+			oldWatches := make([]dcgmprovider.FieldGroupWatch, 0, watches)
+			for _, fieldGroup := range watchedFieldGroups {
+				oldWatches = append(oldWatches, dcgmprovider.FieldGroupWatch{FieldGroup: fieldGroup, Group: group})
+			}
+
+			// Reads are split like the watches. The first read of the profiling
+			// field reports a dropped watch; the read after the repair succeeds.
+			profilingReads := 0
+			mockDCGM.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(0), gomock.Any()).
+				DoAndReturn(func(_ dcgm.Field_Entity_Group, _ uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1, error) {
+					if !slices.Contains(fields, counter.FieldID) {
+						return nil, nil
+					}
+					profilingReads++
+					if profilingReads == 1 {
+						return []dcgm.FieldValue_v1{profilingFieldValue(counter.FieldID, dcgm.DCGM_ST_NOT_WATCHED, 10, 0)}, nil
+					}
+					return []dcgm.FieldValue_v1{profilingFieldValue(counter.FieldID, dcgm.DCGM_ST_OK, 11, 5)}, nil
+				}).AnyTimes()
+
+			got, err := collector.GetMetrics()
+			require.NoError(t, err)
+			require.Len(t, got[counter], 1)
+			assert.Equal(t, "5", got[counter][0].Value)
+			assert.Equal(t, 1, refreshes, "the repair's own update runs once, whatever the watch count")
+			assert.Equal(t, 2*watches, watchCalls, "repair rewatches each field group once")
+			assert.Equal(t, [][]dcgmprovider.FieldGroupWatch{oldWatches}, unwatchBatches, "repair unwatches the old watches in one batch")
+			assert.Equal(t, 2, profilingReads, "the repaired scrape is retried once")
+
+			collector.Cleanup()
+		})
+	}
+}
+
+// TestDCGMCollectorDoesNotRepairNonLifecycleProfilingStatuses verifies excluded status.
 func TestDCGMCollectorDoesNotRepairNonLifecycleProfilingStatuses(t *testing.T) {
 	for _, status := range []int{dcgm.DCGM_ST_NOT_CONFIGURED, dcgm.DCGM_ST_PROFILING_LIBRARY_ERROR} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -1020,8 +1296,14 @@ func TestDCGMCollectorFallsBackAfterRetryFailure(t *testing.T) {
 		name      string
 		retryVals []dcgm.FieldValue_v1
 		retryErr  error
+		wantFatal bool
 	}{
 		{name: "API failure", retryErr: assert.AnError},
+		{
+			name:      "fatal API failure",
+			retryErr:  &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID},
+			wantFatal: true,
+		},
 		{
 			name: "repeated stale status",
 			retryVals: []dcgm.FieldValue_v1{
@@ -1058,11 +1340,50 @@ func TestDCGMCollectorFallsBackAfterRetryFailure(t *testing.T) {
 				Return(tt.retryVals, tt.retryErr)
 
 			got, err := collector.GetMetrics()
+			if tt.wantFatal {
+				require.Error(t, err)
+				assert.True(t, dcgmerrors.IsFatalScrapeError(err))
+				assert.Nil(t, got)
+				collector.Cleanup()
+				return
+			}
 			require.NoError(t, err)
 			assert.Empty(t, got)
 			collector.Cleanup()
 		})
 	}
+}
+
+// TestDCGMCollectorReturnsFatalErrorWhenProfilingRearmFails verifies stale
+// watch recovery never converts a broken DCGM session into a successful scrape.
+func TestDCGMCollectorReturnsFatalErrorWhenProfilingRearmFails(t *testing.T) {
+	realDCGM := dcgmprovider.Client()
+	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
+
+	ctrl := gomock.NewController(t)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	dcgmprovider.SetClient(mockDCGM)
+	deviceInfo := testGPUDeviceInfo(ctrl)
+	watcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	counter := testProfilingCounter()
+
+	watcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), deviceInfo).Return(nil, nil, nil, nil)
+	collector := newTestProfilingCollector(t, deviceInfo, watcher, time.Second)
+	mockDCGM.EXPECT().
+		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{counter.FieldID}).
+		Return([]dcgm.FieldValue_v1{
+			profilingFieldValue(counter.FieldID, dcgm.DCGM_ST_NOT_WATCHED, 10, 0),
+		}, nil)
+	watcher.EXPECT().
+		WatchDeviceFieldGroups(gomock.Any(), deviceInfo).
+		Return(nil, nil, nil, &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID})
+
+	got, err := collector.GetMetrics()
+
+	require.Error(t, err)
+	assert.True(t, dcgmerrors.IsFatalScrapeError(err))
+	assert.Nil(t, got)
+	collector.Cleanup()
 }
 
 // TestDCGMCollectorRateLimitsFailedRepair verifies backoff after a failed rewatch.
@@ -1109,16 +1430,9 @@ func TestDCGMCollectorRateLimitsFailedRepair(t *testing.T) {
 func TestDCGMCollectorFatalErrorPrecedesProfilingRepair(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
-	realOS := os
-	t.Cleanup(func() { os = realOS })
-
 	ctrl := gomock.NewController(t)
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
 	dcgmprovider.SetClient(mockDCGM)
-	mockOS := mockos.NewMockOS(ctrl)
-	os = mockOS
-	mockOS.EXPECT().Exit(1)
-
 	counter := testProfilingCounter()
 	deviceInfo := testGPUDeviceInfo(ctrl)
 	watchList := *devicewatchlistmanager.NewWatchList(
@@ -1136,6 +1450,7 @@ func TestDCGMCollectorFatalErrorPrecedesProfilingRepair(t *testing.T) {
 
 	_, err := collector.GetMetrics()
 	require.Error(t, err)
+	assert.True(t, dcgmerrors.IsFatalScrapeError(err))
 }
 
 // TestDCGMCollectorConcurrentScrapesPerformOneRepair verifies lifecycle serialization.
@@ -1205,6 +1520,79 @@ func TestDCGMCollectorConcurrentScrapesPerformOneRepair(t *testing.T) {
 	collector.Cleanup()
 }
 
+func TestDCGMCollectorGetMetricsTimestamps(t *testing.T) {
+	const sourceTimestamp int64 = 1_700_000_000_123_456
+	const readTimestamp int64 = 1_800_000_000_123_456
+	tests := []struct {
+		name       string
+		fieldCount int
+		gpuCount   int
+		source     []int64
+		want       []int64
+	}{
+		{name: "source timestamp", fieldCount: 1, gpuCount: 1, source: []int64{sourceTimestamp}, want: []int64{sourceTimestamp}},
+		{name: "zero uses read time", fieldCount: 1, gpuCount: 1, source: []int64{0}, want: []int64{readTimestamp}},
+		{name: "mixed fields", fieldCount: 2, gpuCount: 1, source: []int64{sourceTimestamp, 0}, want: []int64{sourceTimestamp, readTimestamp}},
+		{name: "multiple entities", fieldCount: 1, gpuCount: 2, source: []int64{sourceTimestamp, 0}, want: []int64{sourceTimestamp, readTimestamp}},
+		{name: "multiple native batches", fieldCount: 129, gpuCount: 1, source: []int64{0, sourceTimestamp}, want: []int64{readTimestamp, sourceTimestamp}},
+		{name: "negative source", fieldCount: 1, gpuCount: 1, source: []int64{-1}, want: []int64{-1}},
+		{name: "maximum source", fieldCount: 1, gpuCount: 1, source: []int64{1<<63 - 1}, want: []int64{1<<63 - 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mockdcgm.NewMockDCGM(ctrl)
+			info := mockdeviceinfo.NewMockProvider(ctrl)
+			info.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
+			info.EXPECT().GOpts().Return(appconfig.DeviceOptions{MajorRange: []int{-1}}).AnyTimes()
+			info.EXPECT().GPUCount().Return(uint(tt.gpuCount)).AnyTimes()
+
+			fields := make([]dcgm.Short, tt.fieldCount)
+			selectedCounters := make([]counters.Counter, tt.fieldCount)
+			inputs := make([][]dcgm.FieldValue_v1, tt.gpuCount)
+			for gpu := range tt.gpuCount {
+				info.EXPECT().GPU(uint(gpu)).Return(deviceinfo.GPUInfo{DeviceInfo: dcgm.Device{GPU: uint(gpu)}}).AnyTimes()
+				inputs[gpu] = make([]dcgm.FieldValue_v1, tt.fieldCount)
+				for i := range fields {
+					fields[i] = dcgm.Short(i + 1)
+					selectedCounters[i] = counters.Counter{FieldID: fields[i], FieldName: fmt.Sprintf("FIELD_%d", fields[i]), PromType: "gauge"}
+					value := int64FieldValue(fields[i], 42)
+					value.TS = tt.source[(gpu*tt.fieldCount+i)%len(tt.source)]
+					inputs[gpu][i] = value
+				}
+				for start := 0; start < tt.fieldCount; start += 128 {
+					end := min(start+128, tt.fieldCount)
+					client.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(gpu), fields[start:end]).Return(inputs[gpu][start:end], nil)
+				}
+			}
+			clockCalls := 0
+			collector := &DCGMCollector{
+				client:          client,
+				counters:        selectedCounters,
+				deviceWatchList: *devicewatchlistmanager.NewWatchList(info, fields, nil, devicewatcher.NewDeviceWatcher(), 1),
+				now: func() time.Time {
+					clockCalls++
+					return time.Unix(1_800_000_000, 123_456_789)
+				},
+			}
+
+			got, err := collector.GetMetrics()
+
+			require.NoError(t, err)
+			assert.Equal(t, 1, clockCalls)
+			require.Len(t, got, tt.fieldCount)
+			for index := range tt.gpuCount * tt.fieldCount {
+				gpu, i := index/tt.fieldCount, index%tt.fieldCount
+				counter := selectedCounters[i]
+				require.Len(t, got[counter], tt.gpuCount)
+				assert.Equal(t, tt.want[index%len(tt.want)], got[counter][gpu].Timestamp, "GPU %d field %d", gpu, counter.FieldID)
+				assert.Equal(t, tt.source[index%len(tt.source)], inputs[gpu][i].TS, "native timestamp must remain unchanged")
+			}
+		})
+	}
+}
+
+// TestDCGMCollectorGetMetricsSuccessAndFailure returns sampled GPU metrics on success and no partial result on query failure.
 func TestDCGMCollectorGetMetricsSuccessAndFailure(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -1272,6 +1660,8 @@ func TestDCGMCollectorGetMetricsSuccessAndFailure(t *testing.T) {
 	})
 }
 
+// TestDCGMCollectorGetMetricsFetchesLabelFieldsForMetricLabels checks that label fields are read in the same
+// request as metric fields and added to the metric series as labels.
 func TestDCGMCollectorGetMetricsFetchesLabelFieldsForMetricLabels(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -1321,6 +1711,9 @@ func TestDCGMCollectorGetMetricsFetchesLabelFieldsForMetricLabels(t *testing.T) 
 	assert.Equal(t, map[string]string{"DCGM_FI_DRIVER_VERSION": "555.55"}, got[metricCounter][0].Labels)
 }
 
+// TestDCGMCollectorGetMetricsReadsComputeInstanceFieldsAtSupportedScopes checks that a GPU instance read skips
+// the compute instance field, while whole GPUs and compute instances read it; samples keep their own timestamps,
+// and a sample with no timestamp uses the scrape time.
 func TestDCGMCollectorGetMetricsReadsComputeInstanceFieldsAtSupportedScopes(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -1379,18 +1772,22 @@ func TestDCGMCollectorGetMetricsReadsComputeInstanceFieldsAtSupportedScopes(t *t
 	mockDCGM.EXPECT().
 		EntityGetLatestValues(dcgm.FE_GPU_I, uint(7), []dcgm.Short{labelCounter.FieldID}).
 		Return([]dcgm.FieldValue_v1{stringFieldValue(labelCounter.FieldID, "555.55")}, nil)
-	// A whole GPU keeps the complete pre-4.8.4 field set even though DCGM
-	// classifies framebuffer fields at compute-instance scope.
+	// A whole GPU still reads every configured field, including framebuffer
+	// fields that DCGM classifies at compute-instance scope.
+	gpuSample := int64FieldValue(counter.FieldID, 230)
+	gpuSample.TS = 230
+	ciSample := int64FieldValue(counter.FieldID, 100)
+	ciSample.TS = 100
 	mockDCGM.EXPECT().
 		EntityGetLatestValues(dcgm.FE_GPU, uint(1), []dcgm.Short{counter.FieldID, labelCounter.FieldID}).
 		Return([]dcgm.FieldValue_v1{
-			int64FieldValue(counter.FieldID, 230),
+			gpuSample,
 			stringFieldValue(labelCounter.FieldID, "555.55"),
 		}, nil)
 	mockDCGM.EXPECT().
 		EntityGetLatestValues(dcgm.FE_GPU_CI, uint(21), []dcgm.Short{counter.FieldID, labelCounter.FieldID}).
 		Return([]dcgm.FieldValue_v1{
-			int64FieldValue(counter.FieldID, 100),
+			ciSample,
 			stringFieldValue(labelCounter.FieldID, "555.55"),
 		}, nil)
 	mockDCGM.EXPECT().
@@ -1407,6 +1804,7 @@ func TestDCGMCollectorGetMetricsReadsComputeInstanceFieldsAtSupportedScopes(t *t
 		nonComputeInstanceFields:    []dcgm.Short{labelCounter.FieldID},
 		computeInstanceScrapeFields: []dcgm.Short{counter.FieldID, labelCounter.FieldID},
 		hostname:                    "host-a",
+		now:                         func() time.Time { return time.Unix(100, 123_456_789) },
 	}
 
 	got, err := collector.GetMetrics()
@@ -1414,17 +1812,23 @@ func TestDCGMCollectorGetMetricsReadsComputeInstanceFieldsAtSupportedScopes(t *t
 	require.NoError(t, err)
 	require.Len(t, got[counter], 3)
 	assert.Equal(t, "230", got[counter][0].Value)
+	assert.Equal(t, int64(230), got[counter][0].Timestamp)
 	assert.Empty(t, got[counter][0].GPUComputeInstanceID)
 	assert.Empty(t, got[counter][0].GPUInstanceID)
 	assert.Equal(t, map[string]string{"DCGM_FI_DRIVER_VERSION": "555.55"}, got[counter][0].Labels)
 	assert.Equal(t, "100", got[counter][1].Value)
+	assert.Equal(t, int64(100), got[counter][1].Timestamp)
 	assert.Equal(t, "0", got[counter][1].GPUComputeInstanceID)
 	assert.Equal(t, "3", got[counter][1].GPUInstanceID)
 	assert.Equal(t, "1g.10gb", got[counter][1].MigProfile)
 	assert.Equal(t, "200", got[counter][2].Value)
+	assert.Equal(t, int64(100_123_456), got[counter][2].Timestamp)
 	assert.Equal(t, "1", got[counter][2].GPUComputeInstanceID)
 }
 
+// TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes checks that an XID field is read for the whole GPU,
+// the GPU instance, and the compute instance, giving one series each, all stamped with the scrape time taken
+// before the reads.
 func TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes(t *testing.T) {
 	realDCGM := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(realDCGM) })
@@ -1466,8 +1870,10 @@ func TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes(t *testing.T) {
 		1,
 	)
 
+	now := time.Unix(100, 123_456_789)
 	mockDCGM.EXPECT().
 		EntityGetLatestValues(dcgm.FE_GPU, uint(0), []dcgm.Short{counter.FieldID}).
+		Do(func(dcgm.Field_Entity_Group, uint, []dcgm.Short) { now = now.Add(time.Second) }).
 		Return([]dcgm.FieldValue_v1{int64FieldValue(counter.FieldID, 79)}, nil)
 	mockDCGM.EXPECT().
 		EntityGetLatestValues(dcgm.FE_GPU_I, uint(7), []dcgm.Short{counter.FieldID}).
@@ -1484,6 +1890,7 @@ func TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes(t *testing.T) {
 		computeInstanceScrapeFields: []dcgm.Short{counter.FieldID},
 		parentGPUScrapeFields:       []dcgm.Short{counter.FieldID},
 		hostname:                    "host-a",
+		now:                         func() time.Time { return now },
 	}
 
 	got, err := collector.GetMetrics()
@@ -1493,6 +1900,7 @@ func TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes(t *testing.T) {
 	valuesByScope := make(map[string]string)
 	for _, metric := range got[counter] {
 		valuesByScope[metric.GPUInstanceID+":"+metric.GPUComputeInstanceID] = metric.Value
+		assert.Equal(t, int64(100_123_456), metric.Timestamp)
 	}
 	assert.Equal(t, map[string]string{
 		":":   "79",
@@ -1501,23 +1909,9 @@ func TestDCGMCollectorGetMetricsReadsDirectXIDFieldsAtAllScopes(t *testing.T) {
 	}, valuesByScope)
 }
 
-func TestSplitComputeInstanceFieldsKeepsLabelsWithComputeInstanceMetrics(t *testing.T) {
-	metricField := dcgm.DCGM_FI_DEV_GPU_TEMP
-	computeInstanceField := dcgm.DCGM_FI_DEV_FB_USED
-	multiScopeField := dcgm.DCGM_FI_DEV_XID_ERRORS
-	labelField := dcgm.DCGM_FI_DRIVER_VERSION
-
-	nonComputeInstanceFields, computeInstanceFields := splitComputeInstanceFields(
-		[]dcgm.Short{metricField, computeInstanceField, multiScopeField, labelField},
-		[]dcgm.Short{computeInstanceField, multiScopeField},
-		[]dcgm.Short{multiScopeField},
-		[]dcgm.Short{labelField},
-	)
-
-	assert.Equal(t, []dcgm.Short{metricField, multiScopeField, labelField}, nonComputeInstanceFields)
-	assert.Equal(t, []dcgm.Short{computeInstanceField, multiScopeField, labelField}, computeInstanceFields)
-}
-
+// TestFieldsForScrapeKeepsComputeInstanceFieldsOnSelectedFullGPU checks that a whole GPU reads all scrape
+// fields, a GPU instance reads only the non compute instance fields, and a compute instance reads only the
+// compute instance fields.
 func TestFieldsForScrapeKeepsComputeInstanceFieldsOnSelectedFullGPU(t *testing.T) {
 	metricField := dcgm.DCGM_FI_DEV_GPU_TEMP
 	computeInstanceField := dcgm.DCGM_FI_DEV_FB_USED
@@ -1687,6 +2081,9 @@ func TestDCGMCollectorLatestValuesAddsBatchFailureContext(t *testing.T) {
 	))
 }
 
+// TestNewDCGMCollectorValidationAndNilConfig checks that an empty watch list is rejected with
+// "deviceWatchList is empty", and that a non-empty list with a nil config still builds a collector with the
+// given hostname.
 func TestNewDCGMCollectorValidationAndNilConfig(t *testing.T) {
 	_, err := NewDCGMCollector(nil, "host-a", &appconfig.Config{}, devicewatchlistmanager.WatchList{})
 	require.Error(t, err)
@@ -1704,6 +2101,9 @@ func TestNewDCGMCollectorValidationAndNilConfig(t *testing.T) {
 	assert.Equal(t, "host-a", got.hostname)
 }
 
+// TestNewDCGMCollectorCachesScrapeFields checks that the collector stores the device fields followed by the
+// label fields with duplicates removed, leaves the parent GPU fields empty, and keeps its own copy when the
+// caller later changes the input slices.
 func TestNewDCGMCollectorCachesScrapeFields(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1768,6 +2168,7 @@ func TestNewDCGMCollectorCachesScrapeFields(t *testing.T) {
 	}
 }
 
+// TestDCGMCollectorGetMetricsEntityBranches assigns switch, CPU, and CPU-core samples to their matching identity fields.
 func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1784,14 +2185,41 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 				info.EXPECT().IsSwitchWatched(uint(3)).Return(true).AnyTimes()
 			},
 			expectDCGM: func(mockDCGM *mockdcgm.MockDCGM, fieldID dcgm.Short) {
+				sample := int64FieldValue(fieldID, 11)
+				sample.TS = 11
 				mockDCGM.EXPECT().
 					EntityGetLatestValues(dcgm.FE_SWITCH, uint(3), []dcgm.Short{fieldID}).
-					Return([]dcgm.FieldValue_v1{int64FieldValue(fieldID, 11)}, nil)
+					Return([]dcgm.FieldValue_v1{sample}, nil)
 			},
 			assertion: func(t *testing.T, got Metric) {
 				assert.Equal(t, "11", got.Value)
+				assert.Equal(t, int64(11), got.Timestamp)
 				assert.Equal(t, "nvswitch3", got.NvSwitch)
 				assert.Empty(t, got.NvLink)
+			},
+		},
+		{
+			name:     "switch nvlink entity",
+			infoType: dcgm.FE_LINK,
+			setupInfo: func(info *mockdeviceinfo.MockProvider) {
+				info.EXPECT().GPUCount().Return(uint(0)).AnyTimes()
+				info.EXPECT().Switches().Return([]deviceinfo.SwitchInfo{{
+					EntityId: 3,
+					NvLinks:  []dcgm.NvLinkStatus{{Index: 4, State: dcgm.LS_UP, ParentId: 3, ParentType: dcgm.FE_SWITCH}},
+				}}).AnyTimes()
+				info.EXPECT().IsSwitchWatched(uint(3)).Return(true).AnyTimes()
+				info.EXPECT().IsLinkWatched(uint(4), uint(3)).Return(true).AnyTimes()
+			},
+			expectDCGM: func(mockDCGM *mockdcgm.MockDCGM, fieldID dcgm.Short) {
+				mockDCGM.EXPECT().
+					LinkGetLatestValues(uint(4), dcgm.FE_SWITCH, uint(3), []dcgm.Short{fieldID}).
+					Return([]dcgm.FieldValue_v1{int64FieldValue(fieldID, 12)}, nil)
+			},
+			assertion: func(t *testing.T, got Metric) {
+				assert.Equal(t, "12", got.Value)
+				assert.Equal(t, "nvswitch3", got.NvSwitch)
+				assert.Equal(t, "4", got.NvLink)
+				assert.Equal(t, int64(100_123_456), got.Timestamp)
 			},
 		},
 		{
@@ -1802,13 +2230,16 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 				info.EXPECT().IsCPUWatched(uint(2)).Return(true).AnyTimes()
 			},
 			expectDCGM: func(mockDCGM *mockdcgm.MockDCGM, fieldID dcgm.Short) {
+				sample := int64FieldValue(fieldID, 22)
+				sample.TS = 22
 				mockDCGM.EXPECT().
 					EntityGetLatestValues(dcgm.FE_CPU, uint(2), []dcgm.Short{fieldID}).
-					Return([]dcgm.FieldValue_v1{int64FieldValue(fieldID, 22)}, nil)
+					Return([]dcgm.FieldValue_v1{sample}, nil)
 			},
 			assertion: func(t *testing.T, got Metric) {
 				assert.Equal(t, "22", got.Value)
-				assert.Equal(t, "2", got.GPU)
+				assert.Equal(t, int64(22), got.Timestamp)
+				assert.Equal(t, "2", got.CPU)
 				assert.Equal(t, "CPU-SERIAL-123", got.CPUSerial)
 			},
 		},
@@ -1827,7 +2258,9 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 			},
 			assertion: func(t *testing.T, got Metric) {
 				assert.Equal(t, "23", got.Value)
-				assert.Equal(t, "11", got.GPU)
+				assert.Equal(t, int64(100_123_456), got.Timestamp)
+				assert.Equal(t, "2", got.CPU)
+				assert.Equal(t, "11", got.CPUCore)
 				assert.Equal(t, "2", got.GPUDevice)
 				assert.Empty(t, got.CPUSerial)
 			},
@@ -1853,12 +2286,15 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 				info.EXPECT().Switches().Return(nil).AnyTimes()
 			},
 			expectDCGM: func(mockDCGM *mockdcgm.MockDCGM, fieldID dcgm.Short) {
+				sample := int64FieldValue(fieldID, 33)
+				sample.TS = 33
 				mockDCGM.EXPECT().
 					LinkGetLatestValues(uint(4), dcgm.FE_GPU, uint(0), []dcgm.Short{fieldID}).
-					Return([]dcgm.FieldValue_v1{int64FieldValue(fieldID, 33)}, nil)
+					Return([]dcgm.FieldValue_v1{sample}, nil)
 			},
 			assertion: func(t *testing.T, got Metric) {
 				assert.Equal(t, "33", got.Value)
+				assert.Equal(t, int64(33), got.Timestamp)
 				assert.Equal(t, "4", got.NvLink)
 				assert.Equal(t, "GPU-0", got.GPUUUID)
 			},
@@ -1891,6 +2327,7 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 				counters:        []counters.Counter{counter},
 				deviceWatchList: watchList,
 				hostname:        "host-a",
+				now:             func() time.Time { return time.Unix(100, 123_456_789) },
 			}
 
 			got, err := collector.GetMetrics()
@@ -1902,6 +2339,8 @@ func TestDCGMCollectorGetMetricsEntityBranches(t *testing.T) {
 	}
 }
 
+// TestCPUSerialForEntityReturnsEmptyWhenMissing checks that cpuSerialForEntity returns an empty string for a CPU
+// ID that the device info does not list.
 func TestCPUSerialForEntityReturnsEmptyWhenMissing(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	info := mockdeviceinfo.NewMockProvider(ctrl)
@@ -1912,24 +2351,28 @@ func TestCPUSerialForEntityReturnsEmptyWhenMissing(t *testing.T) {
 	assert.Empty(t, cpuSerialForEntity(info, 9))
 }
 
+// TestToSwitchMetric converts samples for a switch link and checks the value, link and switch names, hostname
+// and old-namespace UUID label name. A label sample without data does not replace an earlier label value, and
+// a field with no counter is ignored.
 func TestToSwitchMetric(t *testing.T) {
 	labelCounter := counters.Counter{FieldID: 1, FieldName: "switch_label", PromType: "label"}
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "switch_temp", PromType: "gauge"}
 	unavailableLabel := stringFieldValue(labelCounter.FieldID, "should-not-overwrite")
 	unavailableLabel.Status = dcgm.DCGM_ST_NO_DATA
 	metrics := MetricsByCounter{}
+	collector := &DCGMCollector{counters: []counters.Counter{labelCounter, valueCounter}, useOldNamespace: true, hostname: "host-a"}
 	mi := devicemonitoring.Info{
 		Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: 3},
 		ParentId:   9,
 		ParentType: dcgm.FE_SWITCH,
 	}
 
-	toSwitchMetric(metrics, []dcgm.FieldValue_v1{
+	collector.toSwitchMetric(metrics, []dcgm.FieldValue_v1{
 		stringFieldValue(labelCounter.FieldID, "fabric-a"),
 		unavailableLabel,
 		int64FieldValue(valueCounter.FieldID, 77),
 		int64FieldValue(999, 1), // adversarial: field not configured
-	}, []counters.Counter{labelCounter, valueCounter}, mi, true, "host-a")
+	}, mi, 0, nil)
 
 	require.Len(t, metrics[valueCounter], 1)
 	got := metrics[valueCounter][0]
@@ -1946,16 +2389,17 @@ func TestToSwitchMetric(t *testing.T) {
 func TestToSwitchMetricUsesEntityIDForEachSwitch(t *testing.T) {
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "switch_temp", PromType: "gauge"}
 	metrics := MetricsByCounter{}
+	collector := &DCGMCollector{counters: []counters.Counter{valueCounter}, hostname: "host-a"}
 
 	for _, sample := range []struct {
 		entityID uint
 		value    byte
 	}{{entityID: 0, value: 40}, {entityID: 3, value: 43}} {
-		toSwitchMetric(metrics, []dcgm.FieldValue_v1{
+		collector.toSwitchMetric(metrics, []dcgm.FieldValue_v1{
 			int64FieldValue(valueCounter.FieldID, sample.value),
-		}, []counters.Counter{valueCounter}, devicemonitoring.Info{
+		}, devicemonitoring.Info{
 			Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_SWITCH, EntityId: sample.entityID},
-		}, false, "host-a")
+		}, 0, nil)
 	}
 
 	require.Len(t, metrics[valueCounter], 2)
@@ -1965,35 +2409,68 @@ func TestToSwitchMetricUsesEntityIDForEachSwitch(t *testing.T) {
 	assert.Empty(t, metrics[valueCounter][1].NvLink)
 }
 
+// TestToCPUMetric verifies CPU and CPU-core samples preserve their distinct
+// entity identities before the renderer assigns Prometheus labels.
 func TestToCPUMetric(t *testing.T) {
 	labelCounter := counters.Counter{FieldID: 1, FieldName: "cpu_label", PromType: "label"}
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "cpu_util", PromType: "gauge"}
-	metrics := MetricsByCounter{}
-	mi := devicemonitoring.Info{
-		Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: 11},
-		ParentId:   2,
-		ParentType: dcgm.FE_CPU,
+	collector := &DCGMCollector{counters: []counters.Counter{labelCounter, valueCounter}, hostname: "host-a"}
+
+	tests := []struct {
+		name       string
+		metricInfo devicemonitoring.Info
+		cpuSerial  string
+		wantCPU    string
+		wantCore   string
+	}{
+		{
+			name: "CPU entity has no core identity",
+			metricInfo: devicemonitoring.Info{
+				Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU, EntityId: 2},
+				ParentType: dcgm.FE_NONE,
+			},
+			cpuSerial: "CPU-SERIAL-2",
+			wantCPU:   "2",
+		},
+		{
+			name: "CPU core preserves its CPU parent identity",
+			metricInfo: devicemonitoring.Info{
+				Entity:     dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_CPU_CORE, EntityId: 11},
+				ParentId:   2,
+				ParentType: dcgm.FE_CPU,
+			},
+			wantCPU:  "2",
+			wantCore: "11",
+		},
 	}
 
-	toCPUMetric(metrics, []dcgm.FieldValue_v1{
-		stringFieldValue(labelCounter.FieldID, "socket-a"),
-		int64FieldValue(valueCounter.FieldID, 91),
-	}, []counters.Counter{labelCounter, valueCounter}, mi, false, "host-a", "")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metrics := MetricsByCounter{}
+			collector.toCPUMetric(metrics, []dcgm.FieldValue_v1{
+				stringFieldValue(labelCounter.FieldID, "socket-a"),
+				int64FieldValue(valueCounter.FieldID, 91),
+			}, tt.metricInfo, tt.cpuSerial, 0, nil)
 
-	require.Len(t, metrics[valueCounter], 1)
-	got := metrics[valueCounter][0]
-	assert.Equal(t, "91", got.Value)
-	assert.Equal(t, "UUID", got.UUID)
-	assert.Equal(t, "11", got.GPU)
-	assert.Equal(t, "2", got.GPUDevice)
-	assert.Equal(t, map[string]string{"cpu_label": "socket-a"}, got.Labels)
-	assert.Empty(t, got.CPUSerial)
+			require.Len(t, metrics[valueCounter], 1)
+			got := metrics[valueCounter][0]
+			assert.Equal(t, "91", got.Value)
+			assert.Equal(t, "UUID", got.UUID)
+			assert.Empty(t, got.UUIDLabelName)
+			assert.Equal(t, tt.wantCPU, got.CPU)
+			assert.Equal(t, tt.wantCore, got.CPUCore)
+			assert.Equal(t, fmt.Sprintf("%d", tt.metricInfo.ParentId), got.GPUDevice)
+			assert.Equal(t, map[string]string{"cpu_label": "socket-a"}, got.Labels)
+			assert.Equal(t, tt.cpuSerial, got.CPUSerial)
+		})
+	}
 }
 
+// TestToGPUNvLinkMetric checks the fields of a GPU NVLink link series and that
+// the model name follows the replace-blanks setting.
 func TestToGPUNvLinkMetric(t *testing.T) {
 	labelCounter := counters.Counter{FieldID: 1, FieldName: "link_label", PromType: "label"}
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "link_errors", PromType: "gauge"}
-	metrics := MetricsByCounter{}
 	mi := devicemonitoring.Info{
 		Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_LINK, EntityId: 5},
 		DeviceInfo: dcgm.Device{
@@ -2007,27 +2484,51 @@ func TestToGPUNvLinkMetric(t *testing.T) {
 		ParentType: dcgm.FE_GPU,
 	}
 
-	toGPUNvLinkMetric(metrics, []dcgm.FieldValue_v1{
-		stringFieldValue(labelCounter.FieldID, "link-a"),
-		int64FieldValue(valueCounter.FieldID, 12),
-	}, []counters.Counter{labelCounter, valueCounter}, mi, "host-a")
+	testCases := []struct {
+		name                     string
+		replaceBlanksInModelName bool
+		expectedGPUModelName     string
+	}{
+		{name: "blanks replaced", replaceBlanksInModelName: true, expectedGPUModelName: "NVIDIA-T400-4GB"},
+		{name: "blanks kept", replaceBlanksInModelName: false, expectedGPUModelName: "NVIDIA T400 4GB"},
+	}
 
-	require.Len(t, metrics[valueCounter], 1)
-	got := metrics[valueCounter][0]
-	assert.Equal(t, "12", got.Value)
-	assert.Equal(t, "4", got.GPU)
-	assert.Equal(t, "GPU-4", got.GPUUUID)
-	assert.Equal(t, "5", got.NvLink)
-	assert.Equal(t, "nvidia4", got.GPUDevice)
-	assert.Equal(t, "NVIDIA T400 4GB", got.GPUModelName)
-	assert.Equal(t, "0000:04:00.0", got.GPUPCIBusID)
-	assert.Equal(t, map[string]string{"link_label": "link-a"}, got.Labels)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			metrics := MetricsByCounter{}
+			collector := &DCGMCollector{
+				counters:                 []counters.Counter{labelCounter, valueCounter},
+				hostname:                 "host-a",
+				replaceBlanksInModelName: tc.replaceBlanksInModelName,
+			}
+
+			collector.toGPUNvLinkMetric(metrics, []dcgm.FieldValue_v1{
+				stringFieldValue(labelCounter.FieldID, "link-a"),
+				int64FieldValue(valueCounter.FieldID, 12),
+			}, mi, 0, nil)
+
+			require.Len(t, metrics[valueCounter], 1)
+			got := metrics[valueCounter][0]
+			assert.Equal(t, "12", got.Value)
+			assert.Equal(t, "4", got.GPU)
+			assert.Equal(t, "GPU-4", got.GPUUUID)
+			assert.Equal(t, "5", got.NvLink)
+			assert.Equal(t, "nvidia4", got.GPUDevice)
+			assert.Equal(t, tc.expectedGPUModelName, got.GPUModelName)
+			assert.Equal(t, "0000:04:00.0", got.GPUPCIBusID)
+			assert.Equal(t, "host-a", got.Hostname)
+			assert.Equal(t, map[string]string{"link_label": "link-a"}, got.Labels)
+		})
+	}
 }
 
+// TestToMetricWithMIGInstanceAndLabels converts samples for a GPU instance and checks that the metric carries
+// the MIG profile, the NVML GPU instance ID, the label field value and the old-namespace UUID label name.
 func TestToMetricWithMIGInstanceAndLabels(t *testing.T) {
 	labelCounter := counters.Counter{FieldID: 1, FieldName: "driver", PromType: "label"}
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "gpu_temp", PromType: "gauge"}
 	metrics := MetricsByCounter{}
+	collector := &DCGMCollector{counters: []counters.Counter{labelCounter, valueCounter}, useOldNamespace: true, hostname: "host-a"}
 	mi := devicemonitoring.Info{
 		DeviceInfo: dcgm.Device{
 			GPU:         2,
@@ -2041,10 +2542,10 @@ func TestToMetricWithMIGInstanceAndLabels(t *testing.T) {
 		ParentType: dcgm.FE_GPU,
 	}
 
-	toMetric(metrics, []dcgm.FieldValue_v1{
+	collector.toMetric(metrics, []dcgm.FieldValue_v1{
 		stringFieldValue(labelCounter.FieldID, "555.55"),
 		int64FieldValue(valueCounter.FieldID, 64),
-	}, []counters.Counter{labelCounter, valueCounter}, mi, true, "host-a", false)
+	}, mi, 0, nil)
 
 	require.Len(t, metrics[valueCounter], 1)
 	got := metrics[valueCounter][0]
@@ -2054,6 +2555,9 @@ func TestToMetricWithMIGInstanceAndLabels(t *testing.T) {
 	assert.Equal(t, map[string]string{"driver": "555.55"}, got.Labels)
 }
 
+// TestToMetricSuppressesCollectedHostnameLabelsWhenNoHostnameIsEnabled checks that a collector with no
+// hostname drops both its hostname and a Hostname label read from DCGM, while a collector with a hostname
+// keeps both.
 func TestToMetricSuppressesCollectedHostnameLabelsWhenNoHostnameIsEnabled(t *testing.T) {
 	hostnameCounter := counters.Counter{FieldID: 1, FieldName: "Hostname", PromType: "label"}
 	valueCounter := counters.Counter{FieldID: 2, FieldName: "DCGM_FI_PROF_PIPE_TENSOR_ACTIVE", PromType: "gauge"}
@@ -2068,11 +2572,12 @@ func TestToMetricSuppressesCollectedHostnameLabelsWhenNoHostnameIsEnabled(t *tes
 
 	t.Run("no hostname omits collected hostname label", func(t *testing.T) {
 		metrics := MetricsByCounter{}
+		collector := &DCGMCollector{counters: []counters.Counter{hostnameCounter, valueCounter}}
 
-		toMetric(metrics, []dcgm.FieldValue_v1{
+		collector.toMetric(metrics, []dcgm.FieldValue_v1{
 			stringFieldValue(hostnameCounter.FieldID, "k3d-node"),
 			int64FieldValue(valueCounter.FieldID, 7),
-		}, []counters.Counter{hostnameCounter, valueCounter}, mi, false, "", false)
+		}, mi, 0, nil)
 
 		require.Len(t, metrics[valueCounter], 1)
 		assert.Empty(t, metrics[valueCounter][0].Hostname)
@@ -2081,11 +2586,12 @@ func TestToMetricSuppressesCollectedHostnameLabelsWhenNoHostnameIsEnabled(t *tes
 
 	t.Run("normal hostname keeps collected hostname label", func(t *testing.T) {
 		metrics := MetricsByCounter{}
+		collector := &DCGMCollector{counters: []counters.Counter{hostnameCounter, valueCounter}, hostname: "exporter-node"}
 
-		toMetric(metrics, []dcgm.FieldValue_v1{
+		collector.toMetric(metrics, []dcgm.FieldValue_v1{
 			stringFieldValue(hostnameCounter.FieldID, "k3d-node"),
 			int64FieldValue(valueCounter.FieldID, 7),
-		}, []counters.Counter{hostnameCounter, valueCounter}, mi, false, "exporter-node", false)
+		}, mi, 0, nil)
 
 		require.Len(t, metrics[valueCounter], 1)
 		assert.Equal(t, "exporter-node", metrics[valueCounter][0].Hostname)
@@ -2093,6 +2599,7 @@ func TestToMetricSuppressesCollectedHostnameLabelsWhenNoHostnameIsEnabled(t *tes
 	})
 }
 
+// TestToString formats supported integer, double, and string values and skips failed, blank, or unsupported values.
 func TestToString(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -22,6 +22,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
+// Counter stores one metric's DCGM or exporter field identity and render metadata.
 type Counter struct {
 	FieldID   dcgm.Short `json:"field_id"`
 	FieldName string     `json:"field_name"`
@@ -29,16 +30,20 @@ type Counter struct {
 	Help      string     `json:"help"`
 }
 
+// IsLabel reports whether PromType marks this counter as a label-only field.
 func (c Counter) IsLabel() bool {
 	return c.PromType == "label"
 }
 
+// IsProfilingMetric reports whether this counter names a DCGM profiling field.
 func (c Counter) IsProfilingMetric() bool {
 	return strings.HasPrefix(c.FieldName, "DCGM_FI_PROF_")
 }
 
+// CounterList is the ordered set of counters selected for a metric source.
 type CounterList []Counter
 
+// LabelCounters returns only label fields, preserving source order.
 func (c CounterList) LabelCounters() CounterList {
 	var labelsCounters CounterList
 	for _, counter := range c {
@@ -50,6 +55,7 @@ func (c CounterList) LabelCounters() CounterList {
 	return labelsCounters
 }
 
+// NonLabelCounters returns metric counters, preserving source order.
 func (c CounterList) NonLabelCounters() CounterList {
 	var nonLabelCounters CounterList
 	for _, counter := range c {
@@ -61,6 +67,7 @@ func (c CounterList) NonLabelCounters() CounterList {
 	return nonLabelCounters
 }
 
+// HasProfilingMetrics reports whether any counter is a DCGM profiling field.
 func (c CounterList) HasProfilingMetrics() bool {
 	for _, counter := range c {
 		if counter.IsProfilingMetric() {
@@ -70,11 +77,13 @@ func (c CounterList) HasProfilingMetrics() bool {
 	return false
 }
 
+// CounterSet keeps configured DCGM fields separate from exporter-owned counters.
 type CounterSet struct {
 	DCGMCounters     CounterList
 	ExporterCounters CounterList
 }
 
+// HasProfilingMetrics reports whether either counter list contains a profiling field.
 func (cs *CounterSet) HasProfilingMetrics() bool {
 	return cs.DCGMCounters.HasProfilingMetrics() || cs.ExporterCounters.HasProfilingMetrics()
 }

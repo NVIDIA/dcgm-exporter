@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+filegroup(
+    name = "source_files",
+    srcs = glob(["*.go"]),
+    visibility = ["//tests/static:__pkg__"],
+)
+
+go_library(
+    name = "resultmarker",
+    srcs = ["resultmarker.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/internal/resultmarker",
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        "@com_github_onsi_ginkgo_v2//:ginkgo",
+        "@com_github_onsi_ginkgo_v2//types",
+    ],
+)
+
+go_test(
+    name = "resultmarker_test",
+    srcs = ["resultmarker_test.go"],
+    embed = [":resultmarker"],
+    deps = [
+        "@com_github_onsi_ginkgo_v2//:ginkgo",
+        "@com_github_onsi_ginkgo_v2//types",
+        "@com_github_onsi_gomega//:gomega",
+    ],
+)

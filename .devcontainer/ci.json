@@ -1,0 +1,7 @@
+{
+  "name": "dcgm-exporter-ci",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  }
+}

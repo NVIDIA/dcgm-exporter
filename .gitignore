@@ -1,10 +1,25 @@
 *.swp
 *.swo
 
+# Python bytecode caches.
+__pycache__/
+
 # Local build and dependency caches.
-dcgm-exporter
+/dcgm-exporter
 .go/
 .cache/
+.tools/
+/bazel-bin
+/bazel-out
+/bazel-testlogs
+/bazel-*
+/\.bazelrc.local
+# Developer-local Go workspace.
+/go.work
+/go.work.sum
+# CI materializes its generated Go workspace in this directory.
+/.workspace/*
+!/.workspace/.gitkeep
 !etc/
 !deployment/
 .env
@@ -15,7 +30,7 @@ vendor/
 # Test, package, and scanner outputs.
 tests.cov
 test_results.json
-combined_coverage.out*
+test-reports/
 .coverdata/
 .scannerwork
 dist/
@@ -256,3 +271,5 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 .vscode/settings.json
+coverage.xml
+/integration_*

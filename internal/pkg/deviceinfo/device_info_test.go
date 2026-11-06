@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -34,12 +35,141 @@ import (
 	mockdcgm "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider"
 	mocknvml "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testfixtures"
+	testdcgm "github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils/dcgm"
 )
 
 var fakeProfileName = "2fake.4gb"
 
+func TestInitializeDetachedGPU(t *testing.T) {
+	tests := []struct {
+		name             string
+		statuses         []dcgm.EntityStatus
+		options          appconfig.DeviceOptions
+		infoError        error
+		wantError        string
+		detachDuringInfo bool
+		cachedMIG        bool
+	}{
+		{
+			name:     "flexible selection retains detached identity",
+			statuses: []dcgm.EntityStatus{dcgm.EntityStatusDetached},
+			options:  appconfig.DeviceOptions{Flex: true},
+		},
+		{
+			name:     "explicit detached GPU is known",
+			statuses: []dcgm.EntityStatus{dcgm.EntityStatusDetached},
+			options:  appconfig.DeviceOptions{MajorRange: []int{0}},
+		},
+		{
+			name:      "cached detached MIG identity needs no profile query",
+			statuses:  []dcgm.EntityStatus{dcgm.EntityStatusDetached},
+			options:   appconfig.DeviceOptions{MinorRange: []int{10}},
+			cachedMIG: true,
+		},
+		{
+			name:             "detach completes during metadata lookup",
+			statuses:         []dcgm.EntityStatus{dcgm.EntityStatusOk},
+			options:          appconfig.DeviceOptions{Flex: true},
+			infoError:        &dcgm.Error{Code: dcgm.DCGM_ST_NVML_NOT_LOADED},
+			detachDuringInfo: true,
+		},
+		{
+			name:      "missing GPU still fails",
+			statuses:  []dcgm.EntityStatus{dcgm.EntityStatusDetached},
+			options:   appconfig.DeviceOptions{MajorRange: []int{1}},
+			wantError: "couldn't find requested GPU ID '1'",
+		},
+		{
+			name:     "mixed inventory keeps active GPU ID",
+			statuses: []dcgm.EntityStatus{dcgm.EntityStatusDetached, dcgm.EntityStatusOk},
+			options:  appconfig.DeviceOptions{Flex: true},
+		},
+		{
+			name:      "unknown status does not hide discovery failure",
+			statuses:  []dcgm.EntityStatus{dcgm.EntityStatusUnknown},
+			options:   appconfig.DeviceOptions{Flex: true},
+			infoError: errors.New("device attributes unavailable"),
+			wantError: "device attributes unavailable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := mockdcgm.NewMockDCGM(gomock.NewController(t))
+			previous := dcgmprovider.Client()
+			dcgmprovider.SetClient(client)
+			t.Cleanup(func() { dcgmprovider.SetClient(previous) })
+			client.EXPECT().GetAllDeviceCount().Return(uint(len(tt.statuses)), nil)
+			expectDetachedGPUDiscovery(client, tt.statuses, tt.infoError, tt.detachDuringInfo)
+			client.EXPECT().GetNvLinkLinkStatus().Return(nil, nil).AnyTimes()
+			hierarchyError := error(nil)
+			if len(tt.statuses) == 1 && (tt.statuses[0] == dcgm.EntityStatusDetached || tt.detachDuringInfo) {
+				hierarchyError = &dcgm.Error{Code: dcgm.DCGM_ST_NVML_NOT_LOADED}
+			}
+			hierarchy := dcgm.MigHierarchy_v2{}
+			if tt.cachedMIG {
+				hierarchyError = nil
+				hierarchy.Count = 2
+				hierarchy.EntityList[0].Entity = dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: 10}
+				hierarchy.EntityList[0].Parent = dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: 0}
+				hierarchy.EntityList[1].Entity = dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_CI, EntityId: 20}
+				hierarchy.EntityList[1].Parent = hierarchy.EntityList[0].Entity
+			}
+			client.EXPECT().GetGPUInstanceHierarchy().Return(hierarchy, hierarchyError).AnyTimes()
+			info, err := Initialize(tt.options, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, uint(len(tt.statuses)), info.GPUCount())
+			assertDetachedGPUInventory(t, info, tt.statuses, tt.detachDuringInfo, tt.cachedMIG)
+		})
+	}
+}
+
+func expectDetachedGPUDiscovery(client *mockdcgm.MockDCGM, statuses []dcgm.EntityStatus, infoError error, detachDuringInfo bool) {
+	for index, status := range statuses {
+		gpuID := uint(index)
+		statusCall := client.EXPECT().GetGPUStatus(gpuID).Return(status)
+		if status == dcgm.EntityStatusDetached {
+			continue
+		}
+		infoCall := client.EXPECT().GetDeviceInfo(gpuID).
+			Return(dcgm.Device{GPU: gpuID, UUID: "GPU-active"}, infoError).After(statusCall)
+		if infoError == nil {
+			continue
+		}
+		if detachDuringInfo {
+			status = dcgm.EntityStatusDetached
+		}
+		client.EXPECT().GetGPUStatus(gpuID).Return(status).After(infoCall)
+	}
+}
+
+func assertDetachedGPUInventory(t *testing.T, info *Info, statuses []dcgm.EntityStatus, detachDuringInfo, cachedMIG bool) {
+	t.Helper()
+	for index, status := range statuses {
+		gpu := info.GPU(uint(index))
+		require.Equal(t, uint(index), gpu.DeviceInfo.GPU)
+		if detachDuringInfo {
+			status = dcgm.EntityStatusDetached
+		}
+		require.Equal(t, status, gpu.Status)
+		if cachedMIG {
+			require.Len(t, gpu.GPUInstances, 1)
+			require.Equal(t, uint(10), gpu.GPUInstances[0].EntityId)
+			require.Len(t, gpu.GPUInstances[0].ComputeInstances, 1)
+			require.Equal(t, uint(20), gpu.GPUInstances[0].ComputeInstances[0].EntityId)
+		}
+	}
+}
+
+// captureWarnLogs installs a JSON slog handler for warning assertions and
+// restores the previous logger when the test ends.
 func captureWarnLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 
@@ -53,6 +183,8 @@ func captureWarnLogs(t *testing.T) *bytes.Buffer {
 	return &logs
 }
 
+// warningRecords returns JSON warning records from logs that have message. The
+// warning tests use it to assert structured attributes without log formatting.
 func warningRecords(t *testing.T, logs *bytes.Buffer, message string) []map[string]any {
 	t.Helper()
 
@@ -83,6 +215,8 @@ func dcgmStringFieldValue(fieldID dcgm.Short, value string) dcgm.FieldValue_v1 {
 	}
 }
 
+// SpoofGPUDeviceInfo builds a two-GPU MIG topology for JSON and selector tests.
+// It is a test fixture, not a representation of live DCGM output.
 func SpoofGPUDeviceInfo() Info {
 	var deviceInfo Info
 	deviceInfo.gpuCount = 2
@@ -104,24 +238,15 @@ func SpoofGPUDeviceInfo() Info {
 	return deviceInfo
 }
 
-type nonInfoProvider struct{}
+// nonInfoProvider satisfies Provider without being backed by Info. It embeds
+// the contract only for the safe rejection-path test, which never invokes an
+// embedded method.
+type nonInfoProvider struct {
+	Provider
+}
 
-func (nonInfoProvider) GPUCount() uint                    { return 0 }
-func (nonInfoProvider) GPUs() []GPUInfo                   { return nil }
-func (nonInfoProvider) GPU(uint) GPUInfo                  { return GPUInfo{} }
-func (nonInfoProvider) Switches() []SwitchInfo            { return nil }
-func (nonInfoProvider) Switch(uint) SwitchInfo            { return SwitchInfo{} }
-func (nonInfoProvider) CPUs() []CPUInfo                   { return nil }
-func (nonInfoProvider) CPU(uint) CPUInfo                  { return CPUInfo{} }
-func (nonInfoProvider) GOpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
-func (nonInfoProvider) SOpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
-func (nonInfoProvider) COpts() appconfig.DeviceOptions    { return appconfig.DeviceOptions{} }
-func (nonInfoProvider) InfoType() dcgm.Field_Entity_Group { return dcgm.FE_NONE }
-func (nonInfoProvider) IsCPUWatched(uint) bool            { return false }
-func (nonInfoProvider) IsCoreWatched(uint, uint) bool     { return false }
-func (nonInfoProvider) IsSwitchWatched(uint) bool         { return false }
-func (nonInfoProvider) IsLinkWatched(uint, uint) bool     { return false }
-
+// TestWarnMIGInstancesWithoutComputeInstances checks that only MIG instances
+// without compute instances produce the structured warning.
 func TestWarnMIGInstancesWithoutComputeInstances(t *testing.T) {
 	t.Run("GI with compute instances does not warn", func(t *testing.T) {
 		logs := captureWarnLogs(t)
@@ -201,8 +326,9 @@ func TestWarnMIGInstancesWithoutComputeInstances(t *testing.T) {
 	})
 }
 
+// TestGetters checks that Info returns its stored GPU, switch, CPU, and selector data.
 func TestGetters(t *testing.T) {
-	fakeDevices := SpoofGPUDevices()
+	fakeDevices := testfixtures.SampleGPUDevices()
 	fakeDeviceInfo := [dcgm.MAX_NUM_DEVICES]GPUInfo{}
 	fakeDeviceInfo[0] = GPUInfo{
 		DeviceInfo: fakeDevices[0],
@@ -277,6 +403,8 @@ func TestGetters(t *testing.T) {
 	assert.Equal(t, fakeInfoType, deviceInfo.InfoType(), "InfoType mismatch")
 }
 
+// TestInfoJSONAndBase64RoundTrip checks that JSON and base64 retain topology
+// and selector fields across serialization and decoding.
 func TestInfoJSONAndBase64RoundTrip(t *testing.T) {
 	info := SpoofGPUDeviceInfo()
 	info.infoType = dcgm.FE_GPU
@@ -303,6 +431,8 @@ func TestInfoJSONAndBase64RoundTrip(t *testing.T) {
 	assert.Equal(t, info.InfoType(), roundTrip.InfoType())
 }
 
+// TestToBase64Provider_NonInfoProvider checks that another Provider type safely
+// encodes as an empty JSON object without calling its embedded methods.
 func TestToBase64Provider_NonInfoProvider(t *testing.T) {
 	got := ToBase64Provider(nonInfoProvider{})
 	decoded, err := base64.StdEncoding.DecodeString(got)
@@ -311,7 +441,10 @@ func TestToBase64Provider_NonInfoProvider(t *testing.T) {
 	assert.JSONEq(t, `{}`, string(decoded))
 }
 
+// TestInfoUnmarshalJSONRejectsBadInput checks malformed JSON and GPU-count
+// mismatches before data is copied into Info.
 func TestInfoUnmarshalJSONRejectsBadInput(t *testing.T) {
+	// These cases cover malformed JSON and topology shapes that cannot fit Info.
 	tests := []struct {
 		name    string
 		data    string
@@ -332,10 +465,13 @@ func TestInfoUnmarshalJSONRejectsBadInput(t *testing.T) {
 }
 
 // TestInitializeUsesMinimalGPUInfoFallback verifies GPU identity can be
-// populated from DCGM field values when GetDeviceInfo is unavailable.
+// populated from DCGM field values when GetDeviceInfo is unavailable, and that
+// the fallback logs a warning.
 func TestInitializeUsesMinimalGPUInfoFallback(t *testing.T) {
+	logs := captureWarnLogs(t)
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 
 	realDCGM := dcgmprovider.Client()
 	defer func() {
@@ -368,15 +504,25 @@ func TestInitializeUsesMinimalGPUInfoFallback(t *testing.T) {
 	assert.Equal(t, uint(0), gpu.GPU)
 	assert.Equal(t, "Yes", gpu.DCGMSupported)
 	assert.Equal(t, "GPU-remote", gpu.UUID)
+	assert.False(t, info.GPU(0).SyntheticGPUUUID)
 	assert.Equal(t, "NVIDIA GB200", gpu.Identifiers.Model)
 	assert.Equal(t, "00000008:01:00.0", gpu.PCI.BusID)
+	records := warningRecords(t, logs, gpuIdentityFallbackWarning)
+	require.Len(t, records, 1)
+	assert.Equal(t, []any{float64(0)}, records[0]["gpu_ids"])
+	assert.Contains(t, records[0], "error")
+	assert.Equal(t, dcgmerrors.SupportedVersionHint, records[0]["hint"])
+	assert.Empty(t, warningRecords(t, logs, gpuPlaceholderUUIDWarning))
 }
 
 // TestInitializeUsesSyntheticMinimalGPUInfoFallback verifies remote hostengine
-// metrics still initialize when DCGM exposes GPU entity IDs but not identity fields.
+// metrics still initialize when DCGM exposes GPU entity IDs but not identity
+// fields, and that both fallback steps log a warning.
 func TestInitializeUsesSyntheticMinimalGPUInfoFallback(t *testing.T) {
+	logs := captureWarnLogs(t)
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 
 	realDCGM := dcgmprovider.Client()
 	defer func() {
@@ -405,13 +551,67 @@ func TestInitializeUsesSyntheticMinimalGPUInfoFallback(t *testing.T) {
 	assert.Equal(t, uint(0), gpu.GPU)
 	assert.Equal(t, "Yes", gpu.DCGMSupported)
 	assert.Equal(t, "GPU-0", gpu.UUID)
+	assert.True(t, info.GPU(0).SyntheticGPUUUID)
 	assert.Empty(t, gpu.Identifiers.Model)
 	assert.Empty(t, gpu.PCI.BusID)
+	identityRecords := warningRecords(t, logs, gpuIdentityFallbackWarning)
+	require.Len(t, identityRecords, 1)
+	assert.Equal(t, []any{float64(0)}, identityRecords[0]["gpu_ids"])
+	placeholderRecords := warningRecords(t, logs, gpuPlaceholderUUIDWarning)
+	require.Len(t, placeholderRecords, 1)
+	assert.Equal(t, []any{float64(0)}, placeholderRecords[0]["gpu_ids"])
+	assert.Equal(t, dcgmerrors.SupportedVersionHint, placeholderRecords[0]["hint"])
 }
 
+// TestInitializeWarnsOnceForGPUIdentityFallbacks checks that several GPUs on
+// the identity fallback share one warning per fallback step, listing their IDs.
+func TestInitializeWarnsOnceForGPUIdentityFallbacks(t *testing.T) {
+	logs := captureWarnLogs(t)
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	identityFields := []dcgm.Short{dcgm.DCGM_FI_DEV_NAME, dcgm.DCGM_FI_DEV_UUID, dcgm.DCGM_FI_DEV_PCI_BUSID}
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(3), nil)
+	mockDCGMProvider.EXPECT().GetDeviceInfo(gomock.Any()).Return(
+		dcgm.Device{},
+		&dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND},
+	).Times(3)
+	for _, gpuID := range []uint{0, 2} {
+		mockDCGMProvider.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, gpuID, identityFields).Return([]dcgm.FieldValue_v1{
+			dcgmStringFieldValue(dcgm.DCGM_FI_DEV_UUID, fmt.Sprintf("GPU-remote-%d", gpuID)),
+		}, nil)
+	}
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(dcgm.FE_GPU, uint(1), identityFields).Return(
+		nil, &dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND},
+	)
+	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+
+	info, err := Initialize(appconfig.DeviceOptions{Flex: true}, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+
+	require.NoError(t, err)
+	require.Equal(t, uint(3), info.GPUCount())
+	identityRecords := warningRecords(t, logs, gpuIdentityFallbackWarning)
+	require.Len(t, identityRecords, 1)
+	assert.Equal(t, []any{float64(0), float64(1), float64(2)}, identityRecords[0]["gpu_ids"])
+	placeholderRecords := warningRecords(t, logs, gpuPlaceholderUUIDWarning)
+	require.Len(t, placeholderRecords, 1)
+	assert.Equal(t, []any{float64(1)}, placeholderRecords[0]["gpu_ids"])
+}
+
+// TestInitializeDoesNotFallbackForMinimalGPUInfoQueryErrors checks that errors
+// from the fallback identity query remain visible to startup.
 func TestInitializeDoesNotFallbackForMinimalGPUInfoQueryErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 
 	realDCGM := dcgmprovider.Client()
 	defer func() {
@@ -441,6 +641,7 @@ func TestInitializeDoesNotFallbackForMinimalGPUInfoQueryErrors(t *testing.T) {
 func TestInitializeDoesNotFallbackForOtherGPUInfoErrors(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 
 	realDCGM := dcgmprovider.Client()
 	defer func() {
@@ -457,9 +658,12 @@ func TestInitializeDoesNotFallbackForOtherGPUInfoErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "device info failed")
 }
 
+// TestInitialize checks discovery and selector results for GPU, switch, link,
+// CPU, and CPU-core registries, including error cases.
 func TestInitialize(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
 
 	realDCGM := dcgmprovider.Client()
 	defer func() {
@@ -467,19 +671,23 @@ func TestInitialize(t *testing.T) {
 	}()
 	dcgmprovider.SetClient(mockDCGMProvider)
 
-	fakeDevices := SpoofGPUDevices()
-	_, fakeGPUs, _, _ := SpoofMigHierarchy()
+	fakeDevices := testfixtures.SampleGPUDevices()
+	_, fakeGPUs, _, _ := testfixtures.SampleMIGHierarchy()
 
+	// These cases cover each supported entity group and its startup errors.
 	tests := []struct {
-		name           string
-		gOpts          appconfig.DeviceOptions
-		sOpts          appconfig.DeviceOptions
-		cOpts          appconfig.DeviceOptions
-		entityType     dcgm.Field_Entity_Group
-		mockCalls      func()
+		name       string
+		gOpts      appconfig.DeviceOptions
+		sOpts      appconfig.DeviceOptions
+		cOpts      appconfig.DeviceOptions
+		entityType dcgm.Field_Entity_Group
+		// mockCalls sets the provider responses that one Initialize case expects.
+		mockCalls func()
+		// expectedOutput builds that case's expected discovered topology.
 		expectedOutput func() *Info
-		assertions     func(*Info, *Info)
-		wantErr        bool
+		// assertions compares the expected topology with Initialize's result.
+		assertions func(*Info, *Info)
+		wantErr    bool
 	}{
 		{
 			name:       "Initialize GPUs",
@@ -498,7 +706,7 @@ func TestInitialize(t *testing.T) {
 			},
 			expectedOutput: func() *Info {
 				return &Info{
-					gpuCount: 0,
+					gpuCount: 1,
 					gpus: [dcgm.MAX_NUM_DEVICES]GPUInfo{
 						{
 							DeviceInfo: fakeDevices[0],
@@ -513,6 +721,8 @@ func TestInitialize(t *testing.T) {
 				}
 			},
 			assertions: func(expected, actual *Info) {
+				assert.Equal(t, expected.gpuCount, actual.GPUCount(), "GPU count mismatch")
+
 				assert.Equal(t, expected.gpus[0].DeviceInfo, actual.gpus[0].DeviceInfo,
 					"GPU device info mismatch")
 
@@ -657,14 +867,13 @@ func TestInitialize(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "Initialize NV Link error",
+			name:       "Initialize NV Link without optional switch module",
 			sOpts:      appconfig.DeviceOptions{Flex: true},
 			entityType: dcgm.FE_LINK,
 			mockCalls: func() {
-				// Mock calls for initializeNvSwitchInfo (will return error but is ignored for FE_LINK)
+				// An absent switch module still allows GPU link discovery.
 				mockDCGMProvider.EXPECT().GetEntityGroupEntities(dcgm.FE_SWITCH).Return([]uint{uint(0)},
-					fmt.Errorf("some error"))
-				// Mock calls for initializeGPUInfo (called for FE_LINK even if initializeNvSwitchInfo fails)
+					&dcgm.Error{Code: dcgm.DCGM_ST_MODULE_NOT_LOADED})
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(0), nil)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
 				mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{Count: 0}, nil)
@@ -781,26 +990,31 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
-func TestInitializeGPUInfo(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+// initializeGPUInfoTestCase describes one mocked GPU discovery outcome. Each
+// case keeps its DCGM setup beside its expected topology.
+type initializeGPUInfoTestCase struct {
+	name  string
+	gOpts appconfig.DeviceOptions
+	// mockCalls sets the DCGM responses expected for this GPU discovery case.
+	mockCalls      func()
+	expectedOutput map[uint]GPUInfo
+	wantErr        bool
+}
 
-	realDCGM := dcgmprovider.Client()
-	defer func() {
-		dcgmprovider.SetClient(realDCGM)
-	}()
-	dcgmprovider.SetClient(mockDCGMProvider)
+// initializeGPUInfoTestGroup groups related GPU discovery cases under a stable
+// subtest name so callers can run one phase on its own.
+type initializeGPUInfoTestGroup struct {
+	name  string
+	cases []initializeGPUInfoTestCase
+}
 
-	fakeDevices := SpoofGPUDevices()
-	fakeMigHierarchy, fakeGPUs, fakeGPUInstances, fakeGPUComputeInstances := SpoofMigHierarchy()
-
-	tests := []struct {
-		name           string
-		gOpts          appconfig.DeviceOptions
-		mockCalls      func()
-		expectedOutput map[uint]GPUInfo
-		wantErr        bool
-	}{
+// basicDiscoveryCases returns GPU discovery cases without MIG relationships.
+func basicDiscoveryCases(
+	mockDCGMProvider *mockdcgm.MockDCGM,
+	fakeDevices []dcgm.Device,
+	fakeGPUs []dcgm.MigHierarchyInfo_v2,
+) []initializeGPUInfoTestCase {
+	return []initializeGPUInfoTestCase{
 		{
 			name: "GPU with 0 Device Count",
 			gOpts: appconfig.DeviceOptions{
@@ -860,7 +1074,7 @@ func TestInitializeGPUInfo(t *testing.T) {
 					Count: 2,
 				}
 				mockHierarchy.EntityList[0] = fakeGPUs[0]
-				mockHierarchy.EntityList[0] = fakeGPUs[1]
+				mockHierarchy.EntityList[1] = fakeGPUs[1]
 
 				mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(len(fakeDevices)), nil)
 				mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
@@ -922,6 +1136,17 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			wantErr: false,
 		},
+	}
+}
+
+// migHierarchyCases returns cases for single- and multi-GPU MIG discovery.
+func migHierarchyCases(
+	mockDCGMProvider *mockdcgm.MockDCGM,
+	fakeDevices []dcgm.Device,
+	fakeMigHierarchy dcgm.MigHierarchy_v2,
+	fakeGPUs, fakeGPUInstances, fakeGPUComputeInstances []dcgm.MigHierarchyInfo_v2,
+) []initializeGPUInfoTestCase {
+	return []initializeGPUInfoTestCase{
 		{
 			name: "GPU Count 1 with Hierarchy",
 			gOpts: appconfig.DeviceOptions{
@@ -1161,6 +1386,17 @@ func TestInitializeGPUInfo(t *testing.T) {
 			},
 			wantErr: true,
 		},
+	}
+}
+
+// selectorValidationCases returns accepted and rejected GPU selector cases.
+func selectorValidationCases(
+	mockDCGMProvider *mockdcgm.MockDCGM,
+	fakeDevices []dcgm.Device,
+	fakeMigHierarchy dcgm.MigHierarchy_v2,
+	fakeGPUInstances, fakeGPUComputeInstances []dcgm.MigHierarchyInfo_v2,
+) []initializeGPUInfoTestCase {
+	return []initializeGPUInfoTestCase{
 		{
 			name: "GPU Count 2 with Hierarchy and device options",
 			gOpts: appconfig.DeviceOptions{
@@ -1636,51 +1872,134 @@ func TestInitializeGPUInfo(t *testing.T) {
 			wantErr: true,
 		},
 	}
+}
 
-	for _, tt := range tests {
+// runInitializeGPUInfoTestGroup gives related cases a shared subtest prefix
+// so a failed discovery phase can be rerun on its own.
+func runInitializeGPUInfoTestGroup(t *testing.T, group initializeGPUInfoTestGroup) {
+	t.Helper()
+	t.Run(group.name, func(t *testing.T) {
+		for _, testCase := range group.cases {
+			t.Run(testCase.name, func(t *testing.T) {
+				runInitializeGPUInfoTestCase(t, testCase)
+			})
+		}
+	})
+}
+
+// runInitializeGPUInfoTestCase applies each case's mock setup, then checks
+// its error or shared topology expectations.
+func runInitializeGPUInfoTestCase(t *testing.T, testCase initializeGPUInfoTestCase) {
+	t.Helper()
+	testCase.mockCalls()
+
+	deviceInfo := Info{}
+	err := deviceInfo.initializeGPUInfo(testCase.gOpts, false)
+	if testCase.wantErr {
+		assert.Error(t, err, "Error expected")
+		return
+	}
+
+	require.NoError(t, err, "Error not expected")
+	assertInitializeGPUInfoMatches(t, deviceInfo, testCase.expectedOutput)
+}
+
+// assertInitializeGPUInfoMatches checks identity, MIG state, and instances
+// shared by all successful GPU discovery cases.
+func assertInitializeGPUInfoMatches(t *testing.T, deviceInfo Info, expectedOutput map[uint]GPUInfo) {
+	t.Helper()
+	assert.Equal(t, len(expectedOutput), int(deviceInfo.gpuCount), "GPU length mismatch")
+
+	for i := 0; i < int(deviceInfo.gpuCount); i++ {
+		actualGPU := deviceInfo.gpus[i]
+		expectedGPU := expectedOutput[actualGPU.DeviceInfo.GPU]
+		assert.Equal(t, expectedGPU.DeviceInfo, actualGPU.DeviceInfo, "GPU device info mismatch")
+		assert.Equal(t, expectedGPU.MigEnabled, actualGPU.MigEnabled, "MIG info mismatch")
+		assert.Equal(t, len(expectedGPU.GPUInstances), len(actualGPU.GPUInstances), "GPU Instances length mismatch")
+
+		for _, expectedInstance := range expectedGPU.GPUInstances {
+			instanceExists := slices.ContainsFunc(actualGPU.GPUInstances, func(actualInstance GPUInstanceInfo) bool {
+				return expectedInstance.Info == actualInstance.Info &&
+					expectedInstance.EntityId == actualInstance.EntityId &&
+					slices.Equal(expectedInstance.ComputeInstances, actualInstance.ComputeInstances)
+			})
+			assert.True(t, instanceExists, "Expected instance %+v not found", expectedInstance)
+		}
+	}
+}
+
+// TestInitializeGPUInfo keeps all 16 basic, MIG, and selector cases in named
+// groups so focused test runs retain the original discovery coverage.
+func TestInitializeGPUInfo(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	// Shared fixtures keep expected device identities and the MIG hierarchy aligned.
+	fakeDevices := testfixtures.SampleGPUDevices()
+	fakeMigHierarchy, fakeGPUs, fakeGPUInstances, fakeGPUComputeInstances := testfixtures.SampleMIGHierarchy()
+
+	groups := []initializeGPUInfoTestGroup{
+		{name: "basic discovery", cases: basicDiscoveryCases(mockDCGMProvider, fakeDevices, fakeGPUs)},
+		{name: "MIG hierarchy", cases: migHierarchyCases(
+			mockDCGMProvider, fakeDevices, fakeMigHierarchy, fakeGPUs, fakeGPUInstances, fakeGPUComputeInstances,
+		)},
+		{name: "selector validation", cases: selectorValidationCases(
+			mockDCGMProvider, fakeDevices, fakeMigHierarchy, fakeGPUInstances, fakeGPUComputeInstances,
+		)},
+	}
+
+	for _, group := range groups {
+		runInitializeGPUInfoTestGroup(t, group)
+	}
+}
+
+// TestInitializeGPUInfoPreservesPhysicalNVLinkIndices verifies discovery keeps sparse physical NVLink IDs.
+func TestInitializeGPUInfoPreservesPhysicalNVLinkIndices(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		indices []uint
+	}{
+		{name: "first physical link", indices: []uint{0}},
+		{name: "noncontiguous links", indices: []uint{0, 17}},
+		{name: "high physical link", indices: []uint{0, 17, 35}},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.mockCalls()
+			mockDCGM := mockdcgm.NewMockDCGM(gomock.NewController(t))
+			mockDCGM.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+			previous := dcgmprovider.Client()
+			dcgmprovider.SetClient(mockDCGM)
+			t.Cleanup(func() { dcgmprovider.SetClient(previous) })
 
-			if !tt.wantErr {
-				deviceInfo := Info{}
-				err := deviceInfo.initializeGPUInfo(tt.gOpts, false)
-				assert.NoError(t, err, "Error not expected")
-				assert.Equal(t, len(tt.expectedOutput), int(deviceInfo.gpuCount), "GPU length mismatch")
-
-				for i := 0; i < int(deviceInfo.gpuCount); i++ {
-					actualGPU := deviceInfo.gpus[i]
-					expectedGPU := tt.expectedOutput[actualGPU.DeviceInfo.GPU]
-
-					assert.Equal(t, expectedGPU.DeviceInfo, actualGPU.DeviceInfo,
-						"GPU device info mismatch")
-
-					assert.Equal(t, expectedGPU.MigEnabled, actualGPU.MigEnabled,
-						"MIG info mismatch")
-
-					assert.Equal(t, len(expectedGPU.GPUInstances), len(actualGPU.GPUInstances),
-						"GPU Instances length mismatch")
-
-					// Ensure each GPU Instance and Computer matches
-					for _, expectedInstance := range expectedGPU.GPUInstances {
-						instanceExist := slices.ContainsFunc(actualGPU.GPUInstances,
-							func(actualInstance GPUInstanceInfo) bool {
-								return expectedInstance.Info == actualInstance.Info &&
-									expectedInstance.EntityId == actualInstance.EntityId &&
-									slices.Equal(expectedInstance.ComputeInstances, actualInstance.ComputeInstances)
-							})
-
-						assert.True(t, instanceExist, "Expected instance %+v not found", expectedInstance)
-					}
+			links := make([]dcgm.NvLinkStatus, len(tt.indices))
+			for i, index := range tt.indices {
+				links[i] = dcgm.NvLinkStatus{
+					ParentType: dcgm.FE_GPU,
+					ParentId:   0,
+					Index:      index,
+					State:      dcgm.LS_UP,
 				}
-			} else {
-				deviceInfo := Info{}
-				err := deviceInfo.initializeGPUInfo(tt.gOpts, false)
-				assert.Error(t, err, "Error expected")
 			}
+			mockDCGM.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+			mockDCGM.EXPECT().GetDeviceInfo(uint(0)).Return(dcgm.Device{GPU: 0}, nil)
+			mockDCGM.EXPECT().GetNvLinkLinkStatus().Return(links, nil)
+			mockDCGM.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+
+			var info Info
+			require.NoError(t, info.initializeGPUInfo(appconfig.DeviceOptions{Flex: true}, false))
+			assert.Equal(t, links, info.gpus[0].NvLinks)
 		})
 	}
 }
 
+// TestInitializeCPUInfo checks CPU and core selection from the DCGM hierarchy,
+// including missing topology and provider errors.
 func TestInitializeCPUInfo(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
@@ -1691,9 +2010,11 @@ func TestInitializeCPUInfo(t *testing.T) {
 	}()
 	dcgmprovider.SetClient(mockDCGMProvider)
 
+	// These cases cover CPU selection, the discovered hierarchy, and lookup failures.
 	tests := []struct {
-		name                  string
-		cOpts                 appconfig.DeviceOptions
+		name  string
+		cOpts appconfig.DeviceOptions
+		// mockCalls sets the CPU hierarchy returned for this case.
 		mockCalls             func()
 		expectedCPUCoreOutput map[uint][]int
 		expectedCPUSerials    map[uint]string
@@ -2068,6 +2389,8 @@ func TestInitializeCPUInfo(t *testing.T) {
 	}
 }
 
+// TestInitializeNvSwitchInfo checks selected switch and link topology and
+// rejects missing selections or failed discovery.
 func TestInitializeNvSwitchInfo(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
@@ -2078,11 +2401,13 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 	}()
 	dcgmprovider.SetClient(mockDCGMProvider)
 
+	// These cases cover switch and link selection across topology sizes and errors.
 	tests := []struct {
-		name                    string
-		sOpts                   appconfig.DeviceOptions
-		switchOutput            []uint
-		linkStatusOutput        []dcgm.NvLinkStatus
+		name             string
+		sOpts            appconfig.DeviceOptions
+		switchOutput     []uint
+		linkStatusOutput []dcgm.NvLinkStatus
+		// mockCalls configures switch and link responses for this case.
 		mockCalls               func([]uint, []dcgm.NvLinkStatus)
 		expectedSwitchToLinkMap map[uint][]uint
 		wantErr                 bool
@@ -2436,6 +2761,8 @@ func TestInitializeNvSwitchInfo(t *testing.T) {
 	}
 }
 
+// TestVerifyDevicePresence checks explicit GPU and MIG selectors against the
+// discovered topology while allowing flexible selection.
 func TestVerifyDevicePresence(t *testing.T) {
 	deviceInfo := SpoofGPUDeviceInfo()
 	deviceInfo.gOpt.Flex = true
@@ -2466,7 +2793,9 @@ func TestVerifyDevicePresence(t *testing.T) {
 	require.Equal(t, err, nil, "Expected to have no error, but found %s", err)
 }
 
+// TestIsSwitchWatched checks flexible, wildcard, explicit, and unmatched switch IDs.
 func TestIsSwitchWatched(t *testing.T) {
+	// These cases cover flexible selection, wildcard selection, and explicit switch IDs.
 	tests := []struct {
 		name       string
 		switchID   uint
@@ -2533,7 +2862,10 @@ func TestIsSwitchWatched(t *testing.T) {
 	}
 }
 
+// TestIsLinkWatched checks link selectors together with switch selection and
+// discovered link membership.
 func TestIsLinkWatched(t *testing.T) {
+	// These cases cover link selection under watched switches and the link wildcard.
 	tests := []struct {
 		name       string
 		linkIndex  uint
@@ -2621,7 +2953,9 @@ func TestIsLinkWatched(t *testing.T) {
 	}
 }
 
+// TestIsCPUWatched checks flexible, wildcard, explicit, and unmatched CPU IDs.
 func TestIsCPUWatched(t *testing.T) {
+	// These cases cover CPU discovery, flexible mode, wildcard selection, and explicit IDs.
 	tests := []struct {
 		name       string
 		cpuID      uint
@@ -2715,7 +3049,9 @@ func TestIsCPUWatched(t *testing.T) {
 	}
 }
 
+// TestIsCoreWatched checks minor selectors only for cores under watched CPUs.
 func TestIsCoreWatched(t *testing.T) {
+	// These cases cover core selection within a selected CPU and the minor wildcard.
 	tests := []struct {
 		name       string
 		coreID     uint
@@ -2793,14 +3129,17 @@ func TestIsCoreWatched(t *testing.T) {
 	}
 }
 
+// TestSetMigProfileNames checks that sampled values resolve to known MIG
+// entities and that values for unknown entities return an error.
 func TestSetMigProfileNames(t *testing.T) {
 	config := &appconfig.Config{
 		EnableDCGMLog: true,
 		DCGMLogLevel:  "DEBUG",
 	}
-	dcgmprovider.SmartDCGMInit(t, config)
+	testdcgm.Initialize(t, config)
 	defer dcgmprovider.Client().Cleanup()
 
+	// These cases cover one or many sampled entities and an unmatched entity.
 	tests := []struct {
 		name       string
 		deviceInfo Info
@@ -2952,6 +3291,8 @@ func TestSetMigProfileNames(t *testing.T) {
 	}
 }
 
+// TestSetMigProfileNamesPrefersNVMLProfileName checks that NVML's resolved
+// profile name replaces DCGM's value when available.
 func TestSetMigProfileNamesPrefersNVMLProfileName(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
@@ -2994,7 +3335,10 @@ func TestSetMigProfileNamesPrefersNVMLProfileName(t *testing.T) {
 	assert.Equal(t, "7g.80gb", deviceInfo.gpus[0].GPUInstances[0].ProfileName)
 }
 
+// TestSetMigProfileNamesFallsBackToDCGMProfileName checks that NVML errors and
+// empty profile names leave DCGM's sampled value in place.
 func TestSetMigProfileNamesFallsBackToDCGMProfileName(t *testing.T) {
+	// Returned errors, including an unavailable optional symbol, preserve the sampled DCGM name.
 	tests := []struct {
 		name            string
 		deviceGPUUUID   string
@@ -3005,6 +3349,11 @@ func TestSetMigProfileNamesFallsBackToDCGMProfileName(t *testing.T) {
 			name:          "remote parent UUID is unavailable to local NVML",
 			deviceGPUUUID: "GPU-remote-parent",
 			nvmlErr:       fmt.Errorf("nvml unavailable"),
+		},
+		{
+			name:          "NVML profile symbol is unavailable",
+			deviceGPUUUID: "GPU-parent",
+			nvmlErr:       fmt.Errorf("failed to get GPU instance profile info: FUNCTION_NOT_FOUND"),
 		},
 		{
 			name:          "NVML returns an empty profile name",
@@ -3058,7 +3407,9 @@ func TestSetMigProfileNamesFallsBackToDCGMProfileName(t *testing.T) {
 	}
 }
 
+// Test_getCoreArray checks DCGM bitmask expansion and rejection of oversized masks.
 func Test_getCoreArray(t *testing.T) {
+	// These cases map DCGM core bitmasks to indexes and check the maximum supported size.
 	tests := []struct {
 		name    string
 		bitmask []uint64
@@ -3115,15 +3466,19 @@ func Test_getCoreArray(t *testing.T) {
 	}
 }
 
+// TestGetGPUInstanceIdentifier checks UUID-based lookup and the resulting
+// stable GPU-instance label value.
 func TestGetGPUInstanceIdentifier(t *testing.T) {
-	fakeDevices := SpoofGPUDevices()
+	fakeDevices := testfixtures.SampleGPUDevices()
 	gpuInstanceID := 3
 
+	// The local args fixture keeps each provider and requested identity together.
 	type args struct {
 		deviceInfo    Provider
 		gpuuuid       string
 		gpuInstanceID uint
 	}
+	// These cases cover UUID lookup and the empty result for a missing GPU.
 	tests := []struct {
 		name           string
 		args           args
@@ -3173,4 +3528,131 @@ func TestGetGPUInstanceIdentifier(t *testing.T) {
 				tt.args.gpuInstanceID), "GPU Instance Identifier mismatch")
 		})
 	}
+}
+
+// topologyFailureCase describes a discovery result used by CPU and NVSwitch error tests.
+type topologyFailureCase struct {
+	name     string
+	err      error
+	optional bool
+}
+
+// topologySelectorCase describes a selector used by CPU and NVSwitch error tests.
+type topologySelectorCase struct {
+	name     string
+	options  appconfig.DeviceOptions
+	explicit bool
+}
+
+// TestOptionalTopologyDiscovery checks which CPU and NVSwitch discovery failures startup may skip.
+func TestOptionalTopologyDiscovery(t *testing.T) {
+	failures := []topologyFailureCase{
+		{"empty topology", nil, true},
+		{"module unavailable", &dcgm.Error{Code: dcgm.DCGM_ST_MODULE_NOT_LOADED}, true},
+		{"legacy module unavailable", errors.New("This request is serviced by a module of DCGM that is not currently loaded"), true},
+		{"connection lost", &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID}, false},
+		{"permission denied", &dcgm.Error{Code: dcgm.DCGM_ST_NO_PERMISSION}, false},
+		{"unknown failure", errors.New("discovery failed"), false},
+	}
+	selectors := []topologySelectorCase{
+		{"empty options", appconfig.DeviceOptions{}, false},
+		{"automatic", appconfig.DeviceOptions{Flex: true}, false},
+		{"all entities", appconfig.DeviceOptions{MajorRange: []int{-1}}, false},
+		{"all children", appconfig.DeviceOptions{MinorRange: []int{-1}}, false},
+		{"explicit entity", appconfig.DeviceOptions{MajorRange: []int{99}}, true},
+		{"explicit child", appconfig.DeviceOptions{MinorRange: []int{99}}, true},
+	}
+	for _, entity := range []string{"CPU", "NVSwitch"} {
+		for _, failure := range failures {
+			for _, selector := range selectors {
+				t.Run(entity+"/"+failure.name+"/"+selector.name, func(t *testing.T) {
+					assertOptionalTopologyDiscoveryCase(t, entity, failure, selector)
+				})
+			}
+		}
+	}
+}
+
+// assertOptionalTopologyDiscoveryCase runs one entity, failure, and selector case against the startup error rule.
+func assertOptionalTopologyDiscoveryCase(
+	t *testing.T, entity string, failure topologyFailureCase, selector topologySelectorCase,
+) {
+	t.Helper()
+	mock := mockdcgm.NewMockDCGM(gomock.NewController(t))
+	previous := dcgmprovider.Client()
+	dcgmprovider.SetClient(mock)
+	t.Cleanup(func() { dcgmprovider.SetClient(previous) })
+	var err, sentinel error
+	if entity == "CPU" {
+		mock.EXPECT().GetCPUHierarchy().Return(dcgm.CPUHierarchy_v2{}, failure.err)
+		err = (&Info{}).initializeCPUInfo(selector.options)
+		sentinel = ErrNoCPUsToMonitor
+	} else {
+		mock.EXPECT().GetEntityGroupEntities(dcgm.FE_SWITCH).Return(nil, failure.err)
+		err = (&Info{}).initializeNvSwitchInfo(selector.options)
+		sentinel = ErrNoSwitchesToMonitor
+	}
+	require.Error(t, err)
+	assert.Equal(t, failure.optional && !selector.explicit, errors.Is(err, sentinel))
+	assert.Equal(t, failure.optional && !selector.explicit, errors.Is(err, ErrNoEntities))
+	if failure.err != nil {
+		assert.ErrorIs(t, err, failure.err)
+	}
+	if selector.explicit && failure.optional {
+		assert.Contains(t, err.Error(), "99")
+	}
+}
+
+// TestInitializeLinksRejectsSwitchDiscoveryFailures checks link discovery fails for missing selections or switch lookup errors.
+func TestInitializeLinksRejectsSwitchDiscoveryFailures(t *testing.T) {
+	// These cases cover missing explicit entities and a failing switch query.
+	for _, tc := range []struct {
+		name    string
+		options appconfig.DeviceOptions
+		err     error
+	}{
+		{"explicit switch", appconfig.DeviceOptions{MajorRange: []int{99}}, nil},
+		{"explicit link", appconfig.DeviceOptions{MinorRange: []int{99}}, nil},
+		{"discovery failure", appconfig.DeviceOptions{Flex: true}, errors.New("connection failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := mockdcgm.NewMockDCGM(gomock.NewController(t))
+			previous := dcgmprovider.Client()
+			dcgmprovider.SetClient(mock)
+			t.Cleanup(func() { dcgmprovider.SetClient(previous) })
+			mock.EXPECT().GetEntityGroupEntities(dcgm.FE_SWITCH).Return(nil, tc.err)
+			_, err := Initialize(appconfig.DeviceOptions{}, tc.options, appconfig.DeviceOptions{}, false, dcgm.FE_LINK)
+			require.Error(t, err)
+			assert.False(t, IsOptionalTopologyError(err))
+			if tc.err != nil {
+				assert.ErrorIs(t, err, tc.err)
+			} else {
+				assert.Contains(t, err.Error(), "99")
+			}
+		})
+	}
+}
+
+// TestInitializeLinksPropagatesLinkStatusFailure checks link status errors reach callers instead of becoming optional topology errors.
+func TestInitializeLinksPropagatesLinkStatusFailure(t *testing.T) {
+	mock := mockdcgm.NewMockDCGM(gomock.NewController(t))
+	previous := dcgmprovider.Client()
+	dcgmprovider.SetClient(mock)
+	t.Cleanup(func() { dcgmprovider.SetClient(previous) })
+
+	linkErr := errors.New("link status unavailable")
+	mock.EXPECT().GetEntityGroupEntities(dcgm.FE_SWITCH).Return([]uint{1}, nil)
+	mock.EXPECT().GetNvLinkLinkStatus().Return(nil, linkErr)
+
+	_, err := Initialize(
+		appconfig.DeviceOptions{},
+		appconfig.DeviceOptions{Flex: true},
+		appconfig.DeviceOptions{},
+		false,
+		dcgm.FE_LINK,
+	)
+
+	require.ErrorIs(t, err, linkErr)
+	assert.Contains(t, err.Error(), "query NVLink link status")
+	assert.False(t, IsOptionalTopologyError(err))
 }

@@ -1,0 +1,103 @@
+{{- /* An upgrade that reuses values stored by an older chart has no networkPolicy. */ -}}
+{{- $networkPolicy := .Values.networkPolicy | default dict -}}
+{{- if $networkPolicy.enabled -}}
+{{- if .Values.hostNetwork -}}
+  {{- fail "networkPolicy.enabled has no effect with hostNetwork: true, because NetworkPolicy does not apply to host-network pods; turn one of them off" -}}
+{{- end -}}
+{{- /*
+The API server validates peer contents, but it silently drops unknown keys, so a
+misspelled selector would become {} and admit every source. Reject unknown keys here.
+*/ -}}
+{{- range $key, $_ := $networkPolicy -}}
+  {{- if not (has $key (list "enabled" "allowedPeers")) -}}
+    {{- fail (printf "networkPolicy.%s is not a chart value; use networkPolicy.enabled and networkPolicy.allowedPeers" $key) -}}
+  {{- end -}}
+{{- end -}}
+{{- $peers := $networkPolicy.allowedPeers | default list -}}
+{{- if not (kindIs "slice" $peers) -}}
+  {{- fail "networkPolicy.allowedPeers must be a list of NetworkPolicy peers" -}}
+{{- end -}}
+{{- $peerFields := dict "podSelector" (list "matchLabels" "matchExpressions") "namespaceSelector" (list "matchLabels" "matchExpressions") "ipBlock" (list "cidr" "except") -}}
+{{- range $i, $peer := $peers -}}
+  {{- if not (kindIs "map" $peer) -}}
+    {{- fail (printf "networkPolicy.allowedPeers[%d] must be a map with podSelector, namespaceSelector or ipBlock" $i) -}}
+  {{- end -}}
+  {{- range $field, $value := $peer -}}
+    {{- if not (hasKey $peerFields $field) -}}
+      {{- fail (printf "networkPolicy.allowedPeers[%d].%s is not a peer field; use podSelector, namespaceSelector or ipBlock" $i $field) -}}
+    {{- end -}}
+    {{- if not (kindIs "map" $value) -}}
+      {{- fail (printf "networkPolicy.allowedPeers[%d].%s must be a map" $i $field) -}}
+    {{- end -}}
+    {{- range $key, $_ := $value -}}
+      {{- if not (has $key (get $peerFields $field)) -}}
+        {{- fail (printf "networkPolicy.allowedPeers[%d].%s.%s is not a valid field; use %s" $i $field $key (join " or " (get $peerFields $field))) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- if hasKey $value "matchExpressions" -}}
+      {{- if not (kindIs "slice" $value.matchExpressions) -}}
+        {{- fail (printf "networkPolicy.allowedPeers[%d].%s.matchExpressions must be a list" $i $field) -}}
+      {{- end -}}
+      {{- range $j, $expression := $value.matchExpressions -}}
+        {{- if not (kindIs "map" $expression) -}}
+          {{- fail (printf "networkPolicy.allowedPeers[%d].%s.matchExpressions[%d] must be a map" $i $field $j) -}}
+        {{- end -}}
+        {{- range $key, $_ := $expression -}}
+          {{- if not (has $key (list "key" "operator" "values")) -}}
+            {{- fail (printf "networkPolicy.allowedPeers[%d].%s.matchExpressions[%d].%s is not a valid field; use key, operator or values" $i $field $j $key) -}}
+          {{- end -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $listenerError := "networkPolicy.enabled requires the metrics listener to come from config.outputs.<name>.listen on service.port" -}}
+{{- /* False spellings match Go strconv.ParseBool and keep the TCP listener. */ -}}
+{{- $falseSocketValues := list "0" "f" "F" "false" "False" "FALSE" -}}
+{{- range .Values.arguments -}}
+  {{- $arg := toString . -}}
+  {{- if hasPrefix "-" $arg -}}
+    {{- $flag := trimPrefix "-" (trimPrefix "-" $arg) -}}
+    {{- $setsAddress := or (eq $flag "address") (hasPrefix "address=" $flag) (eq $flag "a") (hasPrefix "a=" $flag) -}}
+    {{- $setsSocket := and (or (eq $flag "web-systemd-socket") (hasPrefix "web-systemd-socket=" $flag)) (not (has (trimPrefix "web-systemd-socket=" $flag) $falseSocketValues)) -}}
+    {{- if or $setsAddress $setsSocket -}}
+      {{- fail (printf "%s; remove %q from arguments or manage the NetworkPolicy yourself" $listenerError $arg) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- range .Values.extraEnv -}}
+  {{- if or (eq .name "DCGM_EXPORTER_LISTEN") (and (eq .name "DCGM_EXPORTER_SYSTEMD_SOCKET") (or (hasKey . "valueFrom") (not (has (toString .value) $falseSocketValues)))) -}}
+    {{- fail (printf "%s; remove %s from extraEnv or manage the NetworkPolicy yourself" $listenerError .name) -}}
+  {{- end -}}
+{{- end -}}
+{{- $server := (include "dcgm-exporter.config" . | fromJson).server | default dict -}}
+{{- if and (kindIs "map" $server) $server.systemd_socket -}}
+  {{- fail (printf "%s; remove config.server.systemd_socket or manage the NetworkPolicy yourself" $listenerError) -}}
+{{- end -}}
+{{- $port := int .Values.service.port -}}
+{{- if or (lt $port 1) (gt $port 65535) (ne (toString $port) (toString .Values.service.port)) -}}
+  {{- fail "networkPolicy.enabled requires service.port to be a TCP port in the range 1-65535" -}}
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dcgm-exporter.fullname" . }}
+  namespace: {{ include "dcgm-exporter.namespace" . }}
+  labels:
+    {{- include "dcgm-exporter.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dcgm-exporter.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  {{- if $networkPolicy.allowedPeers }}
+  ingress:
+    - from:
+        {{- toYaml $networkPolicy.allowedPeers | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ $port }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+{{- end }}

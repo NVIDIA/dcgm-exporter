@@ -17,6 +17,7 @@ linters:
       - legacy
       - std-error-handling
     paths:
+      - dist/
       - third_party$
       - builtin$
       - examples$

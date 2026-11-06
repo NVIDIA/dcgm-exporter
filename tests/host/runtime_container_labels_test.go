@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,13 +39,13 @@ func runStartWithRuntimeContainerLabels(t testing.TB) {
 		t.Skip("skipping test in short mode.")
 	}
 
-	socketPath := startFakeDockerRuntime(t)
+	socketPath, _ := startFakeDockerRuntime(t)
 	port := getRandomAvailablePort(t)
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
-	process, _ := startExporterAndWait(
+	process, _ := startFastExporterAndWait(
 		t,
 		metricsURL,
-		"--collectors", "./testdata/default-counters.csv",
+		"--collectors", defaultCollectorsFile(t),
 		"--address", fmt.Sprintf(":%d", port),
 		"--container-labels",
 		"--container-runtime-socket", socketPath,
@@ -60,15 +61,29 @@ func runStartWithRuntimeContainerLabels(t testing.TB) {
 	}, 60*time.Second, 500*time.Millisecond, "expected a GPU metric with container=%q", runtimeLabelContainerName)
 }
 
-// startFakeDockerRuntime serves the runtime API endpoints used by container label discovery.
-func startFakeDockerRuntime(t testing.TB) string {
+// startFakeDockerRuntime serves the runtime API endpoints used by container label
+// discovery. It returns the socket path and a count of the requests it has served.
+func startFakeDockerRuntime(t testing.TB) (string, *atomic.Int64) {
 	t.Helper()
-
-	const containerID = "0123456789abcdef"
 	socketPath := filepath.Join(t.TempDir(), "docker.sock")
-	listener, err := net.Listen("unix", socketPath)
+	requests, stop, err := serveFakeDockerRuntime(socketPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, stop()) })
+	return socketPath, requests
+}
 
+// serveFakeDockerRuntime listens on socketPath and serves the runtime API
+// endpoints used by container label discovery. It returns a count of the
+// requests served and a function that stops the server. It does not touch a
+// test, so a goroutine can start the socket late.
+func serveFakeDockerRuntime(socketPath string) (*atomic.Int64, func() error, error) {
+	const containerID = "0123456789abcdef"
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var requests atomic.Int64
 	mux := http.NewServeMux()
 	mux.HandleFunc("/containers/json", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintf(w, `[{"Id":%q,"Names":["/%s"]}]`, containerID, runtimeLabelContainerName)
@@ -77,7 +92,11 @@ func startFakeDockerRuntime(t testing.TB) string {
 		_, _ = fmt.Fprintf(w, `{"Id":%q,"Name":"/%s","HostConfig":{"DeviceRequests":[{"Driver":"nvidia","Count":-1,"Capabilities":[["gpu"]]}]}}`, containerID, runtimeLabelContainerName)
 	})
 
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second}
+	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		mux.ServeHTTP(w, r)
+	})
+	server := &http.Server{Handler: counted, ReadHeaderTimeout: time.Second}
 	done := make(chan error, 1)
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -86,14 +105,14 @@ func startFakeDockerRuntime(t testing.TB) string {
 		close(done)
 	}()
 
-	t.Cleanup(func() {
+	stop := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
 		_ = listener.Close()
-		require.NoError(t, <-done)
-	})
-	return socketPath
+		return <-done
+	}
+	return &requests, stop, nil
 }
 
 // gpuMetricContainsLabelValue reports whether a GPU metric family has one label value.

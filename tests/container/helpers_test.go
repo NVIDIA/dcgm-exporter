@@ -25,10 +25,67 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-const localLoopbackHost = "127.0.0.1"
+// ownedContainerSet records only containers created by this test process. It
+// deliberately has no discovery path: a matching Docker name does not prove
+// another invocation is safe to stop or remove.
+type ownedContainerSet struct {
+	mu  sync.Mutex
+	ids map[string]struct{}
+}
+
+// add records a container ID immediately after this test process creates it,
+// making later cleanup unable to select a similarly named external container.
+func (s *ownedContainerSet) add(id string) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ids == nil {
+		s.ids = map[string]struct{}{}
+	}
+	s.ids[id] = struct{}{}
+}
+
+// remove forgets an owned container after this test process has cleaned it up.
+func (s *ownedContainerSet) remove(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.ids, id)
+}
+
+// snapshot returns the containers this process created so cleanup can operate
+// only on explicit ownership records.
+func (s *ownedContainerSet) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.ids))
+	for id := range s.ids {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+var (
+	suiteOwnedContainers  ownedContainerSet
+	containerNameSequence atomic.Uint64
+)
+
+// testContainerName makes Docker names unique across concurrent test processes.
+func testContainerName(role string) string {
+	return fmt.Sprintf(
+		"dcgm-exporter-test-%s-%d-%d-%d",
+		role,
+		os.Getpid(),
+		containerNameSequence.Add(1),
+		time.Now().UnixNano(),
+	)
+}
 
 // dockerAvailable reports whether the Docker CLI can reach a running daemon.
 func dockerAvailable() bool {
@@ -53,10 +110,6 @@ func getFreePort() (int, error) {
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
-func localHTTPURL(port int, path string) string {
-	return fmt.Sprintf("http://%s/%s", net.JoinHostPort(localLoopbackHost, fmt.Sprintf("%d", port)), strings.TrimPrefix(path, "/"))
-}
-
 // imageExists checks whether a container image is already present locally.
 func imageExists(ctx context.Context, imageName string) (bool, error) {
 	cmd := exec.CommandContext(ctx, "docker", "image", "inspect", imageName)
@@ -76,11 +129,16 @@ func imageExists(ctx context.Context, imageName string) (bool, error) {
 	return true, nil
 }
 
+// pullImage pulls a required image, treats a missing host architecture as unavailable, and returns other Docker errors.
 func pullImage(ctx context.Context, imageName string) (bool, error) {
 	fmt.Printf("  → Pulling required image\n")
 	cmd := exec.CommandContext(ctx, "docker", "pull", imageName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if imagePullUnavailableForPlatform(output) {
+			fmt.Printf("  ✗ Image is not published for this host architecture\n")
+			return false, nil
+		}
 		fmt.Printf("  ✗ Image pull failed\n")
 		return false, fmt.Errorf("pull image %s: %w (output: %s)", imageName, err, strings.TrimSpace(string(output)))
 	}
@@ -110,15 +168,17 @@ func runLshwJSON(ctx context.Context, imageName string) (string, error) {
 
 // startContainer starts a dcgm-exporter container with GPU access on a host port.
 func startContainer(ctx context.Context, imageName string, port int) (string, error) {
-	containerName := fmt.Sprintf("dcgm-exporter-test-%d", time.Now().UnixNano())
+	containerName := testContainerName("exporter")
 
 	fmt.Printf("→ Starting container: %s\n", imageName)
-	fmt.Printf("  docker run -d --gpus all --privileged --net host --name %s %s -a :%d\n", containerName, imageName, port)
+	fmt.Printf("  docker run -d --gpus all --privileged --net host --uts host --name %s %s -a :%d\n", containerName, imageName, port)
 
 	cmd := exec.CommandContext(ctx, "docker", "run", "-d",
 		"--gpus", "all",
 		"--privileged",
 		"--net", "host",
+		// Share the host UTS namespace so the exporter's hostname label is the host name.
+		"--uts", "host",
 		"-e", "DCGM_EXPORTER_DEBUG=true", // Enable dcgm-exporter debug output
 		"--name", containerName,
 		imageName,
@@ -135,6 +195,7 @@ func startContainer(ctx context.Context, imageName string, port int) (string, er
 	}
 
 	containerID := strings.TrimSpace(string(output))
+	suiteOwnedContainers.add(containerID)
 	fmt.Printf("  ✓ Container started: %s\n", containerID[:12])
 
 	// Wait a moment and check if container is still running (quick failure detection)
@@ -194,6 +255,7 @@ func cleanupContainer(_ context.Context, containerID string) error {
 		fmt.Printf("  ✗ Failed to cleanup\n")
 		return err
 	}
+	suiteOwnedContainers.remove(containerID)
 
 	fmt.Printf("  ✓ Container removed\n")
 	fmt.Printf("  ⏳ Waiting for GPU to be released...\n")
@@ -219,31 +281,35 @@ func cleanupContainer(_ context.Context, containerID string) error {
 	return nil
 }
 
-// cleanupTestContainers removes stale dcgm-exporter test containers before or after the suite.
-func cleanupTestContainers(ctx context.Context) {
+// removeLeftoverTestContainers removes containers with the documented test-name
+// prefix before the suite starts, so a killed earlier run cannot keep holding
+// the GPU. The prefix is the accepted ownership rule for this suite.
+func removeLeftoverTestContainers(ctx context.Context) {
 	fmt.Printf("→ Cleaning up leftover dcgm-exporter-test containers...\n")
-
-	// First, stop all test containers
 	_ = exec.CommandContext(ctx, "sh", "-c",
 		"docker ps --filter 'name=dcgm-exporter-test-' --format '{{.ID}}' | xargs -r docker stop -t 5").Run()
+	output, err := exec.CommandContext(ctx, "sh", "-c",
+		"docker ps -a --filter 'name=dcgm-exporter-test-' --format '{{.ID}}' | xargs -r docker rm -f").CombinedOutput()
+	if err != nil || len(output) == 0 {
+		return
+	}
+	fmt.Printf("  ✓ Removed containers: %s\n", strings.TrimSpace(string(output)))
+	fmt.Printf("  ⏳ Waiting for GPU to be released...\n")
+	for i := 0; i < 10; i++ {
+		output, err := exec.CommandContext(ctx, "nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader").Output()
+		if err == nil && len(strings.TrimSpace(string(output))) == 0 {
+			fmt.Printf("  ✓ GPU released\n")
+			return
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
 
-	// Then remove them
-	cmd := exec.CommandContext(ctx, "sh", "-c",
-		"docker ps -a --filter 'name=dcgm-exporter-test-' --format '{{.ID}}' | xargs -r docker rm -f")
-	output, err := cmd.CombinedOutput()
-	if err == nil && len(output) > 0 {
-		fmt.Printf("  ✓ Removed containers: %s\n", strings.TrimSpace(string(output)))
-
-		// Wait for GPU to be released
-		fmt.Printf("  ⏳ Waiting for GPU to be released...\n")
-		for i := 0; i < 10; i++ {
-			cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader")
-			output, err := cmd.Output()
-			if err == nil && len(strings.TrimSpace(string(output))) == 0 {
-				fmt.Printf("  ✓ GPU released\n")
-				return
-			}
-			time.Sleep(1 * time.Second)
+// cleanupTestContainers removes only containers this test process created.
+func cleanupTestContainers(ctx context.Context) {
+	for _, id := range suiteOwnedContainers.snapshot() {
+		if err := cleanupContainer(ctx, id); err != nil {
+			fmt.Printf("  ✗ Failed to cleanup owned container %s: %v\n", id, err)
 		}
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"testing"
 )
 
+// TestSyntheticGPUMetrics checks family types and series counts for a synthetic benchmark case.
 func TestSyntheticGPUMetrics(t *testing.T) {
 	benchmarkCase := Case{FieldCount: 3, GPUCount: 2}
 	metricsByCounter := SyntheticGPUMetrics(benchmarkCase)

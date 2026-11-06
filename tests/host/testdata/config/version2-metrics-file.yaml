@@ -1,0 +1,13 @@
+version: 2
+metrics:
+  - name: gpu
+    every: 1s
+    file: ${METRICS_FILE}
+    enrichment:
+      kubernetes: false
+      container: false
+      hpc_jobs: false
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1

@@ -1,0 +1,6 @@
+version: 1
+collections:
+  - name: scrape
+    every: 1s
+    metrics:
+      include: ["*"]

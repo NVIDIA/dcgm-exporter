@@ -1,0 +1,39 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "deviceinfo",
+    srcs = [
+        "device_info.go",
+        "types.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/dcgmerrors",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/nvmlprovider",
+        "@com_github_bits_and_blooms_bitset//:bitset",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "deviceinfo_test",
+    srcs = ["device_info_test.go"],
+    embed = [":deviceinfo"],
+    deps = [
+        "//internal/mocks/pkg/dcgmprovider",
+        "//internal/mocks/pkg/nvmlprovider",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/dcgmerrors",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/nvmlprovider",
+        "//internal/pkg/testfixtures",
+        "//internal/pkg/testutils/dcgm",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

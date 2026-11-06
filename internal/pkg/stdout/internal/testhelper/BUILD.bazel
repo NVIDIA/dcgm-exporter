@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testhelper",
+    srcs = ["cgo.go", "doc.go"],
+    cgo = True,
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/stdout/internal/testhelper",
+    visibility = ["//internal/pkg/stdout:__subpackages__"],
+)

@@ -1,0 +1,110 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files")
+load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+exports_files([
+    "BUILD.bazel",
+    "config-files/systemd/nvidia-dcgm-exporter.service",
+])
+
+pkg_files(
+    name = "exporter_binary",
+    srcs = ["//cmd/dcgm-exporter"],
+    attributes = pkg_attributes(
+        gid = 0,
+        mode = "0755",
+        uid = 0,
+    ),
+    prefix = "dcgm_exporter/usr/bin",
+)
+
+pkg_files(
+    name = "metric_presets",
+    srcs = [
+        "//:etc/1.x-compatibility-metrics.csv",
+        "//:etc/dcp-metrics-included.csv",
+        "//:etc/default-counters.csv",
+    ],
+    attributes = pkg_attributes(
+        gid = 0,
+        mode = "0644",
+        uid = 0,
+    ),
+    prefix = "dcgm_exporter/etc/dcgm-exporter",
+)
+
+pkg_files(
+    name = "default_config",
+    srcs = ["//:etc/config.yaml"],
+    attributes = pkg_attributes(
+        gid = 0,
+        mode = "0644",
+        uid = 0,
+    ),
+    prefix = "dcgm_exporter/etc/dcgm-exporter",
+)
+
+pkg_files(
+    name = "license",
+    srcs = ["//:LICENSE"],
+    attributes = pkg_attributes(
+        gid = 0,
+        mode = "0644",
+        uid = 0,
+    ),
+    prefix = "dcgm_exporter",
+)
+
+pkg_files(
+    name = "third_party_notices",
+    srcs = ["//:THIRD_PARTY_NOTICES"],
+    attributes = pkg_attributes(
+        gid = 0,
+        mode = "0644",
+        uid = 0,
+    ),
+    prefix = "dcgm_exporter",
+)
+
+pkg_files(
+    name = "systemd_unit",
+    srcs = [":config-files/systemd/nvidia-dcgm-exporter.service"],
+    attributes = pkg_attributes(
+        gid = 0,
+        mode = "0644",
+        uid = 0,
+    ),
+    prefix = "dcgm_exporter/lib/systemd/system",
+)
+
+pkg_tar(
+    name = "dcgm_exporter_tar",
+    srcs = [
+        ":default_config",
+        ":exporter_binary",
+        ":license",
+        ":metric_presets",
+        ":systemd_unit",
+        ":third_party_notices",
+    ],
+    extension = "tar.gz",
+    owner = "0.0",
+    portable_mtime = True,
+    stamp = 0,
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "package_archive_test",
+    srcs = ["package_archive_test.sh"],
+    args = ["$(location :dcgm_exporter_tar)"],
+    data = [":dcgm_exporter_tar"],
+)

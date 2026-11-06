@@ -1,0 +1,20 @@
+# Repository-owned development tools. task deps:sync renders shared tool pins
+# from hack/versions.env; task deps:lock refreshes mise.lock.
+
+[tools]
+task = "3.54.0"
+bazel = "9.3.2"
+go = "1.27.3"
+uv = "0.13.7"
+golangci-lint = "2.15.0"
+gofumpt = "0.12.0"
+"go:golang.org/x/tools/cmd/goimports" = "v0.52.0"
+"go:github.com/boumenot/gocover-cobertura" = "v1.5.0"
+helm = "4.3.1"
+k3d = "5.9.0"
+kubectl = "1.37.2"
+shellcheck = "0.11.0"
+hadolint = "2.15.1"
+"go:golang.org/x/vuln/cmd/govulncheck" = "v1.9.0"
+grype = "0.121.2"
+syft = "1.57.0"

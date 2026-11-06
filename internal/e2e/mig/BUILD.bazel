@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mig",
+    srcs = [
+        "cdi.go",
+        "layout.go",
+        "lock_linux.go",
+        "lock_other.go",
+        "mig.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/mig",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/e2e/config",
+        "//internal/e2e/exec",
+        "//internal/e2e/scenario",
+    ],
+)
+
+go_test(
+    name = "mig_test",
+    srcs = [
+        "cdi_test.go",
+        "layout_test.go",
+        "lock_linux_test.go",
+        "mig_test.go",
+    ],
+    embed = [":mig"],
+    deps = [
+        "//internal/e2e/config",
+        "//internal/e2e/exec",
+        "//internal/e2e/scenario",
+    ],
+)

@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "exportercontract",
+    srcs = ["contracts.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/internal/exportercontract",
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        "//tests/internal/metriccontract",
+        "@com_github_prometheus_client_model//go",
+    ],
+)
+
+go_test(
+    name = "exportercontract_test",
+    srcs = ["contracts_test.go"],
+    embed = [":exportercontract"],
+    deps = [
+        "//tests/internal/metriccontract",
+        "@com_github_stretchr_testify//require",
+    ],
+)

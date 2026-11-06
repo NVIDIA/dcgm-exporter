@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "scenario",
+    srcs = [
+        "catalog.go",
+        "kubernetes_allocation.go",
+        "mig_layout.go",
+        "plan.go",
+        "requirements.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/scenario",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/e2e/capability",
+        "//internal/e2e/config",
+    ],
+)
+
+go_test(
+    name = "scenario_test",
+    srcs = [
+        "catalog_label_test.go",
+        "catalog_test.go",
+        "kubernetes_allocation_test.go",
+        "plan_test.go",
+        "requirements_test.go",
+    ],
+    data = glob(["testdata/**"]) + [
+        "//tests/container:source_files",
+        "//tests/host:source_files",
+        "//tests/k8s:source_files",
+    ],
+    embed = [":scenario"],
+    deps = [
+        "//internal/e2e/capability",
+        "//internal/e2e/config",
+        "//tests/k8smarkers",
+    ],
+)

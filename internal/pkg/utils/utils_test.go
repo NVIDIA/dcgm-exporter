@@ -29,6 +29,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
+// TestWaitWithTimeout checks timeout and already-completed WaitGroup paths.
 func TestWaitWithTimeout(t *testing.T) {
 	t.Run("Returns error by timeout", func(t *testing.T) {
 		wg := &sync.WaitGroup{}
@@ -50,18 +51,21 @@ func TestWaitWithTimeout(t *testing.T) {
 	})
 }
 
+// TestRandUint64_Success checks that the system entropy source produces a value without error.
 func TestRandUint64_Success(t *testing.T) {
 	num, err := RandUint64()
 	assert.Nil(t, err, "Unexpected error: %v", err)
 	assert.NotZero(t, num, "Expected a non-zero uint64, but got 0")
 }
 
+// TestRandUint64_Failure checks an injected entropy failure returns an error and zero value.
 func TestRandUint64_Failure(t *testing.T) {
 	// Simulate a failure in rand.Reader using mock rand.Reader
 	mockReader := &testutils.MockReader{Err: fmt.Errorf("mock error")}
 
 	originalReader := rand.Reader
 	rand.Reader = mockReader
+	// Restore the global entropy reader before the next test.
 	defer func() {
 		rand.Reader = originalReader
 	}()
@@ -71,7 +75,9 @@ func TestRandUint64_Failure(t *testing.T) {
 	assert.Zero(t, num, fmt.Sprintf("Expected a uint64, but got %d", num))
 }
 
+// TestCleanupOnError checks the empty return list for absent, single, and multiple callbacks.
 func TestCleanupOnError(t *testing.T) {
+	// Inert callbacks isolate the helper's returned-list contract, not cleanup effects.
 	tests := []struct {
 		name     string
 		cleanups []func()
@@ -115,6 +121,7 @@ func TestCleanupOnError(t *testing.T) {
 	}
 }
 
+// TestSanitizeLabelName checks invalid characters, numeric prefixes, reserved names, and empty labels.
 func TestSanitizeLabelName(t *testing.T) {
 	t.Run("Sanitize label with invalid characters", func(t *testing.T) {
 		input := "label.with.dots/and-slashes"

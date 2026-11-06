@@ -51,7 +51,7 @@ type fakeDCGMBenchmarkWatchListManager struct{}
 
 func (*fakeDCGMBenchmarkWatchListManager) CreateEntityWatchList(
 	dcgm.Field_Entity_Group,
-	devicewatcher.Watcher,
+	devicewatcher.WatchInstaller,
 	int64,
 ) error {
 	return nil
@@ -111,7 +111,7 @@ func BenchmarkFakeDCGMScrape(b *testing.B) {
 
 	for _, benchmarkCase := range benchmarktest.Cases() {
 		b.Run(benchmarkCase.Name(), func(b *testing.B) {
-			handler := newFakeDCGMBenchmarkHandler(benchmarkCase)
+			handler := newFakeDCGMBenchmarkHandler(b, benchmarkCase)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
 			validateFakeDCGMBenchmarkResponse(b, recorder, benchmarkCase)
@@ -141,7 +141,7 @@ func TestFakeDCGMBenchmarkServer(t *testing.T) {
 	for _, benchmarkCase := range benchmarktest.Cases() {
 		t.Run(benchmarkCase.Name(), func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			newFakeDCGMBenchmarkHandler(benchmarkCase).ServeHTTP(recorder, request)
+			newFakeDCGMBenchmarkHandler(t, benchmarkCase).ServeHTTP(recorder, request)
 			validateFakeDCGMBenchmarkResponse(t, recorder, benchmarkCase)
 		})
 	}
@@ -182,14 +182,17 @@ func validateFakeDCGMBenchmarkResponse(
 }
 
 // newFakeDCGMBenchmarkHandler enables exporter metrics around the fake DCGM scrape benchmark.
-func newFakeDCGMBenchmarkHandler(benchmarkCase benchmarktest.Case) http.Handler {
+func newFakeDCGMBenchmarkHandler(tb testing.TB, benchmarkCase benchmarktest.Case) http.Handler {
+	tb.Helper()
 	reg := registry.NewRegistry()
 	tuple := collector.EntityCollectorTuple{}
 	tuple.SetEntity(dcgm.FE_GPU)
 	tuple.SetCollector(&fakeDCGMBenchmarkCollector{
 		metrics: benchmarktest.SyntheticGPUMetrics(benchmarkCase),
 	})
-	reg.Register(tuple)
+	if err := reg.Register(tuple); err != nil {
+		tb.Fatal(err)
+	}
 
 	metricServer := &MetricsServer{
 		deviceWatchListManager: &fakeDCGMBenchmarkWatchListManager{},

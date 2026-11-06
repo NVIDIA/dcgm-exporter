@@ -1,0 +1,24 @@
+Config file   testdata/overrides.yaml
+
+Settings that differ from defaults
+metrics[0]
+  fields                                       4 inline definitions  file:4
+  overrides[DCGM_EXP_XID_ERRORS_COUNT].window  10m                   file:19 (metrics[0].overrides[0].window)
+  enrichment.kubernetes                        auto                  file:3 (metrics[0].enrichment)
+    note: auto: used when available (checked by the running exporter)
+  enrichment.container                         auto                  file:3 (metrics[0].enrichment)
+    note: auto: used if Kubernetes is unavailable at startup (checked by the running exporter)
+  enrichment.hpc_jobs                          auto                  file:3 (metrics[0].enrichment)
+    note: auto: used when available (checked by the running exporter)
+sources
+  dcgm.embedded_log.level  debug   file:32
+  dcgm.embedded_log.file   stdout  file:31 (sources.dcgm.embedded_log)
+
+Fields   5 from inline definitions, every 30s, retention 10m, no sample limit
+  override metrics[0].overrides[1] (unnamed)  (2 fields)  every 1s, retention 10m, no sample limit
+  override clocks  (1 field)  every 5s, retention 10m, no sample limit
+
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories
+Use --verbose for all settings and all fields.

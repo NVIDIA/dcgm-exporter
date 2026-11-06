@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "capability",
+    srcs = [
+        "c2c.go",
+        "capability.go",
+        "cluster.go",
+        "dcgm_probe.go",
+        "fabric.go",
+        "field.go",
+        "field_support.go",
+        "gpu.go",
+        "grace.go",
+        "helpers.go",
+        "mig.go",
+        "nvlink.go",
+        "nvswitch.go",
+        "probe.go",
+        "profiling.go",
+    ],
+    embedsrcs = ["dcgmi_probe.sh"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/capability",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/e2e/exec"],
+)
+
+go_test(
+    name = "capability_test",
+    srcs = [
+        "capability_test.go",
+        "field_support_test.go",
+    ],
+    data = glob(["testdata/**"]) + ["//tests/internal/metriccontract:field_support_document"],
+    embed = [":capability"],
+    deps = [
+        "//internal/e2e/exec",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -24,7 +24,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
+// Manager builds and holds one watch list per entity type.
 type Manager interface {
-	CreateEntityWatchList(dcgm.Field_Entity_Group, devicewatcher.Watcher, int64) error
+	CreateEntityWatchList(dcgm.Field_Entity_Group, devicewatcher.WatchInstaller, int64) error
 	EntityWatchList(dcgm.Field_Entity_Group) (WatchList, bool)
 }

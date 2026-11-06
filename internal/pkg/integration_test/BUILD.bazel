@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "integration_test_test",
+    srcs = [
+        "collector_test.go",
+        "transformation_test.go",
+    ],
+    tags = [
+        "manual",
+        "requires-dcgm",
+        "requires-gpu",
+    ],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/collector",
+        "//internal/pkg/counters",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicewatcher",
+        "//internal/pkg/devicewatchlistmanager",
+        "//internal/pkg/rendermetrics",
+        "//internal/pkg/testutils",
+        "//internal/pkg/testutils/dcgm",
+        "//internal/pkg/transformation",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//expfmt",
+        "@com_github_prometheus_common//model",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_k8s_kubelet//pkg/apis/podresources/v1:podresources",
+        "@io_k8s_utils//ptr",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)

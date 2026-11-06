@@ -57,7 +57,7 @@ func (m *MockManager) EXPECT() *MockManagerMockRecorder {
 }
 
 // CreateEntityWatchList mocks base method.
-func (m *MockManager) CreateEntityWatchList(arg0 dcgm.Field_Entity_Group, arg1 devicewatcher.Watcher, arg2 int64) error {
+func (m *MockManager) CreateEntityWatchList(arg0 dcgm.Field_Entity_Group, arg1 devicewatcher.WatchInstaller, arg2 int64) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "CreateEntityWatchList", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)

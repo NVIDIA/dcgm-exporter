@@ -1,0 +1,10 @@
+exit 1
+--- stdout ---
+--- stderr ---
+testdata/invalid.yaml: invalid (1 error, 0 warnings)
+error    testdata/invalid.yaml:8:12 metrics[0].every: must be greater than 0
+Only the first problem in the config file is reported; fix it and run again.
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories
+Not checked until the errors above are fixed: metric file

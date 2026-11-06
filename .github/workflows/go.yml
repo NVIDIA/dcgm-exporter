@@ -6,22 +6,35 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
 
   build:
     runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
     steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: false
 
-    - name: Set up Go
-      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+    - name: Build and test in the devcontainer
+      uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
       with:
-        go-version: 1.26
+        configFile: .devcontainer/ci.json
+        runCmd: |
+          set -euo pipefail
+          BAZEL_TARGETS=//cmd/dcgm-exporter:dcgm-exporter task bazel:build
+          task fmt:check
+          task test:unit COVERAGE=true REPORTS=true
 
-    - name: Build
-      run: make binary
-
-    - name: Lint
-      run: make check-format
+    - name: Upload coverage to Codecov
+      if: ${{ !cancelled() }}
+      continue-on-error: true
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+      with:
+        disable_search: true
+        files: ./tests.cov
+        token: ${{ secrets.CODECOV_TOKEN }}

@@ -17,6 +17,7 @@
 package collector
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"testing"
@@ -37,6 +38,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
+// TestIsDCGMExpXIDErrorsCountEnabled checks that the helper returns true when the XID errors count counter is
+// in the list, and false for an empty list or a list of unrelated counters.
 func TestIsDCGMExpXIDErrorsCountEnabled(t *testing.T) {
 	tests := []struct {
 		name string
@@ -84,9 +87,16 @@ func TestIsDCGMExpXIDErrorsCountEnabled(t *testing.T) {
 	}
 }
 
+// TestNewXIDCollector checks that construction fails without the XID errors count counter or when the field
+// watch fails. Otherwise the collector watches the XID field, keeps the label counters, the DCGM client and
+// the configured window, and has its parser, label filler and clock set.
 func TestNewXIDCollector(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+	previousClient := dcgmprovider.Client()
+	dcgmprovider.SetClient(mockDCGM)
+	t.Cleanup(func() { dcgmprovider.SetClient(previousClient) })
 
 	sampleDeviceInfo := &deviceinfo.Info{}
 	sampleDeviceFields := []dcgm.Short{42}
@@ -111,6 +121,7 @@ func TestNewXIDCollector(t *testing.T) {
 		PromType:  "label",
 	}
 
+	// args supplies constructor inputs for each XID collector case.
 	type args struct {
 		counterList     counters.CounterList
 		hostname        string
@@ -189,7 +200,7 @@ func TestNewXIDCollector(t *testing.T) {
 				hostname string, config *appconfig.Config,
 				deviceWatchList devicewatchlistmanager.WatchList,
 			) Collector {
-				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+				deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 				return &xidCollector{
 					expCollector{
 						baseExpCollector: baseExpCollector{
@@ -198,10 +209,10 @@ func TestNewXIDCollector(t *testing.T) {
 							labelsCounters:  []counters.Counter{sampleLabelCounter},
 							hostname:        hostname,
 							config:          config,
-							cleanups:        sampleCleanups,
+							watchResult:     watchResultFromCleanups(sampleCleanups),
 						},
 						sourceFields: map[dcgm.Short]string{
-							dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
+							dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERROR",
 						},
 						windowSize: config.XIDCountWindowSize,
 					},
@@ -230,7 +241,7 @@ func TestNewXIDCollector(t *testing.T) {
 				hostname string, config *appconfig.Config,
 				deviceWatchList devicewatchlistmanager.WatchList,
 			) Collector {
-				deviceWatchList.SetDeviceFields([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
+				deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
 				return &xidCollector{
 					expCollector{
 						baseExpCollector: baseExpCollector{
@@ -239,10 +250,10 @@ func TestNewXIDCollector(t *testing.T) {
 							labelsCounters:  nil,
 							hostname:        hostname,
 							config:          config,
-							cleanups:        sampleCleanups,
+							watchResult:     watchResultFromCleanups(sampleCleanups),
 						},
 						sourceFields: map[dcgm.Short]string{
-							dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
+							dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERROR",
 						},
 						windowSize: config.XIDCountWindowSize,
 					},
@@ -260,16 +271,22 @@ func TestNewXIDCollector(t *testing.T) {
 			want := tt.want(tt.args.hostname, tt.args.config, *tt.args.deviceWatchList)
 
 			if !tt.wantErr {
-				assert.NoError(t, err, "unexpected error")
+				require.NoError(t, err, "unexpected error")
 
-				wantAttrs := testutils.GetFields(&want.(*xidCollector).expCollector, testutils.Fields)
-				gotAttrs := testutils.GetFields(&got.(*xidCollector).expCollector, testutils.Fields)
-				assert.Equal(t, wantAttrs, gotAttrs, "unexpected result")
-
-				gotFuncAttrs := testutils.GetFields(&got.(*xidCollector).expCollector, testutils.Functions)
-				for functionName, value := range gotFuncAttrs {
-					assert.NotNilf(t, value, "unexpected %s to be not nil", functionName)
-				}
+				wantCollector := want.(*xidCollector)
+				gotCollector := got.(*xidCollector)
+				assert.Same(t, mockDCGM, gotCollector.client)
+				assert.Equal(t, wantCollector.deviceWatchList, gotCollector.deviceWatchList)
+				assert.Equal(t, wantCollector.counter, gotCollector.counter)
+				assert.Equal(t, wantCollector.labelsCounters, gotCollector.labelsCounters)
+				assert.Equal(t, wantCollector.hostname, gotCollector.hostname)
+				assert.Equal(t, wantCollector.config, gotCollector.config)
+				require.NotNil(t, gotCollector.watchResult)
+				assert.Equal(t, wantCollector.watchResult.Bindings(), gotCollector.watchResult.Bindings())
+				assert.Equal(t, wantCollector.sourceFields, gotCollector.sourceFields)
+				assert.Equal(t, wantCollector.windowSize, gotCollector.windowSize)
+				assert.NotNil(t, gotCollector.fieldValueParser)
+				assert.NotNil(t, gotCollector.labelFiller)
 			} else {
 				assert.Error(t, err, "expected error")
 				assert.Equal(t, want, got, "unexpected result")
@@ -278,19 +295,15 @@ func TestNewXIDCollector(t *testing.T) {
 	}
 }
 
+// sortXIDMetrics orders metrics by GPU, then by xid label. Cases must not
+// repeat a GPU and xid pair, since the order of equal metrics is unspecified.
 func sortXIDMetrics(metrics []Metric) {
 	slices.SortFunc(metrics, func(a, b Metric) int {
-		if a.GPU < b.GPU {
-			return -1
-		} else if a.GPU == b.GPU {
-			if a.Labels["xid"] < b.Labels["xid"] {
-				return -1
-			}
-		}
-		return 1
+		return cmp.Or(cmp.Compare(a.GPU, b.GPU), cmp.Compare(a.Labels["xid"], b.Labels["xid"]))
 	})
 }
 
+// xidMetricsCreator builds one expected XID metric for the requested GPU and labels.
 func xidMetricsCreator(
 	counter counters.Counter, gpuID uint, value, hostname, mockFieldName,
 	mockFieldLabelValue string, mockXID uint64,
@@ -307,7 +320,7 @@ func xidMetricsCreator(
 		GPUInstanceID: "",
 		Hostname:      hostname,
 		Labels: map[string]string{
-			windowSizeInMSLabel: "0",
+			WindowSizeInMSLabel: "0",
 			mockFieldName:       mockFieldLabelValue,
 			"xid":               fmt.Sprint(mockXID),
 		},
@@ -315,6 +328,8 @@ func xidMetricsCreator(
 	}
 }
 
+// Test_xidCollector_GetMetrics checks that GetMetrics emits one XID count series per GPU and XID pair with the
+// XID code and label values, and blank XID samples are filtered out.
 func Test_xidCollector_GetMetrics(t *testing.T) {
 	/******* Mock DCGM *************/
 	ctrl := gomock.NewController(t)
@@ -572,6 +587,7 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 			want, gpu1Value, gpu2Value := tt.want()
 			tt.conditions(mockDeviceWatcher, gpu1Value, gpu2Value)
 			c := tt.collector()
+			c.(*xidCollector).now = func() time.Time { return time.UnixMicro(123) }
 
 			got, err := c.GetMetrics()
 
@@ -581,6 +597,9 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 
 				wantMetrics := want[mockDCGMXIDCounter]
 				gotMetrics := got[mockDCGMXIDCounter]
+				for i := range wantMetrics {
+					wantMetrics[i].Timestamp = 123
+				}
 
 				assert.Len(t, gotMetrics, len(wantMetrics), "GetMetrics() returned wrong number of metrics")
 
@@ -593,6 +612,8 @@ func Test_xidCollector_GetMetrics(t *testing.T) {
 	}
 }
 
+// Test_xidCollector_GetMetricsReadsAllDeviceFieldGroups checks that GetMetrics reads every field group in the
+// watch, so the same XID seen in two field groups counts as 2.
 func Test_xidCollector_GetMetricsReadsAllDeviceFieldGroups(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)
@@ -661,6 +682,9 @@ func Test_xidCollector_GetMetricsReadsAllDeviceFieldGroups(t *testing.T) {
 	assert.Equal(t, "42", got[counter][0].Labels["xid"])
 }
 
+// Test_xidCollector_GetMetricsUsesConfiguredWindow checks that GetMetrics asks DCGM for values since now minus
+// the configured window, labels the series with that window, and reports 1 with an xid label for one event or 0
+// without that label when none were seen.
 func Test_xidCollector_GetMetricsUsesConfiguredWindow(t *testing.T) {
 	const windowSize = 1400
 	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
@@ -738,7 +762,8 @@ func Test_xidCollector_GetMetricsUsesConfiguredWindow(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, got[counter], 1)
 			assert.Equal(t, tt.wantCount, got[counter][0].Value)
-			assert.Equal(t, "1400", got[counter][0].Labels[windowSizeInMSLabel])
+			assert.Equal(t, "1400", got[counter][0].Labels[WindowSizeInMSLabel])
+			assert.Equal(t, now.UnixMicro(), got[counter][0].Timestamp)
 			if tt.wantXIDLabel {
 				assert.Equal(t, tt.wantXID, got[counter][0].Labels["xid"])
 			} else {
@@ -748,6 +773,8 @@ func Test_xidCollector_GetMetricsUsesConfiguredWindow(t *testing.T) {
 	}
 }
 
+// Test_xidCollector_GetMetricsLogsBlankSourceFieldName checks that a blank XID sample is skipped with a debug
+// log naming the source field, its ID, the entity type, and the entity ID.
 func Test_xidCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
 	buf := setupDebugLogCapture(t)
 
@@ -801,11 +828,13 @@ func Test_xidCollector_GetMetricsLogsBlankSourceFieldName(t *testing.T) {
 	got := findLogRecord(t, buf, blankValueSkippedMessage)
 	assert.Equal(t, blankValueSkippedMessage, got["msg"])
 	assert.Equal(t, float64(dcgm.DCGM_FI_DEV_XID_ERRORS), got["fieldID"])
-	assert.Equal(t, "DCGM_FI_DEV_XID_ERRORS", got["fieldName"])
+	assert.Equal(t, "DCGM_FI_DEV_XID_ERROR", got["fieldName"])
 	assert.Equal(t, dcgm.FE_GPU.String(), got["entityType"])
 	assert.Equal(t, float64(0), got["entityID"])
 }
 
+// Test_xidCollector_GetMetricsIsolatesLabelsPerEntity checks that with two GPUs, each XID series carries the
+// label value read for its own GPU, not the other GPU's.
 func Test_xidCollector_GetMetricsIsolatesLabelsPerEntity(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := mockdcgm.NewMockDCGM(ctrl)

@@ -18,6 +18,7 @@ package transformation
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,9 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
+// TestGetTransformations checks configured transform selection and Kubernetes ownership of container labels.
 func TestGetTransformations(t *testing.T) {
+	// Each assert callback checks the selected transforms for one configuration.
 	tests := []struct {
 		name   string
 		config *appconfig.Config
@@ -52,7 +55,10 @@ func TestGetTransformations(t *testing.T) {
 		{
 			name: "The environment is HPC cluster",
 			config: &appconfig.Config{
-				HPCJobMappingDir: "/var/run/nvidia/slurm",
+				HPCJobMappingDir:            "/var/run/nvidia/slurm",
+				HPCJobMappingMaxFileBytes:   appconfig.DefaultHPCJobMappingMaxFileBytes,
+				HPCJobMappingMaxJobIDBytes:  appconfig.DefaultHPCJobMappingMaxJobIDBytes,
+				HPCJobMappingMaxJobsPerFile: appconfig.DefaultHPCJobMappingMaxJobsPerFile,
 			},
 			assert: func(t *testing.T, transforms []Transform) {
 				assert.Len(t, transforms, 1)
@@ -87,5 +93,59 @@ func TestGetTransformations(t *testing.T) {
 			transformations := GetTransformations(tt.config)
 			tt.assert(t, transformations)
 		})
+	}
+}
+
+// TestManagedTransformsOwnsPodMapperLifecycle checks managed cleanup stops its mapper and tolerates repeated calls.
+func TestManagedTransformsOwnsPodMapperLifecycle(t *testing.T) {
+	managed := NewManagedTransforms(&appconfig.Config{Kubernetes: true}, nil)
+	require.Len(t, managed.Transformations, 1)
+
+	podMapper, ok := managed.Transformations[0].(*PodMapper)
+	require.True(t, ok)
+
+	managed.Start()
+	managed.Cleanup()
+	managed.Cleanup()
+
+	select {
+	case <-podMapper.stopChan:
+	default:
+		t.Fatal("managed cleanup did not stop the pod mapper")
+	}
+}
+
+// TestManagedTransformsStartDoesNotWaitForBackgroundWork checks Start returns while its background callback is blocked.
+func TestManagedTransformsStartDoesNotWaitForBackgroundWork(t *testing.T) {
+	started := make(chan struct{})
+	allowFinish := make(chan struct{})
+	// Release background work even if an assertion ends this test early.
+	defer close(allowFinish)
+	// Hold owned background work until the test releases it.
+	managed := ManagedTransforms{start: func() {
+		close(started)
+		<-allowFinish
+	}}
+
+	finished := make(chan struct{})
+	// Signal when Start itself returns, independently of background completion.
+	go func() {
+		managed.Start()
+		close(finished)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("Start waited for background work")
 	}
 }

@@ -16,65 +16,78 @@
 
 package capability
 
-import (
-	"context"
-	"fmt"
+import "strings"
 
-	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
-)
+// HasActiveNVLink reports whether nvidia-smi exposes at least one active link.
+func HasActiveNVLink(output string) bool {
+	return nvlinkBandwidthRE.MatchString(output)
+}
 
-const (
-	nvlinkCRCFieldName       = "DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL"
-	nvlinkCRCFieldFallbackID = "409"
-)
-
-// nvlinkCapability reports whether host topology output shows active NVLink.
-func nvlinkCapability(active bool, topo string) Capability {
+// nvlinkFabricCapability reports physical NVLink hardware without checking health or counters.
+func nvlinkFabricCapability(fabric fabricSignals, nvidiaQ, topo, nvlinkStatus string) Capability {
+	if probeOutputFailed(nvidiaQ, topo) {
+		return hostCapability(
+			"nvlink_fabric",
+			StatusUnknown,
+			"nvidia-smi topology and fabric inventory",
+			"NVLink hardware inventory could not be determined",
+			firstLine(nvidiaQ+"\n"+topo+"\n"+nvlinkStatus),
+		)
+	}
+	if fabric.nvlinkPresent() {
+		return hostCapability(
+			"nvlink_fabric",
+			StatusSupported,
+			"nvidia-smi topology and fabric inventory",
+			"host advertises NVLink fabric hardware",
+			fabric.evidence(nvidiaQ, topo),
+		)
+	}
 	return hostCapability(
-		"nvlink",
-		statusIf(active),
-		"nvidia-smi nvlink/topo",
-		reasonIf(active, "active NVLink evidence was detected", "active NVLink evidence was not detected"),
+		"nvlink_fabric",
+		StatusUnsupported,
+		"nvidia-smi topology and fabric inventory",
+		"host does not advertise NVLink fabric hardware",
 		firstLine(topo),
 	)
 }
 
-// HasActiveNVLink reports whether nvlink/topology output shows active NVLink.
-func HasActiveNVLink(nvlink, topo string) bool {
-	return nvlinkBandwidthRE.MatchString(nvlink) || topologyNVLinkRE.MatchString(topo)
-}
-
-// nvlinkFailureInjectionCapability verifies the DCGM NVLink CRC field needed by injection scenarios.
-func nvlinkFailureInjectionCapability(ctx context.Context, runner e2eexec.Runner, opts ProbeOptions, injection Capability, fields string) Capability {
-	name := "dcgm:failure_injection_nvlink_crc"
-	if injection.Status != StatusSupported {
-		return Capability{Name: name, Status: injection.Status, Source: injection.Source, Reason: injection.Reason, Evidence: injection.Evidence, DCGMNotSupported: injection.DCGMNotSupported}
-	}
-	field := nvlinkCRCFieldSupport(fields)
-	output := dcgmContainerProbe(ctx, runner, opts, "dmon", "-e", field.ID, "-c", "1")
-	if sentinel := dcgmSentinelEvidence(output); sentinel == "DCGM_FT_INT64_NOT_SUPPORTED" {
-		return Capability{
-			Name:             name,
-			Status:           StatusUnsupported,
-			Source:           field.dmonSource(),
-			Reason:           fmt.Sprintf("DCGM field %s returned %s", field.label(), sentinel),
-			Evidence:         firstLine(output),
-			DCGMNotSupported: true,
+// activeNVLinkEvidence returns the first active link reported by nvidia-smi.
+func activeNVLinkEvidence(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if nvlinkBandwidthRE.MatchString(line) {
+			return "active NVLink: " + strings.TrimSpace(line)
 		}
 	}
-	if dcgmProbeUnavailable(output) {
-		return Capability{Name: name, Status: StatusUnknown, Source: field.dmonSource(), Reason: dcgmProbeUnavailableReason("nvlink-crc", output), Evidence: firstLine(output)}
-	}
-	if dcgmDmonHasRealSample(output) {
-		return Capability{Name: name, Status: StatusSupported, Source: field.dmonSource(), Reason: fmt.Sprintf("DCGM field %s returned readable samples", field.label()), Evidence: firstLine(output)}
-	}
-	return Capability{Name: name, Status: StatusUnsupported, Source: field.dmonSource(), Reason: fmt.Sprintf("DCGM field %s did not return readable samples", field.label()), Evidence: firstLine(output), DCGMNotSupported: true}
+	return ""
 }
 
-// nvlinkCRCFieldSupport resolves the field read back by NVLink failure injection.
-// NVLink CRC flit errors are the scenario signal because they are integer DCGM
-// device fields on NVLink-capable GPUs; a readable dmon sample proves DCGM can
-// resolve and collect the same field family that the failure-injection suite uses.
-func nvlinkCRCFieldSupport(fields string) dcgmFieldSupport {
-	return resolveDCGMFieldSupport(fields, nvlinkCRCFieldName, nvlinkCRCFieldFallbackID)
+// nvlink5Applicability reports whether scenarios for the NVLink 5 field contract apply.
+func nvlink5Applicability(query string) Capability {
+	major := newestComputeCapabilityMajor(query)
+	if major == 0 {
+		return hostCapability(
+			"nvlink5",
+			StatusUnknown,
+			"nvidia-smi compute capability",
+			"GPU protocol generation could not be determined",
+			firstLine(query),
+		)
+	}
+	if major < 10 {
+		return hostCapability(
+			"nvlink5",
+			StatusUnsupported,
+			"nvidia-smi compute capability",
+			"scenario requires an NVLink 5 generation GPU",
+			firstLine(query),
+		)
+	}
+	return hostCapability(
+		"nvlink5",
+		StatusSupported,
+		"nvidia-smi compute capability",
+		"GPU generation uses the NVLink 5 field contract",
+		firstLine(query),
+	)
 }

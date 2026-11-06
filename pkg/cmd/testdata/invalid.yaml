@@ -1,0 +1,12 @@
+version: 2
+metrics:
+  - name: gpu
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP
+        prometheus_type: gauge
+        help: GPU temperature in Celsius.
+    every: 0s
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1

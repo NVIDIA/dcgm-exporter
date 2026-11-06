@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ import (
 	ginkgo "github.com/onsi/ginkgo/v2"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/kube"
+	repo "helm.sh/helm/v4/pkg/repo/v1"
 	"helm.sh/helm/v4/pkg/storage/driver"
 	restclient "k8s.io/client-go/rest"
 )
@@ -69,7 +71,7 @@ func NewHelmClient(opts ...HelmClientOption) (*HelmClient, error) {
 	restConfOptions := &helm.RestConfClientOptions{
 		Options: &helm.Options{
 			Namespace:        client.namespace,
-			RepositoryConfig: client.repositoryConfig,
+			RepositoryConfig: repositoryConfigFile(client.repositoryConfig),
 			RepositoryCache:  client.repositoryCache,
 			DebugLog: func(format string, v ...interface{}) {
 				// suppress helm chart client debug log
@@ -114,9 +116,11 @@ type HelmChartOptions struct {
 	CleanupOnFail bool
 	GenerateName  bool
 	ReleaseName   string
-	Timeout       time.Duration
-	Wait          bool
-	DryRun        bool
+	// Version pins the chart version; empty takes the newest one.
+	Version string
+	Timeout time.Duration
+	Wait    bool
+	DryRun  bool
 }
 
 // HelmChartValueOption mutates Helm values passed to an install or upgrade.
@@ -155,8 +159,8 @@ func addDebugArgumentIfNotPresent(values *helmValues.Options) {
 				fmt.Fprintln(ginkgo.GinkgoWriter, "Before modification:", value)
 
 				// Parse the arguments format
-				// Expected format: arguments={-f=/etc/dcgm-exporter/default-counters.csv,--collect-interval=1000}
-				// We need to convert this to: arguments={-f=/etc/dcgm-exporter/default-counters.csv,--collect-interval=1000, --debug}
+				// Expected format: arguments={-c=1000}
+				// We need to convert this to: arguments={-c=1000,--debug}
 
 				// Extract the content between curly braces
 				start := strings.Index(value, "{")
@@ -168,7 +172,7 @@ func addDebugArgumentIfNotPresent(values *helmValues.Options) {
 
 					// Add --debug to the arguments content with comma separator
 					if argsContent != "" {
-						argsContent += ", --debug"
+						argsContent += ",--debug"
 					} else {
 						argsContent = "--debug"
 					}
@@ -256,6 +260,7 @@ func (c *HelmClient) buildChartSpec(actionName string, chartOpts HelmChartOption
 		Namespace:       c.namespace,
 		GenerateName:    chartOpts.GenerateName,
 		ReleaseName:     chartOpts.ReleaseName,
+		Version:         chartOpts.Version,
 		WaitStrategy:    waitStrategy,
 		Timeout:         chartOpts.Timeout,
 		CleanupOnFail:   chartOpts.CleanupOnFail,
@@ -304,6 +309,22 @@ func logChartValues(actionName string, chartName string, namespace string, chart
 			fmt.Fprintln(ginkgo.GinkgoWriter, "    ", value)
 		}
 	}
+}
+
+// repositoryConfigFile returns the repositories file inside directory. Helm reads
+// its repository list from a file, not from a directory.
+func repositoryConfigFile(directory string) string {
+	return filepath.Join(directory, "repositories.yaml")
+}
+
+// AddRepository adds a chart repository, so the client can install the
+// "<name>/<chart>" charts it publishes.
+func (c *HelmClient) AddRepository(name, url string) error {
+	if err := c.client.AddOrUpdateChartRepo(repo.Entry{Name: name, URL: url}); err != nil {
+		return fmt.Errorf("add chart repository %q: %w", name, err)
+	}
+
+	return nil
 }
 
 // Install deploys the helm chart

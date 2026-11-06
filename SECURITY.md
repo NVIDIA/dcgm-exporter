@@ -6,6 +6,28 @@ NVIDIA takes the security of our software products and services seriously, which
 
 If you believe you have found a security vulnerability in any NVIDIA-owned repository that meets [NVIDIA's definition of a security vulnerability](https://www.nvidia.com/en-us/security/psirt-policies/), please report it to us as described below.
 
+## Remote DCGM hostengine connections
+
+The `sources.dcgm.hostengine` setting (`--remote-hostengine-info`) connects the
+exporter to a standalone DCGM hostengine. DCGM's TCP protocol provides no
+authentication, authorization, or encryption. Treat the hostengine as an
+administrative interface and connect only to a trusted endpoint. See the
+[DCGM transport security guidance](https://docs.nvidia.com/datacenter/dcgm/latest/reference/command-line-reference/nv-hostengine.html#transport-and-client-addresses).
+
+- For same-host connections, keep a TCP listener on loopback or use a
+  pathname-based Unix-domain socket. Restrict access to the socket and its
+  containing directory to the service identities that need it; a local socket
+  relies on filesystem permissions, not cryptographic client authentication.
+- When TCP access between hosts is required, use a trusted management network
+  and host/network firewall rules that allow only the required client hosts.
+  Do not expose the hostengine port to public or untrusted networks. If the
+  connection crosses an untrusted network, protect it with an authenticated,
+  encrypted tunnel or VPN managed by the operator.
+
+The exporter's `--web-config-file` TLS and basic-auth settings protect incoming
+HTTP requests. They do not protect or authenticate the separate connection
+from the exporter to the DCGM hostengine. Restrict that connection independently.
+
 ## Reporting Security Issues
 
 **Please do not report security vulnerabilities through public GitHub issues.**

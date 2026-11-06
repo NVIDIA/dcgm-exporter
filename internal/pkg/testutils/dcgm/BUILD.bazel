@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dcgm",
+    srcs = ["dcgm_init.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils/dcgm",
+    testonly = True,
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/dcgmprovider",
+    ],
+)

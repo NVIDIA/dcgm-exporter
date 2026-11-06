@@ -1,0 +1,53 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "framework",
+    srcs = [
+        "helm.go",
+        "kube.go",
+        "utils.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/k8s/internal/framework",
+    visibility = ["//tests/k8s:__subpackages__"],
+    deps = [
+        "@com_github_mittwald_go_helm_client//:go-helm-client",
+        "@com_github_mittwald_go_helm_client//values",
+        "@com_github_onsi_ginkgo_v2//:ginkgo",
+        "@io_k8s_api//authorization/v1:authorization",
+        "@io_k8s_api//core/v1:core",
+        "@io_k8s_api//rbac/v1:rbac",
+        "@io_k8s_apimachinery//pkg/api/errors",
+        "@io_k8s_apimachinery//pkg/api/resource",
+        "@io_k8s_apimachinery//pkg/apis/meta/v1:meta",
+        "@io_k8s_apimachinery//pkg/labels",
+        "@io_k8s_apimachinery//pkg/types",
+        "@io_k8s_client_go//kubernetes",
+        "@io_k8s_client_go//kubernetes/scheme",
+        "@io_k8s_client_go//rest",
+        "@io_k8s_client_go//tools/portforward",
+        "@io_k8s_client_go//tools/remotecommand",
+        "@io_k8s_client_go//transport/spdy",
+        "@sh_helm_helm_v4//pkg/action",
+        "@sh_helm_helm_v4//pkg/kube",
+        "@sh_helm_helm_v4//pkg/repo/v1:repo",
+        "@sh_helm_helm_v4//pkg/storage/driver",
+    ],
+)
+
+go_test(
+    name = "framework_test",
+    srcs = [
+        "helm_test.go",
+        "kube_test.go",
+    ],
+    embed = [":framework"],
+    deps = [
+        "@io_k8s_api//core/v1:core",
+        "@io_k8s_apimachinery//pkg/apis/meta/v1:meta",
+        "@io_k8s_apimachinery//pkg/types",
+        "@io_k8s_client_go//rest",
+        "@sh_helm_helm_v4//pkg/action",
+        "@sh_helm_helm_v4//pkg/kube",
+        "@com_github_stretchr_testify//require",
+    ],
+)

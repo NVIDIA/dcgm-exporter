@@ -22,11 +22,11 @@ import "strings"
 func graceCapability(lscpu, discovery string) Capability {
 	switch {
 	case graceEvidence(discovery):
-		return hostCapability("grace_cpu", StatusSupported, "DCGM container discovery -l", "DCGM reported Grace CPU hierarchy evidence", firstLine(discovery))
+		return hostCapability("grace_cpu", StatusSupported, "dcgmi discovery -l", "DCGM reported Grace CPU hierarchy evidence", firstLine(discovery))
 	case strings.Contains(strings.ToLower(lscpu), "grace"):
-		return hostCapability("grace_cpu", StatusUnknown, "DCGM container discovery -l/lscpu", "Grace CPU detected, but "+dcgmProbeUnavailableReason("cpu-hierarchy", discovery), firstLine(lscpu))
+		return hostCapability("grace_cpu", StatusUnknown, "dcgmi discovery -l/lscpu", "Grace CPU detected, but "+dcgmProbeUnavailableReason("cpu-hierarchy", discovery), firstLine(lscpu))
 	default:
-		return hostCapability("grace_cpu", StatusUnsupported, "DCGM container discovery -l/lscpu", "Grace CPU or DCGM CPU hierarchy evidence was not detected", firstLine(lscpu))
+		return hostCapability("grace_cpu", StatusUnsupported, "dcgmi discovery -l/lscpu", "Grace CPU or DCGM CPU hierarchy evidence was not detected", firstLine(lscpu))
 	}
 }
 

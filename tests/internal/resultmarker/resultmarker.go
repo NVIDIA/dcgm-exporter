@@ -33,7 +33,6 @@ import (
 const markerPrefix = "dcgm_exporter_e2e"
 
 var (
-	bracketRE                 = regexp.MustCompile(`\[[^]]+\]`)
 	camelBoundaryRE           = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 	invalidRE                 = regexp.MustCompile(`[^a-z0-9]+`)
 	collapseRE                = regexp.MustCompile(`_+`)
@@ -72,6 +71,7 @@ func register(enabled func() bool, nameFor func(ginkgo.SpecReport) string) bool 
 	var mu sync.Mutex
 	started := map[string]struct{}{}
 
+	// Record only specs that actually begin, so filtered specs get no terminal marker.
 	ginkgo.BeforeEach(func() {
 		if !enabled() {
 			return
@@ -85,6 +85,7 @@ func register(enabled func() bool, nameFor func(ginkgo.SpecReport) string) bool 
 		line("RUNNING", name)
 	})
 
+	// Pair the completed report with its RUNNING marker under the same lock.
 	ginkgo.ReportAfterEach(func(report ginkgo.SpecReport) {
 		if !enabled() {
 			return
@@ -130,8 +131,13 @@ func specName(report ginkgo.SpecReport, names map[string]string) string {
 // suiteSpecName derives a stable suite-qualified name from the first scenario label.
 func suiteSpecName(report ginkgo.SpecReport, suite string) string {
 	base := markerPrefix + "_" + slug(suite) + "_unlabeled"
-	if labels := report.Labels(); len(labels) > 0 {
-		base = markerPrefix + "_" + slug(suite) + "_" + scenarioSlug(labels[0])
+	for _, label := range report.Labels() {
+		// Ginkgo adds Serial before the scenario's own labels.
+		if label == "Serial" {
+			continue
+		}
+		base = markerPrefix + "_" + slug(suite) + "_" + scenarioSlug(label)
+		break
 	}
 	return nameWithLeaf(base, report.LeafNodeText)
 }
@@ -166,9 +172,8 @@ func scenarioSlug(text string) string {
 	return slug(camelBoundaryRE.ReplaceAllString(text, `${1}_${2}`))
 }
 
-// slug converts free-form Ginkgo text into a stable test-name suffix.
+// slug normalizes Ginkgo text, retaining bracketed image variants in the name.
 func slug(text string) string {
-	text = bracketRE.ReplaceAllString(text, " ")
 	text = strings.ToLower(text)
 	text = invalidRE.ReplaceAllString(text, "_")
 	text = collapseRE.ReplaceAllString(text, "_")

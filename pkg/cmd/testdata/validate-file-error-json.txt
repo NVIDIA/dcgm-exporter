@@ -1,0 +1,35 @@
+exit 1
+--- stdout ---
+{
+  "format_version": 1,
+  "command": "config.validate",
+  "data": {
+    "path": "testdata/invalid.yaml",
+    "valid": false,
+    "diagnostics": [
+      {
+        "severity": "error",
+        "source": {
+          "kind": "file",
+          "file": "testdata/invalid.yaml",
+          "line": 8,
+          "column": 12,
+          "path": "metrics[0].every"
+        },
+        "summary": "must be greater than 0"
+      }
+    ],
+    "checked": [],
+    "not_checked": [
+      "gpus",
+      "dcgm",
+      "field_support",
+      "kubelet_socket",
+      "workload_labels",
+      "listener",
+      "directories",
+      "local_files"
+    ]
+  }
+}
+--- stderr ---

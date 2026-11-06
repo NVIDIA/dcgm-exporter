@@ -17,7 +17,6 @@
 package scenario
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -55,10 +54,26 @@ type PlanGroup struct {
 	Labels []string
 }
 
+// SelectionOptions adjusts how a caller handles capability evidence it intentionally cannot collect.
+// The default leaves unknown capabilities as errors so ordinary local planning cannot silently use incomplete evidence.
+type SelectionOptions struct {
+	// SkipUnknownCapabilityPrefixes marks unknown capabilities in these namespaces as explicit skips.
+	// An external Kubernetes caller uses the host namespace because controller facts do not describe its selected target.
+	SkipUnknownCapabilityPrefixes []string
+}
+
 // Select returns the Kubernetes scenario plan.
 func Select(cat []Scenario, caps capability.Snapshot, cfg config.Config) (Plan, error) {
+	return SelectWithOptions(cat, caps, cfg, SelectionOptions{})
+}
+
+// SelectWithOptions returns the Kubernetes scenario plan using the caller's explicit unknown-capability policy.
+// It preserves Select's strict behavior unless an option identifies evidence that the caller intentionally did not collect.
+func SelectWithOptions(cat []Scenario, caps capability.Snapshot, cfg config.Config, options SelectionOptions) (Plan, error) {
+	if err := ValidateCatalog(cat); err != nil {
+		return Plan{}, err
+	}
 	var plan Plan
-	var requiredFailures []string
 	groups := map[string]int{}
 
 	for _, entry := range cat {
@@ -69,38 +84,98 @@ func Select(cat []Scenario, caps capability.Snapshot, cfg config.Config) (Plan, 
 			continue
 		}
 
-		decision := decide(entry, caps)
-		plan.Scenarios = append(plan.Scenarios, decision)
-		if decision.Outcome == OutcomeSkipped && scenarioRequired(entry, caps, cfg) && !dcgmNotSupported(entry, caps) && !hardwareAbsent(entry, caps) {
-			requiredFailures = append(requiredFailures, fmt.Sprintf("%s required but unsupported: %s", entry.Selector(), decision.Reason))
+		decision, err := decide(entry, caps, cfg.TestOptions.DryRun, options)
+		if err != nil {
+			return plan, err
 		}
-		if decision.Outcome != OutcomeSelected {
+		plan.Scenarios = append(plan.Scenarios, decision)
+		if decision.Outcome == OutcomeSelected {
+			plan.addSelected(entry, groups)
+		}
+	}
+
+	return plan, nil
+}
+
+// addSelected records a selected scenario's label as remote or embedded and adds
+// it to its group, creating the group in first-seen order. groups maps names to indexes.
+func (p *Plan) addSelected(entry Scenario, groups map[string]int) {
+	if entry.Remote {
+		p.RemoteLabels = append(p.RemoteLabels, entry.Name)
+	} else {
+		p.EmbeddedLabels = append(p.EmbeddedLabels, entry.Name)
+	}
+	index, ok := groups[entry.Group]
+	if !ok {
+		index = len(p.Groups)
+		groups[entry.Group] = index
+		p.Groups = append(p.Groups, PlanGroup{Name: entry.Group})
+	}
+	p.Groups[index].Labels = append(p.Groups[index].Labels, entry.Name)
+}
+
+// skipsUnknownCapability reports whether an unknown gate belongs to a namespace the caller cannot probe.
+func (o SelectionOptions) skipsUnknownCapability(gate string) bool {
+	for _, prefix := range o.SkipUnknownCapabilityPrefixes {
+		if prefix != "" && strings.HasPrefix(gate, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// GroupSelected groups scenarios by their first occurrence in selected.
+func GroupSelected(selected []Scenario) []PlanGroup {
+	indexes := make(map[string]int)
+	var groups []PlanGroup
+	for _, entry := range selected {
+		index, ok := indexes[entry.Group]
+		if !ok {
+			indexes[entry.Group] = len(groups)
+			groups = append(groups, PlanGroup{Name: entry.Group})
+			index = len(groups) - 1
+		}
+		groups[index].Labels = append(groups[index].Labels, entry.Name)
+	}
+	return groups
+}
+
+// SkipSelectedLabel marks one selected scenario as skipped after planning completes.
+func SkipSelectedLabel(plan Plan, label, reason string) Plan {
+	for i := range plan.Scenarios {
+		if plan.Scenarios[i].Scenario.Name != label || plan.Scenarios[i].Outcome != OutcomeSelected {
 			continue
 		}
-
-		if entry.Remote {
-			plan.RemoteLabels = append(plan.RemoteLabels, entry.Name)
-		} else {
-			plan.EmbeddedLabels = append(plan.EmbeddedLabels, entry.Name)
-		}
-
-		groupName := entry.Group
-		if groupName == "" {
-			groupName = "embedded-baseline"
-		}
-		index, ok := groups[groupName]
-		if !ok {
-			groups[groupName] = len(plan.Groups)
-			plan.Groups = append(plan.Groups, PlanGroup{Name: groupName})
-			index = len(plan.Groups) - 1
-		}
-		plan.Groups[index].Labels = append(plan.Groups[index].Labels, entry.Name)
+		plan.Scenarios[i].Outcome = OutcomeSkipped
+		plan.Scenarios[i].Reason = reason
+		break
 	}
-
-	if len(requiredFailures) != 0 {
-		return plan, errors.New(strings.Join(requiredFailures, "\n"))
+	plan.EmbeddedLabels = removeString(plan.EmbeddedLabels, label)
+	plan.RemoteLabels = removeString(plan.RemoteLabels, label)
+	for i := range plan.Groups {
+		plan.Groups[i].Labels = removeString(plan.Groups[i].Labels, label)
 	}
-	return plan, nil
+	filtered := plan.Groups[:0]
+	for _, group := range plan.Groups {
+		if len(group.Labels) == 0 {
+			continue
+		}
+		filtered = append(filtered, group)
+	}
+	plan.Groups = filtered
+	return plan
+}
+
+// removeString drops one exact value from values.
+func removeString(values []string, value string) []string {
+	filtered := values[:0]
+	for _, candidate := range values {
+		if candidate == value {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	return filtered
 }
 
 // SelectedForSuite returns selected scenarios for a non-capability-gated suite.
@@ -211,36 +286,117 @@ func plural(count int, singular, plural string) string {
 	return plural
 }
 
-// decide evaluates one scenario's capability gates against the current snapshot.
-func decide(entry Scenario, caps capability.Snapshot) PlannedScenario {
-	gates := append([]string{}, entry.Capabilities...)
-	gates = append(gates, entry.ExtraGates...)
-	if len(gates) == 0 {
-		return PlannedScenario{Scenario: entry, Outcome: OutcomeSelected, Reason: "always-run scenario"}
+// decide evaluates coarse features before scenario-specific applicability.
+func decide(entry Scenario, caps capability.Snapshot, dryRun bool, options SelectionOptions) (PlannedScenario, error) {
+	required := entry.RequiredCapabilitiesFor(dryRun)
+	if len(required) == 0 && len(entry.Applicability) == 0 {
+		return PlannedScenario{Scenario: entry, Outcome: OutcomeSelected, Reason: "always-run scenario"}, nil
 	}
 
+	reasons, skipped, skip, err := evaluateGates(entry, caps, dryRun, options, "feature unsupported", required)
+	if err != nil {
+		return PlannedScenario{}, err
+	}
+	if skip {
+		return skipped, nil
+	}
+
+	applicabilityReasons, skipped, skip, err := evaluateGates(
+		entry,
+		caps,
+		dryRun,
+		options,
+		"scenario not applicable",
+		entry.Applicability,
+	)
+	if err != nil {
+		return PlannedScenario{}, err
+	}
+	if skip {
+		return skipped, nil
+	}
+
+	reasons = append(reasons, applicabilityReasons...)
+	return PlannedScenario{
+		Scenario: entry,
+		Outcome:  OutcomeSelected,
+		Reason:   strings.Join(reasons, "; "),
+	}, nil
+}
+
+// evaluateGates returns the first skip or unknown result for one gate tier.
+func evaluateGates(
+	entry Scenario,
+	caps capability.Snapshot,
+	dryRun bool,
+	options SelectionOptions,
+	skipPrefix string,
+	gates []string,
+) ([]string, PlannedScenario, bool, error) {
 	reasons := make([]string, 0, len(gates))
 	for _, gate := range gates {
-		entryCapability := caps.Lookup(gate)
-		if entryCapability.Status != capability.StatusSupported {
-			return PlannedScenario{Scenario: entry, Outcome: OutcomeSkipped, Reason: entryCapability.Reason}
+		result := caps.Lookup(gate)
+		switch result.Status {
+		case capability.StatusSupported:
+			reasons = append(reasons, result.Reason)
+		case capability.StatusUnsupported:
+			decision := PlannedScenario{
+				Scenario: entry,
+				Outcome:  OutcomeSkipped,
+				Reason:   skipPrefix + ": " + result.Reason,
+			}
+			return nil, decision, true, nil
+		case capability.StatusUnknown:
+			if dryRun {
+				decision := PlannedScenario{
+					Scenario: entry,
+					Outcome:  OutcomeSkipped,
+					Reason:   "not evaluated during dry-run: " + result.Reason,
+				}
+				return nil, decision, true, nil
+			}
+			if options.skipsUnknownCapability(gate) {
+				decision := PlannedScenario{
+					Scenario: entry,
+					Outcome:  OutcomeSkipped,
+					Reason:   "not evaluated for the selected Kubernetes target: " + result.Reason,
+				}
+				return nil, decision, true, nil
+			}
+			return nil, PlannedScenario{}, false, fmt.Errorf(
+				"%s capability probe failed for %s: %s (%s)",
+				entry.Selector(),
+				gate,
+				result.Reason,
+				result.Source,
+			)
+		default:
+			return nil, PlannedScenario{}, false, fmt.Errorf(
+				"%s capability probe returned invalid status %q for %s",
+				entry.Selector(),
+				result.Status,
+				gate,
+			)
 		}
-		reasons = append(reasons, entryCapability.Reason)
 	}
-	return PlannedScenario{Scenario: entry, Outcome: OutcomeSelected, Reason: strings.Join(reasons, "; ")}
+	return reasons, PlannedScenario{}, false, nil
 }
 
 // scenarioEnabled applies feature-mode defaults before selector filters are considered.
 func scenarioEnabled(entry Scenario, cfg config.Config) bool {
 	switch entry.Enabled {
-	case "failure_injection":
-		return featureModeEnabled(cfg.Tests.DCGMFailureInjection) || contains(cfg.Tests.Scenarios, entry.Selector())
 	case "gpu_operator":
-		return featureModeEnabled(cfg.Tests.GPUOperator) || contains(cfg.Tests.Scenarios, entry.Selector())
-	case "nvml_injection":
-		return cfg.Tests.DCGMNVMLInjectionYAML != "" || contains(cfg.Tests.Scenarios, entry.Selector())
+		return cfg.TestOptions.GPUOperator.Enabled() || contains(cfg.TestOptions.Scenarios, entry.Selector())
+	case "gpu_operator_chart":
+		return (cfg.TestOptions.GPUOperator == config.GPUOperatorInstall && strings.TrimSpace(cfg.TestOptions.GPUOperatorChart) != "") || contains(cfg.TestOptions.Scenarios, entry.Selector())
+	case "shared_gpu":
+		return cfg.TestOptions.SharedGPUConfigure.Enabled() || contains(cfg.TestOptions.Scenarios, entry.Selector())
+	case EnabledNVMLInjection:
+		return contains(cfg.TestOptions.Scenarios, entry.Selector())
+	case "nvsdm_mock":
+		return contains(cfg.TestOptions.Scenarios, entry.Selector())
 	case "manual":
-		return contains(cfg.Tests.Scenarios, entry.Selector())
+		return contains(cfg.TestOptions.Scenarios, entry.Selector())
 	default:
 		return true
 	}
@@ -248,16 +404,16 @@ func scenarioEnabled(entry Scenario, cfg config.Config) bool {
 
 // scenarioAllowed applies explicit suite and scenario selection filters.
 func scenarioAllowed(entry Scenario, cfg config.Config) bool {
-	if contains(cfg.Tests.SkipSuites, "all") || contains(cfg.Tests.SkipSuites, string(entry.Suite)) {
+	if contains(cfg.TestOptions.SkipSuites, "all") || contains(cfg.TestOptions.SkipSuites, string(entry.Suite)) {
 		return false
 	}
-	if len(cfg.Tests.Suites) != 0 && !contains(cfg.Tests.Suites, "all") && !contains(cfg.Tests.Suites, string(entry.Suite)) {
+	if len(cfg.TestOptions.Suites) != 0 && !contains(cfg.TestOptions.Suites, "all") && !contains(cfg.TestOptions.Suites, string(entry.Suite)) {
 		return false
 	}
-	if contains(cfg.Tests.SkipScenarios, entry.Selector()) {
+	if contains(cfg.TestOptions.SkipScenarios, entry.Selector()) {
 		return false
 	}
-	if len(cfg.Tests.Scenarios) != 0 && !contains(cfg.Tests.Scenarios, entry.Selector()) {
+	if len(cfg.TestOptions.Scenarios) != 0 && !contains(cfg.TestOptions.Scenarios, entry.Selector()) {
 		return false
 	}
 	return true
@@ -271,143 +427,4 @@ func contains(values []string, value string) bool {
 		}
 	}
 	return false
-}
-
-// featureModeEnabled treats any non-false feature mode as selectable coverage.
-func featureModeEnabled(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "false", "0", "no", "off":
-		return false
-	default:
-		return true
-	}
-}
-
-// scenarioRequired decides whether an unsupported scenario should fail setup or be skipped.
-func scenarioRequired(entry Scenario, caps capability.Snapshot, cfg config.Config) bool {
-	if cfg.Tests.DryRun {
-		return false
-	}
-	if contains(cfg.Tests.Scenarios, entry.Selector()) {
-		return true
-	}
-	if fullDefaultRun(cfg) && capabilityUnknown(entry, caps) {
-		return true
-	}
-	switch entry.Required {
-	case "failure_injection":
-		return boolModeRequired(cfg.Tests.DCGMFailureInjection)
-	case "failure_injection_nvlink":
-		return boolModeRequired(cfg.Tests.DCGMFailureInjection)
-	case "gpu_operator":
-		return gpuOperatorRequired(cfg.Tests.GPUOperator)
-	case "gpu_operator_shared":
-		return gpuOperatorRequired(cfg.Tests.GPUOperator) && boolModeRequired(cfg.Tests.SharedGPUConfigure)
-	case "gpu_operator_mig":
-		return gpuOperatorRequired(cfg.Tests.GPUOperator) && boolModeRequired(cfg.Tests.MIGConfigure)
-	case "gpu_operator_dra":
-		return gpuOperatorRequired(cfg.Tests.GPUOperator) && boolModeRequired(cfg.Tests.DRAConfigure)
-	case "gpu_operator_ipv6":
-		return gpuOperatorRequired(cfg.Tests.GPUOperator) && ipFamilyRequestsIPv6(cfg.Tests.K3dIPFamily)
-	case "dra":
-		return boolModeRequired(cfg.Tests.DRAConfigure)
-	case "shared_gpu":
-		return boolModeRequired(cfg.Tests.SharedGPUConfigure)
-	case "mig":
-		return boolModeRequired(cfg.Tests.MIGConfigure)
-	case "none", "":
-		return false
-	default:
-		return false
-	}
-}
-
-// fullDefaultRun reports whether defaults request the broadest automatic k8s coverage.
-func fullDefaultRun(cfg config.Config) bool {
-	return len(cfg.Tests.Suites) == 0 &&
-		len(cfg.Tests.Scenarios) == 0 &&
-		boolModeRequired(cfg.Tests.DRAConfigure) &&
-		boolModeRequired(cfg.Tests.SharedGPUConfigure) &&
-		boolModeRequired(cfg.Tests.DCGMFailureInjection) &&
-		gpuOperatorRequired(cfg.Tests.GPUOperator)
-}
-
-// capabilityUnknown reports whether any gate for the scenario was not probed.
-func capabilityUnknown(entry Scenario, caps capability.Snapshot) bool {
-	gates := append([]string{}, entry.Capabilities...)
-	gates = append(gates, entry.ExtraGates...)
-	for _, gate := range gates {
-		if caps.Lookup(gate).Status == capability.StatusUnknown {
-			return true
-		}
-	}
-	return false
-}
-
-// hardwareAbsent recognizes unsupported host gates caused by missing hardware rather than setup failure.
-func hardwareAbsent(entry Scenario, caps capability.Snapshot) bool {
-	gates := append([]string{}, entry.Capabilities...)
-	gates = append(gates, entry.ExtraGates...)
-	for _, gate := range gates {
-		entryCapability := caps.Lookup(gate)
-		if entryCapability.Status != capability.StatusUnsupported || !strings.HasPrefix(gate, "host:") {
-			continue
-		}
-		reason := strings.ToLower(entryCapability.Reason)
-		for _, marker := range []string{
-			"not detected",
-			"not enabled",
-			"not present",
-			"no full gpu",
-			"requires at least two gpus",
-			"did not report",
-		} {
-			if strings.Contains(reason, marker) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// dcgmNotSupported reports whether DCGM explicitly rejected a field or feature needed by the scenario.
-func dcgmNotSupported(entry Scenario, caps capability.Snapshot) bool {
-	gates := append([]string{}, entry.Capabilities...)
-	gates = append(gates, entry.ExtraGates...)
-	for _, gate := range gates {
-		if caps.Lookup(gate).DCGMNotSupported {
-			return true
-		}
-	}
-	return false
-}
-
-// boolModeRequired treats explicit true-like modes as setup requirements.
-func boolModeRequired(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "auto", "false", "0", "no", "off":
-		return false
-	default:
-		return true
-	}
-}
-
-// gpuOperatorRequired treats install and existing modes as hard GPU Operator requirements.
-func gpuOperatorRequired(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "install", "existing":
-		return true
-	default:
-		return false
-	}
-}
-
-// ipFamilyRequestsIPv6 reports whether a local-cluster IP-family option requires IPv6.
-func ipFamilyRequestsIPv6(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "ipv6", "dualstack":
-		return true
-	default:
-		return false
-	}
 }

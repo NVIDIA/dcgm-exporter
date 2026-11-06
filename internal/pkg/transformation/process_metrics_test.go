@@ -31,19 +31,23 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
+// mockPIDMapper supplies the process-to-pod join independently of cgroup parsing.
 type mockPIDMapper struct {
 	result map[uint32]*PodInfo
 }
 
+// buildPIDToPodMap returns the join fixture selected by the collection case.
 func (m *mockPIDMapper) buildPIDToPodMap(pids []uint32, pods []PodInfo) map[uint32]*PodInfo {
 	return m.result
 }
 
+// TestGetGPUUUIDToDeviceID checks UUID-to-device aliases for both configured identifier types.
 func TestGetGPUUUIDToDeviceID(t *testing.T) {
 	t.Parallel()
 	gpu0UUID := "GPU-00000000-0000-0000-0000-000000000000"
 	gpu1UUID := "GPU-11111111-1111-1111-1111-111111111111"
 
+	// Each case binds one configured identifier type to its exact GPU aliases.
 	tests := []struct {
 		name     string
 		idType   appconfig.KubernetesGPUIDType
@@ -89,14 +93,18 @@ func TestGetGPUUUIDToDeviceID(t *testing.T) {
 	}
 }
 
+// TestIsPerProcessMetric selects only utilization and framebuffer usage for process attribution.
 func TestIsPerProcessMetric(t *testing.T) {
 	t.Parallel()
+	// The table separates process-attributable fields from unrelated metrics.
 	tests := []struct {
 		fieldName string
 		expected  bool
 	}{
 		{metricGPUUtil, true},
 		{metricFBUsed, true},
+		{metricGPUUtilRatio, true},
+		{metricFBUsedBytes, true},
 		{"DCGM_FI_DEV_POWER_USAGE", false},
 		{"", false},
 	}
@@ -110,6 +118,7 @@ func TestIsPerProcessMetric(t *testing.T) {
 	}
 }
 
+// TestPerProcessMetrics_GetAllPIDs returns the union of memory and utilization PIDs without duplicates.
 func TestPerProcessMetrics_GetAllPIDs(t *testing.T) {
 	t.Parallel()
 	metrics := &perProcessMetrics{
@@ -131,6 +140,7 @@ func TestPerProcessMetrics_GetAllPIDs(t *testing.T) {
 	assert.Contains(t, pids, uint32(1003))
 }
 
+// TestPerProcessMetrics_GetValueForMetric checks value presence, zero values, and conversion of bytes to MiB.
 func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 	t.Parallel()
 	metrics := &perProcessMetrics{
@@ -144,6 +154,7 @@ func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 		},
 	}
 
+	// Presence is independent of a numeric zero; memory expectations use MiB.
 	tests := []struct {
 		name      string
 		fieldName string
@@ -180,6 +191,20 @@ func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 			hasValue:  true,
 		},
 		{
+			name:      "GPU util ratio uses the same observation as GPU util",
+			fieldName: metricGPUUtilRatio,
+			pid:       1001,
+			expected:  50,
+			hasValue:  true,
+		},
+		{
+			name:      "FB used bytes are not converted to MiB",
+			fieldName: metricFBUsedBytes,
+			pid:       1001,
+			expected:  1024 * 1024 * 1024,
+			hasValue:  true,
+		},
+		{
 			name:      "unknown metric",
 			fieldName: "DCGM_FI_DEV_POWER_USAGE",
 			pid:       1001,
@@ -206,6 +231,7 @@ func TestPerProcessMetrics_GetValueForMetric(t *testing.T) {
 	}
 }
 
+// TestPerProcessMetrics_EmptyMaps checks that empty observations produce no PIDs or values.
 func TestPerProcessMetrics_EmptyMaps(t *testing.T) {
 	t.Parallel()
 	metrics := &perProcessMetrics{
@@ -221,6 +247,7 @@ func TestPerProcessMetrics_EmptyMaps(t *testing.T) {
 	assert.Equal(t, uint64(0), value)
 }
 
+// TestPerProcessCollector_Collect checks whole-GPU/MIG joins, unallocated devices, and independent query failures.
 func TestPerProcessCollector_Collect(t *testing.T) {
 	t.Parallel()
 	gpu0UUID := "GPU-00000000-0000-0000-0000-000000000000"
@@ -231,6 +258,7 @@ func TestPerProcessCollector_Collect(t *testing.T) {
 	pod0 := &PodInfo{Name: "test-pod", Namespace: "default", UID: podUID0, Container: "app"}
 	pod1 := &PodInfo{Name: "pod1", Namespace: "ns1", UID: podUID1}
 
+	// setupMocks binds query results; validate keeps each device/topology assertion visible.
 	tests := []struct {
 		name         string
 		setupMocks   func(ctrl *gomock.Controller) (nvmlprovider.NVML, deviceinfo.Provider)

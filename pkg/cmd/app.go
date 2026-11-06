@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,23 +9,17 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/debug"
-	"slices"
-	"strconv"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
-	"text/template"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/google/uuid"
 	"github.com/urfave/cli/v2"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
@@ -42,82 +35,76 @@ const (
 	MajorKey               = "g" // Monitor top-level entities: GPUs or NvSwitches or CPUs
 	MinorKey               = "i" // Monitor sub-level entities: GPU instances/NvLinks/CPUCores - GPUI cannot be specified if MIG is disabled
 	undefinedConfigMapData = appconfig.UndefinedConfigMapData
-	deviceUsageTemplate    = `Specify which devices dcgm-exporter monitors.
-	Possible values: {{.FlexKey}} or
-	                 {{.MajorKey}}[:id1[,-id2...]] or
-	                 {{.MinorKey}}[:id1[,-id2...]] or
-	                 {{.MajorKey}}[:id1[,-id2...]]+{{.MinorKey}}[:id1[,-id2...]].
-	If an id list is used, then devices with match IDs must exist on the system. For example:
-		(default) = monitor all GPU instances in MIG mode, all GPUs if MIG mode is disabled. (See {{.FlexKey}})
-		{{.MajorKey}} = Monitor all GPUs
-		{{.MinorKey}} = Monitor all GPU instances
-		{{.FlexKey}} = Monitor all GPUs if MIG is disabled, or all GPU instances if MIG is enabled.
-                       Note: this rule will be applied to each GPU. If it has GPU instances, those
-                             will be monitored. If it doesn't, then the GPU will be monitored.
-                             This is our recommended option for single or mixed MIG Strategies.
-		{{.MajorKey}}:0,1 = monitor GPUs 0 and 1
-		{{.MinorKey}}:0,2-4 = monitor GPU instances 0, 2, 3, and 4.
-		{{.MajorKey}}+{{.MinorKey}} = monitor all GPUs and GPU instances.
-
-	NOTE 1: Any time indices are specified, those indices must exist on the system.
-	NOTE 2: The flex option {{.FlexKey}} cannot be combined with {{.MajorKey}} or {{.MinorKey}}.`
-	deviceGPUUsageNote = `
-
-	NOTE 3: For GPU devices, i cannot be specified unless MIG mode is enabled.`
 )
 
 const (
-	CLIConfigFile                       = "config-file"
-	CLIFieldsFile                       = "collectors"
-	CLIAddress                          = "address"
-	CLICollectInterval                  = "collect-interval"
-	CLIWatchMaxKeepAge                  = "watch-max-keep-age"
-	CLIWatchMaxKeepSamples              = "watch-max-keep-samples"
-	CLIKubernetes                       = "kubernetes"
-	CLIKubernetesEnablePodLabels        = "kubernetes-enable-pod-labels"
-	CLIKubernetesEnablePodUID           = "kubernetes-enable-pod-uid"
-	CLIKubernetesGPUIDType              = "kubernetes-gpu-id-type"
-	CLIKubernetesPodLabelAllowlistRegex = "kubernetes-pod-label-allowlist-regex"
-	CLIUseOldNamespace                  = "use-old-namespace"
-	CLIRemoteHEInfo                     = "remote-hostengine-info"
-	CLIGPUDevices                       = "devices"
-	CLISwitchDevices                    = "switch-devices"
-	CLICPUDevices                       = "cpu-devices"
-	CLINoHostname                       = "no-hostname"
-	CLIUseFakeGPUs                      = "fake-gpus"
-	CLIConfigMapData                    = "configmap-data"
-	CLIWebSystemdSocket                 = "web-systemd-socket"
-	CLIWebConfigFile                    = "web-config-file"
-	CLIWebReadTimeout                   = "web-read-timeout"
-	CLIWebWriteTimeout                  = "web-write-timeout"
-	CLIMaxConcurrentScrapes             = "max-concurrent-scrapes"
-	CLIEnableExporterMetrics            = "enable-exporter-metrics"
-	CLIXIDCountWindowSize               = "xid-count-window-size"
-	CLIReplaceBlanksInModelName         = "replace-blanks-in-model-name"
-	CLIDebugMode                        = "debug"
-	CLIClockEventsCountWindowSize       = "clock-events-count-window-size"
-	CLIEnableDCGMLog                    = "enable-dcgm-log"
-	CLIDCGMLogLevel                     = "dcgm-log-level"
-	CLILogFormat                        = "log-format"
-	CLIPodResourcesKubeletSocket        = "pod-resources-kubelet-socket"
-	CLIHPCJobMappingDir                 = "hpc-job-mapping-dir"
-	CLIContainerLabels                  = "container-labels"
-	CLIContainerRuntimeSocket           = "container-runtime-socket"
-	CLINvidiaResourceNames              = "nvidia-resource-names"
-	CLIKubernetesVirtualGPUs            = "kubernetes-virtual-gpus"
-	CLIDumpEnabled                      = "dump-enabled"
-	CLIDumpDirectory                    = "dump-directory"
-	CLIDumpRetention                    = "dump-retention"
-	CLIDumpCompression                  = "dump-compression"
-	CLIKubernetesEnableDRA              = "kubernetes-enable-dra"
-	CLIDisableStartupValidate           = "disable-startup-validate"
-	CLIEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
-	CLIGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
-	CLIEnablePprof                      = "enable-pprof"
+	CLIConfigFile                       = appconfig.FlagConfigFile
+	CLIFieldsFile                       = appconfig.FlagFieldsFile
+	CLIAddress                          = appconfig.FlagAddress
+	CLICollectInterval                  = appconfig.FlagCollectInterval
+	CLIWatchMaxKeepAge                  = appconfig.FlagWatchMaxKeepAge
+	CLIWatchMaxKeepSamples              = appconfig.FlagWatchMaxKeepSamples
+	CLIKubernetes                       = appconfig.FlagKubernetes
+	CLIKubernetesEnablePodLabels        = appconfig.FlagKubernetesEnablePodLabels
+	CLIKubernetesEnablePodUID           = appconfig.FlagKubernetesEnablePodUID
+	CLIKubernetesGPUIDType              = appconfig.FlagKubernetesGPUIDType
+	CLIKubernetesPodLabelAllowlistRegex = appconfig.FlagKubernetesPodLabelAllowlistRegex
+	CLIUseOldNamespace                  = appconfig.FlagUseOldNamespace
+	CLIRemoteHEInfo                     = appconfig.FlagRemoteHEInfo
+	CLIGPUDevices                       = appconfig.FlagGPUDevices
+	CLISwitchDevices                    = appconfig.FlagSwitchDevices
+	CLICPUDevices                       = appconfig.FlagCPUDevices
+	CLINoHostname                       = appconfig.FlagNoHostname
+	CLIUseFakeGPUs                      = appconfig.FlagUseFakeGPUs
+	CLIConfigMapData                    = appconfig.FlagConfigMapData
+	CLIWebSystemdSocket                 = appconfig.FlagWebSystemdSocket
+	CLIWebConfigFile                    = appconfig.FlagWebConfigFile
+	CLIWebReadTimeout                   = appconfig.FlagWebReadTimeout
+	CLIWebWriteTimeout                  = appconfig.FlagWebWriteTimeout
+	CLIMaxConcurrentScrapes             = appconfig.FlagMaxConcurrentScrapes
+	CLIEnableExporterMetrics            = appconfig.FlagEnableExporterMetrics
+	CLIXIDCountWindowSize               = appconfig.FlagXIDCountWindowSize
+	CLIReplaceBlanksInModelName         = appconfig.FlagReplaceBlanksInModelName
+	CLIDebugMode                        = appconfig.FlagDebugMode
+	CLIClockEventsCountWindowSize       = appconfig.FlagClockEventsCountWindowSize
+	CLIEnableDCGMLog                    = appconfig.FlagEnableDCGMLog
+	CLIDCGMLogLevel                     = appconfig.FlagDCGMLogLevel
+	CLILogFormat                        = appconfig.FlagLogFormat
+	CLIPodResourcesKubeletSocket        = appconfig.FlagPodResourcesKubeletSocket
+	CLIHPCJobMappingDir                 = appconfig.FlagHPCJobMappingDir
+	CLIHPCJobMappingMaxFileBytes        = appconfig.FlagHPCJobMappingMaxFileBytes
+	CLIHPCJobMappingMaxJobIDBytes       = appconfig.FlagHPCJobMappingMaxJobIDBytes
+	CLIHPCJobMappingMaxJobsPerFile      = appconfig.FlagHPCJobMappingMaxJobsPerFile
+	CLIContainerLabels                  = appconfig.FlagContainerLabels
+	CLIContainerRuntimeSocket           = appconfig.FlagContainerRuntimeSocket
+	CLINvidiaResourceNames              = appconfig.FlagNvidiaResourceNames
+	CLIKubernetesVirtualGPUs            = appconfig.FlagKubernetesVirtualGPUs
+	CLIDumpEnabled                      = appconfig.FlagDumpEnabled
+	CLIDumpDirectory                    = appconfig.FlagDumpDirectory
+	CLIDumpRetention                    = appconfig.FlagDumpRetention
+	CLIDumpCompression                  = appconfig.FlagDumpCompression
+	CLIDumpMinInterval                  = appconfig.FlagDumpMinInterval
+	CLIDumpMaxFileBytes                 = appconfig.FlagDumpMaxFileBytes
+	CLIDumpMaxTotalBytes                = appconfig.FlagDumpMaxTotalBytes
+	CLIDumpMaxFiles                     = appconfig.FlagDumpMaxFiles
+	CLIKubernetesEnableDRA              = appconfig.FlagKubernetesEnableDRA
+	CLIDisableStartupValidate           = appconfig.FlagDisableStartupValidate
+	CLIEnableGPUBindUnbindWatch         = appconfig.FlagEnableGPUBindUnbindWatch
+	CLIGPUBindUnbindPollInterval        = appconfig.FlagGPUBindUnbindPollInterval
+	CLIDCGMCleanupTimeout               = appconfig.FlagDCGMCleanupTimeout
+	CLIEnablePprof                      = appconfig.FlagEnablePprof
+)
+
+// CLI categories are shared display labels, separate from option names.
+const (
+	httpServerCategory        = "HTTP server"
+	workloadLabelsCategory    = "Workload labels"
+	devicesHostengineCategory = "Devices and hostengine"
 )
 
 var (
 	initializeDCGMProviderFunc  = dcgmprovider.Initialize
+	beginDCGMShutdownFunc       = dcgmprovider.BeginShutdown
 	initializeNVMLProviderFunc  = nvmlprovider.Initialize
 	cleanupNVMLProviderFunc     = func() { nvmlprovider.Client().Cleanup() }
 	buildRegistryFunc           = buildRegistry
@@ -125,344 +112,530 @@ var (
 	startWatchListManagerFunc   = startDeviceWatchListManager
 	getHostnameFunc             = hostname.GetHostname
 	initCollectorFactoryFunc    = collector.InitCollectorFactory
-	newMetricsServerFunc        = server.NewMetricsServer
+	newMetricsServerFunc        = server.NewMetricsServerWithDRAChangeCallback
 	newFileWatcherFunc          = watcher.NewFileWatcher
-	newGPUBindUnbindWatcherFunc = watcher.NewGPUBindUnbindWatcher
+	newGPUBindUnbindWatcherFunc = newGenerationGPUBindUnbindWatcher
 )
 
+// newGenerationGPUBindUnbindWatcher creates a watcher that reads the current
+// DCGM client when each run starts. The restartable wrapper stops a running
+// watch before the coordinator retires and replaces its native session.
+func newGenerationGPUBindUnbindWatcher(
+	opts ...watcher.GPUBindUnbindWatcherOption,
+) *watcher.GPUBindUnbindWatcher {
+	return watcher.NewGPUBindUnbindWatcher(opts...)
+}
+
+// NewApp configures the dcgm-exporter command. main calls Run on the returned
+// app and is the only layer that turns its returned error into a process exit.
 func NewApp(buildVersion ...string) *cli.App {
+	defaults := appconfig.DefaultConfig()
 	c := cli.NewApp()
 	c.Name = "DCGM Exporter"
 	c.Usage = "Generates GPU metrics in the prometheus format"
 	if len(buildVersion) == 0 {
 		buildVersion = append(buildVersion, "")
 	}
-	c.Version = buildVersion[0]
 
-	var deviceUsageBuffer bytes.Buffer
-	t := template.Must(template.New("").Parse(deviceUsageTemplate))
-	_ = t.Execute(&deviceUsageBuffer, map[string]string{"FlexKey": FlexKey, "MajorKey": MajorKey, "MinorKey": MinorKey})
-	deviceUsageStr := deviceUsageBuffer.String()
-	gpuDeviceUsageStr := deviceUsageStr + deviceGPUUsageNote
+	c.Version = buildVersion[0]
 
 	c.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:    CLIFieldsFile,
-			Aliases: []string{"f"},
-			Usage:   "Path to the file, that contains the DCGM fields to collect",
-			Value:   appconfig.DefaultCollectorsFile,
-			EnvVars: []string{"DCGM_EXPORTER_COLLECTORS"},
+			Name:     CLIFieldsFile,
+			Category: "Metrics",
+			Aliases:  []string{"f"},
+			Usage:    "Read DCGM metric definitions from CSV `PATH`",
+			Value:    defaults.MetricSource.File,
+			EnvVars:  []string{"DCGM_EXPORTER_COLLECTORS"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIConfigFile,
-			Usage:   "Path to a YAML configuration file. Legacy flags and environment variables explicitly set on startup override YAML values.",
-			Value:   "",
-			EnvVars: []string{"DCGM_EXPORTER_CONFIG_FILE"},
+			Name:     CLIConfigFile,
+			Category: "Configuration",
+			Usage:    "Read startup configuration from YAML `PATH`. Legacy flags and environment variables explicitly set on startup override YAML values.",
+			Value:    defaults.ConfigFile,
+			EnvVars:  []string{"DCGM_EXPORTER_CONFIG_FILE"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIAddress,
-			Aliases: []string{"a"},
-			Value:   ":9400",
-			Usage:   "Listen address as <HOST>:<PORT>. For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::]:9400\")",
-			EnvVars: []string{"DCGM_EXPORTER_LISTEN"},
+			Name:     CLIAddress,
+			Category: httpServerCategory,
+			Aliases:  []string{"a"},
+			Value:    defaults.Address,
+			Usage:    "Listen on `ADDRESS` (<HOST>:<PORT>). For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::]:9400\")",
+			EnvVars:  []string{"DCGM_EXPORTER_LISTEN"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIWebReadTimeout,
-			Value:   appconfig.DefaultWebReadTimeout.String(),
-			Usage:   "Maximum duration for reading an HTTP request.",
-			EnvVars: []string{"DCGM_EXPORTER_WEB_READ_TIMEOUT"},
+			Name:     CLIWebReadTimeout,
+			Category: httpServerCategory,
+			Value:    defaults.WebReadTimeout.String(),
+			Usage:    "Maximum `DURATION` for reading an HTTP request.",
+			EnvVars:  []string{"DCGM_EXPORTER_WEB_READ_TIMEOUT"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIWebWriteTimeout,
-			Value:   appconfig.DefaultWebWriteTimeout.String(),
-			Usage:   "Maximum duration for generating and writing an HTTP response.",
-			EnvVars: []string{"DCGM_EXPORTER_WEB_WRITE_TIMEOUT"},
+			Name:     CLIWebWriteTimeout,
+			Category: httpServerCategory,
+			Value:    defaults.WebWriteTimeout.String(),
+			Usage:    "Maximum `DURATION` for generating and writing an HTTP response.",
+			EnvVars:  []string{"DCGM_EXPORTER_WEB_WRITE_TIMEOUT"},
 		},
+
 		&cli.IntFlag{
-			Name:    CLIMaxConcurrentScrapes,
-			Value:   appconfig.DefaultMaxConcurrentScrapes,
-			Usage:   "Maximum concurrent scrape requests. Excess requests receive HTTP 503 while admitted overlapping requests are coalesced.",
-			EnvVars: []string{"DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES"},
+			Name:     CLIMaxConcurrentScrapes,
+			Category: httpServerCategory,
+			Value:    defaults.MaxConcurrentScrapes,
+			Usage:    "Admit up to `COUNT` concurrent scrape requests. Excess requests receive HTTP 503 while admitted overlapping requests are coalesced.",
+			EnvVars:  []string{"DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIEnableExporterMetrics,
-			Value:   false,
-			Usage:   "Expose Go runtime, process, and HTTP handler metrics about dcgm-exporter itself.",
-			EnvVars: []string{"DCGM_EXPORTER_ENABLE_EXPORTER_METRICS"},
+			Name:               CLIEnableExporterMetrics,
+			Category:           "Metrics",
+			Value:              defaults.EnableExporterMetrics,
+			Usage:              "Expose Go runtime, process, and HTTP handler metrics about dcgm-exporter itself.",
+			EnvVars:            []string{"DCGM_EXPORTER_ENABLE_EXPORTER_METRICS"},
+			DisableDefaultText: true,
 		},
+
 		&cli.IntFlag{
-			Name:    CLICollectInterval,
-			Aliases: []string{"c"},
-			Value:   30000,
-			Usage:   "Interval of time at which point metrics are collected. Unit is milliseconds (ms).",
-			EnvVars: []string{"DCGM_EXPORTER_INTERVAL"},
+			Name:     CLICollectInterval,
+			Category: "Metrics",
+			Aliases:  []string{"c"},
+			Value:    defaults.CollectInterval,
+			Usage:    "Collect metrics every `MILLISECONDS`.",
+			EnvVars:  []string{"DCGM_EXPORTER_INTERVAL"},
 		},
+
 		&cli.DurationFlag{
-			Name:  CLIWatchMaxKeepAge,
-			Value: appconfig.DefaultWatchMaxKeepAge,
-			Usage: "Maximum age of samples retained by DCGM field watches. " +
+			Name:     CLIWatchMaxKeepAge,
+			Category: "Metrics",
+			Value:    defaults.WatchRetention.MaxAge,
+			Usage: "Maximum `DURATION` of samples retained by DCGM field watches. " +
 				"Set to 0s to disable the age limit when a sample limit is configured.",
 			EnvVars: []string{"DCGM_EXPORTER_WATCH_MAX_KEEP_AGE"},
 		},
+
 		&cli.Int64Flag{
-			Name:  CLIWatchMaxKeepSamples,
-			Value: appconfig.DefaultWatchMaxSamples,
-			Usage: "Sample-count retention requested for DCGM field watches. " +
+			Name:     CLIWatchMaxKeepSamples,
+			Category: "Metrics",
+			Value:    defaults.WatchRetention.MaxSamples,
+			Usage: "Retain up to `COUNT` samples in DCGM field watches. " +
 				"Set to 0 for no sample-count limit when an age limit is configured.",
 			EnvVars: []string{"DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIKubernetes,
-			Aliases: []string{"k"},
-			Value:   false,
-			Usage:   "Enable kubernetes mapping metrics to kubernetes pods",
-			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES"},
+			Name:               CLIKubernetes,
+			Category:           workloadLabelsCategory,
+			Aliases:            []string{"k"},
+			Value:              defaults.Kubernetes,
+			Usage:              "Enable kubernetes mapping metrics to kubernetes pods",
+			EnvVars:            []string{"DCGM_EXPORTER_KUBERNETES"},
+			DisableDefaultText: true,
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIUseOldNamespace,
-			Aliases: []string{"o"},
-			Value:   false,
-			Usage:   "Use old 1.x namespace",
-			EnvVars: []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
+			Name:               CLIUseOldNamespace,
+			Category:           "Metrics",
+			Aliases:            []string{"o"},
+			Value:              defaults.UseOldNamespace,
+			Usage:              "Use old 1.x namespace.",
+			EnvVars:            []string{"DCGM_EXPORTER_USE_OLD_NAMESPACE"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:    CLICPUDevices,
-			Aliases: []string{"p"},
-			Value:   FlexKey,
-			Usage:   deviceUsageStr,
-			EnvVars: []string{"DCGM_EXPORTER_CPU_DEVICES_STR"},
+			Name:     CLICPUDevices,
+			Category: devicesHostengineCategory,
+			Aliases:  []string{"p"},
+			Value:    deviceOptionsFlagValue(defaults.CPUDeviceOptions),
+			Usage:    "Select CPUs and CPU cores using `SELECTOR` (see device selectors below).",
+			EnvVars:  []string{"DCGM_EXPORTER_CPU_DEVICES_STR"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIConfigMapData,
-			Aliases: []string{"m"},
-			Value:   undefinedConfigMapData,
-			Usage:   "ConfigMap <NAMESPACE>:<NAME> for metric data",
-			EnvVars: []string{"DCGM_EXPORTER_CONFIGMAP_DATA"},
+			Name:     CLIConfigMapData,
+			Category: "Metrics",
+			Aliases:  []string{"m"},
+			Value:    undefinedConfigMapData,
+			Usage:    deprecatedUsage(CLIConfigMapData, "Read metrics from ConfigMap `NAMESPACE:NAME`."),
+			EnvVars:  []string{"DCGM_EXPORTER_CONFIGMAP_DATA"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIRemoteHEInfo,
-			Aliases: []string{"r"},
-			Value:   "localhost:5555",
-			Usage:   "Connect to remote hostengine at <HOST>:<PORT> or a DCGM URI (tcp://<HOST>:<PORT>, unix:///<SOCKET_PATH>, vsock://<CID>:<PORT>). For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::1]:5555\")",
+			Name:     CLIRemoteHEInfo,
+			Category: devicesHostengineCategory,
+			Aliases:  []string{"r"},
+			Value:    defaults.RemoteHEInfo,
+			Usage: "Connect to remote hostengine at `ADDRESS` (<HOST>:<PORT> or a DCGM URI) " +
+				"(tcp://<HOST>:<PORT>, unix:///<SOCKET_PATH>, vsock://<CID>:<PORT>). For IPv6, use \"[<IPv6_ADDR>]:<PORT>\" (e.g., \"[::1]:5555\")",
 			EnvVars: []string{"DCGM_REMOTE_HOSTENGINE_INFO"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIKubernetesEnablePodLabels,
-			Value:   false,
-			Usage:   "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
-			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
+			Name:               CLIKubernetesEnablePodLabels,
+			Category:           workloadLabelsCategory,
+			Value:              defaults.KubernetesEnablePodLabels,
+			Usage:              "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
+			EnvVars:            []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
+			DisableDefaultText: true,
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIKubernetesEnablePodUID,
-			Value:   false,
-			Usage:   "Enable kubernetes pod UID in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
-			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"},
+			Name:               CLIKubernetesEnablePodUID,
+			Category:           workloadLabelsCategory,
+			Value:              defaults.KubernetesEnablePodUID,
+			Usage:              "Enable kubernetes pod UID in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
+			EnvVars:            []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:  CLIKubernetesGPUIDType,
-			Value: string(appconfig.GPUUID),
-			Usage: fmt.Sprintf("Choose Type of GPU ID to use to map kubernetes resources to pods. Possible values: '%s', '%s'",
+			Name:     CLIKubernetesGPUIDType,
+			Category: workloadLabelsCategory,
+			Value:    string(defaults.KubernetesGPUIdType),
+			Usage: fmt.Sprintf("Map Kubernetes resources to pods using GPU ID `TYPE`. Possible values: '%s', '%s'",
 				appconfig.GPUUID, appconfig.DeviceName),
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"},
 		},
+
 		&cli.StringSliceFlag{
-			Name:    CLIKubernetesPodLabelAllowlistRegex,
-			Value:   cli.NewStringSlice(),
-			Usage:   "Regex patterns for filtering pod labels to include in metrics (comma-separated). Empty means include all labels. This parameter is effective only when '--kubernetes-enable-pod-labels' is true.",
+			Name:     CLIKubernetesPodLabelAllowlistRegex,
+			Category: workloadLabelsCategory,
+			Value:    cli.NewStringSlice(defaults.KubernetesPodLabelAllowlistRegex...),
+			Usage: "Include pod labels matching regex `PATTERN` (comma-separated). Required when pod labels are enabled; " +
+				"use .* to include all labels. " +
+				"This parameter is effective only when '--kubernetes-enable-pod-labels' is true.",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_POD_LABEL_ALLOWLIST_REGEX"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIGPUDevices,
-			Aliases: []string{"d"},
-			Value:   FlexKey,
-			Usage:   gpuDeviceUsageStr,
-			EnvVars: []string{"DCGM_EXPORTER_DEVICES_STR"},
+			Name:     CLIGPUDevices,
+			Category: devicesHostengineCategory,
+			Aliases:  []string{"d"},
+			Value:    deviceOptionsFlagValue(defaults.GPUDeviceOptions),
+			Usage:    "Select GPUs and MIG GPU instances using `SELECTOR`; i is unavailable unless MIG mode is enabled.",
+			EnvVars:  []string{"DCGM_EXPORTER_DEVICES_STR"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLINoHostname,
-			Aliases: []string{"n"},
-			Value:   false,
-			Usage:   "Omit the hostname information from the output, matching older versions.",
-			EnvVars: []string{"DCGM_EXPORTER_NO_HOSTNAME"},
+			Name:               CLINoHostname,
+			Category:           "Metrics",
+			Aliases:            []string{"n"},
+			Value:              defaults.NoHostname,
+			Usage:              "Omit the hostname information from the output, matching older versions.",
+			EnvVars:            []string{"DCGM_EXPORTER_NO_HOSTNAME"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:    CLISwitchDevices,
-			Aliases: []string{"s"},
-			Value:   FlexKey,
-			Usage:   deviceUsageStr,
-			EnvVars: []string{"DCGM_EXPORTER_OTHER_DEVICES_STR"},
+			Name:     CLISwitchDevices,
+			Category: devicesHostengineCategory,
+			Aliases:  []string{"s"},
+			Value:    deviceOptionsFlagValue(defaults.SwitchDeviceOptions),
+			Usage:    "Select switches and links using `SELECTOR` (see device selectors below).",
+			EnvVars:  []string{"DCGM_EXPORTER_OTHER_DEVICES_STR"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIUseFakeGPUs,
-			Value:   false,
-			Usage:   "Accept GPUs that are fake, for testing purposes only",
-			EnvVars: []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
+			Name:               CLIUseFakeGPUs,
+			Category:           devicesHostengineCategory,
+			Value:              defaults.UseFakeGPUs,
+			Usage:              "Accept GPUs that are fake, for testing purposes only",
+			EnvVars:            []string{"DCGM_EXPORTER_USE_FAKE_GPUS"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:    CLIWebConfigFile,
-			Value:   "",
-			Usage:   "Web configuration file following webConfig spec: https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.",
-			EnvVars: []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
+			Name:     CLIWebConfigFile,
+			Category: httpServerCategory,
+			Value:    defaults.WebConfigFile,
+			Usage:    "Web config file `PATH` following the exporter-toolkit spec: https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.",
+			EnvVars:  []string{"DCGM_EXPORTER_WEB_CONFIG_FILE"},
 		},
+
 		&cli.IntFlag{
-			Name:    CLIXIDCountWindowSize,
-			Aliases: []string{"x"},
-			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Window size in milliseconds (ms) for counting XID errors in DCGM_EXP_XID_ERRORS_COUNT.",
-			EnvVars: []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
+			Name:     CLIXIDCountWindowSize,
+			Category: "Metrics",
+			Aliases:  []string{"x"},
+			Value:    defaults.XIDCountWindowSize,
+			Usage:    "Window `MILLISECONDS` for counting sampled XID error observations in DCGM_EXP_XID_ERRORS_COUNT. Must be greater than 0.",
+			EnvVars:  []string{"DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIReplaceBlanksInModelName,
-			Aliases: []string{"rbmn"},
-			Value:   false,
-			Usage:   "Replace every blank space in the GPU model name with a dash, ensuring a continuous, space-free identifier.",
-			EnvVars: []string{"DCGM_EXPORTER_REPLACE_BLANKS_IN_MODEL_NAME"},
+			Name:               CLIReplaceBlanksInModelName,
+			Category:           "Metrics",
+			Aliases:            []string{"rbmn"},
+			Value:              defaults.ReplaceBlanksInModelName,
+			Usage:              "Replace every blank space in the GPU model name with a dash, ensuring a continuous, space-free identifier.",
+			EnvVars:            []string{"DCGM_EXPORTER_REPLACE_BLANKS_IN_MODEL_NAME"},
+			DisableDefaultText: true,
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIDebugMode,
-			Value:   false,
-			Usage:   "Enable debug output",
-			EnvVars: []string{"DCGM_EXPORTER_DEBUG"},
+			Name:               CLIDebugMode,
+			Category:           "Diagnostics",
+			Value:              defaults.Debug,
+			Usage:              "Enable debug output",
+			EnvVars:            []string{"DCGM_EXPORTER_DEBUG"},
+			DisableDefaultText: true,
 		},
+
 		&cli.IntFlag{
-			Name:    CLIClockEventsCountWindowSize,
-			Value:   int((5 * time.Minute).Milliseconds()),
-			Usage:   "Window size in milliseconds (ms) for counting clock events in DCGM_EXP_CLOCK_EVENTS_COUNT.",
-			EnvVars: []string{"DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE"},
+			Name:     CLIClockEventsCountWindowSize,
+			Category: "Metrics",
+			Value:    defaults.ClockEventsCountWindowSize,
+			Usage:    "Window `MILLISECONDS` for counting sampled clock-event observations in DCGM_EXP_CLOCK_EVENTS_COUNT. Must be greater than 0.",
+			EnvVars:  []string{"DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIEnableDCGMLog,
-			Value:   false,
-			Usage:   "Enable writing DCGM logs to standard output (stdout).",
-			EnvVars: []string{"DCGM_EXPORTER_ENABLE_DCGM_LOG"},
+			Name:               CLIEnableDCGMLog,
+			Category:           "Diagnostics",
+			Value:              defaults.EnableDCGMLog,
+			Usage:              "Enable writing DCGM logs to standard output (stdout). Embedded hostengine only; not valid with --remote-hostengine-info.",
+			EnvVars:            []string{"DCGM_EXPORTER_ENABLE_DCGM_LOG"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:    CLIDCGMLogLevel,
-			Value:   DCGMDbgLvlNone,
-			Usage:   "Specify the DCGM log verbosity level. This parameter is effective only when the '--enable-dcgm-log' option is set to 'true'. Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
+			Name:     CLIDCGMLogLevel,
+			Category: "Diagnostics",
+			Value:    defaults.DCGMLogLevel,
+			Usage: "DCGM log verbosity `LEVEL`. This parameter is effective only when the '--enable-dcgm-log' option is set to 'true'. " +
+				"Possible values: NONE, FATAL, ERROR, WARN, INFO, DEBUG and VERB",
 			EnvVars: []string{"DCGM_EXPORTER_DCGM_LOG_LEVEL"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLILogFormat,
-			Value:   "text",
-			Usage:   "Specify the log output format. Possible values: text, json",
-			EnvVars: []string{"DCGM_EXPORTER_LOG_FORMAT"},
+			Name:     CLILogFormat,
+			Category: "Diagnostics",
+			Value:    defaults.LogFormat,
+			Usage:    "Log output `FORMAT`. Possible values: text, json",
+			EnvVars:  []string{"DCGM_EXPORTER_LOG_FORMAT"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIPodResourcesKubeletSocket,
-			Value:   "/var/lib/kubelet/pod-resources/kubelet.sock",
-			Usage:   "Path to the kubelet pod-resources socket file.",
-			EnvVars: []string{"DCGM_POD_RESOURCES_KUBELET_SOCKET"},
+			Name:     CLIPodResourcesKubeletSocket,
+			Category: workloadLabelsCategory,
+			Value:    defaults.PodResourcesKubeletSocket,
+			Usage:    "Kubelet pod-resources socket `PATH`.",
+			EnvVars:  []string{"DCGM_POD_RESOURCES_KUBELET_SOCKET"},
 		},
+
 		&cli.StringFlag{
-			Name:    CLIHPCJobMappingDir,
-			Value:   "",
-			Usage:   "Path to HPC job mapping file directory used for mapping GPUs to jobs.",
-			EnvVars: []string{"DCGM_HPC_JOB_MAPPING_DIR"},
+			Name:     CLIHPCJobMappingDir,
+			Category: workloadLabelsCategory,
+			Value:    defaults.HPCJobMappingDir,
+			Usage:    "Read GPU to job mapping files from `DIRECTORY`.",
+			EnvVars:  []string{"DCGM_HPC_JOB_MAPPING_DIR"},
 		},
+
+		&cli.Int64Flag{
+			Name:     CLIHPCJobMappingMaxFileBytes,
+			Category: workloadLabelsCategory,
+			Value:    defaults.HPCJobMappingMaxFileBytes,
+			Usage:    "Ignore an HPC job mapping file larger than `BYTES`.",
+			EnvVars:  []string{"DCGM_HPC_JOB_MAPPING_MAX_FILE_BYTES"},
+		},
+
+		&cli.Int64Flag{
+			Name:     CLIHPCJobMappingMaxJobIDBytes,
+			Category: workloadLabelsCategory,
+			Value:    defaults.HPCJobMappingMaxJobIDBytes,
+			Usage:    "Ignore an HPC job mapping file with a job ID longer than `BYTES`.",
+			EnvVars:  []string{"DCGM_HPC_JOB_MAPPING_MAX_JOB_ID_BYTES"},
+		},
+
+		&cli.Int64Flag{
+			Name:     CLIHPCJobMappingMaxJobsPerFile,
+			Category: workloadLabelsCategory,
+			Value:    defaults.HPCJobMappingMaxJobsPerFile,
+			Usage:    "Ignore an HPC job mapping file with more than `COUNT` distinct jobs.",
+			EnvVars:  []string{"DCGM_HPC_JOB_MAPPING_MAX_JOBS_PER_FILE"},
+		},
+
 		&cli.BoolFlag{
-			Name:    CLIContainerLabels,
-			Value:   false,
-			Usage:   "Enable runtime container labels in metrics.",
-			EnvVars: []string{"DCGM_EXPORTER_CONTAINER_LABELS"},
+			Name:               CLIContainerLabels,
+			Category:           workloadLabelsCategory,
+			Value:              defaults.ContainerLabels,
+			Usage:              "Enable runtime container labels in metrics.",
+			EnvVars:            []string{"DCGM_EXPORTER_CONTAINER_LABELS"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:    CLIContainerRuntimeSocket,
-			Value:   "",
-			Usage:   "Path to a container runtime socket used for container labels.",
-			EnvVars: []string{"DCGM_CONTAINER_RUNTIME_SOCKET"},
+			Name:     CLIContainerRuntimeSocket,
+			Category: workloadLabelsCategory,
+			Value:    defaults.ContainerRuntimeSocket,
+			Usage:    "Container runtime socket `PATH` used for container labels. Empty means /var/run/docker.sock when container labels are on.",
+			EnvVars:  []string{"DCGM_CONTAINER_RUNTIME_SOCKET"},
 		},
+
 		&cli.StringSliceFlag{
-			Name:    CLINvidiaResourceNames,
-			Value:   cli.NewStringSlice(),
-			Usage:   "Nvidia resource names for specified GPU type like nvidia.com/a100, nvidia.com/a10.",
-			EnvVars: []string{"NVIDIA_RESOURCE_NAMES"},
+			Name:     CLINvidiaResourceNames,
+			Category: workloadLabelsCategory,
+			Value:    cli.NewStringSlice(defaults.NvidiaResourceNames...),
+			Usage:    "GPU resource `NAME` values such as nvidia.com/a100, nvidia.com/a10.",
+			EnvVars:  []string{"NVIDIA_RESOURCE_NAMES"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIKubernetesVirtualGPUs,
-			Value:   false,
-			Usage:   "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins when using GPU sharing strategies, e.g. time-sharing or MPS.",
-			EnvVars: []string{"KUBERNETES_VIRTUAL_GPUS"},
+			Name:     CLIKubernetesVirtualGPUs,
+			Category: workloadLabelsCategory,
+			Value:    defaults.KubernetesVirtualGPUs,
+			Usage: "Capture metrics associated with virtual GPUs exposed by Kubernetes device plugins " +
+				"when using GPU sharing strategies, e.g. time-sharing or MPS.",
+			EnvVars:            []string{"KUBERNETES_VIRTUAL_GPUS"},
+			DisableDefaultText: true,
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIDumpEnabled,
-			Value:   false,
-			Usage:   "Enable file-based debugging dumps for troubleshooting",
-			EnvVars: []string{"DCGM_EXPORTER_DUMP_ENABLED"},
+			Name:               CLIDumpEnabled,
+			Category:           "Diagnostics",
+			Value:              defaults.DumpConfig.Enabled,
+			Usage:              "Enable file-based debugging dumps for troubleshooting",
+			EnvVars:            []string{"DCGM_EXPORTER_DUMP_ENABLED"},
+			DisableDefaultText: true,
 		},
+
 		&cli.StringFlag{
-			Name:    CLIDumpDirectory,
-			Value:   "/tmp/dcgm-exporter-debug",
-			Usage:   "Directory to store debug dump files",
-			EnvVars: []string{"DCGM_EXPORTER_DUMP_DIRECTORY"},
+			Name:     CLIDumpDirectory,
+			Category: "Diagnostics",
+			Value:    defaults.DumpConfig.Directory,
+			Usage:    "Store debug dump files in `DIRECTORY`",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_DIRECTORY"},
 		},
+
 		&cli.IntFlag{
-			Name:    CLIDumpRetention,
-			Value:   24,
-			Usage:   "Retention period for debug dump files in hours (0 = no cleanup)",
-			EnvVars: []string{"DCGM_EXPORTER_DUMP_RETENTION"},
+			Name:     CLIDumpRetention,
+			Category: "Diagnostics",
+			Value:    int(defaults.DumpConfig.Retention / time.Hour),
+			Usage:    "Retain debug dump files for `HOURS` (0 = no age cleanup; the size and count limits still apply)",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_RETENTION"},
 		},
+
 		&cli.BoolFlag{
-			Name:    CLIDumpCompression,
-			Value:   true,
-			Usage:   "Use gzip compression for debug dump files",
-			EnvVars: []string{"DCGM_EXPORTER_DUMP_COMPRESSION"},
+			Name:     CLIDumpCompression,
+			Category: "Diagnostics",
+			Value:    defaults.DumpConfig.Compression,
+			Usage:    "Use gzip compression for debug dump files",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_COMPRESSION"},
 		},
-		&cli.BoolFlag{
-			Name:    CLIKubernetesEnableDRA,
-			Value:   false,
-			Usage:   "Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource Allocation (DRA) API.",
-			EnvVars: []string{"KUBERNETES_ENABLE_DRA"},
-		},
-		&cli.BoolFlag{
-			Name:    CLIDisableStartupValidate,
-			Value:   false,
-			Usage:   "Disable validation checks during startup. Can be useful for running in minimal environments or testing",
-			EnvVars: []string{"DISABLE_STARTUP_VALIDATE"},
-		},
-		&cli.BoolFlag{
-			Name:    CLIEnableGPUBindUnbindWatch,
-			Value:   false,
-			Usage:   "Enable watching for GPU bind/unbind events to trigger automatic reloads (requires DCGM 4.5+)",
-			EnvVars: []string{"DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH"},
-		},
+
 		&cli.StringFlag{
-			Name:    CLIGPUBindUnbindPollInterval,
-			Usage:   "Interval for polling GPU bind/unbind events (DCGM recommends 1s)",
-			EnvVars: []string{"DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL"},
-			Value:   "1s",
+			Name:     CLIDumpMinInterval,
+			Category: "Diagnostics",
+			Value:    defaults.DumpConfig.MinInterval.String(),
+			Usage:    "Write at most one debug dump per `DURATION` for each dump kind and entity group",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_MIN_INTERVAL"},
 		},
+
+		&cli.Int64Flag{
+			Name:     CLIDumpMaxFileBytes,
+			Category: "Diagnostics",
+			Value:    defaults.DumpConfig.MaxFileBytes,
+			Usage:    "Limit each debug dump file to `BYTES` on disk",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_MAX_FILE_BYTES"},
+		},
+
+		&cli.Int64Flag{
+			Name:     CLIDumpMaxTotalBytes,
+			Category: "Diagnostics",
+			Value:    defaults.DumpConfig.MaxTotalBytes,
+			Usage:    "Limit all debug dump files to `BYTES` in total; the oldest files are removed first",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_MAX_TOTAL_BYTES"},
+		},
+
+		&cli.Int64Flag{
+			Name:     CLIDumpMaxFiles,
+			Category: "Diagnostics",
+			Value:    defaults.DumpConfig.MaxFiles,
+			Usage:    "Keep at most `COUNT` debug dump files; the oldest files are removed first",
+			EnvVars:  []string{"DCGM_EXPORTER_DUMP_MAX_FILES"},
+		},
+
 		&cli.BoolFlag{
-			Name:    CLIEnablePprof,
-			Value:   false,
-			Usage:   "Enable /debug/pprof/ HTTP endpoints for profiling and debugging",
-			EnvVars: []string{"DCGM_EXPORTER_ENABLE_PPROF"},
+			Name:               CLIKubernetesEnableDRA,
+			Category:           workloadLabelsCategory,
+			Value:              defaults.KubernetesEnableDRA,
+			Usage:              "Capture metrics associated with GPUs managed by Kubernetes Dynamic Resource Allocation (DRA) API.",
+			EnvVars:            []string{"KUBERNETES_ENABLE_DRA"},
+			DisableDefaultText: true,
+		},
+
+		&cli.BoolFlag{
+			Name:               CLIDisableStartupValidate,
+			Category:           "Diagnostics",
+			Value:              defaults.DisableStartupValidate,
+			Usage:              "Disable validation checks during startup. Can be useful for running in minimal environments or testing",
+			EnvVars:            []string{"DISABLE_STARTUP_VALIDATE"},
+			DisableDefaultText: true,
+		},
+
+		&cli.BoolFlag{
+			Name:               CLIEnableGPUBindUnbindWatch,
+			Category:           devicesHostengineCategory,
+			Value:              defaults.EnableGPUBindUnbindWatch,
+			Usage:              "Enable watching for GPU bind/unbind events to trigger automatic reloads (requires DCGM 4.5+)",
+			EnvVars:            []string{"DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH"},
+			DisableDefaultText: true,
+		},
+
+		&cli.StringFlag{
+			Name:     CLIGPUBindUnbindPollInterval,
+			Category: devicesHostengineCategory,
+			Usage:    "Poll GPU bind/unbind events every `DURATION` (DCGM recommends 1s).",
+			EnvVars:  []string{"DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL"},
+			Value:    defaults.GPUBindUnbindPollInterval.String(),
+		},
+
+		&cli.DurationFlag{
+			Name:     CLIDCGMCleanupTimeout,
+			Category: devicesHostengineCategory,
+			Usage:    "Wait up to `DURATION` for DCGM to release watches; if DCGM has not finished by then, the exporter exits.",
+			EnvVars:  []string{envDCGMCleanupTimeout},
+			Value:    defaults.DCGMCleanupTimeout,
+		},
+
+		&cli.BoolFlag{
+			Name:               CLIEnablePprof,
+			Category:           httpServerCategory,
+			Value:              defaults.EnablePprof,
+			Usage:              "Enable /debug/pprof/ HTTP endpoints on the metrics port; needs a web config file with TLS or basic auth",
+			EnvVars:            []string{"DCGM_EXPORTER_ENABLE_PPROF"},
+			DisableDefaultText: true,
 		},
 	}
 
 	if runtime.GOOS == "linux" {
 		c.Flags = append(c.Flags, &cli.BoolFlag{
-			Name:    CLIWebSystemdSocket,
-			Value:   false,
-			Usage:   "Use systemd socket activation listeners instead of port listeners (Linux only).",
-			EnvVars: []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
+			Name:               CLIWebSystemdSocket,
+			Category:           httpServerCategory,
+			Value:              defaults.WebSystemdSocket,
+			Usage:              "Use systemd socket activation listeners instead of port listeners (Linux only).",
+			EnvVars:            []string{"DCGM_EXPORTER_SYSTEMD_SOCKET"},
+			DisableDefaultText: true,
 		})
 	} else {
-		err := "dcgm-exporter is only supported on Linux."
-		slog.Error(err)
-		fatal()
-		return nil
+		c.Action = func(*cli.Context) error {
+			return errors.New("dcgm-exporter is only supported on Linux")
+		}
+
+		return c
 	}
 
 	c.Action = action
+	configureInspectionCLI(c)
 
 	return c
 }
 
-func fatal() {
-	os.Exit(1)
-}
-
+// newOSWatcher provides an owned signal channel and cleanup function for the
+// application runner. StartDCGMExporterWithSignalSource uses it in production.
 func newOSWatcher(sigs ...os.Signal) (chan os.Signal, func()) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, sigs...)
@@ -473,6 +646,8 @@ func newOSWatcher(sigs ...os.Signal) (chan os.Signal, func()) {
 	return sigChan, cleanup
 }
 
+// action runs exporter startup behind stdout capture and turns a startup panic
+// into a returned error. NewApp installs it as the Linux command action.
 func action(c *cli.Context) error {
 	return stdout.Capture(context.Background(), func() (err error) {
 		// The purpose of this function is to capture any panic that may occur
@@ -487,85 +662,350 @@ func action(c *cli.Context) error {
 	})
 }
 
-func configureLogger(c *cli.Context) error {
-	logFormat := c.String(CLILogFormat)
-	logDebug := c.Bool(CLIDebugMode)
+// configureLogger installs the configured text or JSON slog handler before
+// startup. The command action calls it once so every later component shares it.
+// The format and level come from the resolved config, so a YAML file can set them.
+func configureLogger(config *appconfig.Config) error {
+	logFormat := config.LogFormat
+	logDebug := config.Debug
 	var opts slog.HandlerOptions
 	if logDebug {
 		opts.Level = slog.LevelDebug
 		defer slog.Debug("Debug output is enabled")
 	}
-	switch logFormat {
-	case "text":
-		logger := slog.New(slog.NewTextHandler(os.Stderr, &opts))
-		slog.SetDefault(logger)
-	case "json":
+
+	if err := appconfig.ValidateLogFormat(logFormat); err != nil {
+		return err
+	}
+
+	if logFormat == "json" {
 		// Use our custom JSON handler that properly handles complex structs
 		logging.SetupGlobalLogger(os.Stderr, &opts)
-	default:
-		return fmt.Errorf("invalid %s parameter values: %s", CLILogFormat, logFormat)
+		return nil
 	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &opts)))
+
 	return nil
 }
 
-// runDCGMExporter starts the exporter until lifecycleCtx is canceled.
-// Reload requests trigger the same hot-reload path as SIGHUP in production.
-func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequests <-chan struct{}) error {
-	if err := configureLogger(c); err != nil {
-		return err
+// resolveConfigAndLogger resolves startup config, installs the logger that the
+// config selects, logs the config warnings with it, and then checks the
+// enrichment sources, which can wait up to a minute for a required one. A config
+// error is returned before any logger is installed. Nothing is served until
+// this returns. The result keeps the origins, which runtime messages name.
+func resolveConfigAndLogger(ctx context.Context, c *cli.Context) (*appconfig.Resolved, error) {
+	resolved, err := resolveRuntimeConfig(c)
+	if err != nil {
+		return nil, err
 	}
+
+	if err := configureLogger(resolved.Config); err != nil {
+		return nil, err
+	}
+
+	logConfigWarnings(resolved.Warnings)
+	logged := len(resolved.Warnings)
+
+	if err := resolveEnrichment(ctx, resolved); err != nil {
+		return nil, err
+	}
+
+	logConfigWarnings(resolved.Warnings[logged:])
+
+	return resolved, nil
+}
+
+// logConfigWarnings logs each warning collected while resolving the config.
+func logConfigWarnings(warnings []appconfig.ResolutionWarning) {
+	for _, warning := range warnings {
+		slog.Warn(warning.Message, warning.Attrs...)
+	}
+}
+
+// startupError turns a stop signal during the wait for a required enrichment
+// source into a clean stop; any other startup error is returned as it is.
+func startupError(ctx context.Context, err error) error {
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		slog.Info("Stopped while waiting for enrichment sources")
+		return nil
+	}
+
+	return err
+}
+
+// appVersion returns the CLI app's version, or "" when c or its app is nil.
+func appVersion(c *cli.Context) string {
+	if c == nil || c.App == nil {
+		return ""
+	}
+
+	return c.App.Version
+}
+
+// runDCGMExporter starts the exporter until lifecycleCtx is canceled or the
+// metrics server returns a terminal error. Reload requests use the same path
+// as SIGHUP and preserve the current registry when a replacement build fails.
+func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequests <-chan struct{}) (returnErr error) {
 	if lifecycleCtx == nil {
 		return errors.New("lifecycle context is required")
 	}
 
-	var version string
-	if c != nil && c.App != nil {
-		version = c.App.Version
+	resolved, err := resolveConfigAndLogger(lifecycleCtx, c)
+	if err != nil {
+		return startupError(lifecycleCtx, err)
 	}
 
-	slog.Info("Starting dcgm-exporter", slog.String("Version", version))
+	config := resolved.Config
 
-	config, err := contextToConfig(c)
-	if err != nil {
-		return err
+	slog.Info("Starting dcgm-exporter", slog.String("Version", appVersion(c)))
+
+	config.ServiceInstanceID = uuid.NewString()
+	coord := initReloadCoordinator(config)
+
+	// Cleanup timeout messages name the input that set the timeout.
+	coord.cleanupSource = resolved.Origin(appconfig.FieldDCGMCleanupTimeout)
+
+	if config.EnableOTLP {
+		coord.readConfig = func() (*appconfig.Config, error) { return contextToConfig(c) }
 	}
 
 	// Initialize DCGM Provider Instance (once)
-	initializeDCGMProviderFunc(config)
+	if err := initializeDCGMProviderFunc(config); err != nil {
+		return fmt.Errorf("initialize DCGM provider: %w", err)
+	}
 
-	defer func() { dcgmprovider.Client().Cleanup() }()
+	defer cleanupDCGMAfterRetirement(coord)
 	slog.Info("DCGM successfully initialized!")
 
 	ctx := lifecycleCtx
-	coord := initReloadCoordinator(c, config)
 	watcherCtx, watcherCancel := context.WithCancel(lifecycleCtx)
 	defer watcherCancel()
 	var watcherWg sync.WaitGroup
-	var gpuWatcher *restartableGPUWatcher
+
+	// Stop the GPU watch before DCGM cleanup. A stop timeout blocks that cleanup.
+	defer func() {
+		if err := coord.stopGPUWatcher(); err != nil && !errors.Is(returnErr, err) {
+			returnErr = errors.Join(returnErr, err)
+		}
+	}()
 
 	// Register the lifecycle watch immediately after DCGM initialization. Trigger
 	// safely queues any completion observed before later startup reads or before
 	// the coordinator begins draining events.
-	if config.EnableGPUBindUnbindWatch {
-		bindUnbindWatcher := newGPUBindUnbindWatcherFunc(
-			watcher.WithPollInterval(config.GPUBindUnbindPollInterval),
-		)
-		gpuWatcher = newRestartableGPUWatcher(bindUnbindWatcher.Start, func(state dcgm.BindUnbindEventState) {
-			event, ok := reloadEventForGPUState(state)
-			if !ok {
-				return
-			}
-			coord.Trigger(event)
-		})
-		if err := gpuWatcher.Start(watcherCtx); err != nil {
-			return fmt.Errorf("start GPU bind/unbind watcher: %w", err)
-		}
-		defer gpuWatcher.Stop()
-		coord.setGPUWatcher(gpuWatcher)
+	if err := startGPULifecycleWatcher(watcherCtx, config, coord); err != nil {
+		return err
 	}
 
-	// Initialize NVML as the preferred MIG profile-name source in every deployment mode.
-	err = initializeNVMLProviderFunc()
+	// Initialize NVML as the preferred MIG profile-name source in every deployment.
+	if err := initializeNVMLForConfig(config); err != nil {
+		return err
+	}
+
+	defer cleanupNVMLAfterRetirement(coord)
+
+	// Query profiling support after starting the GPU lifecycle watcher, if enabled.
+	// CSV reloads reuse this snapshot until the next GPU lifecycle reset.
+	coord.queryDCPMetrics(0)
+
+	// Refresh a stale discovery snapshot if a GPU detaches during construction.
+	// Other setup failures remain fatal, including an unknown GPU status.
+	initialRegistry, deviceWatchListManager, err := buildInitialRegistry(ctx, config, coord)
+	if err != nil {
+		return err
+	}
+
+	cleanupRegistry := shutdownRegistryCleanup(ctx, coord, config, func() *registry.Registry { return initialRegistry })
+
+	defer func() { cleanupRegistryAfterShutdown(coord, cleanupRegistry, &returnErr) }()
+
+	// Create metrics server (will run throughout entire lifecycle)
+	metricsServer, serverCleanup, err := newMetricsServerFunc(
+		config,
+		deviceWatchListManager,
+		initialRegistry,
+		func() { coord.Trigger(evDRAResourceSliceChanged) },
+	)
+	if err != nil {
+		return err
+	}
+
+	defer serverCleanup()
+	coord.setServer(metricsServer)
+	cleanupRegistry = shutdownRegistryCleanup(ctx, coord, config, metricsServer.ClearRegistry)
+
+	// Start HTTP server (runs continuously until shutdown signal)
+	stop := make(chan struct{})
+	serverResults := make(chan error, 1)
+	go func() {
+		serverResults <- metricsServer.Run(ctx, stop)
+	}()
+
+	slog.Info("HTTP server started - ready to serve metrics")
+
+	startRuntimeWatchers(watcherCtx, config, coord, &watcherWg)
+
+	// Wait for shutdown. Reload requests trigger the same handler as a CSV
+	// change, matching SIGHUP production behavior.
+	serverStopped, terminalErr := waitForExporterShutdown(lifecycleCtx, reloadRequests, serverResults, coord)
+
+	slog.Info("Shutting down gracefully...")
+
+	// Stop watchers first
+	watcherCancel()
+	watcherWg.Wait()
+
+	// Stop HTTP server unless it already stopped after reporting a terminal error.
+	if !serverStopped {
+		close(stop)
+		terminalErr = metricsServerFailure(coord, <-serverResults)
+	}
+
+	if err := metricsServer.TerminalError(); err != nil && !errors.Is(terminalErr, err) {
+		terminalErr = errors.Join(terminalErr, err)
+	}
+
+	slog.Info("Shutdown complete")
+	return terminalErr
+}
+
+// cleanupRegistryAfterShutdown waits for the final published registry before the
+// provider defers run, joining retirement errors into the lifecycle result.
+func cleanupRegistryAfterShutdown(coord *reloadCoordinator, cleanup func() error, returnErr *error) {
+	if coord.nativeCleanupBlocked.Load() {
+		return
+	}
+	beginDCGMShutdownFunc()
+	if err := cleanup(); err != nil {
+		coord.blockNativeCleanup(err)
+		*returnErr = errors.Join(*returnErr, err)
+	}
+}
+
+// cleanupDCGMAfterRetirement keeps native handles alive when retirement was unsafe.
+func cleanupDCGMAfterRetirement(coord *reloadCoordinator) {
+	if coord.nativeCleanupBlocked.Load() {
+		slog.Error("Skipping DCGM cleanup because registry retirement did not complete")
+		return
+	}
+	if dcgmClient := dcgmprovider.Client(); dcgmClient != nil {
+		dcgmClient.Cleanup()
+	}
+}
+
+// shutdownRegistryCleanup returns the shutdown cleanup that takes the
+// registry from current and waits, within the DCGM cleanup timeout, for it to
+// retire. A timeout error names the shutdown step and the timeout's source.
+func shutdownRegistryCleanup(
+	ctx context.Context, coord *reloadCoordinator, config *appconfig.Config, current func() *registry.Registry,
+) func() error {
+	return func() error {
+		return waitForRegistryRetirement(ctx, current(), coord.cleanupWait(config, cleanupShutdown))
+	}
+}
+
+// startGPULifecycleWatcher registers lifecycle events before registry discovery.
+// The DCGM cleanup timeout bounds watch setup and stop.
+func startGPULifecycleWatcher(ctx context.Context, config *appconfig.Config, coord *reloadCoordinator) error {
+	if !config.EnableGPUBindUnbindWatch {
+		return nil
+	}
+	bindUnbindWatcher := newGPUBindUnbindWatcherFunc(
+		watcher.WithPollInterval(config.GPUBindUnbindPollInterval),
+	)
+	onEvent := func(state dcgm.BindUnbindEventState) {
+		event, ok := reloadEventForGPUState(state)
+		if !ok {
+			return
+		}
+		coord.Trigger(event)
+	}
+	wait := coord.cleanupWait(config, cleanupGPUWatchStart)
+	coord.setGPUWatcher(watcher.NewRestartableGPUWatcher(bindUnbindWatcher.Start, onEvent, wait.timeout), wait)
+
+	if err := coord.startGPUWatcher(ctx); err != nil {
+		return fmt.Errorf("start GPU bind/unbind watcher: %w", err)
+	}
+	return nil
+}
+
+// cleanupNVMLAfterRetirement preserves the same native-retirement guard as DCGM.
+func cleanupNVMLAfterRetirement(coord *reloadCoordinator) {
+	if coord.nativeCleanupBlocked.Load() {
+		slog.Error("Skipping NVML cleanup because registry retirement did not complete")
+		return
+	}
+	cleanupNVMLProviderFunc()
+}
+
+func startRuntimeWatchers(ctx context.Context, config *appconfig.Config, coord *reloadCoordinator, watcherWg *sync.WaitGroup) {
+	// Start the coordinator after the server is ready. Any lifecycle completion
+	// observed during startup is already queued by Trigger.
+	watcherWg.Add(1)
+	go func() {
+		defer watcherWg.Done()
+		coord.Run(ctx)
+	}()
+
+	// File watcher (metric source changes) — trigger a config reload on change.
+	if metricFile, ok := config.MetricFileWatcherPath(); ok {
+		fileWatcher := newFileWatcherFunc(metricFile)
+		runWatcher(ctx, fileWatcher, func() {
+			slog.Info("Metric file changed - triggering hot reload")
+			coord.Trigger(evConfigChanged)
+		}, watcherWg)
+	}
+
+	if config.EnableOTLP && config.ConfigFile != "" {
+		fileWatcher := newFileWatcherFunc(config.ConfigFile)
+		runWatcher(ctx, fileWatcher, func() {
+			slog.Info("OTLP YAML file changed - triggering hot reload")
+			coord.Trigger(evConfigChanged)
+		}, watcherWg)
+	}
+
+	// GPU bind/unbind watcher (optional) reports concrete DCGM lifecycle phases.
+	coord.stopGPUWatcherOnDone(ctx, watcherWg)
+}
+
+// waitForExporterShutdown stops on lifecycle cancellation or a terminal server
+// result; closed reload sources are disabled rather than polled repeatedly.
+func waitForExporterShutdown(ctx context.Context, reloadRequests <-chan struct{}, serverResults <-chan error, coord *reloadCoordinator) (serverStopped bool, terminalErr error) {
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("Shutdown requested", slog.String("reason", ctx.Err().Error()))
+			return false, nil
+		case err := <-serverResults:
+			return true, metricsServerFailure(coord, err)
+		case _, ok := <-reloadRequests:
+			if !ok {
+				reloadRequests = nil
+				continue
+			}
+			slog.Info("Reload requested - triggering hot reload")
+			coord.Trigger(evConfigChanged)
+		}
+	}
+}
+
+// metricsServerFailure blocks native cleanup before shutdown if scrapes did not drain.
+func metricsServerFailure(coord *reloadCoordinator, err error) error {
+	if err == nil {
+		return nil
+	}
+	terminalErr := fmt.Errorf("metrics server stopped: %w", err)
+	if errors.Is(err, server.ErrActiveScrapeDrainTimeout) {
+		coord.blockNativeCleanup(err)
+		slog.Warn("Skipping native cleanup after active scrape drain timeout")
+	}
+	return terminalErr
+}
+
+// initializeNVMLForConfig requires NVML when Kubernetes startup validation is
+// enabled; otherwise, initialization failure falls back to DCGM profile names.
+func initializeNVMLForConfig(config *appconfig.Config) error {
+	err := initializeNVMLProviderFunc()
 	if err != nil {
 		// Keep validated Kubernetes startup strict; other modes fall back to DCGM.
 		if config.Kubernetes && !config.DisableStartupValidate {
@@ -576,103 +1016,40 @@ func runDCGMExporter(lifecycleCtx context.Context, c *cli.Context, reloadRequest
 	} else {
 		slog.Info("NVML provider successfully initialized")
 	}
-	defer cleanupNVMLProviderFunc()
-
-	// Seed DCP capability state only after the lifecycle cursor exists. Without
-	// this snapshot, a CSV reload before the first GPU event could drop profiling
-	// metrics.
-	coord.queryDCPMetrics(config, 0)
-
-	// Build initial registry
-	initialRegistry, deviceWatchListManager, err := buildRegistryFunc(ctx, c, config)
-	if err != nil {
-		return err
-	}
-	cleanupRegistry := initialRegistry.Cleanup
-	defer func() {
-		cleanupRegistry()
-	}()
-
-	// Create metrics server (will run throughout entire lifecycle)
-	metricsServer, serverCleanup, err := newMetricsServerFunc(config, deviceWatchListManager, initialRegistry)
-	if err != nil {
-		return err
-	}
-	defer serverCleanup()
-	coord.setServer(metricsServer)
-	cleanupRegistry = func() {
-		currentRegistry := metricsServer.ClearRegistry()
-		if currentRegistry != nil {
-			currentRegistry.Cleanup()
-		}
-	}
-
-	// Start HTTP server (runs continuously until shutdown signal)
-	var serverWg sync.WaitGroup
-	stop := make(chan interface{})
-
-	serverWg.Add(1)
-	go func() {
-		defer serverWg.Done()
-		metricsServer.Run(ctx, stop)
-	}()
-
-	slog.Info("HTTP server started - ready to serve metrics")
-
-	// Start the coordinator after the server is ready. Any lifecycle completion
-	// observed during startup is already queued by Trigger.
-	watcherWg.Add(1)
-	go func() {
-		defer watcherWg.Done()
-		coord.Run(watcherCtx)
-	}()
-
-	// File watcher (metric source changes) — trigger a config reload on change.
-	// YAML config is startup-only; only a resolved CSV metric source is watched.
-	if metricFile, ok := config.MetricFileWatcherPath(); ok {
-		fileWatcher := newFileWatcherFunc(metricFile)
-		runWatcher(watcherCtx, fileWatcher, func() {
-			slog.Info("Metric file changed - triggering hot reload")
-			coord.Trigger(evConfigChanged)
-		}, &watcherWg)
-	}
-
-	// GPU bind/unbind watcher (optional) reports concrete DCGM lifecycle phases.
-	if gpuWatcher != nil {
-		runGPUWatcher(watcherCtx, gpuWatcher, &watcherWg)
-	}
-
-	// Wait for shutdown. Reload requests trigger the same handler as a CSV
-	// change, matching SIGHUP production behavior.
-	for {
-		select {
-		case <-lifecycleCtx.Done():
-			slog.Info("Shutdown requested", slog.String("reason", lifecycleCtx.Err().Error()))
-			goto shutdown
-		case _, ok := <-reloadRequests:
-			if !ok {
-				reloadRequests = nil
-				continue
-			}
-			slog.Info("Reload requested - triggering hot reload")
-			coord.Trigger(evConfigChanged)
-		}
-	}
-
-	// Graceful shutdown
-shutdown:
-	slog.Info("Shutting down gracefully...")
-
-	// Stop watchers first
-	watcherCancel()
-	watcherWg.Wait()
-
-	// Stop HTTP server
-	close(stop)
-	serverWg.Wait()
-
-	slog.Info("Shutdown complete")
 	return nil
+}
+
+// buildInitialRegistry retries only topology detach failures after safe rollback;
+// provider cleanup remains blocked if rollback cannot finish.
+func buildInitialRegistry(ctx context.Context, config *appconfig.Config, coord *reloadCoordinator) (*registry.Registry, devicewatchlistmanager.Manager, error) {
+	var err error
+	var initialRegistry *registry.Registry
+	var deviceWatchListManager devicewatchlistmanager.Manager
+	for retries := 0; ; retries++ {
+		initialRegistry, deviceWatchListManager, err = buildRegistryFunc(ctx, config, coord.dcp)
+		if err == nil && ctx.Err() == nil {
+			break
+		}
+		if err == nil {
+			err = errors.Join(ctx.Err(), coord.retireRegistry(ctx, initialRegistry, config, cleanupCanceledBuild))
+		}
+
+		if rollbackErr := waitForCollectorRollback(ctx, err, coord.cleanupWait(config, cleanupFailedBuild)); rollbackErr != nil {
+			coord.blockNativeCleanup(rollbackErr)
+			return nil, nil, errors.Join(err, rollbackErr)
+		}
+
+		if !errors.Is(err, errGPUDetachedDuringBuild) || retries >= maxGPURecoveryRetries {
+			return nil, nil, err
+		}
+		if ctx.Err() != nil {
+			return nil, nil, errors.Join(err, ctx.Err())
+		}
+
+		slog.Info("GPU detached during startup; rebuilding registry for the current topology")
+		coord.queryDCPMetrics(0)
+	}
+	return initialRegistry, deviceWatchListManager, nil
 }
 
 // StartDCGMExporterWithSignalSource starts the exporter with injectable signal handling.
@@ -719,1247 +1096,5 @@ func queueReload(reloadRequests chan<- struct{}) {
 	select {
 	case reloadRequests <- struct{}{}:
 	default:
-	}
-}
-
-// buildRegistry creates a new registry with current GPU topology.
-// Called at: startup, hot reload (SIGHUP/file change), GPU bind event.
-// Note: Does NOT query DCP metrics - caller must do this before calling.
-func buildRegistry(ctx context.Context, _ *cli.Context, config *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error) {
-	slog.Info("Building registry for current GPU topology")
-
-	cs, err := getCountersFunc(ctx, config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get counters: %w", err)
-	}
-
-	deviceWatchListManager, err := startWatchListManagerFunc(cs, config)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	hostName := ""
-	if !config.NoHostname {
-		var err error
-		hostName, err = getHostnameFunc(config)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get hostname: %w", err)
-		}
-	}
-
-	cf := initCollectorFactoryFunc(cs, deviceWatchListManager, hostName, config)
-
-	cRegistry := registry.NewRegistry()
-	count := populateRegistry(cf, cRegistry)
-
-	slog.Info("Registry built successfully", slog.Int("collector_count", count))
-
-	return cRegistry, deviceWatchListManager, nil
-}
-
-// populateRegistry calls cf.NewCollectors exactly once and registers every
-// returned collector. It returns the number of collectors registered.
-//
-// The exactly-once contract matters: each collector returned by NewCollectors
-// installs DCGM field watches and GPU groups as a side effect, which are only
-// released by (*registry.Registry).Cleanup once the collector is registered.
-// A second call to NewCollectors without registering would leak DCGM
-// resources, surfacing as "RemoveFieldWatch returned -16 (NOT_WATCHED)"
-// warnings in nv-hostengine.log. This helper makes that contract both
-// readable at the call site and testable in isolation.
-func populateRegistry(cf collector.Factory, r *registry.Registry) int {
-	collectors := cf.NewCollectors()
-	for _, entityCollector := range collectors {
-		r.Register(entityCollector)
-	}
-	return len(collectors)
-}
-
-// hotReloadCounter assigns a monotonically increasing ID to each reload for
-// correlating logs across the reload paths.
-var hotReloadCounter atomic.Uint64
-
-// dcpCapabilities is an immutable snapshot of DCGM profiling capabilities
-// discovered at runtime. Fields are unexported so the stored value cannot be
-// mutated from outside this file; construct via newDCPCapabilities and read
-// via applyTo.
-//
-// The snapshot exists because hot reload rebuilds an appconfig.Config from the
-// CLI context, which cannot itself discover DCP capabilities — those come from
-// DCGM and must be preserved across reloads. A fresh config with CollectDCP=true
-// but MetricGroups=nil causes counters.fieldIsSupported to drop every
-// DCGM_FI_PROF_* metric.
-type dcpCapabilities struct {
-	collectDCP   bool
-	metricGroups []dcgm.MetricGroup
-}
-
-// newDCPCapabilities snapshots the DCP fields of c. The returned value owns
-// its own copy of MetricGroups and nested FieldIds, so later mutation of c does
-// not affect the snapshot.
-func newDCPCapabilities(c *appconfig.Config) *dcpCapabilities {
-	return &dcpCapabilities{
-		collectDCP:   c.CollectDCP,
-		metricGroups: cloneMetricGroups(c.MetricGroups),
-	}
-}
-
-// applyTo overlays the snapshot onto c. c receives its own copy of the metric
-// groups, so later mutation of c cannot reach back into the snapshot.
-func (d *dcpCapabilities) applyTo(c *appconfig.Config) {
-	c.CollectDCP = d.collectDCP
-	c.MetricGroups = cloneMetricGroups(d.metricGroups)
-}
-
-// cloneMetricGroups deep-copies the slice and each element's FieldIds so that
-// the caller and callee cannot share any mutable state.
-func cloneMetricGroups(in []dcgm.MetricGroup) []dcgm.MetricGroup {
-	if in == nil {
-		return nil
-	}
-	out := make([]dcgm.MetricGroup, len(in))
-	for i, g := range in {
-		out[i] = g
-		if g.FieldIds != nil {
-			out[i].FieldIds = append([]uint(nil), g.FieldIds...)
-		}
-	}
-	return out
-}
-
-// logTopologyInfo logs comprehensive information about the loaded GPU topology
-func logTopologyInfo(reloadID uint64, deviceWatchListMgr devicewatchlistmanager.Manager, duration time.Duration) {
-	var gpuCount, switchCount, cpuCount uint
-
-	// Count GPUs
-	if gpuWatchList, exists := deviceWatchListMgr.EntityWatchList(dcgm.FE_GPU); exists {
-		gpuCount = gpuWatchList.DeviceInfo().GPUCount()
-	}
-
-	// Count Switches
-	if switchWatchList, exists := deviceWatchListMgr.EntityWatchList(dcgm.FE_SWITCH); exists {
-		switchCount = uint(len(switchWatchList.DeviceInfo().Switches()))
-	}
-
-	// Count CPUs
-	if cpuWatchList, exists := deviceWatchListMgr.EntityWatchList(dcgm.FE_CPU); exists {
-		cpuCount = uint(len(cpuWatchList.DeviceInfo().CPUs()))
-	}
-
-	slog.Info("System running with new topology",
-		slog.Uint64("reload_id", reloadID),
-		slog.Duration("reload_duration", duration),
-		slog.Uint64("gpus", uint64(gpuCount)),
-		slog.Uint64("switches", uint64(switchCount)),
-		slog.Uint64("cpus", uint64(cpuCount)))
-}
-
-// reloadEvent identifies one kind of reload work.
-type reloadEvent int
-
-const (
-	evNone reloadEvent = iota
-	evConfigChanged
-	// evDRAResourceSliceChanged rebuilds the registry after a complete DRA pool topology changes.
-	evDRAResourceSliceChanged
-	// evDRAResourceSliceRetry is the one bounded replay for a failed
-	// ResourceSlice-triggered registry build. A retry never schedules another retry.
-	evDRAResourceSliceRetry
-	evGPUReinitialized
-	evGPURecoveryRetry
-)
-
-type gpuRecoveryStage int
-
-const (
-	gpuRecoveryIdle gpuRecoveryStage = iota
-	gpuRecoveryRestartWatcher
-	gpuRecoveryBuildRegistry
-)
-
-type pendingReload struct {
-	configChanged bool
-	// draResourceSliceEvent retains one DRA-triggered registry rebuild while other reload work is coalesced.
-	draResourceSliceEvent reloadEvent
-	latestGPUEvent        reloadEvent
-}
-
-func (p pendingReload) empty() bool {
-	return !p.configChanged && p.draResourceSliceEvent == evNone && p.latestGPUEvent == evNone
-}
-
-// reloadCoordinator serializes config and GPU lifecycle work.
-type reloadCoordinator struct {
-	server       *server.MetricsServer
-	c            *cli.Context
-	reloadConfig *appconfig.Config
-
-	pendingMu sync.Mutex
-	pending   pendingReload
-	wake      chan struct{}
-
-	// Owned by the Run goroutine.
-	dcp *dcpCapabilities
-
-	// Existing test seams for config application and registry construction.
-	applyConfigReload func(ctx context.Context, cfg *appconfig.Config, reloadID uint64)
-	buildRegistry     func(ctx context.Context, c *cli.Context, cfg *appconfig.Config) (*registry.Registry, devicewatchlistmanager.Manager, error)
-	cleanupDCGM       func()
-	initializeDCGM    func(cfg *appconfig.Config)
-	cleanupNVML       func()
-	initializeNVML    func() error
-	gpuWatcher        gpuWatcherLifecycle
-	scheduleRetry     func(context.Context, time.Duration, func()) context.CancelFunc
-
-	// Owned by the Run goroutine. Recovery retries resume at the failed stage
-	// so DCGM and NVML are not repeatedly torn down while the coordinator
-	// remains free to process config reloads and shutdown.
-	gpuRecoveryStage       gpuRecoveryStage
-	gpuRecoveryConfig      *appconfig.Config
-	gpuRecoveryStartedAt   time.Time
-	gpuRecoveryRetryDelay  time.Duration
-	cancelGPURecoveryRetry context.CancelFunc
-}
-
-const (
-	lifecycleRetryInitial = time.Second
-	lifecycleRetryMax     = 30 * time.Second
-)
-
-func newReloadCoordinator(c *cli.Context) *reloadCoordinator {
-	r := &reloadCoordinator{
-		c:    c,
-		wake: make(chan struct{}, 1),
-	}
-	r.applyConfigReload = func(ctx context.Context, cfg *appconfig.Config, reloadID uint64) {
-		r.doConfigReload(ctx, cfg, reloadID)
-	}
-	r.buildRegistry = buildRegistryFunc
-	r.cleanupDCGM = func() { dcgmprovider.Client().Cleanup() }
-	r.initializeDCGM = initializeDCGMProviderFunc
-	r.cleanupNVML = cleanupNVMLProviderFunc
-	r.initializeNVML = initializeNVMLProviderFunc
-	r.scheduleRetry = scheduleAfter
-	r.gpuRecoveryRetryDelay = lifecycleRetryInitial
-	return r
-}
-
-func scheduleAfter(ctx context.Context, delay time.Duration, callback func()) context.CancelFunc {
-	retryCtx, cancel := context.WithCancel(ctx)
-	go func() {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		select {
-		case <-retryCtx.Done():
-		case <-timer.C:
-			callback()
-		}
-	}()
-	return cancel
-}
-
-func nextLifecycleRetryDelay(delay time.Duration) time.Duration {
-	delay *= 2
-	if delay > lifecycleRetryMax {
-		return lifecycleRetryMax
-	}
-	return delay
-}
-
-// setServer installs the metrics server before Run starts.
-func (r *reloadCoordinator) setServer(s *server.MetricsServer) {
-	r.server = s
-}
-
-// setGPUWatcher gives lifecycle resets control of the GPU watcher.
-func (r *reloadCoordinator) setGPUWatcher(w gpuWatcherLifecycle) {
-	r.gpuWatcher = w
-}
-
-func initReloadCoordinator(c *cli.Context, config *appconfig.Config) *reloadCoordinator {
-	coord := newReloadCoordinator(c)
-	config.SetDRAResourceSliceChangeCallback(func() {
-		coord.Trigger(evDRAResourceSliceChanged)
-	})
-	coord.reloadConfig = config.Clone()
-	return coord
-}
-
-// Trigger coalesces work into the bounded pending snapshot.
-func (r *reloadCoordinator) Trigger(ev reloadEvent) {
-	r.pendingMu.Lock()
-	switch ev {
-	case evConfigChanged:
-		r.pending.configChanged = true
-	case evDRAResourceSliceChanged:
-		r.pending.draResourceSliceEvent = evDRAResourceSliceChanged
-	case evDRAResourceSliceRetry:
-		if r.pending.draResourceSliceEvent == evNone {
-			r.pending.draResourceSliceEvent = evDRAResourceSliceRetry
-		}
-	case evGPUReinitialized:
-		r.pending.latestGPUEvent = evGPUReinitialized
-	case evGPURecoveryRetry:
-		if r.pending.latestGPUEvent == evNone {
-			r.pending.latestGPUEvent = evGPURecoveryRetry
-		}
-	}
-	r.pendingMu.Unlock()
-
-	select {
-	case r.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (r *reloadCoordinator) takePending() pendingReload {
-	r.pendingMu.Lock()
-	defer r.pendingMu.Unlock()
-
-	pending := r.pending
-	r.pending = pendingReload{}
-	return pending
-}
-
-func (r *reloadCoordinator) handlePending(ctx context.Context, pending pendingReload) {
-	// A completed physical lifecycle is safe to reset. The watcher deliberately
-	// suppresses the earlier reinitializing state because its topology is not
-	// ready for exporter reinitialization yet.
-	// A new lifecycle reset rereads the metric source and consumes a coalesced
-	// config or DRA change. Retry events do not: registry-only reloads remain
-	// serviceable while recovery is waiting on a watcher or registry dependency.
-	if pending.latestGPUEvent != evGPUReinitialized {
-		switch {
-		case pending.draResourceSliceEvent != evNone:
-			// Both registry-only paths use the same config snapshot. Prioritize DRA
-			// work so a failed topology rebuild retains its one bounded retry.
-			r.handle(ctx, pending.draResourceSliceEvent)
-		case pending.configChanged:
-			r.handle(ctx, evConfigChanged)
-		}
-	}
-	if pending.latestGPUEvent == evGPUReinitialized || pending.latestGPUEvent == evGPURecoveryRetry {
-		r.handle(ctx, pending.latestGPUEvent)
-	}
-}
-
-// Run drains pending work while preserving the latest GPU lifecycle state.
-func (r *reloadCoordinator) Run(ctx context.Context) {
-	defer r.cancelRecoveryRetry()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-r.wake:
-			pending := r.takePending()
-			if pending.empty() {
-				continue
-			}
-			r.handlePending(ctx, pending)
-		}
-	}
-}
-
-// handle runs one event with panic recovery so later pending work can still run.
-func (r *reloadCoordinator) handle(ctx context.Context, ev reloadEvent) {
-	reloadID := hotReloadCounter.Add(1)
-
-	defer func() {
-		if p := recover(); p != nil {
-			stackBuf := make([]byte, 8192)
-			n := runtime.Stack(stackBuf, false)
-			slog.ErrorContext(ctx, "PANIC RECOVERED in reload",
-				slog.String("panic_value", fmt.Sprintf("%v", p)),
-				slog.String("panic_type", fmt.Sprintf("%T", p)),
-				slog.Uint64("reload_id", reloadID),
-				slog.String("stack_trace", string(stackBuf[:n])))
-			if (ev == evGPUReinitialized || ev == evGPURecoveryRetry) &&
-				r.gpuRecoveryStage != gpuRecoveryIdle && r.gpuRecoveryConfig != nil && ctx.Err() == nil {
-				r.scheduleRecoveryRetry(
-					ctx,
-					reloadID,
-					"GPU lifecycle recovery panicked",
-					fmt.Errorf("panic: %v", p),
-				)
-			} else if ev == evDRAResourceSliceChanged && ctx.Err() == nil {
-				// Match the bounded error path: the first DRA-triggered attempt gets
-				// one replay even when registry construction panics.
-				r.Trigger(evDRAResourceSliceRetry)
-			}
-		}
-	}()
-
-	r.server.SetReloadInProgress(true)
-	defer func() {
-		if r.gpuRecoveryStage == gpuRecoveryIdle {
-			r.server.SetReloadInProgress(false)
-		}
-	}()
-
-	switch ev {
-	case evConfigChanged, evDRAResourceSliceChanged, evDRAResourceSliceRetry:
-		cfg, err := r.buildReloadConfig()
-		if err != nil {
-			slog.ErrorContext(ctx, "Failed to build reload config",
-				slog.Uint64("reload_id", reloadID),
-				slog.String("error", err.Error()))
-			return
-		}
-		if ev == evConfigChanged {
-			if r.gpuRecoveryStage != gpuRecoveryIdle {
-				// A later recovery retry must not replace this reload with the
-				// older snapshot captured when the GPU event began.
-				r.gpuRecoveryConfig = cfg.Clone()
-			}
-			r.applyConfigReload(ctx, cfg, reloadID)
-			return
-		}
-		if !r.doConfigReload(ctx, cfg, reloadID) && ev == evDRAResourceSliceChanged {
-			// One immediate, coalesced retry covers a transient registry build
-			// failure without creating an unbounded or tight retry loop.
-			r.Trigger(evDRAResourceSliceRetry)
-		}
-	case evGPUReinitialized:
-		r.doGPULifecycleReset(ctx, reloadID)
-	case evGPURecoveryRetry:
-		r.retryGPULifecycleRecovery(ctx, reloadID)
-	}
-}
-
-func (r *reloadCoordinator) buildReloadConfig() (*appconfig.Config, error) {
-	if r.reloadConfig != nil {
-		cfg := r.reloadConfig.Clone()
-		if r.dcp != nil {
-			r.dcp.applyTo(cfg)
-		}
-		return cfg, nil
-	}
-
-	return nil, fmt.Errorf("buildReloadConfig: no startup config snapshot; coordinator was not initialized via initReloadCoordinator")
-}
-
-// doConfigReload preserves the last-good registry until its replacement exists.
-// It reports whether a replacement was installed so DRA topology reloads can
-// schedule their single bounded retry after a transient build failure.
-func (r *reloadCoordinator) doConfigReload(ctx context.Context, cfg *appconfig.Config, reloadID uint64) bool {
-	slog.InfoContext(ctx, "Hot reload triggered - building new registry",
-		slog.Uint64("reload_id", reloadID))
-	startTime := time.Now()
-
-	newRegistry, deviceWatchListMgr, err := r.buildRegistry(ctx, r.c, cfg)
-	if err != nil {
-		slog.ErrorContext(ctx, "Failed to build new registry during hot reload",
-			slog.Uint64("reload_id", reloadID),
-			slog.String("error", err.Error()),
-			slog.String("metrics_state", "preserving last-good registry"))
-		return false
-	}
-
-	oldRegistry := r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
-	if oldRegistry != nil {
-		oldRegistry.Cleanup()
-	}
-
-	duration := time.Since(startTime)
-	slog.InfoContext(ctx, "Hot reload complete",
-		slog.Uint64("reload_id", reloadID),
-		slog.Duration("reload_duration", duration))
-	logTopologyInfo(reloadID, deviceWatchListMgr, duration)
-	return true
-}
-
-func (r *reloadCoordinator) clearMetricsRegistry() {
-	oldRegistry := r.server.ClearRegistry()
-	if oldRegistry != nil {
-		oldRegistry.Cleanup()
-	}
-}
-
-// doGPULifecycleReset replaces provider and registry state after a completed GPU bind or unbind.
-func (r *reloadCoordinator) doGPULifecycleReset(ctx context.Context, reloadID uint64) {
-	slog.InfoContext(ctx, "GPU lifecycle event detected - resetting providers",
-		slog.Uint64("reload_id", reloadID))
-	r.gpuRecoveryStartedAt = time.Now()
-	r.cancelRecoveryRetry()
-	r.gpuRecoveryStage = gpuRecoveryIdle
-	r.gpuRecoveryConfig = nil
-	r.gpuRecoveryRetryDelay = lifecycleRetryInitial
-
-	cfg, err := r.buildReloadConfig()
-	if err != nil {
-		slog.ErrorContext(ctx, "Failed to build GPU lifecycle reload config",
-			slog.Uint64("reload_id", reloadID),
-			slog.String("error", err.Error()))
-		return
-	}
-
-	r.dcp = &dcpCapabilities{}
-
-	// Stop the watcher before releasing the DCGM resources it uses.
-	watcherStopped := false
-	if r.gpuWatcher != nil {
-		r.gpuWatcher.Stop()
-		watcherStopped = true
-		defer func() {
-			if watcherStopped {
-				if err := r.gpuWatcher.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					slog.ErrorContext(ctx, "Failed to restore GPU watcher after interrupted lifecycle reset",
-						slog.Uint64("reload_id", reloadID),
-						slog.String("error", err.Error()))
-				}
-			}
-		}()
-	}
-
-	slog.InfoContext(ctx, "Clearing registry - metrics remain empty during GPU lifecycle reset",
-		slog.Uint64("reload_id", reloadID))
-	r.clearMetricsRegistry()
-
-	// Release providers in reverse startup order, then bring DCGM back first.
-	slog.InfoContext(ctx, "Cleaning up exporter NVML resources",
-		slog.Uint64("reload_id", reloadID))
-	r.cleanupNVML()
-
-	slog.InfoContext(ctx, "Cleaning up DCGM resources",
-		slog.Uint64("reload_id", reloadID))
-	r.cleanupDCGM()
-
-	slog.InfoContext(ctx, "Reinitializing DCGM",
-		slog.Uint64("reload_id", reloadID))
-	r.initializeDCGM(cfg)
-	r.gpuRecoveryConfig = cfg
-	if watcherStopped {
-		r.gpuRecoveryStage = gpuRecoveryRestartWatcher
-		watcherStopped = false
-	} else {
-		r.prepareRegistryRecovery(ctx, cfg, reloadID)
-	}
-	r.continueGPULifecycleRecovery(ctx, reloadID)
-}
-
-func (r *reloadCoordinator) prepareRegistryRecovery(ctx context.Context, cfg *appconfig.Config, reloadID uint64) {
-	// Match startup scope: refresh optional NVML state on every lifecycle reset.
-	if err := r.initializeNVML(); err != nil {
-		level := slog.LevelWarn
-		if cfg.Kubernetes && !cfg.DisableStartupValidate {
-			level = slog.LevelError
-		}
-		slog.LogAttrs(ctx, level, "Failed to reinitialize NVML",
-			slog.Uint64("reload_id", reloadID),
-			slog.String("error", err.Error()))
-	}
-
-	r.queryDCPMetrics(cfg, reloadID)
-	r.gpuRecoveryStage = gpuRecoveryBuildRegistry
-}
-
-func (r *reloadCoordinator) retryGPULifecycleRecovery(ctx context.Context, reloadID uint64) {
-	r.cancelRecoveryRetry()
-	if r.gpuRecoveryStage == gpuRecoveryIdle || r.gpuRecoveryConfig == nil {
-		return
-	}
-	r.continueGPULifecycleRecovery(ctx, reloadID)
-}
-
-func (r *reloadCoordinator) continueGPULifecycleRecovery(ctx context.Context, reloadID uint64) {
-	if ctx.Err() != nil || r.gpuRecoveryConfig == nil {
-		return
-	}
-
-	if r.gpuRecoveryStage == gpuRecoveryRestartWatcher {
-		if err := r.gpuWatcher.Start(ctx); err != nil {
-			if ctx.Err() == nil {
-				r.scheduleRecoveryRetry(ctx, reloadID, "Failed to restart GPU watcher after lifecycle reset", err)
-			}
-			return
-		}
-		r.prepareRegistryRecovery(ctx, r.gpuRecoveryConfig, reloadID)
-	}
-
-	if r.gpuRecoveryStage != gpuRecoveryBuildRegistry {
-		return
-	}
-
-	// Rebuild metrics only after the providers reflect the new topology. A
-	// failed attempt schedules another coordinator event without blocking
-	// config reloads or repeating provider teardown.
-	newRegistry, deviceWatchListMgr, err := r.buildRegistry(ctx, r.c, r.gpuRecoveryConfig)
-	if err != nil {
-		r.scheduleRecoveryRetry(ctx, reloadID, "Failed to build registry after GPU lifecycle reset", err)
-		return
-	}
-	if ctx.Err() != nil {
-		newRegistry.Cleanup()
-		return
-	}
-
-	oldRegistry := r.server.SwapMetricsRuntime(newRegistry, deviceWatchListMgr)
-	if oldRegistry != nil {
-		oldRegistry.Cleanup()
-	}
-
-	duration := time.Since(r.gpuRecoveryStartedAt)
-	slog.InfoContext(ctx, "GPU metrics resumed after lifecycle reset",
-		slog.Uint64("reload_id", reloadID),
-		slog.Duration("reload_duration", duration))
-	logTopologyInfo(reloadID, deviceWatchListMgr, duration)
-	r.finishGPURecovery()
-}
-
-func (r *reloadCoordinator) scheduleRecoveryRetry(
-	ctx context.Context,
-	reloadID uint64,
-	message string,
-	err error,
-) {
-	delay := r.gpuRecoveryRetryDelay
-	slog.ErrorContext(ctx, message,
-		slog.Uint64("reload_id", reloadID),
-		slog.String("error", err.Error()),
-		slog.Duration("retry_delay", delay),
-		slog.String("metrics_state", "recovery pending"))
-	r.cancelRecoveryRetry()
-	r.cancelGPURecoveryRetry = r.scheduleRetry(ctx, delay, func() {
-		r.Trigger(evGPURecoveryRetry)
-	})
-	r.gpuRecoveryRetryDelay = nextLifecycleRetryDelay(delay)
-}
-
-func (r *reloadCoordinator) cancelRecoveryRetry() {
-	if r.cancelGPURecoveryRetry != nil {
-		r.cancelGPURecoveryRetry()
-		r.cancelGPURecoveryRetry = nil
-	}
-}
-
-func (r *reloadCoordinator) finishGPURecovery() {
-	r.cancelRecoveryRetry()
-	r.gpuRecoveryStage = gpuRecoveryIdle
-	r.gpuRecoveryConfig = nil
-	r.gpuRecoveryRetryDelay = lifecycleRetryInitial
-	r.server.SetReloadInProgress(false)
-}
-
-func startDeviceWatchListManager(
-	cs *counters.CounterSet, config *appconfig.Config,
-) (devicewatchlistmanager.Manager, error) {
-	// Create a list containing DCGM Collector, Exp Collectors and all the label Collectors
-	var allCounters counters.CounterList
-	var deviceWatchListManager devicewatchlistmanager.Manager
-
-	allCounters = append(allCounters, cs.DCGMCounters...)
-
-	allCounters = appendDCGMXIDErrorsDependency(allCounters, cs)
-	allCounters = appendDCGMClockEventsDependency(cs, allCounters)
-
-	if err := devicewatchlistmanager.ValidateWatchGroups(allCounters, config.WatchGroups); err != nil {
-		return nil, err
-	}
-
-	deviceWatchListManager = devicewatchlistmanager.NewWatchListManager(allCounters, config)
-	deviceWatcher := devicewatcher.NewDeviceWatcher()
-
-	for _, deviceType := range devicewatchlistmanager.DeviceTypesToWatch {
-		err := deviceWatchListManager.CreateEntityWatchList(deviceType, deviceWatcher, int64(config.CollectInterval))
-		if err != nil {
-			slog.Info(fmt.Sprintf("Not collecting %s metrics; %s", deviceType.String(), err))
-		}
-	}
-	return deviceWatchListManager, nil
-}
-
-func containsDCGMField(slice []counters.Counter, fieldID dcgm.Short) bool {
-	return slices.ContainsFunc(slice, func(counter counters.Counter) bool {
-		return uint16(counter.FieldID) == uint16(fieldID)
-	})
-}
-
-func containsExporterField(slice []counters.Counter, fieldID counters.ExporterCounter) bool {
-	return slices.ContainsFunc(slice, func(counter counters.Counter) bool {
-		return uint16(counter.FieldID) == uint16(fieldID)
-	})
-}
-
-// appendDCGMClockEventsDependency appends DCGM counters required for clock event exporter metrics.
-func appendDCGMClockEventsDependency(
-	cs *counters.CounterSet, allCounters []counters.Counter,
-) []counters.Counter {
-	if len(cs.ExporterCounters) > 0 {
-		if (containsExporterField(cs.ExporterCounters, counters.DCGMClockEventsCount) ||
-			containsExporterField(cs.ExporterCounters, counters.DCGMClockEventsTotal)) &&
-			!containsDCGMField(allCounters, dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS) {
-			allCounters = append(allCounters,
-				counters.Counter{
-					FieldID:   dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS,
-					FieldName: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
-				})
-		}
-	}
-	return allCounters
-}
-
-// appendDCGMXIDErrorsDependency appends DCGM counters required for XID exporter metrics.
-func appendDCGMXIDErrorsDependency(
-	allCounters []counters.Counter, cs *counters.CounterSet,
-) []counters.Counter {
-	if len(cs.ExporterCounters) > 0 {
-		if (containsExporterField(cs.ExporterCounters, counters.DCGMXIDErrorsCount) ||
-			containsExporterField(cs.ExporterCounters, counters.DCGMXIDErrorsTotal)) &&
-			!containsDCGMField(allCounters, dcgm.DCGM_FI_DEV_XID_ERRORS) {
-			allCounters = append(allCounters,
-				counters.Counter{
-					FieldID:   dcgm.DCGM_FI_DEV_XID_ERRORS,
-					FieldName: "DCGM_FI_DEV_XID_ERRORS",
-				})
-		}
-	}
-	return allCounters
-}
-
-func getCounters(ctx context.Context, config *appconfig.Config) (*counters.CounterSet, error) {
-	cs, err := counters.GetCounterSet(ctx, config)
-	if err != nil {
-		return nil, err
-	}
-
-	// Copy labels from DCGM Counters to ExporterCounters
-	for i := range cs.DCGMCounters {
-		if cs.DCGMCounters[i].PromType == "label" {
-			cs.ExporterCounters = append(cs.ExporterCounters, cs.DCGMCounters[i])
-		}
-	}
-	return cs, nil
-}
-
-// queryDCPMetrics queries DCGM for supported profiling metric groups,
-// mutates cfg to reflect the result, and publishes the resulting snapshot to
-// r.dcp so later config reloads can apply it without re-querying (which can
-// segfault during GPU state transitions).
-//
-// Called at: startup (from runDCGMExporter before the
-// first buildRegistry) and from doGPULifecycleReset after DCGM is reinitialized.
-// Config reloads do NOT call this; they apply r.dcp instead.
-//
-// Single deferred epilogue: recover from any profiling API panic, then
-// publish whatever DCP state remains in cfg. Explicit sequencing within one
-// defer guarantees that error and panic paths publish a disabled snapshot
-// — overwriting any prior enabled snapshot — without depending on LIFO
-// declaration order.
-func (r *reloadCoordinator) queryDCPMetrics(cfg *appconfig.Config, reloadID uint64) {
-	slog.Debug("Querying DCGM profiling metric groups", slog.Uint64("reload_id", reloadID))
-
-	defer func() {
-		if p := recover(); p != nil {
-			slog.Warn("Profiling API panic - DCP metrics disabled",
-				slog.Uint64("reload_id", reloadID),
-				slog.String("panic", fmt.Sprintf("%v", p)))
-			cfg.CollectDCP = false
-			cfg.MetricGroups = nil
-		}
-		r.dcp = newDCPCapabilities(cfg)
-	}()
-
-	groups, err := dcgmprovider.Client().GetSupportedMetricGroups(0)
-	if err != nil {
-		cfg.CollectDCP = false
-		cfg.MetricGroups = nil
-		slog.Info("Not collecting DCP metrics: " + err.Error())
-		return
-	}
-
-	gpuModel := "unknown"
-	if gpuCount, err := dcgmprovider.Client().GetAllDeviceCount(); err == nil && gpuCount > 0 {
-		if gpuInfo, err := dcgmprovider.Client().GetDeviceInfo(0); err == nil {
-			gpuModel = gpuInfo.Identifiers.Model
-		}
-	}
-
-	slog.Info("Successfully queried DCGM profiling metric groups",
-		slog.Uint64("reload_id", reloadID),
-		slog.Int("count", len(groups)),
-		slog.String("gpu_model", gpuModel))
-
-	cfg.MetricGroups = groups
-	cfg.CollectDCP = true
-}
-
-// parseDeviceOptions parses the flex, major, minor, and combined selector grammar used by device flags.
-func parseDeviceOptions(devices string) (appconfig.DeviceOptions, error) {
-	var dOpt appconfig.DeviceOptions
-
-	parts := strings.Split(devices, "+")
-	for _, part := range parts {
-		if part == "" {
-			return dOpt, fmt.Errorf("invalid device option '%s': empty selector", devices)
-		}
-
-		letter, rangeSpec, hasRange := strings.Cut(part, ":")
-		if strings.Contains(rangeSpec, ":") {
-			return dOpt, fmt.Errorf("invalid ranged device option '%s': there can only be one specified range", devices)
-		}
-
-		switch letter {
-		case FlexKey:
-			if len(parts) > 1 {
-				return dOpt, fmt.Errorf("the flex option 'f' cannot be combined with other device options")
-			}
-			if hasRange {
-				return dOpt, fmt.Errorf("no range can be specified with the flex option 'f'")
-			}
-			dOpt.Flex = true
-		case MajorKey:
-			if dOpt.MajorRange != nil {
-				return dOpt, fmt.Errorf("duplicate device option '%s'", MajorKey)
-			}
-			indices, err := parseDeviceRange(rangeSpec, hasRange, int(dcgm.MAX_NUM_CPU_CORES))
-			if err != nil {
-				return dOpt, err
-			}
-			dOpt.MajorRange = indices
-		case MinorKey:
-			if dOpt.MinorRange != nil {
-				return dOpt, fmt.Errorf("duplicate device option '%s'", MinorKey)
-			}
-			indices, err := parseDeviceRange(rangeSpec, hasRange, int(dcgm.MAX_NUM_CPU_CORES))
-			if err != nil {
-				return dOpt, err
-			}
-			dOpt.MinorRange = indices
-		default:
-			return dOpt, fmt.Errorf("the only valid options are 'f', 'g', or 'i', but found '%s'", letter)
-		}
-	}
-
-	return dOpt, nil
-}
-
-// parseDeviceRange expands an optional comma-separated selector range into device indices.
-func parseDeviceRange(rangeSpec string, hasRange bool, limit int) ([]int, error) {
-	if !hasRange {
-		// No range means all present devices of the type.
-		if limit < 1 {
-			return nil, fmt.Errorf("device selector expands to more than %d indices", dcgm.MAX_NUM_CPU_CORES)
-		}
-		return []int{-1}, nil
-	}
-
-	var indices []int
-	numbers := strings.Split(rangeSpec, ",")
-	for _, numberOrRange := range numbers {
-		rangeTokens := strings.Split(numberOrRange, "-")
-		rangeTokenCount := len(rangeTokens)
-		switch rangeTokenCount {
-		case 1:
-			number, err := strconv.Atoi(rangeTokens[0])
-			if err != nil {
-				return nil, err
-			}
-			if len(indices) >= limit {
-				return nil, fmt.Errorf("device selector expands to more than %d indices", dcgm.MAX_NUM_CPU_CORES)
-			}
-			indices = append(indices, number)
-		case 2:
-			start, err := strconv.Atoi(rangeTokens[0])
-			if err != nil {
-				return nil, err
-			}
-			end, err := strconv.Atoi(rangeTokens[1])
-			if err != nil {
-				return nil, err
-			}
-
-			if start > end {
-				return nil, fmt.Errorf("invalid range '%s': start (%d) must not exceed end (%d)", numberOrRange, start, end)
-			}
-
-			// Add the range to the indices.
-			for i := start; i <= end; i++ {
-				if len(indices) >= limit {
-					return nil, fmt.Errorf("device selector expands to more than %d indices", dcgm.MAX_NUM_CPU_CORES)
-				}
-				indices = append(indices, i)
-			}
-		default:
-			return nil, fmt.Errorf("range can only be '<number>-<number>', but found '%s'", numberOrRange)
-		}
-	}
-
-	return indices, nil
-}
-
-func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
-	config, err := defaultConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	if c.IsSet(CLIConfigFile) {
-		config.ConfigFile = c.String(CLIConfigFile)
-		yamlConfig, err := appconfig.LoadYAMLConfigFile(config.ConfigFile)
-		if err != nil {
-			return nil, err
-		}
-		if err := yamlConfig.ApplyTo(config); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := applyExplicitConfigOverrides(c, config); err != nil {
-		return nil, err
-	}
-	if err := validateConfig(config); err != nil {
-		return nil, err
-	}
-
-	return config, nil
-}
-
-// defaultConfig builds the runtime defaults used before YAML and explicit CLI overrides are applied.
-func defaultConfig() (*appconfig.Config, error) {
-	gOpt, err := parseDeviceOptions(FlexKey)
-	if err != nil {
-		return nil, err
-	}
-	sOpt, err := parseDeviceOptions(FlexKey)
-	if err != nil {
-		return nil, err
-	}
-	cOpt, err := parseDeviceOptions(FlexKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return &appconfig.Config{
-		CollectorsFile:                   appconfig.DefaultCollectorsFile,
-		Address:                          ":9400",
-		CollectInterval:                  30000,
-		WatchRetention:                   appconfig.DefaultWatchRetention(),
-		Kubernetes:                       false,
-		KubernetesEnablePodLabels:        false,
-		KubernetesEnablePodUID:           false,
-		KubernetesGPUIdType:              appconfig.GPUUID,
-		KubernetesPodLabelAllowlistRegex: nil,
-		CollectDCP:                       true,
-		UseOldNamespace:                  false,
-		UseRemoteHE:                      false,
-		RemoteHEInfo:                     "localhost:5555",
-		GPUDeviceOptions:                 gOpt,
-		SwitchDeviceOptions:              sOpt,
-		CPUDeviceOptions:                 cOpt,
-		NoHostname:                       false,
-		UseFakeGPUs:                      false,
-		ConfigMapData:                    undefinedConfigMapData,
-		MetricSource: appconfig.MetricSource{
-			Kind: appconfig.MetricSourceFile,
-			File: appconfig.DefaultCollectorsFile,
-		},
-		WebSystemdSocket:           false,
-		WebConfigFile:              "",
-		WebReadTimeout:             appconfig.DefaultWebReadTimeout,
-		WebWriteTimeout:            appconfig.DefaultWebWriteTimeout,
-		MaxConcurrentScrapes:       appconfig.DefaultMaxConcurrentScrapes,
-		EnableExporterMetrics:      false,
-		XIDCountWindowSize:         int((5 * time.Minute).Milliseconds()),
-		ReplaceBlanksInModelName:   false,
-		Debug:                      false,
-		ClockEventsCountWindowSize: int((5 * time.Minute).Milliseconds()),
-		EnableDCGMLog:              false,
-		DCGMLogLevel:               DCGMDbgLvlNone,
-		PodResourcesKubeletSocket:  "/var/lib/kubelet/pod-resources/kubelet.sock",
-		HPCJobMappingDir:           "",
-		ContainerLabels:            false,
-		ContainerRuntimeSocket:     "",
-		NvidiaResourceNames:        nil,
-		KubernetesVirtualGPUs:      false,
-		DumpConfig: appconfig.DumpConfig{
-			Enabled:     false,
-			Directory:   "/tmp/dcgm-exporter-debug",
-			Retention:   24,
-			Compression: true,
-		},
-		KubernetesEnableDRA:       false,
-		DisableStartupValidate:    false,
-		EnableGPUBindUnbindWatch:  false,
-		GPUBindUnbindPollInterval: time.Second,
-		EnablePprof:               false,
-	}, nil
-}
-
-// applyExplicitConfigOverrides applies only startup flags and env vars that were explicitly set.
-func applyExplicitConfigOverrides(c *cli.Context, config *appconfig.Config) error {
-	if c.IsSet(CLIFieldsFile) {
-		applyMetricFileSource(config, c.String(CLIFieldsFile))
-	}
-	if c.IsSet(CLIAddress) {
-		config.Address = c.String(CLIAddress)
-	}
-	if c.IsSet(CLICollectInterval) {
-		config.CollectInterval = c.Int(CLICollectInterval)
-	}
-	if c.IsSet(CLIWatchMaxKeepAge) {
-		config.WatchRetention.MaxAge = c.Duration(CLIWatchMaxKeepAge)
-	}
-	if c.IsSet(CLIWatchMaxKeepSamples) {
-		config.WatchRetention.MaxSamples = c.Int64(CLIWatchMaxKeepSamples)
-	}
-	if c.IsSet(CLIKubernetes) {
-		config.Kubernetes = c.Bool(CLIKubernetes)
-	}
-	if c.IsSet(CLIKubernetesEnablePodLabels) {
-		config.KubernetesEnablePodLabels = c.Bool(CLIKubernetesEnablePodLabels)
-	}
-	if c.IsSet(CLIKubernetesEnablePodUID) {
-		config.KubernetesEnablePodUID = c.Bool(CLIKubernetesEnablePodUID)
-	}
-	if c.IsSet(CLIKubernetesGPUIDType) {
-		config.KubernetesGPUIdType = appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType))
-	}
-	if c.IsSet(CLIKubernetesPodLabelAllowlistRegex) {
-		config.KubernetesPodLabelAllowlistRegex = c.StringSlice(CLIKubernetesPodLabelAllowlistRegex)
-	}
-	if c.IsSet(CLIUseOldNamespace) {
-		config.UseOldNamespace = c.Bool(CLIUseOldNamespace)
-	}
-	if c.IsSet(CLIRemoteHEInfo) {
-		config.UseRemoteHE = true
-		config.RemoteHEInfo = c.String(CLIRemoteHEInfo)
-	}
-	if c.IsSet(CLIGPUDevices) {
-		opt, err := parseDeviceOptions(c.String(CLIGPUDevices))
-		if err != nil {
-			return err
-		}
-		config.GPUDeviceOptions = opt
-	}
-	if c.IsSet(CLISwitchDevices) {
-		opt, err := parseDeviceOptions(c.String(CLISwitchDevices))
-		if err != nil {
-			return err
-		}
-		config.SwitchDeviceOptions = opt
-	}
-	if c.IsSet(CLICPUDevices) {
-		opt, err := parseDeviceOptions(c.String(CLICPUDevices))
-		if err != nil {
-			return err
-		}
-		config.CPUDeviceOptions = opt
-	}
-	if c.IsSet(CLINoHostname) {
-		config.NoHostname = c.Bool(CLINoHostname)
-	}
-	if c.IsSet(CLIUseFakeGPUs) {
-		config.UseFakeGPUs = c.Bool(CLIUseFakeGPUs)
-	}
-	if c.IsSet(CLIConfigMapData) {
-		if err := applyConfigMapDataSource(config, c.String(CLIConfigMapData)); err != nil {
-			return err
-		}
-	}
-	if c.IsSet(CLIWebSystemdSocket) {
-		config.WebSystemdSocket = c.Bool(CLIWebSystemdSocket)
-	}
-	if c.IsSet(CLIWebConfigFile) {
-		config.WebConfigFile = c.String(CLIWebConfigFile)
-	}
-	if c.IsSet(CLIWebReadTimeout) {
-		config.WebReadTimeout = parseDuration(c.String(CLIWebReadTimeout), appconfig.DefaultWebReadTimeout)
-	}
-	if c.IsSet(CLIWebWriteTimeout) {
-		config.WebWriteTimeout = parseDuration(c.String(CLIWebWriteTimeout), appconfig.DefaultWebWriteTimeout)
-	}
-	if c.IsSet(CLIMaxConcurrentScrapes) {
-		config.MaxConcurrentScrapes = c.Int(CLIMaxConcurrentScrapes)
-	}
-	if c.IsSet(CLIEnableExporterMetrics) {
-		config.EnableExporterMetrics = c.Bool(CLIEnableExporterMetrics)
-	}
-	if c.IsSet(CLIXIDCountWindowSize) {
-		config.XIDCountWindowSize = c.Int(CLIXIDCountWindowSize)
-	}
-	if c.IsSet(CLIReplaceBlanksInModelName) {
-		config.ReplaceBlanksInModelName = c.Bool(CLIReplaceBlanksInModelName)
-	}
-	if c.IsSet(CLIDebugMode) {
-		config.Debug = c.Bool(CLIDebugMode)
-	}
-	if c.IsSet(CLIClockEventsCountWindowSize) {
-		config.ClockEventsCountWindowSize = c.Int(CLIClockEventsCountWindowSize)
-	}
-	if c.IsSet(CLIEnableDCGMLog) {
-		config.EnableDCGMLog = c.Bool(CLIEnableDCGMLog)
-	}
-	if c.IsSet(CLIDCGMLogLevel) {
-		config.DCGMLogLevel = c.String(CLIDCGMLogLevel)
-	}
-	if c.IsSet(CLIPodResourcesKubeletSocket) {
-		config.PodResourcesKubeletSocket = c.String(CLIPodResourcesKubeletSocket)
-	}
-	if c.IsSet(CLIHPCJobMappingDir) {
-		config.HPCJobMappingDir = c.String(CLIHPCJobMappingDir)
-	}
-	if c.IsSet(CLIContainerLabels) {
-		config.ContainerLabels = c.Bool(CLIContainerLabels)
-	}
-	if c.IsSet(CLIContainerRuntimeSocket) {
-		config.ContainerRuntimeSocket = c.String(CLIContainerRuntimeSocket)
-	}
-	if c.IsSet(CLINvidiaResourceNames) {
-		config.NvidiaResourceNames = c.StringSlice(CLINvidiaResourceNames)
-	}
-	if c.IsSet(CLIKubernetesVirtualGPUs) {
-		config.KubernetesVirtualGPUs = c.Bool(CLIKubernetesVirtualGPUs)
-	}
-	if c.IsSet(CLIDumpEnabled) {
-		config.DumpConfig.Enabled = c.Bool(CLIDumpEnabled)
-	}
-	if c.IsSet(CLIDumpDirectory) {
-		config.DumpConfig.Directory = c.String(CLIDumpDirectory)
-	}
-	if c.IsSet(CLIDumpRetention) {
-		config.DumpConfig.Retention = c.Int(CLIDumpRetention)
-	}
-	if c.IsSet(CLIDumpCompression) {
-		config.DumpConfig.Compression = c.Bool(CLIDumpCompression)
-	}
-	if c.IsSet(CLIKubernetesEnableDRA) {
-		config.KubernetesEnableDRA = c.Bool(CLIKubernetesEnableDRA)
-	}
-	if c.IsSet(CLIDisableStartupValidate) {
-		config.DisableStartupValidate = c.Bool(CLIDisableStartupValidate)
-	}
-	if c.IsSet(CLIEnableGPUBindUnbindWatch) {
-		config.EnableGPUBindUnbindWatch = c.Bool(CLIEnableGPUBindUnbindWatch)
-	}
-	if c.IsSet(CLIGPUBindUnbindPollInterval) {
-		config.GPUBindUnbindPollInterval = parseDuration(c.String(CLIGPUBindUnbindPollInterval), time.Second)
-	}
-	if c.IsSet(CLIEnablePprof) {
-		config.EnablePprof = c.Bool(CLIEnablePprof)
-	}
-
-	return nil
-}
-
-// applyMetricFileSource selects a file-backed metric source and clears compatibility ConfigMap data.
-func applyMetricFileSource(config *appconfig.Config, file string) {
-	config.CollectorsFile = file
-	config.ConfigMapData = undefinedConfigMapData
-	config.MetricSource = appconfig.MetricSource{
-		Kind: appconfig.MetricSourceFile,
-		File: file,
-	}
-}
-
-// applyConfigMapDataSource selects the compatibility API-backed ConfigMap metric source.
-func applyConfigMapDataSource(config *appconfig.Config, configMapData string) error {
-	config.ConfigMapData = configMapData
-	if configMapData == "" || configMapData == undefinedConfigMapData {
-		applyMetricFileSource(config, config.CollectorsFile)
-		return nil
-	}
-
-	parts := strings.Split(configMapData, ":")
-	if len(parts) != 2 {
-		return fmt.Errorf("malformed configmap-data %q", configMapData)
-	}
-	config.MetricSource = appconfig.MetricSource{
-		Kind: appconfig.MetricSourceConfigMap,
-		ConfigMap: appconfig.ConfigMapMetricSource{
-			Namespace: parts[0],
-			Name:      parts[1],
-		},
-	}
-	return nil
-}
-
-// validateConfig checks cross-field runtime requirements after all config sources are applied.
-func validateConfig(config *appconfig.Config) error {
-	if config.MaxConcurrentScrapes <= 0 {
-		return fmt.Errorf(
-			"invalid %s parameter value: %d, must be greater than 0",
-			CLIMaxConcurrentScrapes,
-			config.MaxConcurrentScrapes,
-		)
-	}
-
-	if err := config.WatchRetention.Validate(); err != nil {
-		return fmt.Errorf("invalid field watch retention: %w", err)
-	}
-	for i, watchGroup := range config.WatchGroups {
-		if err := watchGroup.Retention.Resolve(config.WatchRetention).Validate(); err != nil {
-			return fmt.Errorf("invalid watch group %q retention at index %d: %w", watchGroup.Name, i, err)
-		}
-	}
-	if !slices.Contains(DCGMDbgLvlValues, config.DCGMLogLevel) {
-		return fmt.Errorf("invalid %s parameter value: %s", CLIDCGMLogLevel, config.DCGMLogLevel)
-	}
-	if config.EnableGPUBindUnbindWatch && config.GPUBindUnbindPollInterval <= 0 {
-		return fmt.Errorf(
-			"invalid %s parameter value: %q, must be greater than 0",
-			CLIGPUBindUnbindPollInterval,
-			config.GPUBindUnbindPollInterval.String(),
-		)
-	}
-	if config.EnablePprof && strings.TrimSpace(config.WebConfigFile) == "" {
-		return fmt.Errorf(
-			"%s requires %s so profiling endpoints are protected by exporter-toolkit auth or TLS",
-			CLIEnablePprof,
-			CLIWebConfigFile,
-		)
-	}
-	if config.ContainerLabels && config.Kubernetes {
-		slog.Warn(
-			"container runtime labels are ignored when kubernetes mode is enabled",
-			slog.String("flag", CLIContainerLabels),
-			slog.String("mode", CLIKubernetes),
-		)
-	}
-	if config.ContainerLabels && !config.Kubernetes && strings.TrimSpace(config.ContainerRuntimeSocket) == "" {
-		return fmt.Errorf(
-			"%s requires %s or DCGM_CONTAINER_RUNTIME_SOCKET",
-			CLIContainerLabels,
-			CLIContainerRuntimeSocket,
-		)
-	}
-
-	return nil
-}
-
-// parseDuration parses a duration string and returns the parsed duration.
-// If parsing fails, returns the default value.
-func parseDuration(s string, defaultValue time.Duration) time.Duration {
-	if s == "" {
-		return defaultValue
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		slog.Warn("Failed to parse duration, using default",
-			slog.String("input", s),
-			slog.Duration("default", defaultValue),
-			slog.String("error", err.Error()))
-		return defaultValue
-	}
-	return d
-}
-
-// runWatcher starts a file watcher in a goroutine and manages its lifecycle.
-func runWatcher(ctx context.Context, w watcher.Watcher, onChange func(), wg *sync.WaitGroup) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err := w.Watch(ctx, onChange)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("Watcher failed", slog.String("error", err.Error()))
-		}
-	}()
-}
-
-func reloadEventForGPUState(state dcgm.BindUnbindEventState) (reloadEvent, bool) {
-	switch state {
-	case dcgm.DcgmBUEventStateSystemReinitializationCompleted:
-		return evGPUReinitialized, true
-	default:
-		return evNone, false
 	}
 }

@@ -24,6 +24,15 @@ import (
 
 // gpuCapability reports whether nvidia-smi returned any usable GPU inventory.
 func gpuCapability(query string, gpuCount int) Capability {
+	if probeOutputFailed(query) {
+		return hostCapability(
+			"gpu",
+			StatusUnknown,
+			"nvidia-smi query",
+			"GPU inventory probe failed",
+			firstLine(query),
+		)
+	}
 	return hostCapability(
 		"gpu",
 		statusIf(gpuCount > 0),
@@ -33,9 +42,24 @@ func gpuCapability(query string, gpuCount int) Capability {
 	)
 }
 
-// p2pCapability reports whether the host has enough NVLink-backed GPUs for P2P status checks.
-func p2pCapability(gpuCount int, activeNVLink bool) Capability {
-	return hostCapability("p2p", p2pStatus(gpuCount, activeNVLink), "nvidia-smi query", p2pReason(gpuCount, activeNVLink), fmt.Sprintf("%d GPU(s)", gpuCount))
+// multiGPUApplicability reports whether scenarios that compare GPU peers apply.
+func multiGPUApplicability(gpuCount int) Capability {
+	if gpuCount < 2 {
+		return hostCapability(
+			"multi_gpu",
+			StatusUnsupported,
+			"nvidia-smi query",
+			"scenario requires at least two GPUs",
+			fmt.Sprintf("%d GPU(s)", gpuCount),
+		)
+	}
+	return hostCapability(
+		"multi_gpu",
+		StatusSupported,
+		"nvidia-smi query",
+		"scenario can compare at least two GPUs",
+		fmt.Sprintf("%d GPUs", gpuCount),
+	)
 }
 
 // GPUCount counts valid GPU rows in nvidia-smi CSV query output.
@@ -58,42 +82,4 @@ func gpuIndexes(query string) []string {
 		}
 	}
 	return indexes
-}
-
-// fullGPUCount counts GPUs whose current MIG mode still exposes a full GPU.
-func fullGPUCount(query string) int {
-	count := 0
-	for _, line := range strings.Split(query, "\n") {
-		fields := strings.Split(line, ",")
-		if len(fields) < 6 {
-			continue
-		}
-		if _, err := strconv.Atoi(strings.TrimSpace(fields[0])); err != nil {
-			continue
-		}
-		migMode := strings.Trim(strings.TrimSpace(fields[5]), "[]")
-		if !strings.EqualFold(migMode, "enabled") {
-			count++
-		}
-	}
-	return count
-}
-
-// p2pStatus requires at least two GPUs and active NVLink evidence.
-func p2pStatus(gpuCount int, activeNVLink bool) Status {
-	if gpuCount < 2 || !activeNVLink {
-		return StatusUnsupported
-	}
-	return StatusSupported
-}
-
-// p2pReason explains the P2P capability decision.
-func p2pReason(gpuCount int, activeNVLink bool) string {
-	if gpuCount < 2 {
-		return "P2P status validation requires at least two GPUs"
-	}
-	if !activeNVLink {
-		return "P2P status validation requires active NVLink evidence"
-	}
-	return "multi-GPU active NVLink evidence was detected for P2P status validation"
 }
