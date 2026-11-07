@@ -42,6 +42,7 @@ func DefaultConfig() *Config {
 		CPUDeviceOptions:    DeviceOptions{Flex: true},
 		NoHostname:          false,
 		UseFakeGPUs:         false,
+		HealthRequireGPUs:   false,
 
 		MetricSource: MetricSource{
 			Kind: MetricSourceFile,

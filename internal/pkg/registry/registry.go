@@ -83,6 +83,16 @@ func (r *Registry) Register(entityCollectorTuples collector.EntityCollectorTuple
 	return nil
 }
 
+// CollectorCount returns the number of collectors registered for an entity group.
+// A published registry is immutable until retirement, so health checks can call
+// this concurrently with metric scrapes.
+func (r *Registry) CollectorCount(entityGroup dcgm.Field_Entity_Group) int {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	return len(r.collectorGroups[entityGroup])
+}
+
 // Gather admits one standalone scrape, gathers its metrics, and releases the
 // admission when it returns. Server requests that also render metrics use
 // GatherAdmitted so their one admission stays open through rendering.

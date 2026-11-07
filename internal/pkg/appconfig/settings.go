@@ -81,6 +81,7 @@ var fixedSettingKeys = []SettingKey{
 	{Field: "HPCJobMappingMaxFileBytes", Flag: FlagHPCJobMappingMaxFileBytes, Key: "sources.hpc_jobs.max_file_bytes"},
 	{Field: "HPCJobMappingMaxJobIDBytes", Flag: FlagHPCJobMappingMaxJobIDBytes, Key: "sources.hpc_jobs.max_job_id_bytes"},
 	{Field: "HPCJobMappingMaxJobsPerFile", Flag: FlagHPCJobMappingMaxJobsPerFile, Key: "sources.hpc_jobs.max_jobs_per_file"},
+	{Field: "HealthRequireGPUs", Flag: FlagHealthRequireGPUs, Key: "server.health_require_gpus"},
 	{Field: "WebReadTimeout", Flag: FlagWebReadTimeout, Key: "server.read_timeout"},
 	{Field: "WebWriteTimeout", Flag: FlagWebWriteTimeout, Key: "server.write_timeout"},
 	{Field: "MaxConcurrentScrapes", Flag: FlagMaxConcurrentScrapes, Key: "server.max_concurrent_scrapes"},

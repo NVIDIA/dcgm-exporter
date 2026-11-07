@@ -56,6 +56,7 @@ server:
   max_concurrent_scrapes: 16
   systemd_socket: false
   web_config_file: ""
+  health_require_gpus: false
   profiling: false
 observability:
   metrics:

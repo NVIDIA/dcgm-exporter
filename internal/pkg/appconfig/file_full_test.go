@@ -67,7 +67,7 @@ func fullTestConfig() *Config {
 		},
 
 		WebReadTimeout: 5 * time.Second, WebWriteTimeout: time.Minute, MaxConcurrentScrapes: 4,
-		WebSystemdSocket: true, WebConfigFile: "/etc/web.yml", EnablePprof: true,
+		WebSystemdSocket: true, WebConfigFile: "/etc/web.yml", HealthRequireGPUs: true, EnablePprof: true,
 		EnableExporterMetrics: true, LogFormat: "json", Debug: true,
 		XIDCountWindowSize: 60000, ClockEventsCountWindowSize: 90000,
 		DumpConfig: DumpConfig{

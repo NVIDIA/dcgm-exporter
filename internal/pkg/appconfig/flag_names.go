@@ -37,6 +37,7 @@ const (
 	FlagGPUDevices                       = "devices"
 	FlagSwitchDevices                    = "switch-devices"
 	FlagCPUDevices                       = "cpu-devices"
+	FlagHealthRequireGPUs                = "health-require-gpus"
 	FlagNoHostname                       = "no-hostname"
 	FlagUseFakeGPUs                      = "fake-gpus"
 	FlagConfigMapData                    = "configmap-data"

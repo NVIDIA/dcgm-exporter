@@ -168,6 +168,15 @@ HTTP SERVER OPTIONS
     Default: 16
     Environment: DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES
 
+  --health-require-gpus
+    Report /health as unhealthy when no GPU collector is registered. Off by
+    default so nodes that legitimately expose no GPUs keep passing. Enable where
+    every instance is expected to see at least one GPU, so that a liveness probe
+    on /health restarts an exporter that came up against a hostengine with no
+    GPUs visible.
+    Default: false
+    Environment: DCGM_EXPORTER_HEALTH_REQUIRE_GPUS
+
   --web-config-file PATH
     Web config file PATH following the exporter-toolkit spec:
     https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md.

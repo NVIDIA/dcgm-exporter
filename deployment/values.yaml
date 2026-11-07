@@ -34,6 +34,9 @@ arguments: []
 # To turn on pprof, set config.server.profiling=true and enable
 # tlsServerConfig or basicAuth; profiling needs a web config with TLS or
 # basic auth.
+# Example arguments: ["--health-require-gpus"] makes /health return 503 while
+# no GPU collector is registered. Off by default. basicAuth.users changes both
+# probes to tcpSocket, which cannot observe the 503.
 
 # The exporter's config file, rendered into a ConfigMap. Change one key with
 # --set, for example --set config.sources.dcgm.watch.max_keep_age=5m; a list
@@ -71,6 +74,7 @@ config:
     #   mode: kubernetes    # with metrics[0].enrichment.dra: true
   server:
     max_concurrent_scrapes: 16
+    # health_require_gpus: false  # if true, /health returns 503 with no FE_GPU collector
     # read_timeout: 10s     # time to read a scrape request
     # write_timeout: 30s    # time to build and write a scrape response; keep above serviceMonitor.scrapeTimeout
   observability:

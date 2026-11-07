@@ -158,6 +158,7 @@ func TestNewApp_ConfiguresVersionFlagsAndAction(t *testing.T) {
 		CLIGPUDevices,
 		CLISwitchDevices,
 		CLICPUDevices,
+		CLIHealthRequireGPUs,
 		CLIDumpEnabled,
 		CLIEnablePprof,
 		CLIWebSystemdSocket,
@@ -210,6 +211,7 @@ func TestNewAppDefaultsMatchDefaultConfig(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, defaults.CPUDeviceOptions, cpuDeviceOptions)
 
+		assert.Equal(t, defaults.HealthRequireGPUs, c.Bool(CLIHealthRequireGPUs))
 		assert.Equal(t, defaults.NoHostname, c.Bool(CLINoHostname))
 		assert.Equal(t, defaults.UseFakeGPUs, c.Bool(CLIUseFakeGPUs))
 		assert.Equal(t, undefinedConfigMapData, c.String(CLIConfigMapData))
@@ -1333,6 +1335,41 @@ func TestContextToConfigHonorsConfigurationFlags(t *testing.T) {
 	assert.Equal(t, ":19500", cfg.Address)
 	assert.Equal(t, 5000, cfg.CollectInterval)
 	assert.Equal(t, appconfig.DeviceOptions{MajorRange: []int{2, 3}}, cfg.GPUDeviceOptions)
+}
+
+// TestContextToConfigHonorsHealthRequireGPUs checks flag and environment precedence for the opt-in health gate.
+func TestContextToConfigHonorsHealthRequireGPUs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		env  string
+		want bool
+	}{
+		{name: "default off", args: []string{"dcgm-exporter"}, want: false},
+		{name: "flag on", args: []string{"dcgm-exporter", "--health-require-gpus"}, want: true},
+		{name: "flag explicitly off", args: []string{"dcgm-exporter", "--health-require-gpus=false"}, want: false},
+		{name: "env on", args: []string{"dcgm-exporter"}, env: "true", want: true},
+		{name: "env off", args: []string{"dcgm-exporter"}, env: "false", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var cfg *appconfig.Config
+			app := NewApp("test-version")
+			unsetFlagEnvVars(t, app.Flags)
+			if tc.env != "" {
+				t.Setenv("DCGM_EXPORTER_HEALTH_REQUIRE_GPUS", tc.env)
+			}
+
+			app.Action = func(c *cli.Context) error {
+				var err error
+				cfg, err = contextToConfig(c)
+				return err
+			}
+
+			require.NoError(t, app.Run(tc.args))
+			require.NotNil(t, cfg)
+			assert.Equal(t, tc.want, cfg.HealthRequireGPUs)
+		})
+	}
 }
 
 // TestContextToConfigHonorsConfigurationEnvironment checks each configuration environment value reaches runtime config.

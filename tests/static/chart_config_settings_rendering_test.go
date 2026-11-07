@@ -93,7 +93,9 @@ func TestChartConfigSettingsReachTheExporter(t *testing.T) {
 	resources := renderChart(t, map[string]interface{}{
 		"config": map[string]interface{}{
 			"metrics": draMetrics("auto"),
-			"server":  map[string]interface{}{"read_timeout": "15s", "write_timeout": "45s"},
+			"server": map[string]interface{}{
+				"read_timeout": "15s", "write_timeout": "45s", "health_require_gpus": true,
+			},
 			"sources": map[string]interface{}{"kubernetes": kubernetes, "dra": map[string]interface{}{"mode": "kubernetes"}},
 		},
 	})
@@ -103,6 +105,7 @@ func TestChartConfigSettingsReachTheExporter(t *testing.T) {
 	assert.Equal(t, "15s", nestedValue(document, "server", "read_timeout"))
 	assert.Equal(t, "45s", nestedValue(document, "server", "write_timeout"))
 	assert.EqualValues(t, 16, nestedValue(document, "server", "max_concurrent_scrapes"), "the other server defaults stay")
+	assert.Equal(t, true, nestedValue(document, "server", "health_require_gpus"))
 	assert.Equal(t, kubernetes, nestedValue(document, "sources", "kubernetes"))
 	assert.Equal(t, "kubernetes", nestedValue(document, "sources", "dra", "mode"))
 	assert.Equal(t, "auto", nestedValue(firstMetricsEntry(t, document), "enrichment", "dra"))

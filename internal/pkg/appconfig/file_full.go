@@ -527,6 +527,7 @@ func fullServer(config *Config) *YAMLServer {
 		MaxConcurrentScrapes: new(config.MaxConcurrentScrapes),
 		SystemdSocket:        new(config.WebSystemdSocket),
 		WebConfigFile:        config.WebConfigFile,
+		HealthRequireGPUs:    new(config.HealthRequireGPUs),
 		Profiling:            new(config.EnablePprof),
 	}
 }

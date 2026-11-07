@@ -27,6 +27,7 @@ type YAMLServer struct {
 	MaxConcurrentScrapes *int   `yaml:"max_concurrent_scrapes,omitempty" json:"max_concurrent_scrapes,omitempty"`
 	SystemdSocket        *bool  `yaml:"systemd_socket,omitempty" json:"systemd_socket,omitempty"`
 	WebConfigFile        string `yaml:"web_config_file" json:"web_config_file"`
+	HealthRequireGPUs    *bool  `yaml:"health_require_gpus,omitempty" json:"health_require_gpus,omitempty"`
 	Profiling            *bool  `yaml:"profiling,omitempty" json:"profiling,omitempty"`
 }
 
@@ -74,6 +75,11 @@ func (y *YAMLConfig) applyServerSettings(config *Config, rec originRecorder) err
 	if file := strings.TrimSpace(server.WebConfigFile); file != "" {
 		config.WebConfigFile = file
 		rec.record("WebConfigFile", "server.web_config_file")
+	}
+
+	if server.HealthRequireGPUs != nil {
+		config.HealthRequireGPUs = *server.HealthRequireGPUs
+		rec.record("HealthRequireGPUs", "server.health_require_gpus")
 	}
 
 	if server.Profiling != nil {

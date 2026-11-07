@@ -131,6 +131,10 @@ var flagKeyMappings = []flagKeyMapping{
 		value: map[string]any{"indices": []int{0}, "cores": "none"}, field: "CPUDeviceOptions",
 		read: func(c *appconfig.Config) any { return c.CPUDeviceOptions },
 	},
+	{
+		flag: CLIHealthRequireGPUs, key: "server.health_require_gpus", value: true, field: "HealthRequireGPUs",
+		read: func(c *appconfig.Config) any { return c.HealthRequireGPUs },
+	},
 	{flag: CLINoHostname, flagOnlyReason: "flag only; no config key"},
 	{flag: CLIUseFakeGPUs, flagOnlyReason: "for tests only"},
 	{flag: CLIConfigMapData, flagOnlyReason: "deprecated; mount the ConfigMap and use metrics[0].file"},

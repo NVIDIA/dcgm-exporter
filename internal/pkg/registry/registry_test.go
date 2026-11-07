@@ -385,6 +385,27 @@ func TestRegistry_Register_Accepts_Duplicates_(t *testing.T) {
 	assert.Len(t, reg.collectorGroupsSeen, 1)
 }
 
+// TestRegistryCollectorCountIsKeyedByEntityGroup checks non-GPU collectors do not satisfy the GPU health gate.
+func TestRegistryCollectorCountIsKeyedByEntityGroup(t *testing.T) {
+	reg := NewRegistry()
+
+	cpuTuple := collectorpkg.EntityCollectorTuple{}
+	cpuTuple.SetEntity(dcgm.FE_CPU)
+	cpuTuple.SetCollector(&mockCollector{})
+	require.NoError(t, reg.Register(cpuTuple))
+
+	assert.Equal(t, 1, reg.CollectorCount(dcgm.FE_CPU))
+	assert.Equal(t, 0, reg.CollectorCount(dcgm.FE_GPU))
+
+	gpuTuple := collectorpkg.EntityCollectorTuple{}
+	gpuTuple.SetEntity(dcgm.FE_GPU)
+	gpuTuple.SetCollector(&mockCollector{})
+	require.NoError(t, reg.Register(gpuTuple))
+
+	assert.Equal(t, 1, reg.CollectorCount(dcgm.FE_GPU))
+	assert.Equal(t, 0, reg.CollectorCount(dcgm.FE_SWITCH))
+}
+
 // eventCollector records its Cleanup in a shared event log.
 type eventCollector struct {
 	name   string

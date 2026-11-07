@@ -59,6 +59,7 @@ sources
   hpc_jobs.max_jobs_per_file            64                                        default
     inactive: HPC job labels are disabled
 server
+  health_require_gpus     false  default
   read_timeout            10s    default
   write_timeout           30s    default
   max_concurrent_scrapes  16     default

@@ -41,6 +41,7 @@ server:
   write_timeout: 20s
   systemd_socket: true
   web_config_file: /etc/web.yml
+  health_require_gpus: true
   profiling: true
 sources:
   dcgm:
@@ -71,6 +72,7 @@ debug_dump:
 	assert.Equal(t, 20*time.Second, config.WebWriteTimeout)
 	assert.True(t, config.WebSystemdSocket)
 	assert.Equal(t, "/etc/web.yml", config.WebConfigFile)
+	assert.True(t, config.HealthRequireGPUs)
 	assert.True(t, config.EnablePprof)
 	assert.True(t, config.UseRemoteHE)
 	assert.Equal(t, "tcp://host:5555", config.RemoteHEInfo)
@@ -97,6 +99,7 @@ debug_dump:
 		"WebWriteTimeout":                  "server.write_timeout",
 		"WebSystemdSocket":                 "server.systemd_socket",
 		"WebConfigFile":                    "server.web_config_file",
+		"HealthRequireGPUs":                "server.health_require_gpus",
 		"EnablePprof":                      "server.profiling",
 		"UseRemoteHE":                      "sources.dcgm.hostengine",
 		"RemoteHEInfo":                     "sources.dcgm.hostengine",

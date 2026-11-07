@@ -168,6 +168,10 @@ func applyConfigMapOverride(c *cli.Context, config *appconfig.Config) error {
 
 // applyWebConfigOverrides applies web settings and rejects invalid explicit timeouts during CLI config conversion.
 func applyWebConfigOverrides(c *cli.Context, config *appconfig.Config) error {
+	if c.IsSet(CLIHealthRequireGPUs) {
+		config.HealthRequireGPUs = c.Bool(CLIHealthRequireGPUs)
+	}
+
 	if c.IsSet(CLIWebSystemdSocket) {
 		config.WebSystemdSocket = c.Bool(CLIWebSystemdSocket)
 	}

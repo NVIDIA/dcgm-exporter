@@ -50,6 +50,7 @@ sources
   hpc_jobs.max_job_id_bytes             256                                       default
   hpc_jobs.max_jobs_per_file            64                                        default
 server
+  health_require_gpus     false  default
   read_timeout            10s    default
   write_timeout           30s    default
   max_concurrent_scrapes  16     default

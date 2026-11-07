@@ -589,6 +589,27 @@ readiness probes wait 45 seconds unless you set `initialDelaySeconds`.
 | `networkPolicy.enabled` | Create a NetworkPolicy for the metrics port | `false` |
 | `networkPolicy.allowedPeers` | Peers that may scrape, as NetworkPolicy `from` peers. `[]` blocks every scrape | `[]` |
 
+### Restarting a blind exporter
+
+A DCGM hostengine that starts before the NVIDIA driver is ready comes up
+without NVML and reports no GPUs. An exporter that connects to it in that state
+registers no GPU collector and serves an empty metrics page for the life of the
+process, while `/health` still returns 200.
+
+Setting `config.server.health_require_gpus=true` or adding
+`--health-require-gpus` to `arguments` makes `/health` return 503 in that state,
+so the liveness probe restarts the pod and it re-enumerates. It is off by
+default because the exporter cannot distinguish a node with no GPUs from a
+hostengine reporting none.
+
+Two caveats:
+
+- When `basicAuth.users` is set, the chart degrades both probes to `tcpSocket`,
+  which cannot observe the 503. The flag then has no effect on restarts.
+- The check counts collectors registered under `FE_GPU`. A counters file that
+  contributes no `FE_GPU` fields also reads as zero, so do not enable this with
+  a switch- or CPU-only counter set.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |

@@ -54,6 +54,7 @@ const (
 	CLIGPUDevices                       = appconfig.FlagGPUDevices
 	CLISwitchDevices                    = appconfig.FlagSwitchDevices
 	CLICPUDevices                       = appconfig.FlagCPUDevices
+	CLIHealthRequireGPUs                = appconfig.FlagHealthRequireGPUs
 	CLINoHostname                       = appconfig.FlagNoHostname
 	CLIUseFakeGPUs                      = appconfig.FlagUseFakeGPUs
 	CLIConfigMapData                    = appconfig.FlagConfigMapData
@@ -327,6 +328,19 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:              defaults.NoHostname,
 			Usage:              "Omit the hostname information from the output, matching older versions.",
 			EnvVars:            []string{"DCGM_EXPORTER_NO_HOSTNAME"},
+			DisableDefaultText: true,
+		},
+
+		&cli.BoolFlag{
+			Name:     CLIHealthRequireGPUs,
+			Category: httpServerCategory,
+			Value:    defaults.HealthRequireGPUs,
+			Usage: "Report /health as unhealthy when no GPU collector is registered. " +
+				"Off by default so nodes that legitimately expose no GPUs keep passing. " +
+				"Enable where every instance is expected to see at least one GPU, so that " +
+				"a liveness probe on /health restarts an exporter that came up against a " +
+				"hostengine with no GPUs visible.",
+			EnvVars:            []string{"DCGM_EXPORTER_HEALTH_REQUIRE_GPUS"},
 			DisableDefaultText: true,
 		},
 
