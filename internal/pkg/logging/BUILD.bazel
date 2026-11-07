@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "logging",
+    srcs = [
+        "const.go",
+        "json_handler.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/logging",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "logging_test",
+    srcs = ["json_handler_test.go"],
+    embed = [":logging"],
+    deps = ["@com_github_stretchr_testify//assert"],
+)

@@ -19,8 +19,7 @@ package transformation
 import (
 	"context"
 	"log/slog"
-	"maps"
-	"sync"
+	"slices"
 	"time"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
@@ -31,15 +30,18 @@ import (
 
 // containerMapper adds host runtime container labels to GPU metrics.
 type containerMapper struct {
-	runtime     containerRuntime
-	warnErrOnce sync.Once
+	runtime             containerRuntime
+	unavailableWarnings warningLimiter
 }
 
 // newContainerMapper creates a container mapper using the configured runtime socket.
 func newContainerMapper(c *appconfig.Config) *containerMapper {
 	collectInterval := time.Duration(c.CollectInterval) * time.Millisecond
+	runtime := newDockerCompatibleRuntime(c.ContainerRuntimeSocket, collectInterval)
+	runtime.preserveIdentity = c.EnableOTLP
+
 	return &containerMapper{
-		runtime: newDockerCompatibleRuntime(c.ContainerRuntimeSocket, collectInterval),
+		runtime: runtime,
 	}
 }
 
@@ -51,46 +53,67 @@ func (m *containerMapper) Process(metrics collector.MetricsByCounter, deviceInfo
 	if m == nil || m.runtime == nil {
 		return nil
 	}
+
 	if deviceInfo == nil || deviceInfo.GPUCount() == 0 {
 		return nil
 	}
 
+	// A runtime that cannot be read must not fail the scrape: warn at most once
+	// per interval and serve the metrics without container labels.
 	containersByGPU, err := m.runtime.ContainersByGPU(context.Background(), deviceInfo)
 	if err != nil {
-		m.warnErrOnce.Do(func() {
-			slog.Warn("container mapper failed to collect runtime container labels; skipping enrichment", slog.String(logging.ErrorKey, err.Error()))
-		})
+		if m.unavailableWarnings.allow() {
+			slog.Warn("container mapper failed to collect runtime container labels; skipping enrichment. "+
+				"The exporter keeps checking.", slog.String(logging.ErrorKey, err.Error()))
+		}
+
 		slog.Debug("container mapper runtime collection failed", slog.String(logging.ErrorKey, err.Error()))
+
 		return nil
 	}
+
 	if len(containersByGPU) == 0 {
 		return nil
 	}
 
+	addContainerCopies(metrics, containersByGPU)
+
+	return nil
+}
+
+// addContainerCopies appends one labeled copy of each metric for every
+// container on its GPU, keeping the original sample.
+func addContainerCopies(metrics collector.MetricsByCounter, containersByGPU map[string][]containerInfo) {
 	for counter := range metrics {
 		var transformed []collector.Metric
 		for _, metric := range metrics[counter] {
 			transformed = append(transformed, metric)
+
+			// A sample that already carries a container label is not copied again.
 			if _, exists := metric.Attributes[containerAttribute]; exists {
 				continue
 			}
+
 			for _, info := range containersForMetric(containersByGPU, metric) {
-				if info.Name == "" {
-					continue
-				}
-				copyMetric := metric
-				copyMetric.Labels = maps.Clone(metric.Labels)
-				copyMetric.Attributes = maps.Clone(metric.Attributes)
-				if copyMetric.Attributes == nil {
-					copyMetric.Attributes = make(map[string]string)
-				}
-				copyMetric.Attributes[containerAttribute] = info.Name
-				transformed = append(transformed, copyMetric)
+				transformed = append(transformed, metricWithContainer(metric, info))
 			}
 		}
+
 		metrics[counter] = transformed
 	}
-	return nil
+}
+
+// metricWithContainer creates an isolated workload sample with the legacy label and preserved raw identities.
+func metricWithContainer(metric collector.Metric, info containerInfo) collector.Metric {
+	metric = cloneMetric(metric)
+	if metric.Attributes == nil {
+		metric.Attributes = make(map[string]string)
+	}
+	metric.Attributes[containerAttribute] = info.Name
+	if metric.Source != nil {
+		metric.Source.Containers = slices.Clone(info.Identities)
+	}
+	return metric
 }
 
 // containersForMetric finds containers for the metric's GPU keys and deduplicates labels.
@@ -99,7 +122,7 @@ func containersForMetric(containersByGPU map[string][]containerInfo, metric coll
 	if metric.MigProfile != "" && metric.GPU != "" && metric.GPUInstanceID != "" {
 		keys = append([]string{metric.GPU + "." + metric.GPUInstanceID}, keys...)
 	}
-	seen := make(map[string]struct{})
+	indexByName := make(map[string]int, len(containersByGPU[keys[0]]))
 	var containers []containerInfo
 	for _, key := range keys {
 		if key == "" {
@@ -109,10 +132,12 @@ func containersForMetric(containersByGPU map[string][]containerInfo, metric coll
 			if info.Name == "" {
 				continue
 			}
-			if _, exists := seen[info.Name]; exists {
+			if index, exists := indexByName[info.Name]; exists {
+				containers[index].Identities = mergeContainerIdentities(containers[index].Identities, info.Identities)
 				continue
 			}
-			seen[info.Name] = struct{}{}
+			indexByName[info.Name] = len(containers)
+			info.Identities = slices.Clone(info.Identities)
 			containers = append(containers, info)
 		}
 	}

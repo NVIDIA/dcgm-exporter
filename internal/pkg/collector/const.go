@@ -17,7 +17,14 @@
 package collector
 
 const (
-	windowSizeInMSLabel = "window_size_in_ms"
+	// Exporter counter labels are shared with consumers of collected samples.
+	WindowSizeInMSLabel      = "window_size_in_ms"
+	ClockEventLabel          = "clock_event"
+	XIDLabel                 = "xid"
+	HealthWatchLabel         = "health_watch"
+	HealthErrorCodeLabel     = "health_error_code"
+	HealthErrorSeverityLabel = "health_error_severity"
+	HealthErrorCategoryLabel = "health_error_category"
 
 	skipDCGMValue   = "SKIPPING DCGM VALUE"
 	FailedToConvert = "ERROR - FAILED TO CONVERT TO STRING"

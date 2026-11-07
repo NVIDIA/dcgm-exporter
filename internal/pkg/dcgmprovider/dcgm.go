@@ -27,6 +27,7 @@ import (
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 )
 
 var (
@@ -52,9 +53,16 @@ const (
 	cpuHierarchyV2FunctionNotFoundText = "the requested function was not found"
 )
 
-// Initialize sets up the Singleton DCGM interface using the provided configuration.
-func Initialize(config *appconfig.Config) {
-	dcgmInterface = newDCGMProvider(config)
+// Initialize creates the process-wide DCGM provider from config. The command
+// layer calls it at startup and recovery, and decides whether a returned error
+// ends the process or schedules another recovery attempt.
+func Initialize(config *appconfig.Config) error {
+	provider, err := newDCGMProvider(config)
+	if err != nil {
+		return err
+	}
+	dcgmInterface = provider
+	return nil
 }
 
 // reset clears the current DCGM interface instance.
@@ -72,37 +80,61 @@ func SetClient(d DCGM) {
 	dcgmInterface = d
 }
 
-// dcgmProvider implements DCGM Interface
+// dcgmProvider adapts the go-dcgm singleton to the exporter DCGM interface.
+// Initialize publishes it only after DCGM and its fields module are ready.
 type dcgmProvider struct {
-	shutdown      func()
-	moduleCleanup func()
+	shutdown func()
 }
 
-// newDCGMProvider initializes a new DCGM provider based on the provided configuration
-func newDCGMProvider(config *appconfig.Config) DCGM {
+// newDCGMProvider initializes a DCGM provider without publishing it. It owns
+// a successful DCGM shutdown callback until FieldsInit succeeds, after which
+// Initialize transfers the completed provider to the process-wide client.
+func newDCGMProvider(config *appconfig.Config) (DCGM, error) {
 	// Check if a DCGM client already exists and return it if so.
 	if Client() != nil {
 		slog.Info("DCGM already initialized")
-		return Client()
+		return Client(), nil
 	}
 
-	client := dcgmProvider{}
+	cleanup, err := initializeDCGMSession(config)
+	if err != nil {
+		return nil, err
+	}
+	client := dcgmProvider{shutdown: cleanup}
 
+	// Initialize the DcgmFields module
+	if val := dcgmFieldsInitFunc(); val < 0 {
+		logDCGMFieldsInitFailure(config, val)
+		client.shutdown()
+		return nil, fmt.Errorf("initialize DCGM fields module: status %d", val)
+	} else {
+		slog.Info("Initialized DCGM Fields module.")
+	}
+
+	return newWatchClient(client), nil
+}
+
+// initializeDCGMSession starts embedded DCGM or connects to a remote host engine.
+// It releases partial initialization on failure and returns the successful
+// session's shutdown callback to the provider setup code.
+func initializeDCGMSession(config *appconfig.Config) (func(), error) {
 	// Connect to a remote DCGM host engine if configured.
 	if config.UseRemoteHE {
 		slog.Info("Attempting to connect to remote hostengine at " + config.RemoteHEInfo)
 		cleanup, err := initStandaloneDCGMFunc(config.RemoteHEInfo, "0")
 		if err != nil {
-			// Don't call cleanup on error - initialization failed, nothing to clean up
+			if cleanup != nil {
+				cleanup()
+			}
 			logDCGMInitFailure(
 				config,
 				dcgmInitModeStandalone,
 				err,
 				slog.String("hint", remoteHostengineHint),
 			)
-			os.Exit(1)
+			return nil, fmt.Errorf("initialize standalone DCGM: %w", err)
 		}
-		client.shutdown = cleanup
+		return cleanup, nil
 	} else {
 		if config.EnableDCGMLog {
 			os.Setenv("__DCGM_DBG_FILE", "-")
@@ -113,23 +145,17 @@ func newDCGMProvider(config *appconfig.Config) DCGM {
 		slog.Info("Attempting to initialize DCGM.")
 		cleanup, err := initEmbeddedDCGMFunc()
 		if err != nil {
+			if cleanup != nil {
+				cleanup()
+			}
 			logDCGMInitFailure(config, dcgmInitModeEmbedded, err)
-			os.Exit(1)
+			return nil, fmt.Errorf("initialize embedded DCGM: %w", err)
 		}
-		client.shutdown = cleanup
+		return cleanup, nil
 	}
-
-	// Initialize the DcgmFields module
-	if val := dcgmFieldsInitFunc(); val < 0 {
-		logDCGMFieldsInitFailure(config, val)
-		os.Exit(1)
-	} else {
-		slog.Info("Initialized DCGM Fields module.")
-	}
-
-	return client
 }
 
+// AddEntityToGroup forwards entity membership to the active DCGM session.
 func (d dcgmProvider) AddEntityToGroup(
 	groupID dcgm.GroupHandle, entityGroupID dcgm.Field_Entity_Group,
 	entityID uint,
@@ -137,28 +163,34 @@ func (d dcgmProvider) AddEntityToGroup(
 	return dcgm.AddEntityToGroup(groupID, entityGroupID, entityID)
 }
 
+// AddLinkEntityToGroup forwards link membership to the active DCGM session.
 func (d dcgmProvider) AddLinkEntityToGroup(groupID dcgm.GroupHandle, index uint, entityGroupID dcgm.Field_Entity_Group, parentID uint) error {
 	return dcgm.AddLinkEntityToGroup(groupID, index, entityGroupID, parentID)
 }
 
+// CreateFakeEntities asks DCGM to create the supplied synthetic MIG entities.
 func (d dcgmProvider) CreateFakeEntities(entities []dcgm.MigHierarchyInfo) ([]uint, error) {
 	return dcgm.CreateFakeEntities(entities)
 }
 
+// CreateGroup creates a group through the active DCGM session.
 func (d dcgmProvider) CreateGroup(groupName string) (dcgm.GroupHandle, error) {
 	return dcgm.CreateGroup(groupName)
 }
 
+// DestroyGroup releases a group through the active DCGM session.
 func (d dcgmProvider) DestroyGroup(groupId dcgm.GroupHandle) error {
 	return dcgm.DestroyGroup(groupId)
 }
 
+// EntitiesGetLatestValues reads latest fields for the supplied typed entities.
 func (d dcgmProvider) EntitiesGetLatestValues(
 	entities []dcgm.GroupEntityPair, fields []dcgm.Short, flags uint,
 ) ([]dcgm.FieldValue_v2, error) {
 	return dcgm.EntitiesGetLatestValues(entities, fields, flags)
 }
 
+// EntityGetLatestValues reads latest fields for one entity group and ID.
 func (d dcgmProvider) EntityGetLatestValues(
 	entityGroup dcgm.Field_Entity_Group, entityID uint, fields []dcgm.Short,
 ) ([]dcgm.FieldValue_v1,
@@ -167,28 +199,44 @@ func (d dcgmProvider) EntityGetLatestValues(
 	return dcgm.EntityGetLatestValues(entityGroup, entityID, fields)
 }
 
+// Fv2_String formats a DCGM field value for logs and diagnostics.
 func (d dcgmProvider) Fv2_String(fv dcgm.FieldValue_v2) string {
 	return dcgm.Fv2_String(fv)
 }
 
+// FieldGetByID returns field metadata from the active DCGM session.
 func (d dcgmProvider) FieldGetByID(fieldID dcgm.Short) (dcgm.FieldMeta, error) {
 	return dcgm.FieldGetByID(fieldID)
 }
 
+// FieldGroupCreate creates a field group through the active DCGM session.
 func (d dcgmProvider) FieldGroupCreate(fieldsGroupName string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
 	return dcgm.FieldGroupCreate(fieldsGroupName, fields)
 }
 
+// FieldGroupDestroy releases a field group through the active DCGM session.
 func (d dcgmProvider) FieldGroupDestroy(fieldsGroup dcgm.FieldHandle) error {
 	return dcgm.FieldGroupDestroy(fieldsGroup)
 }
 
+// GetAllDeviceCount returns the device count reported by DCGM.
 func (d dcgmProvider) GetAllDeviceCount() (uint, error) {
 	return dcgm.GetAllDeviceCount()
 }
 
+// GetGPUStatus returns DCGM's lifecycle state, or Unknown when its query fails.
+func (d dcgmProvider) GetGPUStatus(gpuID uint) dcgm.EntityStatus {
+	return dcgm.GetGPUStatus(gpuID)
+}
+
 // GetCPUHierarchy returns the CPU hierarchy in the v2 shape, falling back to v1
 // with empty CPU serials when v2 is unavailable.
+//
+// DCGM version fallback: a DCGM library or hostengine without
+// dcgmGetCpuHierarchy_v2 rejects it, and the v1 call still lists CPUs and
+// cores. The fallback logs a warning each time it is used. Remove it once
+// every DCGM library and hostengine the exporter must work with provides
+// dcgmGetCpuHierarchy_v2.
 func (d dcgmProvider) GetCPUHierarchy() (dcgm.CPUHierarchy_v2, error) {
 	hierarchy, err := getCPUHierarchyV2Func()
 	if err == nil {
@@ -199,8 +247,10 @@ func (d dcgmProvider) GetCPUHierarchy() (dcgm.CPUHierarchy_v2, error) {
 		return hierarchy, err
 	}
 
-	slog.Warn("Falling back to dcgmGetCpuHierarchy after dcgmGetCpuHierarchy_v2 failed",
-		slog.String("error", err.Error()))
+	slog.Warn("DCGM CPU hierarchy v2 unavailable; listing CPUs and cores with the v1 call instead, "+
+		"without CPU serial numbers",
+		slog.String("error", err.Error()),
+		slog.String("hint", dcgmerrors.SupportedVersionHint))
 
 	v1Hierarchy, fallbackErr := getCPUHierarchyV1Func()
 	if fallbackErr != nil {
@@ -243,6 +293,7 @@ func cpuHierarchyV1AsV2(v1Hierarchy dcgm.CPUHierarchy_v1) dcgm.CPUHierarchy_v2 {
 	return hierarchy
 }
 
+// GetDeviceInfo retrieves the DCGM device record for gpuID.
 func (d dcgmProvider) GetDeviceInfo(gpuID uint) (dcgm.Device, error) {
 	return dcgm.GetDeviceInfo(gpuID)
 }
@@ -252,63 +303,95 @@ func (d dcgmProvider) GetErrorMeta(code dcgm.HealthCheckErrorCode) *dcgm.ErrorMe
 	return dcgm.GetErrorMeta(code)
 }
 
-func (d dcgmProvider) GetEntityGroupEntities(entityGroup dcgm.Field_Entity_Group) ([]uint, error) {
-	return dcgm.GetEntityGroupEntities(entityGroup)
-}
-
+// GetGPUInstanceHierarchy retrieves DCGM's current MIG hierarchy.
 func (d dcgmProvider) GetGPUInstanceHierarchy() (dcgm.MigHierarchy_v2, error) {
 	return dcgm.GetGPUInstanceHierarchy()
 }
 
+// GetMultipleValuesForField reads retained values for one device and field over a time range.
+func (d dcgmProvider) GetMultipleValuesForField(
+	gpuID uint, fieldID dcgm.Short, maxSamples int, startTime, endTime time.Time,
+) ([]dcgm.FieldValue_v1, error) {
+	return dcgm.GetMultipleValuesForField(gpuID, fieldID, maxSamples, startTime, endTime)
+}
+
+// GetNvLinkLinkStatus retrieves current link status from DCGM.
 func (d dcgmProvider) GetNvLinkLinkStatus() ([]dcgm.NvLinkStatus, error) {
 	return dcgm.GetNvLinkLinkStatus()
 }
 
+// GetAllFieldPolicies retrieves the policies currently configured in DCGM.
+func (d dcgmProvider) GetAllFieldPolicies() ([]dcgm.FieldPolicy, error) {
+	policies, err := dcgm.GetAllFieldPolicies()
+	if err != nil {
+		return nil, fmt.Errorf("get field policies from DCGM: %w", err)
+	}
+	return policies, nil
+}
+
+// GetSupportedDevices lists GPU IDs supported by the active DCGM session.
 func (d dcgmProvider) GetSupportedDevices() ([]uint, error) {
 	return dcgm.GetSupportedDevices()
 }
 
+// GetSupportedMetricGroups lists the metric groups available for gpuID.
 func (d dcgmProvider) GetSupportedMetricGroups(gpuID uint) ([]dcgm.MetricGroup, error) {
 	return dcgm.GetSupportedMetricGroups(gpuID)
 }
 
+// GetValuesSince reads samples after sinceTime and returns DCGM's next cursor.
 func (d dcgmProvider) GetValuesSince(
 	gpuGroup dcgm.GroupHandle, fieldGroup dcgm.FieldHandle, sinceTime time.Time,
 ) ([]dcgm.FieldValue_v2, time.Time, error) {
 	return dcgm.GetValuesSince(gpuGroup, fieldGroup, sinceTime)
 }
 
+// GroupAllGPUs returns DCGM's built-in group handle containing all GPUs.
 func (d dcgmProvider) GroupAllGPUs() dcgm.GroupHandle {
 	return dcgm.GroupAllGPUs()
 }
 
+// InjectFieldValue injects a synthetic sample into DCGM for one GPU field.
 func (d dcgmProvider) InjectFieldValue(
 	gpu uint, fieldID dcgm.Short, fieldType uint, status int, ts int64, value interface{},
 ) error {
 	return dcgm.InjectFieldValue(gpu, fieldID, fieldType, status, ts, value)
 }
 
+// LinkGetLatestValues reads latest field values for a link under its parent entity.
 func (d dcgmProvider) LinkGetLatestValues(index uint, parentType dcgm.Field_Entity_Group, parentID uint, fields []dcgm.Short) ([]dcgm.FieldValue_v1,
 	error,
 ) {
 	return dcgm.LinkGetLatestValues(index, parentType, parentID, fields)
 }
 
+// NewDefaultGroup creates a DCGM group that holds all GPUs.
 func (d dcgmProvider) NewDefaultGroup(groupName string) (dcgm.GroupHandle, error) {
 	return dcgm.NewDefaultGroup(groupName)
 }
 
+// UpdateAllFields asks DCGM to refresh currently watched fields.
 func (d dcgmProvider) UpdateAllFields() error {
 	return dcgm.UpdateAllFields()
 }
 
-func (d dcgmProvider) WatchFieldsWithGroupEx(
+// WatchFieldValue installs a direct watch for one entity and field.
+func (d dcgmProvider) WatchFieldValue(
+	gpuID uint, fieldID dcgm.Short, updateFreq, maxKeepAge time.Duration, maxKeepSamples int,
+) error {
+	return dcgm.WatchFieldValue(gpuID, fieldID, updateFreq, maxKeepAge, maxKeepSamples)
+}
+
+// WatchFieldsWithGroupExNoRefresh installs a field-group watch for a DCGM
+// group without asking DCGM to update every watched field afterwards.
+func (d dcgmProvider) WatchFieldsWithGroupExNoRefresh(
 	fieldsGroup dcgm.FieldHandle, group dcgm.GroupHandle, updateFreq int64, maxKeepAge float64,
 	maxKeepSamples int32,
 ) error {
-	return dcgm.WatchFieldsWithGroupEx(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
+	return dcgm.WatchFieldsWithGroupExNoRefresh(fieldsGroup, group, updateFreq, maxKeepAge, maxKeepSamples)
 }
 
+// UnwatchFields removes a field-group watch from a DCGM group.
 func (d dcgmProvider) UnwatchFields(fieldsGroup dcgm.FieldHandle, group dcgm.GroupHandle) error {
 	return dcgm.UnwatchFields(fieldsGroup, group)
 }
@@ -328,22 +411,34 @@ func (d dcgmProvider) Cleanup() {
 	reset()
 }
 
+// HealthSet configures the health systems checked for groupID.
 func (d dcgmProvider) HealthSet(groupID dcgm.GroupHandle, systems dcgm.HealthSystem) error {
 	return dcgm.HealthSet(groupID, systems)
 }
 
+// HealthGet returns the health systems configured for groupID.
 func (d dcgmProvider) HealthGet(groupID dcgm.GroupHandle) (dcgm.HealthSystem, error) {
 	return dcgm.HealthGet(groupID)
 }
 
+// HealthCheck runs the configured health checks for groupID.
 func (d dcgmProvider) HealthCheck(groupID dcgm.GroupHandle) (dcgm.HealthResponse, error) {
 	return dcgm.HealthCheck(groupID)
 }
 
+// HealthGetSupportedSystems returns the health watches the connected DCGM
+// hostengine supports. It returns an error when the loaded DCGM library has no
+// such query.
+func (d dcgmProvider) HealthGetSupportedSystems() (dcgm.HealthSystem, error) {
+	return dcgm.HealthGetSupportedSystems()
+}
+
+// GetGroupInfo retrieves the metadata and members of groupID.
 func (d dcgmProvider) GetGroupInfo(groupID dcgm.GroupHandle) (*dcgm.GroupInfo, error) {
 	return dcgm.GetGroupInfo(groupID)
 }
 
+// GetNvLinkP2PStatus retrieves the current NVLink peer-to-peer matrix.
 func (d dcgmProvider) GetNvLinkP2PStatus() (dcgm.NvLinkP2PStatus, error) {
 	return dcgm.GetNvLinkP2PStatus()
 }

@@ -1,28 +1,39 @@
-# Release
+# Release artifacts
 
-This documents the release process as well as the versioning strategy for the DCGM exporter.
+This document describes the names and versions of published DCGM Exporter
+artifacts.
 
-## Versioning
+## Version mapping
 
-The DCGM container has three major components:
-- The DCGM Version (e.g: 4.2.3)
-- The Exporter Version (e.g: 4.1.1)
-- The platform of the container (e.g: distroless, ubuntu26.04)
+`EXPORTER_VERSION` and `DCGM_VERSION` come from `hack/versions.env`. Release
+candidate (`.rc`) tag pipelines set `PACKAGE_VERSION` to
+`<EXPORTER_VERSION>.<CI_PIPELINE_IID>`, where `CI_PIPELINE_IID` is the numeric
+CI pipeline number.
 
-The overall version of the DCGM container has three forms:
-- The long form: `${DCGM_VERSION}-${EXPORTER_VERSION}-${PLATFORM}`
-- The short form: `${DCGM_VERSION}`
-- The latest tag: `latest`
+<!-- sync:release-artifact-example:start -->
+For `EXPORTER_VERSION=4.9.0` and `CI_PIPELINE_IID=1234`, the package artifacts are:
 
-The long form is a unique tag that once pushed will always refer to the same container.
-This means that no updates will be made to that tag and it will always point to the same container.
+```text
+dcgm_exporter-linux-x86_64-4.9.0.1234.tar.gz
+dcgm_exporter-linux-sbsa-4.9.0.1234.tar.gz
+RPM/DEB package version: 4.9.0.1234-1
+```
+<!-- sync:release-artifact-example:end -->
 
-The short form refers to the latest EXPORTER_VERSION with the platform fixed to distroless.
-The latest tag refers to the latest short form (i.e: latest DCGM_VERSION and EXPORTER_VERSION).
-The Ubuntu variant is intended for debugging and support; distroless is the production image published to NGC.
+The version mapping is implemented in these repository files:
 
-Note: We do not maintain multiple version branches. The Exporter functions with the latest go-dcgm bindings.
+- `hack/versions.env` defines `EXPORTER_VERSION` and `DCGM_VERSION`.
+- Release candidate (`.rc`) tag pipelines derive `PACKAGE_VERSION`.
+- `Taskfile.yml` adds `PACKAGE_VERSION` to package archive names.
+- `hack/package/test.sh` validates the RPM/DEB version and package release.
 
-## Releases
+Binary and Helm versions use `EXPORTER_VERSION`. The released distroless
+container has these public tags:
 
-Newer versions are released on demand but tend to follow DCGM's release cadence.
+<!-- sync:distroless-tag-examples:start -->
+- `${EXPORTER_VERSION}`, the tag to use (for example, `4.9.0`)
+- `latest` as the moving alias
+- `${DCGM_VERSION}-${EXPORTER_VERSION}-distroless` and
+  `${DCGM_VERSION}-${EXPORTER_VERSION}`, legacy aliases kept for existing
+  references (for example, `4.7.0-4.9.0-distroless`)
+<!-- sync:distroless-tag-examples:end -->

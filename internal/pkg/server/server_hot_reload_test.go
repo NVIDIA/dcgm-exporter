@@ -18,6 +18,8 @@ package server
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -28,8 +30,38 @@ import (
 
 	mockdevicewatchlistmanager "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 )
+
+func TestMetricsServerPrometheusSelection(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	manager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+	config := &appconfig.Config{Address: ":0", MaxConcurrentScrapes: 16, DisablePrometheus: true}
+	server, cleanup, err := NewMetricsServer(config, manager, registry.NewRegistry())
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	response = httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.NotContains(t, response.Body.String(), "./metrics")
+
+	response = httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	server.SwapMetricsRuntime(registry.NewRegistry(), manager)
+	response = httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	response = httptest.NewRecorder()
+	server.server.Handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.NotContains(t, response.Body.String(), "./metrics")
+}
 
 func TestMetricsServer_ClearRegistry(t *testing.T) {
 	t.Run("clears registry and returns old", func(t *testing.T) {

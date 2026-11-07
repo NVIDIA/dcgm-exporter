@@ -26,8 +26,20 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 )
 
+// watchResultFromCleanups adapts assertions that only need to observe Close
+// calls while collector production code owns a WatchResult instead of callbacks.
+func watchResultFromCleanups(cleanups []func()) *devicewatcher.WatchResult {
+	return devicewatcher.ResultFromBindings(nil, func() {
+		for index := len(cleanups) - 1; index >= 0; index-- {
+			cleanups[index]()
+		}
+	})
+}
+
+// TestEntityCollectorTupleAccessors returns the entity and collector set through their accessors.
 func TestEntityCollectorTupleAccessors(t *testing.T) {
 	collector := new(DCGMCollector)
 	tuple := EntityCollectorTuple{}
@@ -39,6 +51,7 @@ func TestEntityCollectorTupleAccessors(t *testing.T) {
 	assert.Same(t, collector, tuple.Collector())
 }
 
+// TestMetricsByCounter_GoString pins the debug representation for empty and single-counter metric sets.
 func TestMetricsByCounter_GoString(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -78,7 +91,7 @@ func TestMetricsByCounter_GoString(t *testing.T) {
 					},
 				},
 			},
-			expected: `MetricsByCounter{"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", CPUSerial:"", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}}`,
+			expected: `MetricsByCounter{"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", CPUSerial:"", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", GPUComputeInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}}`,
 		},
 	}
 
@@ -90,6 +103,36 @@ func TestMetricsByCounter_GoString(t *testing.T) {
 	}
 }
 
+// TestMetricsByCounterGoStringOmitsAbsentIdentityFields keeps debug output
+// focused on the identities that apply to the sampled entity.
+func TestMetricsByCounterGoStringOmitsAbsentIdentityFields(t *testing.T) {
+	counter := counters.Counter{FieldName: "CPU_METRIC"}
+	tests := []struct {
+		name      string
+		timestamp int64
+	}{
+		{name: "zero timestamp"},
+		{name: "source timestamp", timestamp: 1_700_000_000_123_456},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metrics := MetricsByCounter{
+				counter: {{Counter: counter, CPU: "2", Timestamp: tt.timestamp}},
+			}
+			result := metrics.GoString()
+			assert.Contains(t, result, `CPU:"2"`)
+			assert.NotContains(t, result, "UUIDLabelName")
+			assert.NotContains(t, result, "CPUCore")
+			if tt.timestamp == 0 {
+				assert.NotContains(t, result, "Timestamp")
+			} else {
+				assert.Contains(t, result, "Timestamp:1700000000123456")
+			}
+		})
+	}
+}
+
+// TestMetricsByCounter_GoString_MultipleCounters verifies debug output includes each counter without depending on map order.
 func TestMetricsByCounter_GoString_MultipleCounters(t *testing.T) {
 	metrics := MetricsByCounter{
 		{
@@ -145,8 +188,8 @@ func TestMetricsByCounter_GoString_MultipleCounters(t *testing.T) {
 	result := metrics.GoString()
 
 	// Since Go maps don't guarantee order, we need to check that both counters are present
-	require.Contains(t, result, `"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", CPUSerial:"", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}`)
-	require.Contains(t, result, `"DCGM_FI_DEV_POWER_USAGE": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x9b, FieldName:"DCGM_FI_DEV_POWER_USAGE", PromType:"gauge", Help:"Power usage info"}, Value:"150", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", CPUSerial:"", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}`)
+	require.Contains(t, result, `"DCGM_FI_DEV_GPU_TEMP": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x96, FieldName:"DCGM_FI_DEV_GPU_TEMP", PromType:"gauge", Help:"Temperature Help info"}, Value:"42", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", CPUSerial:"", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", GPUComputeInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}`)
+	require.Contains(t, result, `"DCGM_FI_DEV_POWER_USAGE": []collector.Metric{collector.Metric{Counter:counters.Counter{FieldID:0x9b, FieldName:"DCGM_FI_DEV_POWER_USAGE", PromType:"gauge", Help:"Power usage info"}, Value:"150", GPU:"0", GPUUUID:"GPU-00000000-0000-0000-0000-000000000000", GPUDevice:"nvidia0", CPUSerial:"", GPUModelName:"NVIDIA T400 4GB", GPUPCIBusID:"", UUID:"UUID", MigProfile:"", NvSwitch:"", NvLink:"", GPUInstanceID:"", GPUComputeInstanceID:"", Hostname:"testhost", Labels:map[string]string{}, Attributes:map[string]string{}, ParentType:0x0}}`)
 	require.Contains(t, result, "MetricsByCounter{")
 	require.Contains(t, result, "}")
 
@@ -155,6 +198,7 @@ func TestMetricsByCounter_GoString_MultipleCounters(t *testing.T) {
 	assert.True(t, strings.HasSuffix(result, "}"))
 }
 
+// TestMetricsByCounter_String verifies the JSON string includes metric names, values, and GPU identity.
 func TestMetricsByCounter_String(t *testing.T) {
 	metrics := MetricsByCounter{
 		{
@@ -190,6 +234,7 @@ func TestMetricsByCounter_String(t *testing.T) {
 	require.Contains(t, result, `"gpu":"0"`)
 }
 
+// TestMetricsByCounter_ToBase64 returns encoded output instead of the original JSON text.
 func TestMetricsByCounter_ToBase64(t *testing.T) {
 	metrics := MetricsByCounter{
 		{
@@ -225,6 +270,7 @@ func TestMetricsByCounter_ToBase64(t *testing.T) {
 	require.NotContains(t, result, `"DCGM_FI_DEV_GPU_TEMP"`)
 }
 
+// TestMetricsByCounter_MarshalJSON serializes metric names and values as nonempty JSON.
 func TestMetricsByCounter_MarshalJSON(t *testing.T) {
 	metrics := MetricsByCounter{
 		{
@@ -263,6 +309,7 @@ func TestMetricsByCounter_MarshalJSON(t *testing.T) {
 	require.Contains(t, jsonStr, `"value":"42"`)
 }
 
+// TestMetricsByCounter_UnmarshalJSON restores counter metadata and sampled metric values from JSON.
 func TestMetricsByCounter_UnmarshalJSON(t *testing.T) {
 	jsonData := `{
 		"metrics": {
@@ -307,6 +354,54 @@ func TestMetricsByCounter_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+// TestMetricsByCounterJSONRoundTripPreservesComputeInstanceID verifies that JSON preserves
+// compute-instance IDs and timestamps, omitting timestamps when they are zero.
+func TestMetricsByCounterJSONRoundTripPreservesComputeInstanceID(t *testing.T) {
+	counter := counters.Counter{
+		FieldID:   dcgm.DCGM_FI_DEV_FB_USED,
+		FieldName: "DCGM_FI_DEV_FB_USED",
+		PromType:  "gauge",
+	}
+	tests := []struct {
+		name      string
+		timestamp int64
+	}{
+		{name: "zero timestamp"},
+		{name: "source timestamp", timestamp: 1_700_000_000_123_456},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metrics := MetricsByCounter{
+				counter: {{
+					Counter:              counter,
+					Value:                "42",
+					Timestamp:            tt.timestamp,
+					GPUComputeInstanceID: "2",
+					Hostname:             "testhost",
+					Labels:               map[string]string{},
+					Attributes:           map[string]string{},
+				}},
+			}
+
+			data, err := metrics.MarshalJSON()
+			require.NoError(t, err)
+			if tt.timestamp == 0 {
+				assert.NotContains(t, string(data), `"timestamp"`)
+			} else {
+				assert.Contains(t, string(data), `"timestamp":1700000000123456`)
+			}
+
+			var got MetricsByCounter
+			require.NoError(t, got.UnmarshalJSON(data))
+			require.Len(t, got, 1)
+			require.Len(t, got[counter], 1)
+			assert.Equal(t, "2", got[counter][0].GPUComputeInstanceID)
+			assert.Equal(t, tt.timestamp, got[counter][0].Timestamp)
+		})
+	}
+}
+
+// TestMetric_GetIDOfType selects the configured GPU identity, formats a MIG identity, and rejects unsupported ID types.
 func TestMetric_GetIDOfType(t *testing.T) {
 	tests := []struct {
 		name     string

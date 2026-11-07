@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "nvmlprovider",
+    srcs = ["mock_client.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/nvmlprovider",
+        "@org_uber_go_mock//gomock",
+    ],
+)

@@ -19,6 +19,7 @@ package deviceinfo
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -30,14 +31,42 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
+
+// ErrNoEntities reports successful discovery of an absent optional device type.
+// Watch-list setup may skip it, while native discovery failures must reject a candidate.
+var ErrNoEntities = errors.New("no entities to monitor")
 
 const (
 	deviceInitMessage                  = "System entities of type %s initialized"
 	migGPUInstanceWithoutCIWarning     = "MIG GPU instance has no compute instances; FB metrics will be unavailable if this instance is monitored"
 	migGPUInstanceWithoutCIWarningHint = "create at least one MIG compute instance for this GPU instance"
+	gpuIdentityFallbackWarning         = "DCGM device-attributes API unavailable; read GPU identity from DCGM fields instead"
+	gpuPlaceholderUUIDWarning          = "DCGM GPU UUID unavailable; using placeholder UUIDs GPU-<id> built from the GPU entity ID"
 )
 
+var (
+	// ErrNoCPUsToMonitor identifies a host without CPU entities. Callers may
+	// continue when CPU metrics are optional, while still rejecting bad CPU
+	// selectors on hosts that do report CPUs.
+	ErrNoCPUsToMonitor = fmt.Errorf("no cpus to monitor: %w", ErrNoEntities)
+	// ErrNoSwitchesToMonitor identifies a host without NVSwitch entities.
+	// Callers may continue when switch metrics are optional, while still
+	// rejecting invalid switch or link selectors on switch-equipped hosts.
+	ErrNoSwitchesToMonitor = fmt.Errorf("no switches to monitor: %w", ErrNoEntities)
+)
+
+// IsOptionalTopologyError reports whether err means that this host lacks an
+// optional CPU or NVSwitch topology. Registry construction uses it to keep
+// ordinary GPU-only hosts running without hiding invalid selected-device IDs.
+func IsOptionalTopologyError(err error) bool {
+	return errors.Is(err, ErrNoCPUsToMonitor) || errors.Is(err, ErrNoSwitchesToMonitor)
+}
+
+// Info stores the topology discovered for one registry and the selectors used
+// to choose it. Initialize returns it, and collectors read it through Provider.
+// A link registry can include both GPU and NVSwitch topology.
 type Info struct {
 	gpuCount uint
 	gpus     [dcgm.MAX_NUM_DEVICES]GPUInfo
@@ -49,50 +78,64 @@ type Info struct {
 	infoType dcgm.Field_Entity_Group
 }
 
+// GPUCount returns the number of discovered GPUs in this topology.
 func (s *Info) GPUCount() uint {
 	return s.gpuCount
 }
 
+// GPUs returns the discovered GPUs in DCGM enumeration order.
 func (s *Info) GPUs() []GPUInfo {
 	return s.gpus[:s.gpuCount]
 }
 
+// GPU returns the GPU at index i.
 func (s *Info) GPU(i uint) GPUInfo {
 	return s.gpus[i]
 }
 
+// Switches returns the selected NVSwitches and their selected links.
 func (s *Info) Switches() []SwitchInfo {
 	return s.switches
 }
 
+// Switch returns the switch at index i.
 func (s *Info) Switch(i uint) SwitchInfo {
 	return s.switches[i]
 }
 
+// CPUs returns the selected CPUs and their selected cores.
 func (s *Info) CPUs() []CPUInfo {
 	return s.cpus
 }
 
+// CPU returns the CPU at index i.
 func (s *Info) CPU(i uint) CPUInfo {
 	return s.cpus[i]
 }
 
+// GOpts returns the GPU selectors used to build this topology.
 func (s *Info) GOpts() appconfig.DeviceOptions {
 	return s.gOpt
 }
 
+// SOpts returns the NVSwitch and link selectors used to build this topology.
 func (s *Info) SOpts() appconfig.DeviceOptions {
 	return s.sOpt
 }
 
+// COpts returns the CPU and core selectors used to build this topology.
 func (s *Info) COpts() appconfig.DeviceOptions {
 	return s.cOpt
 }
 
+// InfoType returns the DCGM entity group represented by this topology.
 func (s *Info) InfoType() dcgm.Field_Entity_Group {
 	return s.infoType
 }
 
+// Initialize discovers the topology selected for entityType and returns it as
+// an Info. Startup calls it once per registry; link setup attempts both GPU and
+// switch discovery so the result can include NVLinks attached to either entity.
 func Initialize(
 	gOpt appconfig.DeviceOptions, sOpt appconfig.DeviceOptions, cOpt appconfig.DeviceOptions, useFakeGPUs bool,
 	entityType dcgm.Field_Entity_Group,
@@ -106,6 +149,9 @@ func Initialize(
 		deviceInfo.infoType = dcgm.FE_LINK
 		err = deviceInfo.initializeNvSwitchInfo(sOpt)
 		if err != nil {
+			if !IsOptionalTopologyError(err) {
+				return deviceInfo, err
+			}
 			slog.Warn("Failed to initialize NvSwitch/NvLink info", "error", err)
 		}
 		err = deviceInfo.initializeGPUInfo(gOpt, useFakeGPUs)
@@ -132,6 +178,8 @@ func Initialize(
 	return deviceInfo, err
 }
 
+// initializeGPUInfo discovers GPUs, NVLinks, and their MIG hierarchy, then
+// validates GPU selectors. Initialize uses it for GPU and link registries.
 func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool) error {
 	gpuCount, err := dcgmprovider.Client().GetAllDeviceCount()
 	if err != nil {
@@ -139,110 +187,13 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 	}
 	s.gpuCount = gpuCount
 
-	for i := uint(0); i < s.gpuCount; i++ {
-		// TODO (roarora): Use of array to store GPUs makes it harder to ignore GPUs (including GPU Instances) which
-		//                 should be filtered out based on `Major` attribute in Device Options. Fix it!
-
-		// Default mig enabled to false
-		s.gpus[i].MigEnabled = false
-		s.gpus[i].DeviceInfo, err = dcgmprovider.Client().GetDeviceInfo(i)
-		if err != nil {
-			if useFakeGPUs {
-				s.gpus[i].DeviceInfo.GPU = i
-				s.gpus[i].DeviceInfo.UUID = fmt.Sprintf("fake%d", i)
-			} else {
-				s.gpus[i].DeviceInfo, err = minimalGPUDeviceInfo(i, err)
-				if err != nil {
-					return err
-				}
-			}
-		}
+	if err := s.discoverGPUs(useFakeGPUs); err != nil {
+		return err
 	}
 
-	links, err := dcgmprovider.Client().GetNvLinkLinkStatus()
-	if err == nil {
-		for i := 0; i < len(s.gpus); i++ {
-			// monitor only the nvlinks as per the device options input
-			if gOpt.Flex || s.shouldMonitor(gOpt.MajorRange, s.gpus[i].DeviceInfo.GPU) {
-				var matchingLinks []dcgm.NvLinkStatus
-				var linkCount uint = 1
-				for _, link := range links {
-					if link.ParentType == dcgm.FE_GPU && link.ParentId == s.gpus[i].DeviceInfo.GPU {
-						link.Index = linkCount
-						matchingLinks = append(matchingLinks, link)
-						linkCount++
-					}
-				}
-
-				s.gpus[i].NvLinks = matchingLinks
-			}
-		}
-	}
-
-	hierarchy, err := dcgmprovider.Client().GetGPUInstanceHierarchy()
-	if err != nil {
-		if !isMIGHierarchyNVMLUnavailable(err) {
-			return err
-		}
-		slog.Info("MIG hierarchy unavailable because NVML is not loaded; continuing without MIG device discovery",
-			"error", err)
-	}
-
-	if hierarchy.Count > 0 {
-		var entities []dcgm.GroupEntityPair
-		type gpuInstanceRef struct {
-			gpuID         uint
-			instanceIndex int
-		}
-		gpuInstanceRefs := make(map[uint]gpuInstanceRef)
-
-		for i := uint(0); i < hierarchy.Count; i++ {
-			item := hierarchy.EntityList[i]
-			if item.Parent.EntityGroupId != dcgm.FE_GPU {
-				continue
-			}
-
-			entityID := item.Entity.EntityId
-			gpuID := item.Parent.EntityId
-			instanceInfo := GPUInstanceInfo{
-				Info:        item.Info,
-				ProfileName: "",
-				EntityId:    entityID,
-			}
-			s.gpus[gpuID].MigEnabled = true
-			s.gpus[gpuID].GPUInstances = append(s.gpus[gpuID].GPUInstances, instanceInfo)
-			gpuInstanceRefs[entityID] = gpuInstanceRef{
-				gpuID:         gpuID,
-				instanceIndex: len(s.gpus[gpuID].GPUInstances) - 1,
-			}
-			entities = append(entities, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: entityID})
-		}
-
-		for i := uint(0); i < hierarchy.Count; i++ {
-			item := hierarchy.EntityList[i]
-			if item.Parent.EntityGroupId != dcgm.FE_GPU_I {
-				continue
-			}
-
-			instanceRef, found := gpuInstanceRefs[item.Parent.EntityId]
-			if !found {
-				continue
-			}
-
-			ciInfo := ComputeInstanceInfo{
-				InstanceInfo: item.Info,
-				ProfileName:  "",
-				EntityId:     item.Entity.EntityId,
-			}
-			s.gpus[instanceRef.gpuID].GPUInstances[instanceRef.instanceIndex].ComputeInstances = append(
-				s.gpus[instanceRef.gpuID].GPUInstances[instanceRef.instanceIndex].ComputeInstances, ciInfo,
-			)
-		}
-
-		err = s.populateMigProfileNames(entities)
-		if err != nil {
-			return err
-		}
+	s.attachGPULinks(gOpt)
+	if err := s.discoverMIGInstances(); err != nil {
+		return err
 	}
 
 	s.gOpt = gOpt
@@ -253,12 +204,196 @@ func (s *Info) initializeGPUInfo(gOpt appconfig.DeviceOptions, useFakeGPUs bool)
 	return err
 }
 
+// discoverGPUs reads the status and identity of every GPU DCGM reports, then
+// logs one warning for the GPUs that used the identity fallback.
+func (s *Info) discoverGPUs(useFakeGPUs bool) error {
+	var fallbacks gpuIdentityFallbacks
+	for i := uint(0); i < s.gpuCount; i++ {
+		if err := s.discoverGPU(i, useFakeGPUs, &fallbacks); err != nil {
+			return err
+		}
+	}
+
+	fallbacks.warn()
+	return nil
+}
+
+// discoverGPU reads one GPU's status and identity. A detached GPU keeps only
+// its stable ID for selectors. When DCGM cannot return device attributes, fake
+// GPUs get a fake UUID and real GPUs use minimalGPUDeviceInfo, which fallbacks
+// records.
+func (s *Info) discoverGPU(gpuID uint, useFakeGPUs bool, fallbacks *gpuIdentityFallbacks) error {
+	gpu := &s.gpus[gpuID]
+	gpu.Status = dcgmprovider.Client().GetGPUStatus(gpuID)
+	if gpu.Status == dcgm.EntityStatusDetached {
+		// Retain its stable ID for selectors without querying detached hardware.
+		gpu.DeviceInfo = dcgm.Device{GPU: gpuID}
+		return nil
+	}
+	// TODO (roarora): Use of array to store GPUs makes it harder to ignore GPUs (including GPU Instances) which
+	//                 should be filtered out based on `Major` attribute in Device Options. Fix it!
+
+	// Default mig enabled to false
+	gpu.MigEnabled = false
+	var err error
+	gpu.DeviceInfo, err = dcgmprovider.Client().GetDeviceInfo(gpuID)
+	if err == nil {
+		return nil
+	}
+
+	// Detach can complete between the status and metadata queries.
+	if dcgmprovider.Client().GetGPUStatus(gpuID) == dcgm.EntityStatusDetached {
+		gpu.Status = dcgm.EntityStatusDetached
+		gpu.DeviceInfo = dcgm.Device{GPU: gpuID}
+		return nil
+	}
+
+	if useFakeGPUs {
+		gpu.DeviceInfo.GPU = gpuID
+		gpu.DeviceInfo.UUID = fmt.Sprintf("fake%d", gpuID)
+		gpu.SyntheticGPUUUID = true
+		return nil
+	}
+
+	device, placeholderUUID, fallbackErr := minimalGPUDeviceInfo(gpuID, err)
+	if fallbackErr != nil {
+		return fallbackErr
+	}
+
+	gpu.DeviceInfo, gpu.SyntheticGPUUUID = device, placeholderUUID
+	fallbacks.add(gpuID, placeholderUUID, err)
+	return nil
+}
+
+// attachGPULinks stores each selected GPU's NVLinks from DCGM link status. GPUs
+// keep no links when DCGM cannot report link status.
+func (s *Info) attachGPULinks(gOpt appconfig.DeviceOptions) {
+	links, err := dcgmprovider.Client().GetNvLinkLinkStatus()
+	if err != nil {
+		return
+	}
+
+	for i := range s.gpus {
+		// monitor only the nvlinks as per the device options input
+		if gOpt.Flex || s.shouldMonitor(gOpt.MajorRange, s.gpus[i].DeviceInfo.GPU) {
+			s.gpus[i].NvLinks = gpuLinks(links, s.gpus[i].DeviceInfo.GPU)
+		}
+	}
+}
+
+// gpuLinks returns the links that belong to one GPU. It keeps DCGM's physical
+// link index, which FE_LINK reads and the nvlink label use.
+func gpuLinks(links []dcgm.NvLinkStatus, gpuID uint) []dcgm.NvLinkStatus {
+	var matchingLinks []dcgm.NvLinkStatus
+	for _, link := range links {
+		if link.ParentType == dcgm.FE_GPU && link.ParentId == gpuID {
+			matchingLinks = append(matchingLinks, link)
+		}
+	}
+
+	return matchingLinks
+}
+
+// gpuInstanceRef locates an appended GPU instance while addComputeInstances
+// attaches its compute instances.
+type gpuInstanceRef struct {
+	gpuID         uint
+	instanceIndex int
+}
+
+// discoverMIGInstances adds the MIG GPU and compute instances from DCGM's
+// hierarchy and resolves their profile names. A host where DCGM cannot reach
+// NVML continues without MIG discovery.
+func (s *Info) discoverMIGInstances() error {
+	hierarchy, err := dcgmprovider.Client().GetGPUInstanceHierarchy()
+	if err != nil {
+		if !isMIGHierarchyNVMLUnavailable(err) {
+			return err
+		}
+		slog.Info("MIG hierarchy unavailable because NVML is not loaded; continuing without MIG device discovery",
+			"error", err)
+	}
+
+	if hierarchy.Count == 0 {
+		return nil
+	}
+
+	gpuInstanceRefs, entities := s.addGPUInstances(hierarchy)
+	s.addComputeInstances(hierarchy, gpuInstanceRefs)
+	return s.populateMigProfileNames(entities)
+}
+
+// addGPUInstances appends each GPU instance in hierarchy to its GPU and marks
+// the GPU as MIG-enabled. It returns where each instance was stored, and the
+// instances on attached GPUs whose profile names still need reading.
+func (s *Info) addGPUInstances(hierarchy dcgm.MigHierarchy_v2) (map[uint]gpuInstanceRef, []dcgm.GroupEntityPair) {
+	var entities []dcgm.GroupEntityPair
+	gpuInstanceRefs := make(map[uint]gpuInstanceRef)
+
+	for i := uint(0); i < hierarchy.Count; i++ {
+		item := hierarchy.EntityList[i]
+		if item.Parent.EntityGroupId != dcgm.FE_GPU {
+			continue
+		}
+
+		entityID := item.Entity.EntityId
+		gpuID := item.Parent.EntityId
+		instanceInfo := GPUInstanceInfo{
+			Info:        item.Info,
+			ProfileName: "",
+			EntityId:    entityID,
+		}
+		s.gpus[gpuID].MigEnabled = true
+		s.gpus[gpuID].GPUInstances = append(s.gpus[gpuID].GPUInstances, instanceInfo)
+		gpuInstanceRefs[entityID] = gpuInstanceRef{
+			gpuID:         gpuID,
+			instanceIndex: len(s.gpus[gpuID].GPUInstances) - 1,
+		}
+		if s.gpus[gpuID].Status != dcgm.EntityStatusDetached {
+			entities = append(entities, dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU_I, EntityId: entityID})
+		}
+	}
+
+	return gpuInstanceRefs, entities
+}
+
+// addComputeInstances attaches each compute instance in hierarchy to the GPU
+// instance addGPUInstances stored for it, skipping instances it did not store.
+func (s *Info) addComputeInstances(hierarchy dcgm.MigHierarchy_v2, gpuInstanceRefs map[uint]gpuInstanceRef) {
+	for i := uint(0); i < hierarchy.Count; i++ {
+		item := hierarchy.EntityList[i]
+		if item.Parent.EntityGroupId != dcgm.FE_GPU_I {
+			continue
+		}
+
+		instanceRef, found := gpuInstanceRefs[item.Parent.EntityId]
+		if !found {
+			continue
+		}
+
+		ciInfo := ComputeInstanceInfo{
+			InstanceInfo: item.Info,
+			ProfileName:  "",
+			EntityId:     item.Entity.EntityId,
+		}
+		gpuInstance := &s.gpus[instanceRef.gpuID].GPUInstances[instanceRef.instanceIndex]
+		gpuInstance.ComputeInstances = append(gpuInstance.ComputeInstances, ciInfo)
+	}
+}
+
 // minimalGPUDeviceInfo builds enough GPU identity metadata for remote-hostengine
 // metrics when the richer DCGM device-attributes API is unavailable.
-func minimalGPUDeviceInfo(gpuID uint, deviceInfoErr error) (dcgm.Device, error) {
+//
+// DCGM version fallback: a DCGM hostengine without the device-attributes API
+// returns DCGM_ST_FUNCTION_NOT_FOUND. The name, UUID and PCI bus ID fields give
+// the identity the labels need, and a placeholder UUID is used when those
+// fields are unavailable too. discoverGPUs logs one warning for the GPUs that
+// used it (gpuIdentityFallbacks). Remove it once every DCGM hostengine
+// the exporter must work with provides the device-attributes API.
+func minimalGPUDeviceInfo(gpuID uint, deviceInfoErr error) (dcgm.Device, bool, error) {
 	diagnostic, ok := dcgmerrors.Classify(deviceInfoErr)
 	if !ok || diagnostic.Code != dcgm.DCGM_ST_FUNCTION_NOT_FOUND {
-		return dcgm.Device{}, deviceInfoErr
+		return dcgm.Device{}, false, deviceInfoErr
 	}
 
 	fields := []dcgm.Short{
@@ -270,15 +405,13 @@ func minimalGPUDeviceInfo(gpuID uint, deviceInfoErr error) (dcgm.Device, error) 
 	if err != nil {
 		diagnostic, ok := dcgmerrors.Classify(err)
 		if !ok || diagnostic.Code != dcgm.DCGM_ST_FUNCTION_NOT_FOUND {
-			return dcgm.Device{}, fmt.Errorf("query minimal GPU identity for gpu %d: %w", gpuID, err)
+			return dcgm.Device{}, false, fmt.Errorf("query minimal GPU identity for gpu %d: %w", gpuID, err)
 		}
-		slog.Info("DCGM device identity fields unavailable; using GPU entity ID for minimal device identity",
-			"gpu_id", gpuID,
-			"error", err)
-		return syntheticMinimalGPUDeviceInfo(gpuID), nil
+		return syntheticMinimalGPUDeviceInfo(gpuID), true, nil
 	}
 
 	device := syntheticMinimalGPUDeviceInfo(gpuID)
+	synthetic := true
 	for _, value := range values {
 		fieldValue := normalizeDCGMStringField(value.String())
 		switch value.FieldID {
@@ -286,6 +419,7 @@ func minimalGPUDeviceInfo(gpuID uint, deviceInfoErr error) (dcgm.Device, error) 
 			device.Identifiers.Model = fieldValue
 		case dcgm.DCGM_FI_DEV_UUID:
 			device.UUID = fieldValue
+			synthetic = fieldValue == "" || value.Status != dcgm.DCGM_ST_OK || value.FieldType != dcgm.DCGM_FT_STRING
 		case dcgm.DCGM_FI_DEV_PCI_BUSID:
 			device.PCI.BusID = fieldValue
 		}
@@ -295,7 +429,44 @@ func minimalGPUDeviceInfo(gpuID uint, deviceInfoErr error) (dcgm.Device, error) 
 		device.UUID = syntheticGPUUUID(gpuID)
 	}
 
-	return device, nil
+	return device, synthetic, nil
+}
+
+// gpuIdentityFallbacks collects the GPUs whose identity came from the DCGM
+// version fallback in minimalGPUDeviceInfo, so one warning covers them all.
+type gpuIdentityFallbacks struct {
+	fieldIdentityGPUs   []uint
+	placeholderUUIDGPUs []uint
+	cause               error
+}
+
+// add records a GPU that used the identity fallback, and whether it got a
+// placeholder UUID. cause is the device-attributes error that started it.
+func (f *gpuIdentityFallbacks) add(gpuID uint, placeholderUUID bool, cause error) {
+	f.fieldIdentityGPUs = append(f.fieldIdentityGPUs, gpuID)
+	if placeholderUUID {
+		f.placeholderUUIDGPUs = append(f.placeholderUUIDGPUs, gpuID)
+	}
+	f.cause = cause
+}
+
+// warn logs one warning for the GPUs that read identity from DCGM fields, and
+// one for those labelled with a placeholder UUID. It logs nothing when no GPU
+// used the fallback.
+func (f gpuIdentityFallbacks) warn() {
+	if len(f.fieldIdentityGPUs) == 0 {
+		return
+	}
+
+	slog.Warn(gpuIdentityFallbackWarning,
+		"gpu_ids", f.fieldIdentityGPUs,
+		"error", f.cause,
+		"hint", dcgmerrors.SupportedVersionHint)
+	if len(f.placeholderUUIDGPUs) > 0 {
+		slog.Warn(gpuPlaceholderUUIDWarning,
+			"gpu_ids", f.placeholderUUIDGPUs,
+			"hint", dcgmerrors.SupportedVersionHint)
+	}
 }
 
 // syntheticMinimalGPUDeviceInfo builds the smallest stable GPU identity needed
@@ -351,16 +522,33 @@ func (s *Info) WarnMIGInstancesWithoutComputeInstances() {
 	}
 }
 
+// initializeCPUInfo discovers selected CPUs and CPU cores, then validates the
+// selectors. Initialize uses it for CPU and CPU-core registries.
 func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
+	s.cOpt = cOpt
 	hierarchy, err := dcgmprovider.Client().GetCPUHierarchy()
 	if err != nil {
-		return err
+		if !isOptionalModuleUnavailable(err) {
+			return fmt.Errorf("query CPU hierarchy: %w", err)
+		}
+		return optionalTopologyDiscoveryError(err, ErrNoCPUsToMonitor, s.verifyCPUDevicePresence())
 	}
 
 	if hierarchy.NumCPUs <= 0 {
-		return fmt.Errorf("no cpus to monitor")
+		return optionalTopologyDiscoveryError(nil, ErrNoCPUsToMonitor, s.verifyCPUDevicePresence())
 	}
 
+	s.populateCPUInfo(hierarchy, cOpt)
+	if err := s.verifyCPUDevicePresence(); err != nil {
+		return err
+	}
+
+	slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
+	return nil
+}
+
+// populateCPUInfo selects CPUs and cores from the discovered hierarchy for metric collection.
+func (s *Info) populateCPUInfo(hierarchy dcgm.CPUHierarchy_v2, cOpt appconfig.DeviceOptions) {
 	for i := 0; i < int(hierarchy.NumCPUs); i++ {
 		// monitor only the CPUs as per the device options input
 		if cOpt.Flex || s.shouldMonitor(cOpt.MajorRange, hierarchy.CPUs[i].CPUID) {
@@ -383,72 +571,99 @@ func (s *Info) initializeCPUInfo(cOpt appconfig.DeviceOptions) error {
 			s.cpus = append(s.cpus, cpu)
 		}
 	}
-
-	s.cOpt = cOpt
-
-	// ensures all the CPUs and Cores to monitor have been discovered
-	err = s.verifyCPUDevicePresence()
-	if err != nil {
-		return err
-	}
-
-	// Ensure correct CPUs and Cores are monitored
-	slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
-	return nil
 }
 
+// initializeNvSwitchInfo discovers selected NVSwitches and their NVLink ports,
+// then validates the selectors. Initialize uses it for switch and link
+// registries.
 func (s *Info) initializeNvSwitchInfo(sOpt appconfig.DeviceOptions) error {
+	s.sOpt = sOpt
 	switches, err := dcgmprovider.Client().GetEntityGroupEntities(dcgm.FE_SWITCH)
 	if err != nil {
-		return err
+		return s.switchDiscoveryError(err)
 	}
 
 	if len(switches) <= 0 {
-		return fmt.Errorf("no switches to monitor")
+		return optionalTopologyDiscoveryError(nil, ErrNoSwitchesToMonitor, s.verifySwitchDevicePresence())
 	}
 
 	links, err := dcgmprovider.Client().GetNvLinkLinkStatus()
 	if err != nil {
+		return fmt.Errorf("query NVLink link status: %w", err)
+	}
+
+	s.populateNvSwitchInfo(switches, links, sOpt)
+	if err := s.verifySwitchDevicePresence(); err != nil {
 		return err
 	}
 
+	slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
+	return nil
+}
+
+// switchDiscoveryError turns NVSwitch lookup failures into optional or startup errors.
+func (s *Info) switchDiscoveryError(err error) error {
+	if !isOptionalModuleUnavailable(err) {
+		return fmt.Errorf("query NVSwitch entities: %w", err)
+	}
+	return optionalTopologyDiscoveryError(err, ErrNoSwitchesToMonitor, s.verifySwitchDevicePresence())
+}
+
+// optionalTopologyDiscoveryError keeps a missing-topology error and its cause for startup checks.
+func optionalTopologyDiscoveryError(cause, missingTopologyErr, selectorErr error) error {
+	if selectorErr == nil {
+		selectorErr = missingTopologyErr
+	}
+	if cause == nil {
+		return selectorErr
+	}
+	return fmt.Errorf("%w: %w", selectorErr, cause)
+}
+
+// populateNvSwitchInfo selects discovered switches and their links for metric collection.
+func (s *Info) populateNvSwitchInfo(switches []uint, links []dcgm.NvLinkStatus, sOpt appconfig.DeviceOptions) {
 	for i := 0; i < len(switches); i++ {
 		// monitor only the Switches as per the device options input
 		if sOpt.Flex || s.shouldMonitor(sOpt.MajorRange, switches[i]) {
-
-			var matchingLinks []dcgm.NvLinkStatus
-			for _, link := range links {
-				// monitor only the NV Link as per the device options input
-				if sOpt.Flex || s.shouldMonitor(sOpt.MinorRange, link.Index) {
-					if link.ParentType == dcgm.FE_SWITCH && link.ParentId == switches[i] {
-						matchingLinks = append(matchingLinks, link)
-					}
-				}
-			}
-
-			sw := SwitchInfo{
-				switches[i],
-				matchingLinks,
-			}
-
-			s.switches = append(s.switches, sw)
+			matchingLinks := s.matchingNvSwitchLinks(switches[i], links, sOpt)
+			s.switches = append(s.switches, SwitchInfo{switches[i], matchingLinks})
 		}
 	}
-
-	s.sOpt = sOpt
-	err = s.verifySwitchDevicePresence()
-	if err == nil {
-		slog.Debug(fmt.Sprintf(deviceInitMessage, s.infoType))
-	}
-
-	return err
 }
 
-func (s *Info) setGPUInstanceProfileName(entityID uint, profileName string) bool {
+// matchingNvSwitchLinks returns selected links that belong to one switch.
+func (s *Info) matchingNvSwitchLinks(switchID uint, links []dcgm.NvLinkStatus, sOpt appconfig.DeviceOptions) []dcgm.NvLinkStatus {
+	var matchingLinks []dcgm.NvLinkStatus
+	for _, link := range links {
+		// monitor only the NV Link as per the device options input
+		if sOpt.Flex || s.shouldMonitor(sOpt.MinorRange, link.Index) {
+			if link.ParentType == dcgm.FE_SWITCH && link.ParentId == switchID {
+				matchingLinks = append(matchingLinks, link)
+			}
+		}
+	}
+	return matchingLinks
+}
+
+// isOptionalModuleUnavailable preserves typed status checks while supporting
+// older go-dcgm paths that return the library's module-unavailable message.
+func isOptionalModuleUnavailable(err error) bool {
+	var dcgmErr *dcgm.Error
+	if errors.As(err, &dcgmErr) {
+		return dcgmErr.Code == dcgm.DCGM_ST_MODULE_NOT_LOADED
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "module of dcgm that is not currently loaded")
+}
+
+// setGPUInstanceProfileName stores a resolved profile name on entityID. It
+// returns false when the sampled DCGM entity is not a discovered GPU instance.
+func (s *Info) setGPUInstanceProfileName(entityID uint, dcgmProfileName string) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
 		for j := range s.gpus[i].GPUInstances {
 			if s.gpus[i].GPUInstances[j].EntityId == entityID {
-				s.gpus[i].GPUInstances[j].ProfileName = profileName
+				s.gpus[i].GPUInstances[j].ProfileName = s.getGPUInstanceProfileName(
+					s.gpus[i], s.gpus[i].GPUInstances[j], dcgmProfileName)
 				return true
 			}
 		}
@@ -457,6 +672,32 @@ func (s *Info) setGPUInstanceProfileName(entityID uint, profileName string) bool
 	return false
 }
 
+// getGPUInstanceProfileName prefers NVML's profile name and retains DCGM's
+// value as a safe fallback. setGPUInstanceProfileName uses it after sampling
+// the MIG instance name field.
+func (s *Info) getGPUInstanceProfileName(gpu GPUInfo, instance GPUInstanceInfo, dcgmProfileName string) string {
+	parentGPUUUID := instance.Info.GpuUuid
+	if parentGPUUUID == "" {
+		parentGPUUUID = gpu.DeviceInfo.UUID
+	}
+
+	nvmlProfileName, err := nvmlprovider.Client().GetGPUInstanceProfileName(parentGPUUUID, instance.Info.NvmlMigProfileId)
+	if err != nil {
+		slog.Debug("Falling back to DCGM MIG profile name", "entityID", instance.EntityId, "error", err)
+		return dcgmProfileName
+	}
+	// Preserve the DCGM fallback if another NVML implementation violates the
+	// concrete provider's non-empty-name contract.
+	if nvmlProfileName == "" {
+		slog.Debug("Falling back to DCGM MIG profile name", "entityID", instance.EntityId, "error", "NVML profile name is empty")
+		return dcgmProfileName
+	}
+
+	return nvmlProfileName
+}
+
+// setMigProfileNames resolves sampled profile names using NVML when available
+// and DCGM as fallback. It reports values that did not match the hierarchy.
 func (s *Info) setMigProfileNames(values []dcgm.FieldValue_v2) error {
 	var err error
 	var errFound bool
@@ -476,6 +717,9 @@ func (s *Info) setMigProfileNames(values []dcgm.FieldValue_v2) error {
 	return err
 }
 
+// populateMigProfileNames samples profile names for discovered GPU instances
+// and adds them to the MIG hierarchy. initializeGPUInfo calls it after the
+// hierarchy is complete.
 func (s *Info) populateMigProfileNames(entities []dcgm.GroupEntityPair) error {
 	if len(entities) == 0 {
 		// There are no entities to populate
@@ -493,6 +737,7 @@ func (s *Info) populateMigProfileNames(entities []dcgm.GroupEntityPair) error {
 	return s.setMigProfileNames(values)
 }
 
+// gpuIDExists reports whether GPU gpuID appears in the discovered topology.
 func (s *Info) gpuIDExists(gpuID int) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
 		if s.gpus[i].DeviceInfo.GPU == uint(gpuID) {
@@ -502,6 +747,7 @@ func (s *Info) gpuIDExists(gpuID int) bool {
 	return false
 }
 
+// gpuInstanceIDExists reports whether GPU instance gpuInstanceID was discovered.
 func (s *Info) gpuInstanceIDExists(gpuInstanceID int) bool {
 	for i := uint(0); i < s.gpuCount; i++ {
 		for _, instance := range s.gpus[i].GPUInstances {
@@ -513,6 +759,7 @@ func (s *Info) gpuInstanceIDExists(gpuInstanceID int) bool {
 	return false
 }
 
+// cpuIDExists reports whether cpuID appears in the selected CPU topology.
 func (s *Info) cpuIDExists(cpuID int) bool {
 	for _, cpu := range s.cpus {
 		if cpu.EntityId == uint(cpuID) {
@@ -522,6 +769,8 @@ func (s *Info) cpuIDExists(cpuID int) bool {
 	return false
 }
 
+// cpuCoreIDExists checks a minor selector across all selected CPUs because
+// the selector does not name a parent CPU.
 func (s *Info) cpuCoreIDExists(coreID int) bool {
 	for _, cpu := range s.cpus {
 		for _, core := range cpu.Cores {
@@ -533,6 +782,8 @@ func (s *Info) cpuCoreIDExists(coreID int) bool {
 	return false
 }
 
+// switchIDExists lets selector validation reject a requested switch absent
+// from the topology returned by DCGM.
 func (s *Info) switchIDExists(switchID int) bool {
 	for _, sw := range s.switches {
 		if sw.EntityId == uint(switchID) {
@@ -542,6 +793,8 @@ func (s *Info) switchIDExists(switchID int) bool {
 	return false
 }
 
+// linkIDExists checks a minor selector across all selected switches because
+// the selector does not name a parent switch.
 func (s *Info) linkIDExists(linkID int) bool {
 	for _, sw := range s.switches {
 		for _, link := range sw.NvLinks {
@@ -553,6 +806,8 @@ func (s *Info) linkIDExists(linkID int) bool {
 	return false
 }
 
+// verifyDevicePresence checks that every explicit GPU and MIG selector was
+// discovered. initializeGPUInfo calls it after building the GPU hierarchy.
 func (s *Info) verifyDevicePresence() error {
 	if s.gOpt.Flex {
 		return nil
@@ -594,6 +849,8 @@ func isMIGHierarchyNVMLUnavailable(err error) bool {
 			strings.Contains(message, "does not exist"))
 }
 
+// verifyCPUDevicePresence checks that every explicit CPU and core selector was
+// discovered. initializeCPUInfo calls it after building the CPU topology.
 func (s *Info) verifyCPUDevicePresence() error {
 	if s.cOpt.Flex {
 		return nil
@@ -619,6 +876,8 @@ func (s *Info) verifyCPUDevicePresence() error {
 	return nil
 }
 
+// shouldMonitor reports whether val belongs to a selector range. The -1
+// sentinel selects every value; an empty range selects none.
 func (s *Info) shouldMonitor(monitoringRange []int, val uint) bool {
 	if len(monitoringRange) > 0 {
 		if monitoringRange[0] == -1 {
@@ -631,6 +890,9 @@ func (s *Info) shouldMonitor(monitoringRange []int, val uint) bool {
 	return false
 }
 
+// verifySwitchDevicePresence checks that every explicit NVSwitch and link
+// selector was discovered. initializeNvSwitchInfo calls it after topology
+// discovery.
 func (s *Info) verifySwitchDevicePresence() error {
 	if s.sOpt.Flex {
 		return nil
@@ -656,6 +918,7 @@ func (s *Info) verifySwitchDevicePresence() error {
 	return nil
 }
 
+// IsCPUWatched reports whether cpuID was discovered and selected for metrics.
 func (s *Info) IsCPUWatched(cpuID uint) bool {
 	if !slices.ContainsFunc(s.cpus, func(cpu CPUInfo) bool {
 		return cpu.EntityId == cpuID
@@ -676,6 +939,9 @@ func (s *Info) IsCPUWatched(cpuID uint) bool {
 	})
 }
 
+// IsCoreWatched reports whether coreID is selected for metrics. Flexible selection
+// accepts any IDs; otherwise the CPU must be discovered and selected, and the
+// minor range must select the core or contain the wildcard.
 func (s *Info) IsCoreWatched(coreID uint, cpuID uint) bool {
 	if s.cOpt.Flex {
 		return true
@@ -697,6 +963,8 @@ func (s *Info) IsCoreWatched(coreID uint, cpuID uint) bool {
 	return false
 }
 
+// IsSwitchWatched reports whether switchID is selected for metrics. Switch
+// collection uses it to avoid emitting unconfigured NVSwitch entities.
 func (s *Info) IsSwitchWatched(switchID uint) bool {
 	if s.sOpt.Flex {
 		return true
@@ -710,6 +978,10 @@ func (s *Info) IsSwitchWatched(switchID uint) bool {
 	return slices.Contains(s.sOpt.MajorRange, int(switchID))
 }
 
+// IsLinkWatched reports whether linkIndex is selected for metrics. Flexible
+// selection accepts any IDs. Otherwise the switch must be discovered and selected;
+// a minor-range wildcard accepts any link index, while an explicit index must
+// also exist on the switch.
 func (s *Info) IsLinkWatched(linkIndex uint, switchID uint) bool {
 	if s.sOpt.Flex {
 		return true
@@ -740,6 +1012,8 @@ func (s *Info) IsLinkWatched(linkIndex uint, switchID uint) bool {
 	return false
 }
 
+// getCoreArray expands DCGM's CPU-core bitmask into core IDs. initializeCPUInfo
+// uses it before applying the configured core selector.
 func getCoreArray(bitmask []uint64) []uint {
 	var cores []uint
 	bits := make([]uint64, dcgm.MAX_CPU_CORE_BITMASK_COUNT)
@@ -759,8 +1033,8 @@ func getCoreArray(bitmask []uint64) []uint {
 	return cores
 }
 
-// Helper Functions
-
+// GetGPUInstanceIdentifier returns the stable GPU-and-instance identifier used
+// in metric labels. It finds the GPU UUID in a Provider before composing it.
 func GetGPUInstanceIdentifier(deviceInfo Provider, gpuuuid string, gpuInstanceID uint) string {
 	for i := uint(0); i < deviceInfo.GPUCount(); i++ {
 		if deviceInfo.GPU(i).DeviceInfo.UUID == gpuuuid {
@@ -772,7 +1046,8 @@ func GetGPUInstanceIdentifier(deviceInfo Provider, gpuuuid string, gpuInstanceID
 	return ""
 }
 
-// ToBase64 returns the JSON representation of device info encoded as base64
+// ToBase64 returns Info's JSON representation encoded as base64. Diagnostic
+// output uses it to carry topology in a single text value.
 func (s *Info) ToBase64() string {
 	jsonData, err := json.Marshal(s)
 	if err != nil {
@@ -781,7 +1056,9 @@ func (s *Info) ToBase64() string {
 	return base64.StdEncoding.EncodeToString(jsonData)
 }
 
-// ToBase64Provider is a standalone function that works with any deviceinfo.Provider
+// ToBase64Provider encodes an Info-backed Provider for diagnostics. A different
+// Provider implementation intentionally returns an empty JSON object because it
+// may not expose every field required by Info's JSON contract.
 func ToBase64Provider(provider Provider) string {
 	if info, ok := provider.(*Info); ok {
 		return info.ToBase64()
@@ -792,7 +1069,8 @@ func ToBase64Provider(provider Provider) string {
 	return base64.StdEncoding.EncodeToString([]byte("{}"))
 }
 
-// MarshalJSON implements custom JSON marshaling for Info
+// MarshalJSON writes Info's public topology and selector fields. ToBase64 and
+// configuration diagnostics use this stable, fixed-array-free representation.
 func (s *Info) MarshalJSON() ([]byte, error) {
 	result := map[string]any{
 		"gpu_count":      s.GPUCount(),
@@ -807,8 +1085,11 @@ func (s *Info) MarshalJSON() ([]byte, error) {
 	return json.Marshal(result)
 }
 
-// UnmarshalJSON implements custom JSON unmarshaling for Info
+// UnmarshalJSON restores the JSON representation written by MarshalJSON. It
+// rejects counts that disagree with the GPU list before filling fixed storage.
 func (s *Info) UnmarshalJSON(data []byte) error {
+	// result mirrors the public JSON shape before validation copies it into
+	// Info's fixed GPU storage.
 	var result struct {
 		GPUCount      uint                    `json:"gpu_count"`
 		GPUs          []GPUInfo               `json:"gpus"`

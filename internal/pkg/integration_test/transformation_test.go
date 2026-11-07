@@ -58,7 +58,7 @@ func TestProcessPodMapper(t *testing.T) {
 		DCGMLogLevel:  "DEBUG",
 		UseFakeGPUs:   true,
 	}
-	dcgmprovider.Initialize(config)
+	require.NoError(t, dcgmprovider.Initialize(config))
 	defer dcgmprovider.Client().Cleanup()
 
 	// Create a fake GPU for this test
@@ -106,6 +106,7 @@ func TestProcessPodMapper(t *testing.T) {
 		KubernetesGPUIdType:       appconfig.GPUUID,
 		PodResourcesKubeletSocket: socketPath,
 	})
+	defer podMapper.Stop()
 
 	// Create deviceInfo provider restricted to our fake GPU
 	deviceInfo, err := deviceinfo.Initialize(

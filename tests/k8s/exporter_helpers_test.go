@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -23,9 +23,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,36 +32,29 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
-
-const localPortForwardHost = "127.0.0.1"
 
 const (
 	hpcJobMappingConfigMapName = "hpc-job-mapping"
 	hpcJobMappingDir           = "/tmp/dcgm-exporter-hpc-jobs"
 	hpcJobName                 = "job-e2e"
 
-	debugDumpDirectory     = "/tmp/dcgm-exporter-debug"
-	debugDumpReaderPodName = "debug-dump-reader"
-
-	e2eDefaultCollectorsArg = "-f=/etc/dcgm-exporter/default-counters.csv"
-	e2eCollectIntervalArg   = "--collect-interval=1000"
+	debugDumpReaderPodName  = "debug-dump-reader"
+	debugDumpCleanupTimeout = 30 * time.Second
 )
 
-// exporterArguments formats exporter CLI arguments as a Helm values override.
+// exporterArguments formats the default exporter arguments plus args as a Helm values override.
 func exporterArguments(args ...string) string {
-	allArgs := append([]string{e2eDefaultCollectorsArg, e2eCollectIntervalArg}, args...)
-	return fmt.Sprintf("arguments={%s}", strings.Join(allArgs, ","))
+	return "arguments=" + helmArgumentList(append(defaultExporterArguments(), args...))
 }
 
-// hpcJobMappingJSONValues returns Helm JSON values that mount the HPC job mapping fixture.
+// hpcJobMappingJSONValues copies the projected inputs into regular mapping files.
 func hpcJobMappingJSONValues() []string {
 	return []string{
-		`extraConfigMapVolumes=[{"name":"exporter-metrics-volume","configMap":{"name":"exporter-metrics-config-map","items":[{"key":"metrics","path":"default-counters.csv"}]}},{"name":"hpc-job-mapping","configMap":{"name":"hpc-job-mapping"}}]`,
-		fmt.Sprintf(
-			`extraVolumeMounts=[{"name":"exporter-metrics-volume","mountPath":"/etc/dcgm-exporter/default-counters.csv","subPath":"default-counters.csv"},{"name":"hpc-job-mapping","mountPath":%q}]`,
-			hpcJobMappingDir,
-		),
+		`extraConfigMapVolumes=[{"name":"hpc-job-input","configMap":{"name":"hpc-job-mapping"}},{"name":"hpc-job-mapping","emptyDir":{}}]`,
+		fmt.Sprintf(`extraVolumeMounts=[{"name":"hpc-job-mapping","mountPath":%q}]`, hpcJobMappingDir),
+		fmt.Sprintf(`initContainers=[{"name":"copy-hpc-jobs","image":%q,"command":["sh","-ec","cp -L /input/[0-9]* /jobs/"],"securityContext":{"runAsUser":0,"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"volumeMounts":[{"name":"hpc-job-input","mountPath":"/input","readOnly":true},{"name":"hpc-job-mapping","mountPath":"/jobs"}]}]`, requiredBusyBoxImage()),
 	}
 }
 
@@ -76,10 +67,13 @@ func shouldInstallExporterAndReadMetrics(
 	validate func([]byte) error,
 ) (*corev1.Pod, []byte) {
 	shouldInstallHelmChartWithJSONValues(ctx, helmClient, values, jsonValues)
-	dcgmExpPod := shouldCheckIfPodCreated(ctx, kubeClient, dcgmExporterPodLabels)
-	shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
+	var dcgmExpPod *corev1.Pod
 	if workloadLabels != nil {
-		shouldCreateWorkloadPod(ctx, kubeClient, workloadLabels)
+		workload := shouldCreateWorkloadPod(ctx, kubeClient, workloadLabels)
+		dcgmExpPod = shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
+	} else {
+		dcgmExpPod = shouldFindExporterPod(ctx, kubeClient, dcgmExporterPodLabels)
+		shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
 	}
 
 	var metricsResponse []byte
@@ -98,12 +92,21 @@ func shouldInstallExporterAndReadMetrics(
 	return dcgmExpPod, metricsResponse
 }
 
+// shouldReinstallExporterAndReadMetrics removes the exporter of the previous
+// step, installs one with values and jsonValues, and waits until validate
+// accepts a scrape of it.
+func shouldReinstallExporterAndReadMetrics(ctx context.Context, values, jsonValues []string, validate func([]byte) error) {
+	cleanupTestContext(ctx, kubeClient, helmClient)
+	_, _ = shouldInstallExporterAndReadMetrics(ctx, values, jsonValues, testRunLabels, validate)
+}
+
 // shouldHTTPRequestPodPort requests the exporter metrics endpoint through a pod port-forward.
 func shouldHTTPRequestPodPort(ctx context.Context, pod *corev1.Pod, useTLS bool, username string, password string) (int, []byte) {
 	return shouldHTTPRequestPodPortPath(ctx, pod, useTLS, username, password, "metrics")
 }
 
-// shouldHTTPRequestPodPortPath requests an arbitrary exporter path through a pod port-forward.
+// shouldHTTPRequestPodPortPath requests an arbitrary exporter path through a
+// pod port-forward and fails the spec on any transport error.
 func shouldHTTPRequestPodPortPath(
 	ctx context.Context,
 	pod *corev1.Pod,
@@ -112,19 +115,39 @@ func shouldHTTPRequestPodPortPath(
 	password string,
 	path string,
 ) (int, []byte) {
+	status, body, err := requestPodPortPath(ctx, pod, useTLS, username, password, path)
+	Expect(err).NotTo(HaveOccurred())
+	return status, body
+}
+
+// requestPodPortPath requests an exporter path through a pod port-forward and
+// returns the status and body, or the error that stopped the request, so a
+// retrying caller can try again.
+func requestPodPortPath(
+	ctx context.Context,
+	pod *corev1.Pod,
+	useTLS bool,
+	username string,
+	password string,
+	path string,
+) (int, []byte, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	kubeClient.ErrWriter = GinkgoWriter
 	kubeClient.OutWriter = GinkgoWriter
 	localPort, err := kubeClient.PortForward(ctx, pod.Namespace, pod.Name, dcgmExporterPort)
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return 0, nil, fmt.Errorf("port-forward to pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
 
 	scheme := "http"
 	if useTLS {
 		scheme = "https"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, localPortForwardURL(scheme, localPort, path), http.NoBody)
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return 0, nil, fmt.Errorf("build request: %w", err)
+	}
 	if username != "" || password != "" {
 		req.SetBasicAuth(username, password)
 	}
@@ -136,32 +159,16 @@ func shouldHTTPRequestPodPortPath(
 		},
 	}
 	resp, err := client.Do(req)
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		return 0, nil, fmt.Errorf("request %s: %w", path, err)
+	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	Expect(err).NotTo(HaveOccurred())
-	return resp.StatusCode, body
-}
-
-func localPortForwardURL(scheme string, port int, path string) string {
-	return fmt.Sprintf("%s://%s/%s", scheme, net.JoinHostPort(localPortForwardHost, strconv.Itoa(port)), strings.TrimPrefix(path, "/"))
-}
-
-// shouldReadServiceMetrics scrapes exporter metrics through the Helm-created Kubernetes Service.
-func shouldReadServiceMetrics(ctx context.Context, helmReleaseName string) []byte {
-	services, err := kubeClient.GetServicesByLabel(ctx, testContext.namespace, map[string]string{
-		dcgmExporterPodNameLabel:     dcgmExporterPodNameLabelValue,
-		"app.kubernetes.io/instance": helmReleaseName,
-	})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(services).To(HaveLen(1), "expected one dcgm-exporter service for Helm release %q", helmReleaseName)
-
-	serviceName := services[0].Name
-	metricsResponse, err := kubeClient.DoServiceHTTPRequest(ctx, testContext.namespace, serviceName, dcgmExporterPort, "metrics")
-	Expect(err).NotTo(HaveOccurred())
-	Expect(metricsResponse).NotTo(BeEmpty())
-	return metricsResponse
+	if err != nil {
+		return 0, nil, fmt.Errorf("read response of %s: %w", path, err)
+	}
+	return resp.StatusCode, body, nil
 }
 
 // shouldCreateHPCJobMappingConfigMap creates test GPU-to-job mappings for hpc_job labels.
@@ -175,9 +182,24 @@ func shouldCreateHPCJobMappingConfigMap(ctx context.Context) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
-// shouldCreateDebugDumpReaderPod creates a helper pod that can read exporter debug dump files.
-func shouldCreateDebugDumpReaderPod(ctx context.Context) *corev1.Pod {
+// shouldRequireExactlyOneE2ENode returns the only node selected for an isolated host-path test.
+func shouldRequireExactlyOneE2ENode(ctx context.Context) string {
+	nodeSelector := getE2ENodeSelector()
+	Expect(nodeSelector).NotTo(BeEmpty(),
+		"debug-dump tests require -node-selector-key and -node-selector-value")
+
+	nodes, err := kubeClient.GetNodesByLabel(ctx, nodeSelector)
+	Expect(err).NotTo(HaveOccurred())
+
+	nodeName, err := singleNodeName(nodes)
+	Expect(err).NotTo(HaveOccurred())
+	return nodeName
+}
+
+// shouldCreateDebugDumpReaderPod creates a helper pod pinned to the debug-dump node.
+func shouldCreateDebugDumpReaderPod(ctx context.Context, hostPath, nodeName string) *corev1.Pod {
 	quantity, _ := resource.ParseQuantity("64Mi")
+	hostPathType := corev1.HostPathDirectoryOrCreate
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      debugDumpReaderPodName,
@@ -190,6 +212,7 @@ func shouldCreateDebugDumpReaderPod(ctx context.Context) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyAlways,
 			NodeSelector:  getE2ENodeSelector(),
+			NodeName:      nodeName,
 			Containers: []corev1.Container{
 				{
 					Name:    "reader",
@@ -200,7 +223,7 @@ func shouldCreateDebugDumpReaderPod(ctx context.Context) *corev1.Pod {
 						Limits:   corev1.ResourceList{corev1.ResourceMemory: quantity},
 					},
 					VolumeMounts: []corev1.VolumeMount{
-						{Name: "debug-dumps", MountPath: "/debug-dumps"},
+						{Name: "debug-dumps", MountPath: debugDumpReaderMount},
 					},
 				},
 			},
@@ -208,7 +231,10 @@ func shouldCreateDebugDumpReaderPod(ctx context.Context) *corev1.Pod {
 				{
 					Name: "debug-dumps",
 					VolumeSource: corev1.VolumeSource{
-						HostPath: &corev1.HostPathVolumeSource{Path: debugDumpDirectory},
+						HostPath: &corev1.HostPathVolumeSource{
+							Path: hostPath,
+							Type: &hostPathType,
+						},
 					},
 				},
 			},
@@ -230,7 +256,75 @@ func shouldCreateDebugDumpReaderPod(ctx context.Context) *corev1.Pod {
 	return createdPod
 }
 
+// debugDumpFiles lists matching debug dumps for one validated test-run directory.
+func debugDumpFiles(ctx context.Context, readerPod *corev1.Pod, debugDumpDirectory string, pattern string) ([]string, error) {
+	readerDirectory, err := debugDumpReaderDirectory(debugDumpDirectory, runID.String())
+	if err != nil {
+		return nil, err
+	}
+
+	stdout, stderr, err := kubeClient.ExecutePodCommand(ctx,
+		readerPod.Namespace,
+		readerPod.Name,
+		"reader",
+		[]string{"find", readerDirectory, "-type", "f", "-name", pattern, "-print"},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list debug dumps: %w: %s", err, stderr)
+	}
+	return strings.Fields(stdout), nil
+}
+
+// shouldPrepareDebugDumpDirectory creates an empty directory owned by this test run.
+func shouldPrepareDebugDumpDirectory(ctx context.Context, readerPod *corev1.Pod, debugDumpDirectory string) {
+	readerDirectory, err := debugDumpReaderDirectory(debugDumpDirectory, runID.String())
+	Expect(err).NotTo(HaveOccurred())
+
+	_, stderr, err := kubeClient.ExecutePodCommand(ctx,
+		readerPod.Namespace,
+		readerPod.Name,
+		"reader",
+		[]string{"mkdir", "-p", readerDirectory},
+	)
+	Expect(err).NotTo(HaveOccurred(), stderr)
+
+	files, err := debugDumpFiles(ctx, readerPod, debugDumpDirectory, "*")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(files).To(BeEmpty(), "debug dump directory must start empty")
+}
+
+// shouldRemoveDebugDumpDirectory deletes only the run-owned debug dump directory.
+func shouldRemoveDebugDumpDirectory(ctx context.Context, readerPod *corev1.Pod, debugDumpDirectory string) {
+	readerDirectory, err := debugDumpReaderDirectory(debugDumpDirectory, runID.String())
+	Expect(err).NotTo(HaveOccurred())
+
+	_, stderr, err := kubeClient.ExecutePodCommand(ctx,
+		readerPod.Namespace,
+		readerPod.Name,
+		"reader",
+		[]string{"rm", "-rf", readerDirectory},
+	)
+	Expect(err).NotTo(HaveOccurred(), stderr)
+
+	_, stderr, err = kubeClient.ExecutePodCommand(ctx,
+		readerPod.Namespace,
+		readerPod.Name,
+		"reader",
+		[]string{"test", "!", "-e", readerDirectory},
+	)
+	Expect(err).NotTo(HaveOccurred(), stderr)
+}
+
+// requiredBusyBoxImage returns the configured probe image or fails with its setup requirement.
 func requiredBusyBoxImage() string {
 	Expect(testContext.busyboxImage).NotTo(BeEmpty(), "E2E_BUSYBOX_IMAGE or -busybox-image is required")
 	return testContext.busyboxImage
+}
+
+// configJSON converts an exporter configuration document to the JSON that --set-json
+// takes for the chart's `config` value.
+func configJSON(document string) string {
+	converted, err := yaml.YAMLToJSON([]byte(document))
+	Expect(err).NotTo(HaveOccurred())
+	return string(converted)
 }

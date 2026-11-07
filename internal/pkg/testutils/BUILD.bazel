@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "testutils",
+    srcs = [
+        "const.go",
+        "test_utils.go",
+        "types.go",
+        "variables.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/mocks/pkg/deviceinfo",
+        "//internal/pkg/counters",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/os",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_k8s_kubelet//pkg/apis/podresources/v1:podresources",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_mock//gomock",
+    ],
+)
+
+go_test(
+    name = "testutils_test",
+    srcs = ["test_utils_test.go"],
+    embed = [":testutils"],
+    deps = [
+        "//internal/pkg/deviceinfo",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_k8s_kubelet//pkg/apis/podresources/v1:podresources",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_mock//gomock",
+    ],
+)

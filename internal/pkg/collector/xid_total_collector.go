@@ -29,15 +29,16 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
+// xidTotalKey identifies one XID reason total for a DCGM entity.
 type xidTotalKey struct {
 	entity dcgm.GroupEntityPair
 	xid    int64
 }
 
+// xidTotalCollector counts valid XID samples across polls and serves totals during scrapes.
 type xidTotalCollector struct {
 	expCollector
 	poller cumulativeCollectorPoller
@@ -49,14 +50,16 @@ type xidTotalCollector struct {
 	// updates cannot overlap.
 	collectMu sync.Mutex
 	stateMu   sync.RWMutex
-	cursors   map[dcgm.GroupHandle]time.Time
+	cursors   map[cumulativeWatchCursorKey]time.Time
 	totals    map[xidTotalKey]int
 }
 
+// GetMetrics renders the accumulated XID totals for currently monitored entities.
 func (c *xidTotalCollector) GetMetrics() (MetricsByCounter, error) {
 	totals := c.snapshotTotals()
+	observed := c.currentTime().UnixMicro()
 	metrics := make(MetricsByCounter)
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
+	monitoringInfo := c.deviceWatchList.MonitoredEntities()
 
 	uuid := "UUID"
 	if c.config.UseOldNamespace {
@@ -77,48 +80,63 @@ func (c *xidTotalCollector) GetMetrics() (MetricsByCounter, error) {
 			}
 
 			metricValueLabels := maps.Clone(labels)
-			metricValueLabels["xid"] = fmt.Sprint(key.xid)
-			metrics[c.counter] = append(metrics[c.counter], c.createMetric(metricValueLabels, mi, uuid, total))
+			metricValueLabels[XIDLabel] = fmt.Sprint(key.xid)
+			metric := c.createMetric(metricValueLabels, mi, uuid, total, c.deviceWatchList.DeviceInfo(), observed)
+			metric.StartTimestamp = c.initialSince.UnixMicro()
+			metrics[c.counter] = append(metrics[c.counter], metric)
 		}
 	}
 
 	return metrics, nil
 }
 
+// collectNewEvents reads all watched field groups and commits results only after every read succeeds.
 func (c *xidTotalCollector) collectNewEvents() error {
 	c.collectMu.Lock()
 	defer c.collectMu.Unlock()
 
-	if err := dcgmprovider.Client().UpdateAllFields(); err != nil {
+	if err := c.dcgmClient().UpdateAllFields(); err != nil {
 		return fmt.Errorf("update fields for xid total collector: %w", err)
 	}
 
-	fieldGroup := c.deviceWatchList.DeviceFieldGroup()
-	for _, group := range c.deviceWatchList.DeviceGroups() {
-		since := c.cursorForGroup(group)
-		values, nextSince, err := dcgmprovider.Client().GetValuesSince(
-			group,
-			fieldGroup,
+	polls := make([]cumulativeWatchPoll, 0)
+	for _, binding := range c.watchBindings() {
+		since := cumulativeWatchCursor(&c.stateMu, c.cursors, c.initialSince, binding.Group, binding.FieldGroup)
+		values, nextSince, err := c.dcgmClient().GetValuesSince(
+			binding.Group,
+			binding.FieldGroup,
 			since,
 		)
 		if err != nil {
-			return newCumulativePollContextError("get xid values since cursor", group, fieldGroup, since, err)
+			return newCumulativePollContextError(
+				"get xid values since cursor", binding.Group, binding.FieldGroup, since, err,
+			)
 		}
 
-		c.accumulateGroupEvents(group, values, nextSince)
+		polls = append(polls, cumulativeWatchPoll{
+			group:      binding.Group,
+			fieldGroup: binding.FieldGroup,
+			values:     values,
+			nextSince:  nextSince,
+		})
+	}
+
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	for _, poll := range polls {
+		c.accumulateGroupEvents(poll.group, poll.fieldGroup, poll.values, poll.nextSince)
 	}
 
 	return nil
 }
 
+// accumulateGroupEvents adds valid XID samples and advances one successful watch cursor.
 func (c *xidTotalCollector) accumulateGroupEvents(
 	group dcgm.GroupHandle,
+	fieldGroup dcgm.FieldHandle,
 	values []dcgm.FieldValue_v2,
 	nextSince time.Time,
 ) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-
 	for _, val := range values {
 		if val.Status != 0 || isBlankValue(val) {
 			continue
@@ -132,9 +150,10 @@ func (c *xidTotalCollector) accumulateGroupEvents(
 		entity := dcgm.GroupEntityPair{EntityGroupId: val.EntityGroupId, EntityId: val.EntityID}
 		c.totals[xidTotalKey{entity: entity, xid: xid}]++
 	}
-	c.cursors[group] = nextSince
+	c.cursors[newCumulativeWatchCursorKey(group, fieldGroup)] = nextSince
 }
 
+// snapshotTotals returns a copy so metric rendering does not hold the collector state lock.
 func (c *xidTotalCollector) snapshotTotals() map[xidTotalKey]int {
 	c.stateMu.RLock()
 	defer c.stateMu.RUnlock()
@@ -142,21 +161,35 @@ func (c *xidTotalCollector) snapshotTotals() map[xidTotalKey]int {
 	return maps.Clone(c.totals)
 }
 
-func (c *xidTotalCollector) cursorForGroup(group dcgm.GroupHandle) time.Time {
-	c.stateMu.RLock()
-	defer c.stateMu.RUnlock()
-
-	if cursor, exists := c.cursors[group]; exists {
-		return cursor
-	}
-	return c.initialSince
-}
-
+// Cleanup stops the poller, waiting at most a bounded time, so it can return
+// while a DCGM call is still running. Wait for CleanupComplete before tearing
+// down DCGM.
 func (c *xidTotalCollector) Cleanup() {
 	c.poller.Cleanup()
 }
 
+// CleanupComplete reports when the poller has stopped and released this
+// collector's DCGM watches. Registry retirement waits for it before provider
+// teardown, even when Cleanup returned after its bounded stop request.
+func (c *xidTotalCollector) CleanupComplete() <-chan struct{} {
+	return c.poller.CleanupComplete()
+}
+
+// NewXIDTotalCollector creates the cumulative XID collector with the current
+// process client for direct callers.
 func NewXIDTotalCollector(
+	counterList counters.CounterList,
+	hostname string,
+	config *appconfig.Config,
+	deviceWatchList devicewatchlistmanager.WatchList,
+) (Collector, error) {
+	return newXIDTotalCollectorWithClient(dcgmprovider.Client(), counterList, hostname, config, deviceWatchList)
+}
+
+// newXIDTotalCollectorWithClient creates the cumulative XID collector with
+// client, which stays alive until its poller reports CleanupComplete.
+func newXIDTotalCollectorWithClient(
+	client dcgmprovider.DCGM,
 	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
@@ -167,9 +200,19 @@ func NewXIDTotalCollector(
 		return nil, fmt.Errorf("%s collector is disabled", counters.DCGMExpXIDErrorsTotal)
 	}
 
-	initialSince := time.Now()
-	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_XID_ERRORS})
-	expCollector, err := newExpCollector(
+	source, err := countSource(counters.DCGMExpXIDErrorsCount)
+	if err != nil {
+		return nil, err
+	}
+
+	collector := &xidTotalCollector{
+		cursors: map[cumulativeWatchCursorKey]time.Time{},
+		totals:  map[xidTotalKey]int{},
+	}
+	collector.initialSince = collector.currentTime()
+	deviceWatchList.SetDeviceFieldsForAllGPUScopes([]dcgm.Short{source.FieldID})
+	expCollector, err := newExpCollectorWithClient(
+		client,
 		counterList.LabelCounters(),
 		hostname,
 		config,
@@ -179,21 +222,15 @@ func NewXIDTotalCollector(
 		return nil, fmt.Errorf("create xid total collector watch: %w", err)
 	}
 
-	collector := &xidTotalCollector{
-		expCollector: expCollector,
-		initialSince: initialSince,
-		cursors:      map[dcgm.GroupHandle]time.Time{},
-		totals:       map[xidTotalKey]int{},
-	}
+	collector.expCollector = expCollector
+
 	collector.poller = newCumulativeCollectorPoller(
 		counters.DCGMExpXIDErrorsTotal,
 		cumulativeCollectorPollInterval(counters.DCGMExpXIDErrorsTotal, config.CollectInterval),
 		collector.collectNewEvents,
 		collector.expCollector.Cleanup,
 	)
-	collector.sourceFields = map[dcgm.Short]string{
-		dcgm.DCGM_FI_DEV_XID_ERRORS: "DCGM_FI_DEV_XID_ERRORS",
-	}
+	collector.sourceFields = map[dcgm.Short]string{source.FieldID: source.Name}
 	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
 		return c.FieldName == counters.DCGMExpXIDErrorsTotal
 	})]

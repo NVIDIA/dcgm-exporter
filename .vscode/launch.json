@@ -20,10 +20,10 @@
                 "-image-repository",
                 "nvidia/dcgm-exporter",
                 "-arguments",
-                "{-f=/etc/dcgm-exporter/default-counters.csv}"
+                "{-c=1000}"
             ],
             "env": {},
-            "buildFlags": "-tags=e2e"
+            "buildFlags": "-tags=k8s"
         },
         {
             "name": "Run Debug",

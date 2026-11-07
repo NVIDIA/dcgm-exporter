@@ -1,0 +1,63 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cluster",
+    srcs = [
+        "commands.go",
+        "dcgm.go",
+        "local.go",
+        "local_capabilities.go",
+        "local_deploy.go",
+        "local_device_plugin.go",
+        "local_dra.go",
+        "local_gpu_operator.go",
+        "local_helpers.go",
+        "local_images.go",
+        "local_lifecycle.go",
+        "local_nvswitch.go",
+        "local_runtime_preflight.go",
+        "poll.go",
+        "registry.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/cluster",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/e2e/capability",
+        "//internal/e2e/config",
+        "//internal/e2e/exec",
+        "//internal/e2e/image",
+        "@com_github_distribution_reference//:reference",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+        "@io_k8s_api//core/v1:core",
+    ],
+)
+
+go_test(
+    name = "cluster_test",
+    srcs = [
+        "commands_test.go",
+        "dcgm_test.go",
+        "helm_state_test.go",
+        "helpers_test.go",
+        "local_capabilities_test.go",
+        "local_device_plugin_test.go",
+        "local_dra_test.go",
+        "local_gpu_operator_test.go",
+        "local_helpers_test.go",
+        "local_images_test.go",
+        "local_lifecycle_test.go",
+        "local_nvswitch_test.go",
+        "local_runtime_preflight_test.go",
+        "local_test.go",
+        "poll_test.go",
+        "registry_test.go",
+        "runner_test.go",
+    ],
+    embed = [":cluster"],
+    deps = [
+        "//internal/e2e/capability",
+        "//internal/e2e/config",
+        "//internal/e2e/exec",
+        "@io_k8s_sigs_yaml//:yaml",
+    ],
+)

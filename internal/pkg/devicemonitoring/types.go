@@ -22,10 +22,21 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
+// Info describes one monitored DCGM entity. DeviceInfo is set for GPUs, GPU
+// instances, compute instances and GPU NVLinks, which carry their parent GPU's
+// device; switches, switch links, CPUs and CPU cores leave it zero.
+// InstanceInfo is set only for GPU instances and compute instances, and
+// ComputeInstanceInfo only for compute instances. ParentId and ParentType name
+// the entity's parent: the GPU instance of a compute instance, the GPU or
+// switch of a link, or the CPU of a core. A GPU instance has ParentType FE_GPU
+// but ParentId PARENT_ID_IGNORED, so its GPU comes from DeviceInfo. Top-level
+// entities use PARENT_ID_IGNORED and FE_NONE.
 type Info struct {
 	Entity       dcgm.GroupEntityPair
 	DeviceInfo   dcgm.Device
 	InstanceInfo *deviceinfo.GPUInstanceInfo
-	ParentId     uint
-	ParentType   dcgm.Field_Entity_Group
+	// ComputeInstanceInfo identifies the child compute instance when Entity is a GPU compute instance.
+	ComputeInstanceInfo *deviceinfo.ComputeInstanceInfo
+	ParentId            uint
+	ParentType          dcgm.Field_Entity_Group
 }

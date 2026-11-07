@@ -17,10 +17,8 @@
 package utils
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/gob"
 	"fmt"
 	"regexp"
 	"strings"
@@ -31,8 +29,10 @@ import (
 // invalidLabelCharRE matches any character that is not a letter, digit, or underscore.
 var invalidLabelCharRE = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
+// WaitWithTimeout bounds the caller wait without canceling the WaitGroup or its waiting goroutine.
 func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	c := make(chan struct{})
+	// This completion signal closes only when the original WaitGroup is done.
 	go func() {
 		defer close(c)
 		wg.Wait()
@@ -47,6 +47,7 @@ func WaitWithTimeout(wg *sync.WaitGroup, timeout time.Duration) error {
 	}
 }
 
+// RandUint64 reads a random 64-bit value or returns the entropy-source error.
 func RandUint64() (uint64, error) {
 	var num uint64
 	err := binary.Read(rand.Reader, binary.BigEndian, &num)
@@ -57,32 +58,7 @@ func RandUint64() (uint64, error) {
 	return num, nil
 }
 
-func DeepCopy[T any](src T) (dst T, err error) {
-	var buf bytes.Buffer
-
-	defer func() {
-		if r := recover(); r != nil {
-			// If there was a panic, return the zero value of T and the error.
-			dst = *new(T)
-			err = fmt.Errorf("panic occurred: %v", r)
-		}
-	}()
-
-	// Create an encoder and send a value.
-	err = gob.NewEncoder(&buf).Encode(src)
-	if err != nil {
-		return *new(T), err
-	}
-
-	// Create a new instance of the type T and decode into that.
-	err = gob.NewDecoder(&buf).Decode(&dst)
-	if err != nil {
-		return *new(T), err
-	}
-
-	return dst, nil
-}
-
+// CleanupOnError runs cleanup callbacks in slice order and returns an empty cleanup list.
 func CleanupOnError(cleanups []func()) []func() {
 	for _, cleanup := range cleanups {
 		cleanup()

@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "registry",
+    srcs = [
+        "registry.go",
+        "types.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/registry",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/collector",
+        "//internal/pkg/dcgmprovider",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "registry_test",
+    srcs = ["registry_test.go"],
+    embed = [":registry"],
+    deps = [
+        "//internal/pkg/collector",
+        "//internal/pkg/counters",
+        "//internal/pkg/dcgmerrors",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

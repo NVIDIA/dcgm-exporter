@@ -21,14 +21,32 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 )
 
+// isPerProcessMetric selects GPU utilization and framebuffer usage for process
+// attribution, under both the deprecated and the current field names.
 func isPerProcessMetric(fieldName string) bool {
-	return fieldName == metricGPUUtil || fieldName == metricFBUsed
+	switch fieldName {
+	case metricGPUUtil, metricGPUUtilRatio, metricFBUsed, metricFBUsedBytes:
+		return true
+	}
+	return false
+}
+
+// formatProcessTotal renders a pod's summed process value in the unit of its field.
+// getValueForMetric reports utilization as a whole percent, so the ratio field
+// publishes the same sum divided by 100. A pod with several active processes
+// can therefore report a ratio above 1.
+func formatProcessTotal(fieldName string, total uint64) string {
+	if fieldName == metricGPUUtilRatio {
+		return strconv.FormatFloat(float64(total)/100, 'f', -1, 64)
+	}
+	return strconv.FormatUint(total, 10)
 }
 
 // getGPUUUIDToDeviceID builds a mapping from GPU UUID to device ID based on the specified ID type.
@@ -51,11 +69,13 @@ func getGPUUUIDToDeviceID(devInfo deviceinfo.Provider, idType appconfig.Kubernet
 	return result
 }
 
+// perProcessMetrics holds utilization and memory observations indexed by PID.
 type perProcessMetrics struct {
 	pidToSMUtil map[uint32]uint32
 	pidToMemory map[uint32]uint64
 }
 
+// processRegularGPU queries whole-GPU process data and joins it to allocated pods.
 func (c *perProcessCollector) processRegularGPU(gpuUUID string, podInfos []PodInfo) (*perProcessMetrics, map[uint32]*PodInfo) {
 	var err error
 	data := &perProcessMetrics{}
@@ -74,6 +94,7 @@ func (c *perProcessCollector) processRegularGPU(gpuUUID string, podInfos []PodIn
 	return data, pidToPod
 }
 
+// getAllPIDs returns the union of observed utilization and memory process IDs.
 func (m *perProcessMetrics) getAllPIDs() []uint32 {
 	pidSet := make(map[uint32]struct{})
 	for pid := range m.pidToSMUtil {
@@ -85,9 +106,12 @@ func (m *perProcessMetrics) getAllPIDs() []uint32 {
 	return slices.Collect(maps.Keys(pidSet))
 }
 
+// getValueForMetric returns the observed value for a PID: whole-percent
+// utilization for the utilization fields, memory in MiB for the deprecated
+// framebuffer field, or memory in bytes for the current one.
 func (m *perProcessMetrics) getValueForMetric(fieldName string, pid uint32) (uint64, bool) {
 	switch fieldName {
-	case metricGPUUtil:
+	case metricGPUUtil, metricGPUUtilRatio:
 		if util, ok := m.pidToSMUtil[pid]; ok {
 			return uint64(util), true
 		}
@@ -95,29 +119,38 @@ func (m *perProcessMetrics) getValueForMetric(fieldName string, pid uint32) (uin
 		if mem, ok := m.pidToMemory[pid]; ok {
 			return mem / (1024 * 1024), true
 		}
+	case metricFBUsedBytes:
+		if mem, ok := m.pidToMemory[pid]; ok {
+			return mem, true
+		}
 	}
 	return 0, false
 }
 
+// perProcessDataMap joins device observations, process identities, and pod allocations.
 type perProcessDataMap struct {
 	metrics      map[string]*perProcessMetrics // keyed by GPU UUID or "<parentUUID>/<gpuInstanceID>" for MIG
 	pidToPod     map[uint32]*PodInfo
 	deviceToPods map[string][]PodInfo // keyed by GPU UUID or "<parentUUID>/<gpuInstanceID>" for MIG
 }
 
+// PIDMapper resolves observed PIDs against the current pod allocation list.
 type PIDMapper interface {
 	buildPIDToPodMap(pids []uint32, pods []PodInfo) map[uint32]*PodInfo
 }
 
+// perProcessCollector owns the NVML query and PID attribution collaborators.
 type perProcessCollector struct {
 	client    nvmlprovider.NVML
 	pidMapper PIDMapper
 }
 
+// getMIGMetricsKey distinguishes GPU instances under their parent UUID.
 func getMIGMetricsKey(parentUUID string, gpuInstanceID string) string {
 	return parentUUID + "/" + gpuInstanceID
 }
 
+// processMIGEnabledGPU joins MIG process memory to allocated GPU instances and pods.
 func (c *perProcessCollector) processMIGEnabledGPU(
 	gpu deviceinfo.GPUInfo,
 	deviceToPods map[string][]PodInfo,
@@ -154,6 +187,7 @@ func (c *perProcessCollector) processMIGEnabledGPU(
 	return metrics, pidToPod, migKeyToPods
 }
 
+// Collect builds per-device process attribution, skipping unallocated devices.
 func (c *perProcessCollector) Collect(gpuDeviceMap map[string]string, deviceToPods map[string][]PodInfo, devInfo deviceinfo.Provider) *perProcessDataMap {
 	result := &perProcessDataMap{
 		metrics:      make(map[string]*perProcessMetrics),

@@ -22,6 +22,7 @@ import (
 	"testing"
 )
 
+// TestPackageSystemdUnitContract pins the packaged service dependencies, restart policy, user, and HTTP listener.
 func TestPackageSystemdUnitContract(t *testing.T) {
 	data, err := os.ReadFile(repoPath(t, "packaging", "config-files", "systemd", "nvidia-dcgm-exporter.service"))
 	if err != nil {
@@ -35,7 +36,8 @@ func TestPackageSystemdUnitContract(t *testing.T) {
 		"StartLimitIntervalSec=0",
 		"User=root",
 		"PrivateTmp=false",
-		"ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/default-counters.csv",
+		"Environment=DCGM_EXPORTER_CONFIG_FILE=/etc/dcgm-exporter/config.yaml",
+		"ExecStart=/usr/bin/dcgm-exporter\n",
 		"Restart=on-failure",
 		"RestartSec=10s",
 		"WantedBy=multi-user.target",
@@ -43,6 +45,9 @@ func TestPackageSystemdUnitContract(t *testing.T) {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("systemd unit missing %q", want)
 		}
+	}
+	if strings.Contains(unit, "--config-file") {
+		t.Fatal("the unit must select the config file through the environment so a drop-in can override it")
 	}
 	if strings.Contains(unit, "EnvironmentFile=") {
 		t.Fatal("systemd unit references an environment file that is not packaged")

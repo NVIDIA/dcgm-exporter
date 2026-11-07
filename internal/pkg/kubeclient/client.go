@@ -22,12 +22,14 @@ import (
 )
 
 var (
-	inClusterConfigFunc     = rest.InClusterConfig
+	inClusterConfigFunc = rest.InClusterConfig
+	// Keep the client constructor replaceable for package tests.
 	newKubernetesClientFunc = func(config *rest.Config) (kubernetes.Interface, error) {
 		return kubernetes.NewForConfig(config)
 	}
 )
 
+// GetKubeClient constructs an in-cluster Kubernetes client or returns configuration/client errors.
 func GetKubeClient() (kubernetes.Interface, error) {
 	config, err := inClusterConfigFunc()
 	if err != nil {

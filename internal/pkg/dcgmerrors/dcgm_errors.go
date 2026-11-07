@@ -18,9 +18,18 @@ package dcgmerrors
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
+
+// versionMismatchText is DCGM's status text for DCGM_ST_VER_MISMATCH, in lower case.
+const versionMismatchText = "api version mismatch"
+
+// SupportedVersionHint is the "hint" log attribute for warnings that a DCGM
+// version fallback is in use.
+const SupportedVersionHint = "Make sure the DCGM library and the DCGM hostengine both run the DCGM version " +
+	"supported by this version of dcgm-exporter."
 
 // Diagnostic describes a known DCGM error for operator-facing diagnostics.
 type Diagnostic struct {
@@ -38,6 +47,60 @@ func Classify(err error) (Diagnostic, bool) {
 	}
 
 	return ClassifyCode(int(derr.Code))
+}
+
+// IsVersionMismatch reports whether err is DCGM_ST_VER_MISMATCH. Some go-dcgm
+// calls return only DCGM's status text, so the text is checked as well.
+func IsVersionMismatch(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if diagnostic, ok := Classify(err); ok {
+		return diagnostic.Code == dcgm.DCGM_ST_VER_MISMATCH
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), versionMismatchText)
+}
+
+// IsFatalScrapeError reports whether err means DCGM cannot safely serve
+// metrics. The HTTP server uses this shared taxonomy to end the application
+// instead of treating a fatal DCGM failure as an empty successful scrape.
+func IsFatalScrapeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if dcgmError, ok := err.(*dcgm.Error); ok && isFatalScrapeCode(int(dcgmError.Code)) {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, joinedErr := range joined.Unwrap() {
+			if IsFatalScrapeError(joinedErr) {
+				return true
+			}
+		}
+		return false
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return IsFatalScrapeError(wrapped.Unwrap())
+	}
+	return false
+}
+
+// isFatalScrapeCode reports whether a DCGM status leaves the exporter unable
+// to safely serve metrics. IsFatalScrapeError applies it to every branch of a
+// wrapped or joined error.
+func isFatalScrapeCode(code int) bool {
+	switch code {
+	case dcgm.DCGM_ST_CONNECTION_NOT_VALID,
+		dcgm.DCGM_ST_UNINITIALIZED,
+		dcgm.DCGM_ST_LIBRARY_NOT_FOUND,
+		dcgm.DCGM_ST_INIT_ERROR,
+		dcgm.DCGM_ST_NVML_NOT_LOADED:
+		return true
+	default:
+		return false
+	}
 }
 
 // ClassifyCode maps DCGM status codes to actionable operator guidance.

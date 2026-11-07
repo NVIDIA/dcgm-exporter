@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fieldexport",
+    srcs = ["policy.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/fieldexport",
+    visibility = ["//:__subpackages__"],
+    deps = ["@com_github_nvidia_go_dcgm//pkg/dcgm"],
+)
+
+go_test(
+    name = "fieldexport_test",
+    srcs = ["policy_test.go"],
+    embed = [":fieldexport"],
+    deps = ["@com_github_nvidia_go_dcgm//pkg/dcgm"],
+)

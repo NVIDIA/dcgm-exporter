@@ -18,31 +18,68 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/e2e/cluster"
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/config"
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 	e2eimage "github.com/NVIDIA/dcgm-exporter/internal/e2e/image"
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/scenario"
 )
 
+var (
+	dcgmVersionRE                   = regexp.MustCompile(`\b[0-9]+\.[0-9]+\.[0-9]+\b`)
+	errDCGMImagePlatformUnavailable = errors.New("configured DCGM image is not published for the host architecture")
+)
+
+// containerImageManifestIndex keeps the raw manifest list so a missing list can be told apart from an empty one.
+type containerImageManifestIndex struct {
+	Manifests json.RawMessage `json:"manifests"`
+}
+
+// containerImageManifest describes one image published by a Docker manifest index.
+type containerImageManifest struct {
+	Platform containerImagePlatform `json:"platform"`
+}
+
+// containerImagePlatform names the operating system and processor architecture for one image.
+type containerImagePlatform struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
+}
+
 // exporterImage returns the immutable exporter image reference when a digest is configured.
-func exporterImage(opts config.Tests) string {
+func exporterImage(opts config.TestOptions) string {
 	return pullImage(opts.ExporterImage)
 }
 
-// exporterUbuntuImage returns the Ubuntu exporter image reference for container tests.
-func exporterUbuntuImage(opts config.Tests) string {
-	return pullImage(opts.ExporterUbuntuImage)
+// completeImage preserves repository, tag, and digest for consumers that require a tag-bearing digest reference.
+func completeImage(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	ref, err := e2eimage.Parse(value)
+	if err != nil {
+		return value
+	}
+	return ref.String()
 }
 
 // localK3dExporterImage returns a tag-form image reference that k3d can import by name.
-func localK3dExporterImage(opts config.Tests) string {
-	return taggedImage(opts.ExporterImage)
+func localK3dExporterImage(opts config.TestOptions) string {
+	image, err := cluster.ResolveLocalK3DImage(opts.ExporterImage)
+	if err != nil {
+		return opts.ExporterImage
+	}
+	return image.Local
 }
 
 func pullImage(value string) string {
@@ -68,26 +105,16 @@ func taggedImage(value string) string {
 }
 
 // tagLocalK3dImage creates the tag-form alias needed when the primary image is digest-pinned.
-func tagLocalK3dImage(ctx context.Context, runner e2eexec.Runner, stdout io.Writer, opts config.Tests) error {
-	source := exporterImage(opts)
-	target := localK3dExporterImage(opts)
-	if source == "" || target == "" || source == target {
-		return nil
+func tagLocalK3dImage(ctx context.Context, runner e2eexec.Runner, stdout io.Writer, opts config.TestOptions) error {
+	image, err := cluster.ResolveLocalK3DImage(opts.ExporterImage)
+	if err != nil {
+		return fmt.Errorf("local exporter image: %w", err)
 	}
-	writeStep(stdout, "step", "docker_tag_exporter_image")
-	result := runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"tag", source, target}, Env: dockerConfigEnv(opts), Stdout: stdout, Stderr: stdout, LogName: "docker_tag_exporter_image", QuietOnSuccess: true})
-	if result.ExitCode != 0 {
-		output := strings.TrimSpace(string(result.Stderr))
-		if output == "" {
-			output = strings.TrimSpace(string(result.Stdout))
-		}
-		return fmt.Errorf("docker tag %s %s failed: %s", source, target, output)
-	}
-	return nil
+	return cluster.TagLocalK3DImage(ctx, runner, stdout, image, "docker_tag_exporter_image", dockerConfigEnv(opts))
 }
 
 // ensureDockerImageAvailable pulls an image only when it is not already present locally.
-func ensureDockerImageAvailable(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts config.Tests, image string) error {
+func ensureDockerImageAvailable(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts config.TestOptions, image string) error {
 	if image == "" {
 		return nil
 	}
@@ -115,8 +142,16 @@ func ensureDockerImageAvailable(ctx context.Context, stdout io.Writer, runner e2
 }
 
 // dcgmImage returns the immutable standalone DCGM image reference when a digest is configured.
-func dcgmImage(opts config.Tests) string {
+func dcgmImage(opts config.TestOptions) string {
 	return pullImage(opts.DCGMImage)
+}
+
+func gpuOperatorDCGMImage(opts config.TestOptions) string {
+	image := strings.TrimSpace(opts.GPUOperatorDCGMImage)
+	if image == "" {
+		image = cluster.DefaultGPUOperatorMainDCGMImage
+	}
+	return pullImage(image)
 }
 
 // detectArtifactMode distinguishes source checkout runs from prebuilt test roots.
@@ -143,20 +178,99 @@ func dirExists(path string) bool {
 }
 
 // ensureDCGMImageAvailable verifies the standalone DCGM image is accessible before planning required probes.
-func ensureDCGMImageAvailable(ctx context.Context, runner e2eexec.Runner, opts config.Tests) error {
+func ensureDCGMImageAvailable(ctx context.Context, runner e2eexec.Runner, opts config.TestOptions) error {
 	image := dcgmImage(opts)
 	if image == "" {
 		return fmt.Errorf("selected DCGM-probed scenarios require --dcgm-image or E2E_DCGM_IMAGE")
 	}
-	result := runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"manifest", "inspect", image}, Env: dockerConfigEnv(opts)})
-	if result.ExitCode == 0 {
-		return nil
+	if err := checkContainerImageAvailable(ctx, runner, opts, image); err != nil {
+		return fmt.Errorf("selected DCGM-probed scenarios require accessible DCGM image %s: %w", image, err)
 	}
-	localResult := runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"image", "inspect", image}, Env: dockerConfigEnv(opts)})
-	if localResult.ExitCode == 0 {
-		return nil
+	return nil
+}
+
+// ensureDCGMImageVersion verifies that the selected image provides the pinned nv-hostengine version.
+func ensureDCGMImageVersion(ctx context.Context, runner e2eexec.Runner, opts config.TestOptions) error {
+	expected := strings.TrimSpace(opts.Dependencies.DCGMVersion)
+	if expected == "" {
+		return fmt.Errorf("selected remote DCGM scenarios require --dcgm-version, E2E_DCGM_VERSION, or DCGM_VERSION")
 	}
-	return fmt.Errorf("selected DCGM-probed scenarios require accessible DCGM image %s: %s", image, resultText(result))
+
+	image := dcgmImage(opts)
+	actual, err := dcgmImageVersion(ctx, runner, image, dockerConfigEnv(opts))
+	if err != nil {
+		return err
+	}
+
+	if actual != expected {
+		return fmt.Errorf("configured DCGM image %s provides nv-hostengine %s, want %s", image, actual, expected)
+	}
+	return nil
+}
+
+// dcgmImageVersion runs nv-hostengine --version in a DCGM image and returns
+// the DCGM version it reports. An image not published for this platform
+// returns errDCGMImagePlatformUnavailable.
+func dcgmImageVersion(ctx context.Context, runner e2eexec.Runner, image string, dockerEnv []string) (string, error) {
+	result := runner.Run(ctx, e2eexec.Command{
+		Name: "docker",
+		Args: []string{"run", "--rm", "--entrypoint", "/usr/bin/nv-hostengine", image, "--version"},
+		Env:  dockerEnv,
+	})
+	if result.Err != nil || result.ExitCode != 0 {
+		output := strings.ToLower(string(result.Stdout) + "\n" + string(result.Stderr))
+		if strings.Contains(output, "no matching manifest for linux/") {
+			return "", fmt.Errorf("%w: %s", errDCGMImagePlatformUnavailable, image)
+		}
+		return "", fmt.Errorf("configured DCGM image %s could not run nv-hostengine --version: %s", image, resultText(result))
+	}
+
+	output := versionOutput(result)
+	version := dcgmVersionRE.FindString(output)
+	if version == "" {
+		return "", fmt.Errorf("configured DCGM image %s did not report a parseable nv-hostengine version: %s", image, output)
+	}
+	return version, nil
+}
+
+// ensureHostDCGMVersion verifies that fallback dcgmi matches the pinned DCGM version.
+func ensureHostDCGMVersion(ctx context.Context, runner e2eexec.Runner, opts config.TestOptions) error {
+	expected := strings.TrimSpace(opts.Dependencies.DCGMVersion)
+	if expected == "" {
+		return fmt.Errorf("host DCGM probe fallback requires --dcgm-version, E2E_DCGM_VERSION, or DCGM_VERSION")
+	}
+	actual, err := hostDCGMVersion(ctx, runner)
+	if err != nil {
+		return fmt.Errorf("host DCGM probe fallback: %w", err)
+	}
+
+	if actual != expected {
+		return fmt.Errorf("host dcgmi provides DCGM %s, want %s", actual, expected)
+	}
+	return nil
+}
+
+// hostDCGMVersion runs the host's dcgmi --version and returns the DCGM version
+// it reports.
+func hostDCGMVersion(ctx context.Context, runner e2eexec.Runner) (string, error) {
+	result := runner.Run(ctx, e2eexec.Command{Name: "dcgmi", Args: []string{"--version"}})
+	if result.Err != nil || result.ExitCode != 0 {
+		return "", fmt.Errorf("could not run dcgmi --version: %s", resultText(result))
+	}
+
+	output := versionOutput(result)
+	version := dcgmVersionRE.FindString(output)
+	if version == "" {
+		return "", fmt.Errorf("host dcgmi did not report a parseable version: %s", output)
+	}
+	return version, nil
+}
+
+// versionOutput returns a successful command's stdout, then its stderr. A first
+// docker run writes image pull progress to stderr, so the version on stdout
+// must be searched first.
+func versionOutput(result e2eexec.Result) string {
+	return strings.TrimSpace(string(result.Stdout) + "\n" + string(result.Stderr))
 }
 
 // resultText extracts the most useful failure text from a command result.
@@ -173,27 +287,170 @@ func resultText(result e2eexec.Result) string {
 	return fmt.Sprintf("command exited with status %d", result.ExitCode)
 }
 
-// validateLiveImageConfig ensures image-backed suites have a concrete exporter image before execution.
-func validateLiveImageConfig(_ string, mode artifactMode, opts config.Tests) error {
-	if opts.BuildOnly {
-		return nil
-	}
-	if err := validateOptionalImage("--exporter-ubuntu-image", opts.ExporterUbuntuImage); err != nil {
-		return err
-	}
-	cfg := config.Config{Tests: opts}
-	imageRequired := len(scenario.SelectedForSuite(scenario.Catalog, scenario.SuiteContainer, cfg)) != 0 ||
-		len(scenario.SelectedForSuite(scenario.Catalog, scenario.SuiteK8s, cfg)) != 0
-	if !imageRequired {
-		return nil
-	}
-	if opts.ExporterImage == "" {
-		if mode == artifactModePackage {
-			return fmt.Errorf("prebuilt test environment does not define E2E_EXPORTER_IMAGE")
+// validateSelectedContainerImages checks selected image settings before E2E checks or changes the host.
+func validateSelectedContainerImages(opts config.TestOptions, requirements []scenario.SelectedRequirement) error {
+	checked := map[scenario.ContainerImage]struct{}{}
+	for _, selected := range requirements {
+		if !scenario.IsImageRequirement(selected.Requirement) {
+			continue
 		}
-		return fmt.Errorf("container and Kubernetes validation require --exporter-image or E2E_EXPORTER_IMAGE; source runs should use make test-e2e")
+		if _, ok := checked[selected.Requirement.Image]; ok {
+			continue
+		}
+		checked[selected.Requirement.Image] = struct{}{}
+		_, err := configuredContainerImage(opts, selected.Requirement.Image)
+		if err != nil {
+			return fmt.Errorf(
+				"container image %s required by %s: %w",
+				selected.Requirement.Image,
+				strings.Join(selected.RequiredBy, ", "),
+				err,
+			)
+		}
 	}
-	return validateRequiredImage("--exporter-image", opts.ExporterImage)
+	return nil
+}
+
+// checkSelectedContainerImages verifies controller-local images required by selected scenarios without pulling them.
+// It runs after Docker login so registry checks use the credentials selected for this test run; external Kubernetes images are left to the target cluster.
+func checkSelectedContainerImages(
+	ctx context.Context,
+	runner e2eexec.Runner,
+	opts config.TestOptions,
+	requirements []scenario.SelectedRequirement,
+) error {
+	checked := map[scenario.ContainerImage]struct{}{}
+	for _, selected := range requirements {
+		if !scenario.RequiresLocalImageCheck(selected.Requirement) {
+			continue
+		}
+		if _, ok := checked[selected.Requirement.Image]; ok {
+			continue
+		}
+		checked[selected.Requirement.Image] = struct{}{}
+		image, err := configuredContainerImage(opts, selected.Requirement.Image)
+		if err != nil {
+			return fmt.Errorf(
+				"container image %s required by %s: %w",
+				selected.Requirement.Image,
+				strings.Join(selected.RequiredBy, ", "),
+				err,
+			)
+		}
+		if err := checkContainerImageAvailable(ctx, runner, opts, image); err != nil {
+			return fmt.Errorf(
+				"container image %s required by %s is unavailable: %w",
+				image,
+				strings.Join(selected.RequiredBy, ", "),
+				err,
+			)
+		}
+	}
+	return nil
+}
+
+// configuredContainerImage reads one named scenario image from the test options and validates it.
+func configuredContainerImage(opts config.TestOptions, name scenario.ContainerImage) (string, error) {
+	var flag, value string
+	switch name {
+	case scenario.ContainerImageDCGM:
+		flag, value = "--dcgm-image", opts.DCGMImage
+	case scenario.ContainerImageExporter:
+		flag, value = "--exporter-image", opts.ExporterImage
+	case scenario.ContainerImageBusybox:
+		flag, value = "--busybox-image", opts.BusyboxImage
+	case scenario.ContainerImageCUDAWorkload:
+		flag, value = "--cuda-workload-image", opts.CUDAWorkloadImage
+	case scenario.ContainerImageGPUOperatorDCGM:
+		flag, value = "--gpu-operator-dcgm-image", gpuOperatorDCGMImage(opts)
+	default:
+		return "", fmt.Errorf("unknown scenario image %q", name)
+	}
+	if err := validateRequiredImage(flag, value); err != nil {
+		return "", err
+	}
+	return pullImage(value), nil
+}
+
+// writeSelectedImageReferences records the resolved images required by this run.
+func writeSelectedImageReferences(w io.Writer, opts config.TestOptions, requirements []scenario.SelectedRequirement) error {
+	printed := map[scenario.ContainerImage]struct{}{}
+	for _, selected := range requirements {
+		if !scenario.IsImageRequirement(selected.Requirement) {
+			continue
+		}
+		if _, ok := printed[selected.Requirement.Image]; ok {
+			continue
+		}
+		printed[selected.Requirement.Image] = struct{}{}
+		image, err := configuredContainerImage(opts, selected.Requirement.Image)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "[e2e] image %s: %s\n", selected.Requirement.Image, image); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkContainerImageAvailable checks local Docker storage first, then the registry manifest for this host platform.
+// It never pulls an image; suite setup remains responsible for any image it must import or run.
+func checkContainerImageAvailable(ctx context.Context, runner e2eexec.Runner, opts config.TestOptions, image string) error {
+	local := runner.Run(ctx, e2eexec.Command{
+		Name: "docker",
+		Args: []string{"image", "inspect", image},
+		Env:  dockerConfigEnv(opts),
+	})
+	if local.ExitCode == 0 {
+		return nil
+	}
+	remote := runner.Run(ctx, e2eexec.Command{
+		Name: "docker",
+		Args: []string{"manifest", "inspect", image},
+		Env:  dockerConfigEnv(opts),
+	})
+	if remote.ExitCode != 0 {
+		return fmt.Errorf(
+			"docker image inspect: %s; docker manifest inspect: %s",
+			resultText(local),
+			resultText(remote),
+		)
+	}
+	if err := manifestSupportsHostPlatform(remote.Stdout); err != nil {
+		return fmt.Errorf(
+			"docker image inspect: %s; docker manifest inspect: %s; check manifest platform: %w",
+			resultText(local),
+			resultText(remote),
+			err,
+		)
+	}
+	return nil
+}
+
+// manifestSupportsHostPlatform rejects a manifest index that does not publish an image for this host.
+// A single-image manifest has no manifest list, while an empty list has no image to select.
+func manifestSupportsHostPlatform(manifest []byte) error {
+	var index containerImageManifestIndex
+	if err := json.Unmarshal(manifest, &index); err != nil {
+		return fmt.Errorf("decode manifest JSON: %w", err)
+	}
+	if index.Manifests == nil {
+		return nil
+	}
+	var entries []containerImageManifest
+	if err := json.Unmarshal(index.Manifests, &entries); err != nil {
+		return fmt.Errorf("decode manifest list: %w", err)
+	}
+	if len(entries) == 0 {
+		return errors.New("image manifest list contains no platform entries")
+	}
+	for _, item := range entries {
+		if item.Platform.OS == runtime.GOOS && item.Platform.Architecture == runtime.GOARCH {
+			return nil
+		}
+	}
+	return fmt.Errorf("image is not published for %s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
 func validateRequiredImage(name, value string) error {
@@ -204,11 +461,4 @@ func validateRequiredImage(name, value string) error {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
-}
-
-func validateOptionalImage(name, value string) error {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return validateRequiredImage(name, value)
 }

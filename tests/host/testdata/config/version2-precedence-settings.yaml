@@ -1,0 +1,20 @@
+version: 2
+metrics:
+  - name: gpu
+    enrichment: {kubernetes: false, container: false, hpc_jobs: false}
+    entities:
+      gpu:
+        policy: explicit
+        gpus: [0]
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1
+    listen: ":9401"
+observability:
+  logs:
+    format: json

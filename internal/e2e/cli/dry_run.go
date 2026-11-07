@@ -17,66 +17,81 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/capability"
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/config"
-	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/scenario"
 )
 
-// runDryRun probes enough host capability data to show scenario decisions without mutating the host or cluster.
-func runDryRun(ctx context.Context, stdout io.Writer, root string, runner e2eexec.Runner, opts config.Tests) error {
-	cfg := config.Config{Tests: opts}
+// runDryRun reports existing catalog selection and prerequisites without
+// building binaries, probing hardware, resolving images, or creating resources.
+func runDryRun(stdout io.Writer, opts config.TestOptions, selected []scenario.Scenario) error {
 	writeStep(stdout, "dry-run", "host and cluster changes are disabled")
-
-	probeDCGMImage := ""
-	expectedDCGMVersion := ""
-	if dcgmImageNeeded(opts) {
-		if err := validateRequiredImage("--dcgm-image", opts.DCGMImage); err != nil {
-			return err
-		}
-		if err := ensureDCGMImageAvailable(ctx, runner, opts); err != nil {
-			return err
-		}
-		probeDCGMImage = dcgmImage(opts)
-		expectedDCGMVersion = strings.TrimSpace(opts.Dependencies.DCGMVersion)
-		if expectedDCGMVersion == "" {
-			return fmt.Errorf("selected DCGM-probed scenarios require --dcgm-version, E2E_DCGM_VERSION, or DCGM_VERSION")
-		}
-	}
-	caps := capability.ProbeHost(ctx, runner, capability.ProbeOptions{
-		DryRun:              true,
-		FailureInjection:    featureModeEnabled(opts.DCGMFailureInjection),
-		MIGConfigure:        opts.MIGConfigure,
-		DCGMImage:           probeDCGMImage,
-		DockerEnv:           dockerConfigEnv(opts),
-		ExpectedDCGMVersion: expectedDCGMVersion,
-	}).Snapshot
+	writeDryRunSelection(stdout, selected)
+	writeDryRunRequirements(stdout, opts, selected)
 	writeSection(stdout, "Capabilities")
-	writeCapabilitySummary(stdout, "Host", "host:", capability.HostNames(), caps, opts.Verbose)
-	writeCapabilitySummary(stdout, "Cluster", "cluster:", capability.ClusterNames(), caps, opts.Verbose)
-	writeCapabilitySummary(stdout, "Remote DCGM", "dcgm:", capability.DCGMNames(), caps, opts.Verbose)
-
-	plan, err := scenario.Select(scenario.Catalog, caps, cfg)
-	if err != nil {
-		return err
-	}
-	writeSection(stdout, "Scenario plan")
-	if err := plan.WriteSummary(stdout); err != nil {
-		return err
-	}
-	writeVerbosePlanLabels(stdout, opts.Verbose, plan)
+	fmt.Fprintln(stdout, "  not probed during dry-run; capability-gated Kubernetes scenarios remain unknown until execution")
 	fmt.Fprintln(stdout, "[e2e] PASS dcgm_exporter_e2e_scenario_plan")
-	fmt.Fprintln(stdout, "[e2e] Dry-run passed: scenario planning completed")
+	fmt.Fprintln(stdout, "[e2e] Dry-run passed: selected work and prerequisites described")
 	fmt.Fprintln(stdout, "[e2e] Dry-run finished: no scenarios executed")
 	return nil
 }
 
-// writeCapabilitySummary prints capability status rows in the dry-run report.
+// writeDryRunSelection prints the selected scenario selectors grouped by suite.
+func writeDryRunSelection(w io.Writer, selected []scenario.Scenario) {
+	writeSection(w, "Selected work")
+	for _, suiteName := range scenario.AllSuites() {
+		var entries []scenario.Scenario
+		for _, entry := range selected {
+			if entry.Suite == suiteName {
+				entries = append(entries, entry)
+			}
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "%s:\n", suiteName)
+		for _, entry := range entries {
+			fmt.Fprintf(w, "  %s\n", entry.Selector())
+		}
+	}
+}
+
+// writeDryRunRequirements prints the artifacts and preparation required by the selected scenarios.
+func writeDryRunRequirements(w io.Writer, opts config.TestOptions, selected []scenario.Scenario) {
+	writeSection(w, "Required artifacts and preparation")
+	requirements := scenario.RequirementsFor(selected, runConditions(opts))
+	if len(requirements) == 0 {
+		fmt.Fprintln(w, "  none")
+		return
+	}
+	for _, item := range requirements {
+		description := string(item.Requirement.Kind)
+		if scenario.IsImageRequirement(item.Requirement) {
+			if image, err := configuredContainerImage(opts, item.Requirement.Image); err == nil {
+				description += " " + image
+			} else {
+				description += " " + string(item.Requirement.Image) + " (configure its image reference before execution)"
+			}
+		}
+		fmt.Fprintf(w, "  %s: %s\n", description, strings.Join(item.RequiredBy, ", "))
+	}
+}
+
+// containsCapabilityProbeInput reports whether inputs contains one exact capability-probe input.
+func containsCapabilityProbeInput(inputs []scenario.CapabilityProbeInput, wanted scenario.CapabilityProbeInput) bool {
+	for _, input := range inputs {
+		if input == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// writeCapabilitySummary prints capability statuses and, in verbose mode, their evidence.
 func writeCapabilitySummary(w io.Writer, title, prefix string, names []string, caps capability.Snapshot, verbose bool) {
 	fmt.Fprintf(w, "%s:\n", title)
 	byStatus := map[capability.Status][]capability.Capability{}

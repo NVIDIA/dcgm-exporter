@@ -20,6 +20,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -36,6 +37,8 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
+// TestIsDCGMExpXIDErrorsTotalEnabled checks that the helper returns true when the XID errors total counter is
+// in the list, and false for an empty list or one holding only the clock events count counter.
 func TestIsDCGMExpXIDErrorsTotalEnabled(t *testing.T) {
 	tests := []struct {
 		name string
@@ -62,6 +65,8 @@ func TestIsDCGMExpXIDErrorsTotalEnabled(t *testing.T) {
 	}
 }
 
+// TestXIDTotalCollectorCollectsBetweenScrapes checks that XID samples from two background polls add up per XID
+// code before a scrape, and the total series carry no window label.
 func TestXIDTotalCollectorCollectsBetweenScrapes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -90,10 +95,14 @@ func TestXIDTotalCollectorCollectsBetweenScrapes(t *testing.T) {
 	assert.Equal(t, "2", metricValueByLabel(t, metrics, "xid", "42"))
 	assert.Equal(t, "1", metricValueByLabel(t, metrics, "xid", "46"))
 	for _, metric := range metrics {
-		assert.NotContains(t, metric.Labels, windowSizeInMSLabel)
+		assert.NotContains(t, metric.Labels, WindowSizeInMSLabel)
+		assert.Positive(t, metric.Timestamp)
+		assert.Equal(t, collector.initialSince.UnixMicro(), metric.StartTimestamp)
 	}
 }
 
+// TestXIDTotalCollectorUsesReturnedCursor checks that the second poll asks DCGM for values since the timestamp
+// the first poll returned, and its samples add to the earlier totals.
 func TestXIDTotalCollectorUsesReturnedCursor(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -123,6 +132,8 @@ func TestXIDTotalCollectorUsesReturnedCursor(t *testing.T) {
 	assert.Equal(t, "1", metricValueByLabel(t, metrics, "xid", "46"))
 }
 
+// TestXIDTotalCollectorSkipsBlankStatusFailedAndNoErrorSamples checks that blank values, failed samples, and XID
+// 0 are not counted; only real XID codes produce series.
 func TestXIDTotalCollectorSkipsBlankStatusFailedAndNoErrorSamples(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -147,6 +158,8 @@ func TestXIDTotalCollectorSkipsBlankStatusFailedAndNoErrorSamples(t *testing.T) 
 	assert.Equal(t, "1", metricValueByLabel(t, metrics, "xid", "46"))
 }
 
+// TestXIDTotalCollectorScrapeDoesNotCallGetValuesSince checks that repeated GetMetrics calls return the same
+// totals without polling DCGM again.
 func TestXIDTotalCollectorScrapeDoesNotCallGetValuesSince(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -160,14 +173,28 @@ func TestXIDTotalCollectorScrapeDoesNotCallGetValuesSince(t *testing.T) {
 
 	require.NoError(t, collector.collectNewEvents())
 
+	observed := collector.initialSince.Add(time.Minute)
+	collector.now = func() time.Time { return observed }
+
 	first, err := collector.GetMetrics()
 	require.NoError(t, err)
+	require.Len(t, first[collector.counter], 1)
+
+	assert.Equal(t, observed.UnixMicro(), first[collector.counter][0].Timestamp)
+	observed = observed.Add(time.Second)
 	second, err := collector.GetMetrics()
 	require.NoError(t, err)
 
+	require.Len(t, second[collector.counter], len(first[collector.counter]))
+	for i := range first[collector.counter] {
+		assert.Equal(t, observed.UnixMicro(), second[collector.counter][i].Timestamp)
+		first[collector.counter][i].Timestamp = second[collector.counter][i].Timestamp
+	}
 	assert.Equal(t, first, second)
 }
 
+// TestXIDTotalCollectorGetValuesSinceErrorIncludesPollContext checks that a GetValuesSince failure returns an
+// error that names the group handle, field group handle, and since timestamp.
 func TestXIDTotalCollectorGetValuesSinceErrorIncludesPollContext(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -176,7 +203,7 @@ func TestXIDTotalCollectorGetValuesSinceErrorIncludesPollContext(t *testing.T) {
 
 	since := time.Unix(123, 0)
 	collector.stateMu.Lock()
-	collector.cursors[group] = since
+	collector.cursors[newCumulativeWatchCursorKey(group, fieldGroup)] = since
 	collector.stateMu.Unlock()
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
@@ -190,6 +217,8 @@ func TestXIDTotalCollectorGetValuesSinceErrorIncludesPollContext(t *testing.T) {
 	assert.ErrorContains(t, err, "since_timestamp=1970-01-01T00:02:03Z")
 }
 
+// TestXIDTotalCollectorPollErrorsDoNotMutateState checks that an UpdateAllFields failure or a GetValuesSince
+// failure leaves the totals and the cursor unchanged.
 func TestXIDTotalCollectorPollErrorsDoNotMutateState(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -204,22 +233,71 @@ func TestXIDTotalCollectorPollErrorsDoNotMutateState(t *testing.T) {
 	require.NoError(t, collector.collectNewEvents())
 
 	wantTotals := collector.snapshotTotals()
-	require.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	require.True(t, stableCursor.Equal(xidCursor(collector, group, fieldGroup)))
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(errors.New("update failed"))
 	err := collector.collectNewEvents()
 	require.Error(t, err)
 	assert.Equal(t, wantTotals, collector.snapshotTotals())
-	assert.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	assert.True(t, stableCursor.Equal(xidCursor(collector, group, fieldGroup)))
 
 	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
 	mockDCGM.EXPECT().GetValuesSince(group, fieldGroup, stableCursor).Return(nil, time.Time{}, errors.New("get failed"))
 	err = collector.collectNewEvents()
 	require.Error(t, err)
 	assert.Equal(t, wantTotals, collector.snapshotTotals())
-	assert.True(t, stableCursor.Equal(collector.cursorForGroup(group)))
+	assert.True(t, stableCursor.Equal(xidCursor(collector, group, fieldGroup)))
 }
 
+// TestXIDTotalCollectorSplitPollErrorDoesNotPartiallyMutateState checks that when the second field group's poll
+// fails, values from the first field group in the same poll are dropped: totals and cursors stay empty.
+func TestXIDTotalCollectorSplitPollErrorDoesNotPartiallyMutateState(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := setMockDCGMClient(t, ctrl)
+	group := testGroupHandle(1)
+	firstFieldGroup := testFieldHandle(1)
+	secondFieldGroup := testFieldHandle(2)
+	collector := newTestXIDTotalCollectorWithFieldGroups(
+		t,
+		ctrl,
+		1,
+		[]dcgm.GroupHandle{group},
+		[]dcgm.FieldHandle{firstFieldGroup, secondFieldGroup},
+		nil,
+	)
+	defer collector.Cleanup()
+
+	mockDCGM.EXPECT().UpdateAllFields().Return(nil)
+	mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, collector.initialSince).Return(
+		[]dcgm.FieldValue_v2{xidTotalValue(0, 42, 0)},
+		time.Unix(10, 0),
+		nil,
+	)
+	mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, collector.initialSince).Return(
+		nil,
+		time.Time{},
+		errors.New("second field group failed"),
+	)
+
+	err := collector.collectNewEvents()
+
+	require.Error(t, err)
+	assert.Empty(t, collector.snapshotTotals())
+	collector.stateMu.RLock()
+	defer collector.stateMu.RUnlock()
+	assert.Empty(t, collector.cursors)
+}
+
+// xidCursor reads the saved cursor for one XID watch pair.
+func xidCursor(c *xidTotalCollector, group dcgm.GroupHandle, fieldGroup dcgm.FieldHandle) time.Time {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+
+	return c.cursors[newCumulativeWatchCursorKey(group, fieldGroup)]
+}
+
+// TestXIDTotalCollectorConcurrentCollectAndScrape checks that polling and GetMetrics running at the same time on
+// two goroutines return no errors.
 func TestXIDTotalCollectorConcurrentCollectAndScrape(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -259,6 +337,8 @@ func TestXIDTotalCollectorConcurrentCollectAndScrape(t *testing.T) {
 	}
 }
 
+// TestXIDTotalCollectorCollectsMultipleGroupsAndGPUs checks that one poll reads every watch group and keeps the
+// counts for each GPU in separate series.
 func TestXIDTotalCollectorCollectsMultipleGroupsAndGPUs(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -285,6 +365,8 @@ func TestXIDTotalCollectorCollectsMultipleGroupsAndGPUs(t *testing.T) {
 	assert.Equal(t, "1", metricValueByGPUAndLabel(t, metrics, "1", "xid", "46"))
 }
 
+// TestXIDTotalCollectorRestartStartsWithEmptyTotals checks that a new collector starts with no XID series even
+// after an earlier collector counted some.
 func TestXIDTotalCollectorRestartStartsWithEmptyTotals(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockDCGM := setMockDCGMClient(t, ctrl)
@@ -307,20 +389,23 @@ func TestXIDTotalCollectorRestartStartsWithEmptyTotals(t *testing.T) {
 	assert.Empty(t, got[xidTotalCounter()])
 }
 
+// TestXIDTotalCollectorInitialCursorStartsAtCollectorCreation checks that the first poll cursor is set to the
+// time the collector was created, not the zero time.
 func TestXIDTotalCollectorInitialCursorStartsAtCollectorCreation(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	setMockDCGMClient(t, ctrl)
+	synctest.Test(t, func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		setMockDCGMClient(t, ctrl)
+		expected := time.Now()
 
-	before := time.Now()
-	collector, _, _ := newTestXIDTotalCollector(t, ctrl, nil)
-	defer collector.Cleanup()
-	after := time.Now()
+		collector, _, _ := newTestXIDTotalCollector(t, ctrl, nil)
+		defer collector.Cleanup()
 
-	require.False(t, collector.initialSince.IsZero())
-	assert.False(t, collector.initialSince.Before(before))
-	assert.False(t, collector.initialSince.After(after))
+		assert.Equal(t, expected, collector.initialSince)
+	})
 }
 
+// TestXIDTotalCollectorCleanupStopsPollerBeforeWatchCleanup checks that Cleanup waits for the poller to stop
+// before it runs the watch cleanup.
 func TestXIDTotalCollectorCleanupStopsPollerBeforeWatchCleanup(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	setMockDCGMClient(t, ctrl)
@@ -347,6 +432,8 @@ func TestXIDTotalCollectorCleanupStopsPollerBeforeWatchCleanup(t *testing.T) {
 	}
 }
 
+// TestXIDTotalCollectorCleanupIsIdempotent checks that calling Cleanup twice runs the watch cleanup once and
+// closes CleanupComplete.
 func TestXIDTotalCollectorCleanupIsIdempotent(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	setMockDCGMClient(t, ctrl)
@@ -361,9 +448,16 @@ func TestXIDTotalCollectorCleanupIsIdempotent(t *testing.T) {
 	collector.Cleanup()
 	collector.Cleanup()
 
+	select {
+	case <-collector.CleanupComplete():
+	case <-time.After(time.Second):
+		t.Fatal("watch cleanup did not complete")
+	}
+
 	assert.Equal(t, 1, cleanupCalls)
 }
 
+// setMockDCGMClient installs a mock process client and restores the previous client after the test.
 func setMockDCGMClient(t *testing.T, ctrl *gomock.Controller) *mockdcgm.MockDCGM {
 	t.Helper()
 
@@ -375,6 +469,7 @@ func setMockDCGMClient(t *testing.T, ctrl *gomock.Controller) *mockdcgm.MockDCGM
 	return mockDCGM
 }
 
+// newTestXIDTotalCollector creates a one-GPU XID total collector fixture.
 func newTestXIDTotalCollector(
 	t *testing.T, ctrl *gomock.Controller, cleanups []func(),
 ) (*xidTotalCollector, dcgm.GroupHandle, dcgm.FieldHandle) {
@@ -385,6 +480,72 @@ func newTestXIDTotalCollector(
 	return collector, group, fieldGroup
 }
 
+// TestXIDTotalCollectorPollsAllFieldGroups checks that each field group in a watch is polled from its own saved
+// cursor, and XIDs from both polls add to one total.
+func TestXIDTotalCollectorPollsAllFieldGroups(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGM := setMockDCGMClient(t, ctrl)
+
+	group := testGroupHandle(1)
+	firstFieldGroup := testFieldHandle(1)
+	secondFieldGroup := testFieldHandle(2)
+	collector := newTestXIDTotalCollectorWithFieldGroups(
+		t, ctrl, 1, []dcgm.GroupHandle{group}, []dcgm.FieldHandle{firstFieldGroup, secondFieldGroup}, nil,
+	)
+	defer collector.Cleanup()
+
+	firstCursor := time.Unix(10, 0)
+	secondCursor := time.Unix(11, 0)
+	gomock.InOrder(
+		mockDCGM.EXPECT().UpdateAllFields().Return(nil),
+		mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, collector.initialSince).Return(nil, firstCursor, nil),
+		mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, collector.initialSince).Return([]dcgm.FieldValue_v2{
+			xidTotalValue(0, 42, 0),
+		}, secondCursor, nil),
+		mockDCGM.EXPECT().UpdateAllFields().Return(nil),
+		mockDCGM.EXPECT().GetValuesSince(group, firstFieldGroup, firstCursor).Return(nil, time.Unix(20, 0), nil),
+		mockDCGM.EXPECT().GetValuesSince(group, secondFieldGroup, secondCursor).Return([]dcgm.FieldValue_v2{
+			xidTotalValue(0, 42, 0),
+		}, time.Unix(21, 0), nil),
+	)
+
+	require.NoError(t, collector.collectNewEvents())
+	require.NoError(t, collector.collectNewEvents())
+
+	got, err := collector.GetMetrics()
+	require.NoError(t, err)
+	metrics := got[xidTotalCounter()]
+	assert.Equal(t, "2", metricValueByLabel(t, metrics, "xid", "42"))
+}
+
+// newTestXIDTotalCollectorWithFieldGroups creates a collector fixture with one watch per field group.
+func newTestXIDTotalCollectorWithFieldGroups(
+	t *testing.T,
+	ctrl *gomock.Controller,
+	gpuCount int,
+	groups []dcgm.GroupHandle,
+	fieldGroups []dcgm.FieldHandle,
+	cleanups []func(),
+) *xidTotalCollector {
+	t.Helper()
+
+	mockDeviceWatcher := mockdevicewatcher.NewMockWatcher(ctrl)
+	mockGPUDeviceInfo := testutils.MockGPUDeviceInfo(ctrl, gpuCount, nil)
+	mockGPUDeviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+	mockDeviceWatcher.EXPECT().WatchDeviceFieldGroups(gomock.Any(), gomock.Any()).
+		Return(groups, fieldGroups, cleanups, nil)
+
+	counterList := counters.CounterList{xidTotalCounter()}
+	deviceWatchList := devicewatchlistmanager.NewWatchList(mockGPUDeviceInfo, nil, nil, mockDeviceWatcher, int64(time.Hour/time.Second))
+
+	collector, err := NewXIDTotalCollector(counterList, "localhost", &appconfig.Config{CollectInterval: int(time.Hour / time.Millisecond)}, *deviceWatchList)
+	require.NoError(t, err)
+
+	return collector.(*xidTotalCollector)
+}
+
+// newTestXIDTotalCollectorWithGroups creates a collector fixture for caller-supplied GPU groups.
 func newTestXIDTotalCollectorWithGroups(
 	t *testing.T, ctrl *gomock.Controller, gpuCount int, groups []dcgm.GroupHandle, cleanups []func(),
 ) (*xidTotalCollector, dcgm.FieldHandle) {
@@ -407,18 +568,21 @@ func newTestXIDTotalCollectorWithGroups(
 	return collector.(*xidTotalCollector), fieldGroup
 }
 
+// testGroupHandle creates a group handle with a stable test value.
 func testGroupHandle(handle uintptr) dcgm.GroupHandle {
 	group := dcgm.GroupHandle{}
 	group.SetHandle(handle)
 	return group
 }
 
+// testFieldHandle creates a field-group handle with a stable test value.
 func testFieldHandle(handle uintptr) dcgm.FieldHandle {
 	fieldGroup := dcgm.FieldHandle{}
 	fieldGroup.SetHandle(handle)
 	return fieldGroup
 }
 
+// xidTotalCounter returns the exporter counter used by cumulative XID tests.
 func xidTotalCounter() counters.Counter {
 	return counters.Counter{
 		FieldID:   dcgm.Short(counters.DCGMXIDErrorsTotal),
@@ -428,6 +592,7 @@ func xidTotalCounter() counters.Counter {
 	}
 }
 
+// xidTotalValue builds one XID sample with the requested value and status.
 func xidTotalValue(gpuID uint, xid int64, status int) dcgm.FieldValue_v2 {
 	return dcgm.FieldValue_v2{
 		EntityGroupId: dcgm.FE_GPU,
@@ -439,6 +604,8 @@ func xidTotalValue(gpuID uint, xid int64, status int) dcgm.FieldValue_v2 {
 	}
 }
 
+// metricValueByLabel returns the value of the first metric with label=value and
+// fails the test when none matches.
 func metricValueByLabel(t *testing.T, metrics []Metric, label, value string) string {
 	t.Helper()
 
@@ -452,6 +619,8 @@ func metricValueByLabel(t *testing.T, metrics []Metric, label, value string) str
 	return ""
 }
 
+// metricValueByGPUAndLabel returns the value of the first metric for gpu with
+// label=value and fails the test when none matches.
 func metricValueByGPUAndLabel(t *testing.T, metrics []Metric, gpu, label, value string) string {
 	t.Helper()
 

@@ -1,0 +1,24 @@
+version: 2
+metrics:
+  - name: gpu
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP
+        prometheus_type: gauge
+        help: GPU temperature in Celsius.
+    overrides:
+      - name: temperatures
+        match: [DCGM_FI_DEV_GPU_TEMP]
+        every: 1s
+        sources:
+          dcgm:
+            watch:
+              max_keep_samples: 2
+    enrichment: {kubernetes: false, container: false, dra: false, hpc_jobs: false}
+outputs:
+  scrape:
+    type: prometheus
+    schema: dcgm/v1
+sources:
+  dcgm:
+    watch:
+      max_keep_age: 5s

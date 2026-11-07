@@ -16,23 +16,18 @@
 
 package cmd
 
+import "github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+
 // DCGMDbgLvl is a DCGM library debug level.
 const (
-	DCGMDbgLvlNone  = "NONE"
-	DCGMDbgLvlFatal = "FATAL"
-	DCGMDbgLvlError = "ERROR"
-	DCGMDbgLvlWarn  = "WARN"
-	DCGMDbgLvlInfo  = "INFO"
-	DCGMDbgLvlDebug = "DEBUG"
-	DCGMDbgLvlVerb  = "VERB"
+	DCGMDbgLvlNone  = appconfig.DCGMDbgLvlNone
+	DCGMDbgLvlFatal = appconfig.DCGMDbgLvlFatal
+	DCGMDbgLvlError = appconfig.DCGMDbgLvlError
+	DCGMDbgLvlWarn  = appconfig.DCGMDbgLvlWarn
+	DCGMDbgLvlInfo  = appconfig.DCGMDbgLvlInfo
+	DCGMDbgLvlDebug = appconfig.DCGMDbgLvlDebug
+	DCGMDbgLvlVerb  = appconfig.DCGMDbgLvlVerb
 )
 
-var DCGMDbgLvlValues = []string{
-	DCGMDbgLvlNone,
-	DCGMDbgLvlFatal,
-	DCGMDbgLvlError,
-	DCGMDbgLvlWarn,
-	DCGMDbgLvlInfo,
-	DCGMDbgLvlDebug,
-	DCGMDbgLvlVerb,
-}
+// DCGMDbgLvlValues lists every DCGM library debug level.
+var DCGMDbgLvlValues = appconfig.DCGMDbgLvlValues

@@ -1,0 +1,177 @@
+load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
+load(":cc_toolchain_config.bzl", "cc_toolchain_config")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "zig_ar.sh",
+    "zig_cc_amd64.sh",
+    "zig_cc_arm64.sh",
+    "zig_cc_wrapper.sh",
+])
+
+platform(
+    name = "linux_amd64_cgo",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+platform(
+    name = "linux_arm64_cgo",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+filegroup(
+    name = "zig_x86_64_exec_files",
+    srcs = [
+        "unsupported_tool.sh",
+        "zig_ar.sh",
+        "zig_cc_amd64.sh",
+        "zig_cc_arm64.sh",
+        "zig_cc_wrapper.sh",
+        "@zig_linux_amd64//:files",
+    ],
+)
+
+filegroup(
+    name = "zig_aarch64_exec_files",
+    srcs = [
+        "unsupported_tool.sh",
+        "zig_ar.sh",
+        "zig_cc_amd64.sh",
+        "zig_cc_arm64.sh",
+        "zig_cc_wrapper.sh",
+        "@zig_linux_arm64//:files",
+    ],
+)
+
+cc_toolchain_config(
+    name = "linux_amd64_config",
+    archiver = "zig_ar.sh",
+    compiler_file = "zig_cc_amd64.sh",
+    target_cpu = "x86_64",
+    target_system_name = "x86_64-linux-gnu",
+    unsupported_tool = "unsupported_tool.sh",
+)
+
+cc_toolchain_config(
+    name = "linux_arm64_cross_config",
+    archiver = "zig_ar.sh",
+    compiler_file = "zig_cc_arm64.sh",
+    target_cpu = "aarch64",
+    target_system_name = "aarch64-linux-gnu",
+    unsupported_tool = "unsupported_tool.sh",
+)
+
+cc_toolchain(
+    name = "linux_amd64_x86_64_exec",
+    all_files = ":zig_x86_64_exec_files",
+    ar_files = ":zig_x86_64_exec_files",
+    compiler_files = ":zig_x86_64_exec_files",
+    dwp_files = ":zig_x86_64_exec_files",
+    linker_files = ":zig_x86_64_exec_files",
+    objcopy_files = ":zig_x86_64_exec_files",
+    strip_files = ":zig_x86_64_exec_files",
+    supports_param_files = 0,
+    toolchain_config = ":linux_amd64_config",
+)
+
+cc_toolchain(
+    name = "linux_arm64_x86_64_exec",
+    all_files = ":zig_x86_64_exec_files",
+    ar_files = ":zig_x86_64_exec_files",
+    compiler_files = ":zig_x86_64_exec_files",
+    dwp_files = ":zig_x86_64_exec_files",
+    linker_files = ":zig_x86_64_exec_files",
+    objcopy_files = ":zig_x86_64_exec_files",
+    strip_files = ":zig_x86_64_exec_files",
+    supports_param_files = 0,
+    toolchain_config = ":linux_arm64_cross_config",
+)
+
+cc_toolchain(
+    name = "linux_amd64_aarch64_exec",
+    all_files = ":zig_aarch64_exec_files",
+    ar_files = ":zig_aarch64_exec_files",
+    compiler_files = ":zig_aarch64_exec_files",
+    dwp_files = ":zig_aarch64_exec_files",
+    linker_files = ":zig_aarch64_exec_files",
+    objcopy_files = ":zig_aarch64_exec_files",
+    strip_files = ":zig_aarch64_exec_files",
+    supports_param_files = 0,
+    toolchain_config = ":linux_amd64_config",
+)
+
+cc_toolchain(
+    name = "linux_arm64_aarch64_exec",
+    all_files = ":zig_aarch64_exec_files",
+    ar_files = ":zig_aarch64_exec_files",
+    compiler_files = ":zig_aarch64_exec_files",
+    dwp_files = ":zig_aarch64_exec_files",
+    linker_files = ":zig_aarch64_exec_files",
+    objcopy_files = ":zig_aarch64_exec_files",
+    strip_files = ":zig_aarch64_exec_files",
+    supports_param_files = 0,
+    toolchain_config = ":linux_arm64_cross_config",
+)
+
+toolchain(
+    name = "linux_amd64_toolchain",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    toolchain = ":linux_amd64_x86_64_exec",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+toolchain(
+    name = "linux_arm64_cross_toolchain",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    toolchain = ":linux_arm64_x86_64_exec",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+toolchain(
+    name = "linux_amd64_toolchain_arm64_exec",
+    exec_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    toolchain = ":linux_amd64_aarch64_exec",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)
+
+toolchain(
+    name = "linux_arm64_toolchain_arm64_exec",
+    exec_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    toolchain = ":linux_arm64_aarch64_exec",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+)

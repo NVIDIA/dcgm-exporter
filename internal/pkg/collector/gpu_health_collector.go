@@ -17,21 +17,20 @@
 package collector
 
 import (
-	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/sirupsen/logrus"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/utils"
 )
 
 var gpuHealthChecks = []dcgm.HealthSystem{
@@ -81,44 +80,93 @@ func applyGPUHealthIncidents(
 	for _, incident := range incidents {
 		incidentMap, ok := byEntity[incident.EntityInfo]
 		if !ok {
-			logrus.WithFields(logrus.Fields{
-				"entity": incident.EntityInfo,
-				"system": healthSystemWatchToString(incident.System),
-				"health": incident.Health,
-			}).Warn("Received health incident for entity not in monitoring group, skipping")
+			slog.Warn(
+				"Received health incident for entity not in monitoring group, skipping",
+				"entity", incident.EntityInfo,
+				"system", healthSystemWatchToString(incident.System),
+				"health", incident.Health,
+			)
 			continue
 		}
 		if incidentMap == nil {
-			logrus.WithFields(logrus.Fields{
-				"entity": incident.EntityInfo,
-				"system": healthSystemWatchToString(incident.System),
-				"health": incident.Health,
-			}).Warn("Received health incident for entity with uninitialized incident defaults, skipping")
+			slog.Warn(
+				"Received health incident for entity with uninitialized incident defaults, skipping",
+				"entity", incident.EntityInfo,
+				"system", healthSystemWatchToString(incident.System),
+				"health", incident.Health,
+			)
 			continue
 		}
 		incidentMap[incident.System] = incident
 	}
 }
 
+// gpuHealthStatusCollector owns a DCGM health group and its optional metric
+// watches. The factory registers it after construction and registry cleanup
+// releases those resources.
 type gpuHealthStatusCollector struct {
 	baseExpCollector
+	startTimestamp     int64
 	groupID            dcgm.GroupHandle
+	groupCleanup       func()
 	deviceInfoProvider deviceinfo.Provider
 }
 
+// GetMetrics reads the health group through the captured client and converts
+// its incidents into stable health metric labels for this registry generation.
 func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
-	// Read the GPU health status.
-	gpuHealthStatus, err := dcgmprovider.Client().HealthCheck(c.groupID)
+	monitoringInfoInGroup, entityHealthSystemToIncident, err := c.readHealthIncidents()
 	if err != nil {
-		return MetricsByCounter{}, err
+		return nil, fmt.Errorf("read GPU health incidents: %w", err)
+	}
+
+	observed := c.currentTime().UnixMicro()
+	metrics := make(MetricsByCounter)
+	metrics[c.counter] = make([]Metric, 0)
+	uuid := "UUID"
+	if c.config.UseOldNamespace {
+		uuid = "uuid"
+	}
+
+	for _, mi := range monitoringInfoInGroup {
+		labels := map[string]string{}
+		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
+			if err := c.getLabelsFromCounters(mi, labels); err != nil {
+				return nil, err
+			}
+		}
+
+		for _, healthSystem := range gpuHealthChecks {
+			incident := entityHealthSystemToIncident[mi.Entity][healthSystem]
+			severity, category := healthErrorMetadataLabelsWithClient(c.dcgmClient(), incident.Error.Code)
+			metricValueLabels := maps.Clone(labels)
+			metricValueLabels[HealthWatchLabel] = healthSystemWatchToString(incident.System)
+			metricValueLabels[HealthErrorCodeLabel] = healthCheckErrorToString(incident.Error.Code)
+			metricValueLabels[HealthErrorSeverityLabel] = severity
+			metricValueLabels[HealthErrorCategoryLabel] = category
+			m := c.createMetric(metricValueLabels, mi, uuid, int(incident.Health), c.deviceInfoProvider, observed)
+			m.StartTimestamp = c.startTimestamp
+			metrics[c.counter] = append(metrics[c.counter], m)
+		}
+	}
+
+	return metrics, nil
+}
+
+// readHealthIncidents finds monitored group members and merges incidents into their PASS defaults.
+func (c *gpuHealthStatusCollector) readHealthIncidents() ([]devicemonitoring.Info, map[dcgm.GroupEntityPair]map[dcgm.HealthSystem]dcgm.Incident, error) {
+	// Read the GPU health status.
+	gpuHealthStatus, err := c.dcgmClient().HealthCheck(c.groupID)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceInfoProvider)
 
 	// Get the GPU in the group
-	groupInfo, err := dcgmprovider.Client().GetGroupInfo(c.groupID)
+	groupInfo, err := c.dcgmClient().GetGroupInfo(c.groupID)
 	if err != nil {
-		return MetricsByCounter{}, err
+		return nil, nil, err
 	}
 
 	groupEntityPairSet := make(map[dcgm.GroupEntityPair]struct{})
@@ -134,15 +182,6 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 		if _, exists := groupEntityPairSet[info.Entity]; exists {
 			monitoringInfoInGroup = append(monitoringInfoInGroup, info)
 		}
-	}
-
-	metrics := make(MetricsByCounter)
-	metrics[c.counter] = make([]Metric, 0)
-
-	useOld := c.config.UseOldNamespace
-	uuid := "UUID"
-	if useOld {
-		uuid = "uuid"
 	}
 
 	entityHealthSystemToIncident := map[dcgm.GroupEntityPair]map[dcgm.HealthSystem]dcgm.Incident{}
@@ -164,96 +203,64 @@ func (c *gpuHealthStatusCollector) GetMetrics() (MetricsByCounter, error) {
 	// Each health watch may contribute at most one incident per entity for this scrape.
 	applyGPUHealthIncidents(entityHealthSystemToIncident, gpuHealthStatus.Incidents)
 
-	for _, mi := range monitoringInfoInGroup {
-		labels := map[string]string{}
-		if len(c.labelsCounters) > 0 && len(c.deviceWatchList.LabelDeviceFields()) > 0 {
-			err := c.getLabelsFromCounters(mi, labels)
-			if err != nil {
-				return nil, err
-			}
-		}
-		for _, healthSystem := range gpuHealthChecks {
-			incident := entityHealthSystemToIncident[mi.Entity][healthSystem]
-			severity, category := healthErrorMetadataLabels(incident.Error.Code)
-			metricValueLabels := maps.Clone(labels)
-			metricValueLabels["health_watch"] = healthSystemWatchToString(incident.System)
-			metricValueLabels["health_error_code"] = healthCheckErrorToString(incident.Error.Code)
-			metricValueLabels["health_error_severity"] = severity
-			metricValueLabels["health_error_category"] = category
-			m := c.createMetric(metricValueLabels, mi, uuid, int(incident.Health))
-			metrics[c.counter] = append(metrics[c.counter], m)
-		}
-	}
-
-	return metrics, nil
+	return monitoringInfoInGroup, entityHealthSystemToIncident, nil
 }
 
+// Cleanup releases metric watches before the DCGM health group they support.
+// The registry calls it when this collector is retired.
 func (c *gpuHealthStatusCollector) Cleanup() {
-	for _, cleanup := range c.cleanups {
-		cleanup()
+	c.baseExpCollector.Cleanup()
+	if c.groupCleanup != nil {
+		c.groupCleanup()
+		c.groupCleanup = nil
 	}
 }
 
+// NewGPUHealthStatusCollector creates the optional GPU health collector. It
+// rolls back its health group and any partial watches if a later setup step
+// fails, so callers only own a fully working collector.
 func NewGPUHealthStatusCollector(
 	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
 	deviceWatchList devicewatchlistmanager.WatchList,
 ) (Collector, error) {
+	return newGPUHealthStatusCollectorWithClient(dcgmprovider.Client(), counterList, hostname, config, deviceWatchList)
+}
+
+// newGPUHealthStatusCollectorWithClient creates the health group and optional
+// watches with client, binding every cleanup closure to that same DCGM session.
+func newGPUHealthStatusCollectorWithClient(
+	client dcgmprovider.DCGM,
+	counterList counters.CounterList,
+	hostname string,
+	config *appconfig.Config,
+	deviceWatchList devicewatchlistmanager.WatchList,
+) (Collector, error) {
 	if !IsDCGMExpGPUHealthStatusEnabled(counterList) {
-		logrus.Error(counters.DCGMExpGPUHealthStatus + " collector is disabled")
+		slog.Error(counters.DCGMExpGPUHealthStatus + " collector is disabled")
 		return nil, fmt.Errorf(counters.DCGMExpGPUHealthStatus + " collector is disabled")
 	}
 
-	supportedGPUs, err := dcgmprovider.Client().GetSupportedDevices()
+	// IMEX incidents are host-level and are reported by the system health collector.
+	groupID, groupCleanup, err := createHealthGroup(
+		client,
+		"gpu_health_monitor",
+		dcgm.DCGM_HEALTH_WATCH_ALL&^dcgm.DCGM_HEALTH_WATCH_IMEX,
+	)
 	if err != nil {
-		logrus.WithError(err).Error("Failed to get supported GPU devices")
-		return nil, err
+		return nil, fmt.Errorf("initialize GPU health group: %w", err)
 	}
 
-	if len(supportedGPUs) == 0 {
-		logrus.Error("No supported GPU devices found")
-		return nil, errors.New("no supported GPU devices found")
-	}
-
-	// Create Group
-	newGroupNumber, err := utils.RandUint64()
-	if err != nil {
-		logrus.WithError(err).Error("Failed to generate new group number")
-		return nil, err
-	}
-
-	cleanups := []func(){}
-
-	groupID, err := dcgmprovider.Client().CreateGroup(fmt.Sprintf("gpu_health_monitor_%d", newGroupNumber))
-	if err != nil {
-		logrus.WithError(err).Error("Failed to create group")
-		return nil, err
-	}
-
-	cleanups = append(cleanups, func() {
-		destroyErr := dcgmprovider.Client().DestroyGroup(groupID)
-		if destroyErr != nil {
-			logrus.WithFields(logrus.Fields{
-				"groupID":       groupID,
-				logrus.ErrorKey: destroyErr,
-			}).Warn("cannot destroy group")
+	var watchResult *devicewatcher.WatchResult
+	buildSucceeded := false
+	defer func() {
+		if buildSucceeded {
+			return
 		}
-	})
-
-	for _, gpu := range supportedGPUs {
-		err = dcgmprovider.Client().AddEntityToGroup(groupID, dcgm.FE_GPU, gpu)
-		if err != nil {
-			logrus.WithError(err).WithField("gpu", gpu).Error("Failed to add GPU device to group")
-			return nil, err
-		}
-	}
-
-	err = dcgmprovider.Client().HealthSet(groupID, dcgm.DCGM_HEALTH_WATCH_ALL)
-	if err != nil {
-		logrus.WithError(err).Error("Failed to set health watch")
-		return nil, err
-	}
+		watchResult.Close()
+		groupCleanup()
+	}()
 
 	deviceInfoProvider, err := deviceinfo.Initialize(appconfig.DeviceOptions{
 		MinorRange: []int{-1},
@@ -267,31 +274,36 @@ func NewGPUHealthStatusCollector(
 	}
 
 	if !deviceWatchList.IsEmpty() {
-		watchListCleanups, err := deviceWatchList.Watch()
+		watchResult, err = deviceWatchList.Watch()
 		if err != nil {
-			logrus.WithError(err).Error("Failed to watch metrics")
-			return nil, err
+			slog.Error("Failed to watch metrics", "error", err)
+			return nil, fmt.Errorf("watch health metrics: %w", err)
 		}
-
-		cleanups = append(cleanups, watchListCleanups...)
 	}
 
-	return &gpuHealthStatusCollector{
+	collector := &gpuHealthStatusCollector{
 		baseExpCollector: baseExpCollector{
+			client: client,
 			counter: counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
 				return c.FieldName == counters.DCGMExpGPUHealthStatus
 			})],
 			labelsCounters:  counterList.LabelCounters(),
 			hostname:        hostname,
 			config:          config,
-			cleanups:        cleanups,
+			watchResult:     watchResult,
 			deviceWatchList: deviceWatchList,
 		},
 		groupID:            groupID,
+		groupCleanup:       groupCleanup,
 		deviceInfoProvider: deviceInfoProvider,
-	}, nil
+	}
+	collector.startTimestamp = collector.currentTime().UnixMicro()
+	buildSucceeded = true
+
+	return collector, nil
 }
 
+// IsDCGMExpGPUHealthStatusEnabled reports whether the GPU health counter is selected.
 func IsDCGMExpGPUHealthStatusEnabled(counterList counters.CounterList) bool {
 	return slices.ContainsFunc(counterList, func(c counters.Counter) bool {
 		return c.FieldName == counters.DCGMExpGPUHealthStatus
@@ -299,6 +311,7 @@ func IsDCGMExpGPUHealthStatusEnabled(counterList counters.CounterList) bool {
 }
 
 var healthSystemWatchToStringMap = map[dcgm.HealthSystem]string{
+	dcgm.DCGM_HEALTH_WATCH_IMEX:              "IMEX",
 	dcgm.DCGM_HEALTH_WATCH_PCIE:              "PCIE",
 	dcgm.DCGM_HEALTH_WATCH_NVLINK:            "NVLINK",
 	dcgm.DCGM_HEALTH_WATCH_PMU:               "PMU",
@@ -315,6 +328,7 @@ var healthSystemWatchToStringMap = map[dcgm.HealthSystem]string{
 	dcgm.DCGM_HEALTH_WATCH_ALL:               "ALL",
 }
 
+// healthSystemWatchToString maps a DCGM health system to its stable metric label.
 func healthSystemWatchToString(healthSystem dcgm.HealthSystem) string {
 	name, ok := healthSystemWatchToStringMap[healthSystem]
 	if !ok {
@@ -324,12 +338,20 @@ func healthSystemWatchToString(healthSystem dcgm.HealthSystem) string {
 }
 
 // healthErrorMetadataLabels maps a DCGM error code to stable severity and category label values.
+// healthErrorMetadataLabels preserves the legacy helper for callers that use
+// the process client. Health collectors use the client-specific helper below.
 func healthErrorMetadataLabels(code dcgm.HealthCheckErrorCode) (string, string) {
+	return healthErrorMetadataLabelsWithClient(dcgmprovider.Client(), code)
+}
+
+// healthErrorMetadataLabelsWithClient maps DCGM error metadata from client to
+// stable metric labels, keeping a health collector in its creating generation.
+func healthErrorMetadataLabelsWithClient(client dcgmprovider.DCGM, code dcgm.HealthCheckErrorCode) (string, string) {
 	if code == dcgm.DCGM_FR_OK {
 		return "NONE", "NONE"
 	}
 
-	meta := dcgmprovider.Client().GetErrorMeta(code)
+	meta := client.GetErrorMeta(code)
 	if meta == nil {
 		return "UNKNOWN", "UNKNOWN"
 	}
@@ -535,9 +557,11 @@ var healthCheckErrorToStringMap = map[dcgm.HealthCheckErrorCode]string{
 	dcgm.DCGM_FR_GPU_RECOVERY_DRAIN_RESET:        "DCGM_FR_GPU_RECOVERY_DRAIN_RESET",
 	dcgm.DCGM_FR_NCCL_ERROR:                      "DCGM_FR_NCCL_ERROR",
 	dcgm.DCGM_FR_RETEST_REQUESTED:                "DCGM_FR_RETEST_REQUESTED",
+	dcgm.DCGM_FR_GPU_RECOVERY_IMEX_DOMAIN:        "DCGM_FR_GPU_RECOVERY_IMEX_DOMAIN",
 	dcgm.DCGM_FR_ERROR_SENTINEL:                  "DCGM_FR_ERROR_SENTINEL",
 }
 
+// healthCheckErrorToString returns the known DCGM health error name or DCGM_FR_UNKNOWN(code).
 func healthCheckErrorToString(err dcgm.HealthCheckErrorCode) string {
 	if name, ok := healthCheckErrorToStringMap[err]; ok {
 		return name

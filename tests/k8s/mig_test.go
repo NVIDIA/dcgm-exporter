@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -22,7 +22,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -46,6 +45,7 @@ var _ = Describe("dcgm-exporter MIG scenarios", func() {
 						metricsHaveAnyLabel(metrics, "GPU_I_ID"),
 						metricsHaveAnyLabel(metrics, "GPU_I_PROFILE"),
 						metricsHaveConsistentMIGDeviceSelection(metrics),
+						metricsReportGPULevelFieldsOnParentGPUs(metrics),
 					)
 				})
 		})
@@ -103,29 +103,79 @@ var _ = Describe("dcgm-exporter MIG scenarios", func() {
 				},
 				nil,
 				testRunLabels,
-				metricsHaveOnlyMIGInstanceSamples)
+				func(metrics []byte) error {
+					return errors.Join(
+						metricsHaveOnlyMIGInstanceSamples(metrics),
+						metricsReportGPULevelFieldsOnParentGPUs(metrics),
+					)
+				})
 		})
 	})
 
 	Context("DCGM exporter selects one MIG instance in mixed MIG mode", Ordered, Label("migSpecificInstanceSelection"), func() {
+		var baseline []byte
+
 		AfterAll(func(ctx context.Context) {
 			cleanupTestContext(ctx, kubeClient, helmClient)
+		})
+
+		It("should scrape MIG metrics when all instances are selected", func(ctx context.Context) {
+			settled := settledScrape(migSignature)
+			_, baseline = shouldInstallExporterAndReadMetrics(ctx,
+				[]string{
+					"extraEnv[0].name=DCGM_EXPORTER_DEVICES_STR",
+					"extraEnv[0].value=i",
+				},
+				nil,
+				testRunLabels,
+				settled)
 		})
 
 		It("should honor DCGM_EXPORTER_DEVICES_STR for a selected MIG instance", func(ctx context.Context) {
 			Expect(testContext.migEntityID).NotTo(BeEmpty(), "specific MIG selection requires -mig-instance-entity-id")
 			Expect(testContext.migNVMLID).NotTo(BeEmpty(), "specific MIG selection requires -mig-instance-nvml-id")
 
-			_, _ = shouldInstallExporterAndReadMetrics(ctx,
+			skipWhenSelectionCoversAll(requireSeveralMIGInstances(baseline))
+
+			shouldReinstallExporterAndReadMetrics(ctx,
 				[]string{
 					"extraEnv[0].name=DCGM_EXPORTER_DEVICES_STR",
 					fmt.Sprintf("extraEnv[0].value=i:%s", testContext.migEntityID),
 				},
 				nil,
-				testRunLabels,
 				func(metrics []byte) error {
-					return metricsHaveOnlySelectedMIGInstanceSamples(metrics, testContext.migNVMLID)
+					return errors.Join(
+						metricsHaveOnlySelectedMIGInstanceSamples(metrics, testContext.migNVMLID),
+						onlyOneMIGInstance(metrics, testContext.migNVMLID),
+						metricsReportGPULevelFieldsOnParentGPUs(metrics),
+					)
 				})
+		})
+	})
+
+	Context("DCGM exporter attributes a MIG pod to its MIG instance only", Ordered, Label("migPodAttribution"), func() {
+		AfterAll(func(ctx context.Context) {
+			cleanupTestContext(ctx, kubeClient, helmClient)
+		})
+
+		// The exporter enriches each entity group separately, so the CPU and
+		// CPU core samples check that a MIG pod stays off non-GPU metrics.
+		It("should name the MIG pod on its MIG instance and on no CPU sample", func(ctx context.Context) {
+			shouldInstallHelmChartWithJSONValues(ctx, helmClient,
+				[]string{exporterArguments("-d=f", "--cpu-devices=f", "--kubernetes-gpu-id-type=uid")},
+				[]string{customMetricsJSONValue(gpuTempRow, fbUsedRow, cpuUtilRow)})
+
+			// The workload runs on the node whose MIG resource it requests.
+			mig := shouldFindMIGResource(ctx)
+			workload := shouldCreateWorkloadPodRequesting(ctx, kubeClient, testRunLabels, mig.resource, mig.node)
+			exporterPod := shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
+
+			// CPU_UTIL_TOTAL has CPU samples and, with --cpu-devices=f, CPU core samples.
+			want := shouldReadMIGWorkloadAttribution(ctx, workload)
+			shouldAttributeOnlyWorkloadMIGInstance(ctx, exporterPod, want, []metriccontract.FamilyContract{
+				{Name: cpuUtilFamily, Labels: []string{cpuLabel}, WithoutLabels: []string{coreLabel}},
+				{Name: cpuUtilFamily, Labels: []string{cpuLabel, coreLabel}},
+			})
 		})
 	})
 
@@ -147,6 +197,18 @@ var _ = Describe("dcgm-exporter MIG scenarios", func() {
 	})
 })
 
+// shouldFindMIGResource returns the MIG resource a MIG workload pod requests
+// and the node it must run on: the first resource, in name order, that a node
+// the suite may use can allocate.
+func shouldFindMIGResource(ctx context.Context) migResourceOnNode {
+	nodes, err := kubeClient.GetNodesByLabel(ctx, getE2ENodeSelector())
+	Expect(err).NotTo(HaveOccurred(), "setup: list the nodes the suite may use")
+
+	mig, err := migResourceName(nodes)
+	Expect(err).NotTo(HaveOccurred(), "setup: find a MIG resource for the workload pod")
+	return mig
+}
+
 // metricsHaveConsistentMIGDeviceSelection verifies flex selection emits MIG-labeled GPU samples.
 func metricsHaveConsistentMIGDeviceSelection(metrics []byte) error {
 	_, hasMIG, err := migAndFullGPUSampleState(metrics)
@@ -155,21 +217,6 @@ func metricsHaveConsistentMIGDeviceSelection(metrics []byte) error {
 	}
 	if !hasMIG {
 		return fmt.Errorf("no DCGM GPU sample contains MIG labels")
-	}
-	return nil
-}
-
-// metricsHaveMixedMIGAndFullGPUSamples verifies mixed mode emits both full-GPU and MIG samples.
-func metricsHaveMixedMIGAndFullGPUSamples(metrics []byte) error {
-	hasFullGPU, hasMIG, err := migAndFullGPUSampleState(metrics)
-	if err != nil {
-		return err
-	}
-	if !hasFullGPU {
-		return fmt.Errorf("no full GPU DCGM sample was emitted")
-	}
-	if !hasMIG {
-		return fmt.Errorf("no MIG instance DCGM sample was emitted")
 	}
 	return nil
 }
@@ -209,87 +256,4 @@ func metricsHaveOnlyFullGPUSamples(metrics []byte, expectedGPU string) error {
 // metricsHaveOnlyMIGInstanceSamples verifies device selection emits MIG instances and no full GPUs.
 func metricsHaveOnlyMIGInstanceSamples(metrics []byte) error {
 	return metricsHaveOnlySelectedMIGInstanceSamples(metrics, "")
-}
-
-// metricsHaveOnlySelectedMIGInstanceSamples verifies selection emits only one expected MIG instance when provided.
-func metricsHaveOnlySelectedMIGInstanceSamples(metrics []byte, expectedInstanceID string) error {
-	families, err := metriccontract.ParseText(metrics)
-	if err != nil {
-		return err
-	}
-
-	found := false
-	for familyName, family := range families {
-		for _, metric := range family.GetMetric() {
-			labels := metricLabels(metric)
-			if !isDCGMGPUSample(familyName, labels) {
-				continue
-			}
-			if labels["GPU_I_ID"] == "" || labels["GPU_I_PROFILE"] == "" {
-				return fmt.Errorf("metric family %q has a GPU sample without MIG labels", familyName)
-			}
-			if expectedInstanceID != "" && labels["GPU_I_ID"] != expectedInstanceID {
-				return fmt.Errorf("metric family %q has GPU_I_ID=%q, expected only %q",
-					familyName, labels["GPU_I_ID"], expectedInstanceID)
-			}
-			found = true
-		}
-	}
-	if !found {
-		return fmt.Errorf("no MIG instance DCGM sample was emitted")
-	}
-	return nil
-}
-
-// firstFullGPUID finds a full-GPU label value from mixed MIG discovery metrics.
-func firstFullGPUID(metrics []byte) (string, error) {
-	families, err := metriccontract.ParseText(metrics)
-	if err != nil {
-		return "", err
-	}
-	for familyName, family := range families {
-		for _, metric := range family.GetMetric() {
-			labels := metricLabels(metric)
-			if !isDCGMGPUSample(familyName, labels) {
-				continue
-			}
-			if labels["GPU_I_ID"] == "" && labels["GPU_I_PROFILE"] == "" {
-				return labels["gpu"], nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no full GPU sample was found")
-}
-
-// migAndFullGPUSampleState reports whether metrics contain full-GPU samples, MIG samples, or both.
-func migAndFullGPUSampleState(metrics []byte) (bool, bool, error) {
-	families, err := metriccontract.ParseText(metrics)
-	if err != nil {
-		return false, false, err
-	}
-
-	hasFullGPU := false
-	hasMIG := false
-	for familyName, family := range families {
-		for _, metric := range family.GetMetric() {
-			labels := metricLabels(metric)
-			if !isDCGMGPUSample(familyName, labels) {
-				continue
-			}
-			if labels["GPU_I_ID"] != "" || labels["GPU_I_PROFILE"] != "" {
-				if labels["GPU_I_ID"] == "" || labels["GPU_I_PROFILE"] == "" {
-					return false, false, fmt.Errorf("metric family %q has incomplete MIG labels", familyName)
-				}
-				hasMIG = true
-				continue
-			}
-			hasFullGPU = true
-		}
-	}
-	return hasFullGPU, hasMIG, nil
-}
-
-// isDCGMGPUSample reports whether a metric sample belongs to a DCGM GPU family.
-func isDCGMGPUSample(familyName string, labels map[string]string) bool {
-	return strings.HasPrefix(familyName, "DCGM_FI_") && labels["gpu"] != ""
 }

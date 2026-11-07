@@ -1,0 +1,101 @@
+Config file   testdata/overrides.yaml
+
+All settings
+metrics[0]
+  fields                                         4 inline definitions                file:4
+  every                                          30s                                 default
+  overrides[DCGM_EXP_XID_ERRORS_COUNT].window    10m                                 file:19 (metrics[0].overrides[0].window)
+  overrides[DCGM_EXP_CLOCK_EVENTS_COUNT].window  5m                                  default
+  overrides[1].every                             1s                                  file:21
+  overrides[1].match                             ["/^DCGM_FI_DEV_BOARD_POWER_.*$/"]  file:20
+  overrides[2].name                              clocks                              file:22
+  overrides[2].every                             5s                                  file:24
+  overrides[2].match                             ["DCGM_FI_DEV_SM_CLOCK"]            file:23
+  entities.gpu.policy                            flex                                default
+  entities.switch.indices                        all                                 default
+  entities.switch.links                          all                                 default
+  entities.cpu.cores                             all                                 default
+  entities.cpu.indices                           all                                 default
+  enrichment.kubernetes                          auto                                file:3 (metrics[0].enrichment)
+    note: auto: used when available (checked by the running exporter)
+  enrichment.container                           auto                                file:3 (metrics[0].enrichment)
+    note: auto: used if Kubernetes is unavailable at startup (checked by the running exporter)
+  enrichment.dra                                 false                               file:3 (metrics[0].enrichment)
+  enrichment.hpc_jobs                            auto                                file:3 (metrics[0].enrichment)
+    note: auto: used when available (checked by the running exporter)
+outputs
+  scrape.listen  :9400  default
+sources
+  dcgm.hostengine                       ""                                        default
+    inactive: embedded hostengine is selected
+  dcgm.watch.max_keep_age               10m                                       default
+  dcgm.watch.max_keep_samples           0                                         default
+  dcgm.detect_bind_unbind.enabled       false                                     default
+  dcgm.detect_bind_unbind.every         1s                                        default
+    inactive: GPU bind/unbind watching is disabled
+  dcgm.cleanup_timeout                  5m                                        default
+  dcgm.embedded_log.level               debug                                     file:32
+  dcgm.embedded_log.file                stdout                                    file:31 (sources.dcgm.embedded_log)
+  kubernetes.pod_resources_socket       /var/lib/kubelet/pod-resources/kubelet.sock  default
+  kubernetes.gpu_id_type                uid                                       default
+  kubernetes.additional_resource_names  []                                        default
+  kubernetes.virtual_gpus               false                                     default
+  kubernetes.pod_uid                    false                                     default
+  kubernetes.pod_labels.enabled         false                                     default
+  kubernetes.pod_labels.allow           []                                        default
+    inactive: Kubernetes pod labels are disabled
+  container.runtime_socket              /var/run/docker.sock                      file:3 (metrics[0].enrichment)
+  hpc_jobs.mapping_dir                  /var/lib/dcgm-exporter/job-mapping        file:3 (metrics[0].enrichment)
+  hpc_jobs.max_file_bytes               65536                                     default
+  hpc_jobs.max_job_id_bytes             256                                       default
+  hpc_jobs.max_jobs_per_file            64                                        default
+server
+  health_require_gpus     false  default
+  read_timeout            10s    default
+  write_timeout           30s    default
+  max_concurrent_scrapes  16     default
+  systemd_socket          false  default
+  web_config_file         ""     default
+  profiling               false  default
+observability
+  metrics.enabled  false  default
+  logs.format      text   default
+  logs.level       info   default
+debug_dump
+  enabled          false                     default
+  directory        /tmp/dcgm-exporter-debug  default
+    inactive: debug dumps are disabled
+  retention        24h                       default
+    inactive: debug dumps are disabled
+  compression      true                      default
+    inactive: debug dumps are disabled
+  min_interval     1m                        default
+    inactive: debug dumps are disabled
+  max_file_bytes   16777216                  default
+    inactive: debug dumps are disabled
+  max_total_bytes  268435456                 default
+    inactive: debug dumps are disabled
+  max_files        128                       default
+    inactive: debug dumps are disabled
+
+Flag-only settings (no config file key)
+  --use-old-namespace             false  default
+  --no-hostname                   false  default
+  --replace-blanks-in-model-name  false  default
+  --fake-gpus                     false  default
+  --disable-startup-validate      false  default
+
+Fields   5 from inline definitions, every 30s, retention 10m, no sample limit
+  override metrics[0].overrides[1] (unnamed)  (2 fields)  every 1s, retention 10m, no sample limit
+    match /^DCGM_FI_DEV_BOARD_POWER_.*$/ -> DCGM_FI_DEV_BOARD_POWER_WATTS, DCGM_FI_DEV_BOARD_POWER_LIMIT_ENFORCED_WATTS
+  override clocks  (1 field)  every 5s, retention 10m, no sample limit
+    match DCGM_FI_DEV_SM_CLOCK -> DCGM_FI_DEV_SM_CLOCK
+    DCGM_FI_DEV_SM_CLOCK                          gauge  id 100  every 5s, retention 10m, no sample limit   override clocks
+    DCGM_FI_DEV_BOARD_POWER_WATTS                 gauge  id 155  every 1s, retention 10m, no sample limit   override metrics[0].overrides[1] (unnamed)
+    DCGM_FI_DEV_BOARD_POWER_LIMIT_ENFORCED_WATTS  gauge  id 164  every 1s, retention 10m, no sample limit   override metrics[0].overrides[1] (unnamed)
+    DCGM_FI_DEV_XID_ERROR                                id 230  every 30s, retention 10m, no sample limit
+    DCGM_EXP_XID_ERRORS_COUNT                     gauge                                                     window 10m
+
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories

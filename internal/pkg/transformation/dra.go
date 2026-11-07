@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"time"
 
 	resourcev1 "k8s.io/api/resource/v1"
@@ -40,6 +42,11 @@ const (
 )
 
 var (
+	// draDynamicMIGNameRegex matches the NVIDIA DRA driver's dynamic MIG schema:
+	// gpu-<parentMinor>-mig-<profile>-<profileID>-<placementStart>.
+	// Source: https://github.com/kubernetes-sigs/dra-driver-nvidia-gpu/blob/main/cmd/gpu-kubelet-plugin/mig.go#L113
+	// Mapping context: https://github.com/NVIDIA/dcgm-exporter/issues/714
+	draDynamicMIGNameRegex            = regexp.MustCompile(`^gpu-(\d+)-mig-.+-(\d+)-(\d+)$`)
 	getKubeClientFunc                 = kubeclient.GetKubeClient
 	waitForResourceSliceCacheSyncFunc = cache.WaitForCacheSync
 	shutdownResourceSliceFactoryFunc  = func(factory informers.SharedInformerFactory) { factory.Shutdown() }
@@ -55,6 +62,7 @@ const (
 	resourceSliceAPIV1beta1
 )
 
+// String names the served ResourceSlice API or the unknown-version sentinel.
 func (v resourceSliceAPIVersion) String() string {
 	switch v {
 	case resourceSliceAPIV1:
@@ -93,10 +101,23 @@ func detectResourceSliceAPIVersion(client kubernetes.Interface) resourceSliceAPI
 	return resourceSliceAPIUnknown
 }
 
+// NewDRAResourceSliceManager starts synchronized DRA discovery without reload callbacks.
 func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
+	return newDRAResourceSliceManager(context.Background(), nil)
+}
+
+// newDRAResourceSliceManager starts a ResourceSlice informer and optionally
+// notifies the caller when a complete pool generation changes after the
+// initial cache baseline has been established. Cancelling ctx stops the
+// informer and ends a cache sync that is still waiting.
+func newDRAResourceSliceManager(ctx context.Context, onGenerationChange func()) (*DRAResourceSliceManager, error) {
 	client, err := getKubeClientFunc()
 	if err != nil {
 		return nil, fmt.Errorf("error getting kube client: %w", err)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("DRA setup stopped: %w", err)
 	}
 
 	apiVersion := detectResourceSliceAPIVersion(client)
@@ -113,7 +134,11 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 		}),
 	)
 
-	m := &DRAResourceSliceManager{factory: factory}
+	m := &DRAResourceSliceManager{
+		factory:             factory,
+		onGenerationChange:  onGenerationChange,
+		generationBaselines: make(map[string]int64),
+	}
 	var hasSynced cache.InformerSynced
 
 	switch apiVersion {
@@ -126,8 +151,20 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 			return nil, fmt.Errorf("error adding ResourceSlice indexer: %w", err)
 		}
 
-		m.lookup = makeV1Lookup(informer.GetIndexer())
+		m.indexer = informer.GetIndexer()
+		m.lookup = makeV1Lookup(m.indexer)
+		m.poolGeneration = func(pool string) (int64, bool) {
+			return latestV1PoolGeneration(m.indexer, pool)
+		}
+		m.poolName = v1ResourceSlicePoolName
 		hasSynced = informer.HasSynced
+		if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    m.observeResourceSlice,
+			UpdateFunc: func(_, newObj any) { m.observeResourceSlice(newObj) },
+			DeleteFunc: m.observeResourceSlice,
+		}); err != nil {
+			return nil, fmt.Errorf("error adding v1 ResourceSlice event handler: %w", err)
+		}
 	case resourceSliceAPIV1beta1:
 		informer := factory.Resource().V1beta1().ResourceSlices().Informer()
 		if err := informer.AddIndexers(cache.Indexers{
@@ -137,15 +174,28 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 			return nil, fmt.Errorf("error adding ResourceSlice indexer: %w", err)
 		}
 
-		m.lookup = makeV1beta1Lookup(informer.GetIndexer())
+		m.indexer = informer.GetIndexer()
+		m.lookup = makeV1beta1Lookup(m.indexer)
+		m.poolGeneration = func(pool string) (int64, bool) {
+			return latestV1beta1PoolGeneration(m.indexer, pool)
+		}
+		m.poolName = v1beta1ResourceSlicePoolName
 		hasSynced = informer.HasSynced
+		if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    m.observeResourceSlice,
+			UpdateFunc: func(_, newObj any) { m.observeResourceSlice(newObj) },
+			DeleteFunc: m.observeResourceSlice,
+		}); err != nil {
+			return nil, fmt.Errorf("error adding v1beta1 ResourceSlice event handler: %w", err)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported ResourceSlice API version: %s", apiVersion)
 	}
 
 	slog.Info("Using ResourceSlice API", "groupVersion", apiVersion.String())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	parent := ctx
+	ctx, cancel := context.WithCancel(parent)
 	m.cancelContext = cancel
 	factory.Start(ctx.Done())
 
@@ -154,22 +204,201 @@ func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
 	if !waitForResourceSliceCacheSyncFunc(syncCtx.Done(), hasSynced) {
 		cancel()
 		shutdownResourceSliceFactoryFunc(factory)
+		if parent.Err() != nil {
+			return nil, fmt.Errorf("ResourceSlice informer cache sync stopped: %w", parent.Err())
+		}
 		if syncCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("ResourceSlice informer cache sync timed out after %s (check RBAC: list/watch on resource.k8s.io/resourceslices)", resourceSliceCacheSyncTimeout)
 		}
 		return nil, fmt.Errorf("ResourceSlice informer cache sync failed")
 	}
+	m.establishGenerationBaseline()
 
 	return m, nil
 }
 
+// Stop cancels the informer and shuts down its factory once.
 func (m *DRAResourceSliceManager) Stop() {
-	if m.cancelContext != nil {
-		m.cancelContext()
+	m.generationTrackingMu.Lock()
+	if m.stopped {
+		m.generationTrackingMu.Unlock()
+		return
 	}
-	if m.factory != nil {
-		shutdownResourceSliceFactoryFunc(m.factory)
+	m.stopped = true
+	cancelContext := m.cancelContext
+	factory := m.factory
+	m.generationTrackingMu.Unlock()
+
+	if cancelContext != nil {
+		cancelContext()
 	}
+	if factory != nil {
+		shutdownResourceSliceFactoryFunc(factory)
+	}
+}
+
+// establishGenerationBaseline records the latest complete generation of every
+// pool in the synchronized informer cache. This avoids relying on event-handler
+// delivery order, so the initial list cannot trigger a registry reload.
+func (m *DRAResourceSliceManager) establishGenerationBaseline() {
+	if m.indexer == nil || m.poolName == nil || m.poolGeneration == nil {
+		return
+	}
+
+	m.generationTrackingMu.Lock()
+	defer m.generationTrackingMu.Unlock()
+	if m.stopped {
+		return
+	}
+	pools := make(map[string]struct{})
+	for _, obj := range m.indexer.List() {
+		pool, ok := m.poolName(obj)
+		if ok {
+			pools[pool] = struct{}{}
+		}
+	}
+	for pool := range pools {
+		generation, complete := m.poolGeneration(pool)
+		if complete {
+			m.generationBaselines[pool] = generation
+		}
+	}
+	m.generationTrackingReady = true
+}
+
+// observeResourceSlice compares a changed pool's latest complete generation
+// with the cache baseline and invokes the runtime callback once when it differs.
+func (m *DRAResourceSliceManager) observeResourceSlice(obj any) {
+	if m.poolName == nil || m.poolGeneration == nil {
+		return
+	}
+
+	pool, ok := m.poolName(obj)
+	if !ok {
+		return
+	}
+
+	m.generationTrackingMu.Lock()
+	if m.stopped {
+		m.generationTrackingMu.Unlock()
+		return
+	}
+	if !m.generationTrackingReady {
+		m.generationTrackingMu.Unlock()
+		return
+	}
+	m.generationTrackingMu.Unlock()
+
+	generation, complete := m.poolGeneration(pool)
+	if !complete {
+		m.observePoolRemoval(pool)
+		return
+	}
+	m.observePoolGeneration(pool, generation, complete)
+}
+
+// observePoolGeneration records later complete generations and returns without
+// notifying for duplicate or partial generations. The callback is called after
+// releasing the manager lock so it can safely schedule coordinator work.
+func (m *DRAResourceSliceManager) observePoolGeneration(pool string, generation int64, complete bool) {
+	if !complete {
+		return
+	}
+
+	m.generationTrackingMu.Lock()
+	if m.stopped || !m.generationTrackingReady {
+		m.generationTrackingMu.Unlock()
+		return
+	}
+	previous, known := m.generationBaselines[pool]
+	if known && previous == generation {
+		m.generationTrackingMu.Unlock()
+		return
+	}
+	m.generationBaselines[pool] = generation
+	onGenerationChange := m.onGenerationChange
+	m.generationTrackingMu.Unlock()
+
+	if onGenerationChange != nil {
+		onGenerationChange()
+	}
+}
+
+// observePoolRemoval notifies once when a pool with a synchronized baseline
+// becomes empty. This prevents a removed MIG topology from remaining in the
+// metrics registry while still ignoring incomplete replacement generations.
+func (m *DRAResourceSliceManager) observePoolRemoval(pool string) {
+	if m.indexer == nil {
+		return
+	}
+
+	objects, err := m.indexer.ByIndex(resourceSlicePoolIndex, draPoolIndexKey(DRAGPUDriverName, pool))
+	if err != nil || len(objects) != 0 {
+		return
+	}
+
+	m.generationTrackingMu.Lock()
+	if m.stopped || !m.generationTrackingReady {
+		m.generationTrackingMu.Unlock()
+		return
+	}
+	if _, known := m.generationBaselines[pool]; !known {
+		m.generationTrackingMu.Unlock()
+		return
+	}
+	delete(m.generationBaselines, pool)
+	onGenerationChange := m.onGenerationChange
+	m.generationTrackingMu.Unlock()
+
+	if onGenerationChange != nil {
+		onGenerationChange()
+	}
+}
+
+// v1ResourceSlicePoolName returns the GPU DRA pool named by a v1 ResourceSlice
+// event. It accepts deletion tombstones so removals update generation tracking.
+func v1ResourceSlicePoolName(obj any) (string, bool) {
+	slice, ok := v1ResourceSliceFromEvent(obj)
+	if !ok || slice.Spec.Driver != DRAGPUDriverName || slice.Spec.Pool.Name == "" {
+		return "", false
+	}
+	return slice.Spec.Pool.Name, true
+}
+
+// v1beta1ResourceSlicePoolName returns the GPU DRA pool named by a v1beta1
+// ResourceSlice event. It accepts deletion tombstones for the same reason as v1.
+func v1beta1ResourceSlicePoolName(obj any) (string, bool) {
+	slice, ok := v1beta1ResourceSliceFromEvent(obj)
+	if !ok || slice.Spec.Driver != DRAGPUDriverName || slice.Spec.Pool.Name == "" {
+		return "", false
+	}
+	return slice.Spec.Pool.Name, true
+}
+
+// v1ResourceSliceFromEvent unwraps a v1 ResourceSlice or its delete tombstone
+// so event handlers can process additions, updates, and removals uniformly.
+func v1ResourceSliceFromEvent(obj any) (*resourcev1.ResourceSlice, bool) {
+	if slice, ok := obj.(*resourcev1.ResourceSlice); ok {
+		return slice, true
+	}
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		slice, ok := tombstone.Obj.(*resourcev1.ResourceSlice)
+		return slice, ok
+	}
+	return nil, false
+}
+
+// v1beta1ResourceSliceFromEvent unwraps a v1beta1 ResourceSlice or its delete
+// tombstone so event handlers can process additions, updates, and removals uniformly.
+func v1beta1ResourceSliceFromEvent(obj any) (*resourcev1beta1.ResourceSlice, bool) {
+	if slice, ok := obj.(*resourcev1beta1.ResourceSlice); ok {
+		return slice, true
+	}
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		slice, ok := tombstone.Obj.(*resourcev1beta1.ResourceSlice)
+		return slice, ok
+	}
+	return nil, false
 }
 
 // GetDeviceInfo returns the mapping UUID and MIG device info if applicable.
@@ -185,18 +414,22 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 // deviceLookupFunc resolves a DRA (pool, device) tuple from the informer cache.
 type deviceLookupFunc func(pool, device string) (string, *DRAMigDeviceInfo)
 
+// draDeviceKey identifies a device within a DRA pool for allocation deduplication.
 func draDeviceKey(pool, device string) string {
 	return pool + "/" + device
 }
 
+// draPoolIndexKey separates pools belonging to different DRA drivers.
 func draPoolIndexKey(driver, pool string) string {
 	return driver + "/" + pool
 }
 
+// draDeviceIndexKey identifies a driver, pool, and device in the informer index.
 func draDeviceIndexKey(driver, pool, device string) string {
 	return draPoolIndexKey(driver, pool) + "/" + device
 }
 
+// indexV1ResourceSliceByDevice indexes NVIDIA v1 slices by each advertised device.
 func indexV1ResourceSliceByDevice(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1.ResourceSlice)
 	if !ok {
@@ -213,6 +446,7 @@ func indexV1ResourceSliceByDevice(obj any) ([]string, error) {
 	return keys, nil
 }
 
+// indexV1beta1ResourceSliceByDevice indexes NVIDIA v1beta1 slices by advertised device.
 func indexV1beta1ResourceSliceByDevice(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1beta1.ResourceSlice)
 	if !ok {
@@ -229,6 +463,7 @@ func indexV1beta1ResourceSliceByDevice(obj any) ([]string, error) {
 	return keys, nil
 }
 
+// indexV1ResourceSliceByPool indexes NVIDIA v1 slices by their driver and pool.
 func indexV1ResourceSliceByPool(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1.ResourceSlice)
 	if !ok {
@@ -240,6 +475,7 @@ func indexV1ResourceSliceByPool(obj any) ([]string, error) {
 	return []string{draPoolIndexKey(slice.Spec.Driver, slice.Spec.Pool.Name)}, nil
 }
 
+// indexV1beta1ResourceSliceByPool indexes NVIDIA v1beta1 slices by driver and pool.
 func indexV1beta1ResourceSliceByPool(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1beta1.ResourceSlice)
 	if !ok {
@@ -251,6 +487,7 @@ func indexV1beta1ResourceSliceByPool(obj any) ([]string, error) {
 	return []string{draPoolIndexKey(slice.Spec.Driver, slice.Spec.Pool.Name)}, nil
 }
 
+// latestV1PoolGeneration accepts the newest generation only after its slice count is present.
 func latestV1PoolGeneration(indexer cache.Indexer, pool string) (int64, bool) {
 	objects, err := indexer.ByIndex(resourceSlicePoolIndex, draPoolIndexKey(DRAGPUDriverName, pool))
 	if err != nil {
@@ -282,6 +519,7 @@ func latestV1PoolGeneration(indexer cache.Indexer, pool string) (int64, bool) {
 	return latestGeneration, true
 }
 
+// latestV1beta1PoolGeneration requires the newest generation's declared slice count.
 func latestV1beta1PoolGeneration(indexer cache.Indexer, pool string) (int64, bool) {
 	objects, err := indexer.ByIndex(resourceSlicePoolIndex, draPoolIndexKey(DRAGPUDriverName, pool))
 	if err != nil {
@@ -313,6 +551,7 @@ func latestV1beta1PoolGeneration(indexer cache.Indexer, pool string) (int64, boo
 	return latestGeneration, true
 }
 
+// makeV1Lookup resolves devices in the newest complete pool with a stable slice-key tie break.
 func makeV1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	return func(pool, device string) (string, *DRAMigDeviceInfo) {
 		latestGeneration, ok := latestV1PoolGeneration(indexer, pool)
@@ -354,6 +593,7 @@ func makeV1Lookup(indexer cache.Indexer) deviceLookupFunc {
 		}
 
 		return buildDeviceMapping(
+			selected.Name,
 			getV1AttrString(selected.Attributes, "type"),
 			getV1AttrString(selected.Attributes, "uuid"),
 			getV1AttrString(selected.Attributes, "parentUUID"),
@@ -362,6 +602,7 @@ func makeV1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	}
 }
 
+// makeV1beta1Lookup resolves v1beta1 devices using complete generation and slice-key order.
 func makeV1beta1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	return func(pool, device string) (string, *DRAMigDeviceInfo) {
 		latestGeneration, ok := latestV1beta1PoolGeneration(indexer, pool)
@@ -403,6 +644,7 @@ func makeV1beta1Lookup(indexer cache.Indexer) deviceLookupFunc {
 		}
 
 		return buildDeviceMapping(
+			selected.Name,
 			getV1beta1AttrString(selected.Basic.Attributes, "type"),
 			getV1beta1AttrString(selected.Basic.Attributes, "uuid"),
 			getV1beta1AttrString(selected.Basic.Attributes, "parentUUID"),
@@ -411,7 +653,8 @@ func makeV1beta1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	}
 }
 
-func buildDeviceMapping(deviceType, uuid, parentUUID, profile string) (string, *DRAMigDeviceInfo) {
+// buildDeviceMapping converts DRA attributes into the exporter lookup key and optional MIG metadata.
+func buildDeviceMapping(deviceName, deviceType, uuid, parentUUID, profile string) (string, *DRAMigDeviceInfo) {
 	switch deviceType {
 	case "gpu":
 		return uuid, nil
@@ -420,17 +663,57 @@ func buildDeviceMapping(deviceType, uuid, parentUUID, profile string) (string, *
 			slog.Debug("MIG device missing parent UUID", "uuid", uuid)
 			return "", nil
 		}
-		return parentUUID, &DRAMigDeviceInfo{
+		migInfo := &DRAMigDeviceInfo{
 			MIGDeviceUUID: uuid,
 			Profile:       profile,
 			ParentUUID:    parentUUID,
 		}
+		if uuid == "" {
+			spec, err := parseDRAMigSpec(deviceName)
+			if err != nil {
+				slog.Debug("Dynamic MIG device name is not resolvable",
+					"device", deviceName,
+					"parentUUID", parentUUID,
+					"error", err)
+			} else {
+				migInfo.spec = spec
+			}
+		}
+		return parentUUID, migInfo
 	default:
 		slog.Debug("Unknown DRA device type", "type", deviceType)
 		return "", nil
 	}
 }
 
+// parseDRAMigSpec parses the canonical dynamic MIG device name emitted by the NVIDIA DRA driver.
+func parseDRAMigSpec(deviceName string) (*draMIGSpec, error) {
+	matches := draDynamicMIGNameRegex.FindStringSubmatch(deviceName)
+	if matches == nil {
+		return nil, fmt.Errorf("device name %q does not match the canonical dynamic MIG format", deviceName)
+	}
+
+	parentMinor, err := strconv.ParseUint(matches[1], 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("parse parent minor from device name %q: %w", deviceName, err)
+	}
+	profileID, err := strconv.ParseUint(matches[2], 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("parse GPU instance profile ID from device name %q: %w", deviceName, err)
+	}
+	placementStart, err := strconv.ParseUint(matches[3], 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("parse MIG placement start from device name %q: %w", deviceName, err)
+	}
+
+	return &draMIGSpec{
+		ParentMinor:    uint32(parentMinor),
+		ProfileID:      uint32(profileID),
+		PlacementStart: uint32(placementStart),
+	}, nil
+}
+
+// getV1AttrString returns a string-valued v1 attribute, or empty when absent or nonstring.
 func getV1AttrString(attrs map[resourcev1.QualifiedName]resourcev1.DeviceAttribute, key resourcev1.QualifiedName) string {
 	if attr, ok := attrs[key]; ok && attr.StringValue != nil {
 		return *attr.StringValue
@@ -438,6 +721,7 @@ func getV1AttrString(attrs map[resourcev1.QualifiedName]resourcev1.DeviceAttribu
 	return ""
 }
 
+// getV1beta1AttrString returns a v1beta1 string attribute, or empty when unavailable.
 func getV1beta1AttrString(attrs map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute, key resourcev1beta1.QualifiedName) string {
 	if attr, ok := attrs[key]; ok && attr.StringValue != nil {
 		return *attr.StringValue

@@ -1,0 +1,101 @@
+version: 2
+metrics:
+  - name: gpu
+    fields:
+      - name: DCGM_FI_DEV_SM_CLOCK
+        prometheus_type: gauge
+        help: SM clock frequency in MHz.
+      - name: DCGM_FI_DEV_BOARD_POWER_WATTS
+        prometheus_type: gauge
+        help: Power draw in watts.
+      - name: DCGM_FI_DEV_BOARD_POWER_LIMIT_ENFORCED_WATTS
+        prometheus_type: gauge
+        help: Enforced power limit in watts.
+      - name: DCGM_EXP_XID_ERRORS_COUNT
+        prometheus_type: gauge
+        help: XID errors in the window.
+    every: 30s
+    overrides:
+      - match:
+          - DCGM_EXP_XID_ERRORS_COUNT
+        window: 10m
+      - match:
+          - /^DCGM_FI_DEV_BOARD_POWER_.*$/
+        every: 1s
+      - name: clocks
+        match:
+          - DCGM_FI_DEV_SM_CLOCK
+        every: 5s
+    entities:
+      gpu:
+        policy: flex
+      switch:
+        indices: all
+        links: all
+      cpu:
+        indices: all
+        cores: all
+    enrichment:
+      kubernetes: auto
+      container: auto
+      dra: false
+      hpc_jobs: auto
+outputs:
+  scrape:
+    type: prometheus
+    schema: dcgm/v1
+    listen: ":9400"
+sources:
+  dcgm:
+    hostengine: ""
+    watch:
+      max_keep_age: 10m
+      max_keep_samples: 0
+    detect_bind_unbind:
+      enabled: false
+      every: 1s
+    cleanup_timeout: 5m
+    embedded_log:
+      level: debug
+      file: stdout
+  kubernetes:
+    pod_resources_socket: /var/lib/kubelet/pod-resources/kubelet.sock
+    gpu_id_type: uid
+    additional_resource_names: []
+    virtual_gpus: false
+    pod_uid: false
+    pod_labels:
+      enabled: false
+      allow: []
+  container:
+    runtime_socket: /var/run/docker.sock
+  dra:
+    mode: kubernetes
+  hpc_jobs:
+    mapping_dir: /var/lib/dcgm-exporter/job-mapping
+    max_file_bytes: 65536
+    max_job_id_bytes: 256
+    max_jobs_per_file: 64
+server:
+  read_timeout: 10s
+  write_timeout: 30s
+  max_concurrent_scrapes: 16
+  systemd_socket: false
+  web_config_file: ""
+  health_require_gpus: false
+  profiling: false
+observability:
+  metrics:
+    enabled: false
+  logs:
+    format: text
+    level: info
+debug_dump:
+  enabled: false
+  directory: /tmp/dcgm-exporter-debug
+  retention: 24h
+  compression: true
+  min_interval: 1m
+  max_file_bytes: 16777216
+  max_total_bytes: 268435456
+  max_files: 128

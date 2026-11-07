@@ -31,11 +31,13 @@ import (
 	mocknvmlprovider "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/nvmlprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/testutils"
 )
 
+// sampleMetricsJSON records two MIG instances on GPU 0 and seven whole GPUs.
 const sampleMetricsJSON = `{
   "metrics": {
     "DCGM_FI_DEV_FB_FREE": [
@@ -377,6 +379,7 @@ const sampleMetricsJSON = `{
   }
 }`
 
+// sampleDeviceInfoJSON supplies the matching GPU inventory and GPU instance IDs 11 and 13.
 const sampleDeviceInfoJSON = `{
   "cpu_options": {
     "Flex": false,
@@ -950,6 +953,7 @@ const sampleDeviceInfoJSON = `{
   "switches": null
 }`
 
+// samplePodResourcesResponseJSON allocates GPU 0 and its legacy MIG alias to one pod.
 const samplePodResourcesResponseJSON = `{
   "pod_resources": [
     {
@@ -980,7 +984,7 @@ const samplePodResourcesResponseJSON = `{
   ]
 }`
 
-// unmarshalSampleMetrics is an unexported reusable function to unmarshal sample metrics JSON
+// unmarshalSampleMetrics decodes a fresh metric map for the mixed GPU/MIG fixture.
 func unmarshalSampleMetrics() (collector.MetricsByCounter, error) {
 	var metrics collector.MetricsByCounter
 	err := json.Unmarshal([]byte(sampleMetricsJSON), &metrics)
@@ -1032,6 +1036,8 @@ func TestPodMapperProcess_WhenMIGDevicesAvailableAndPodRunning(t *testing.T) {
 		ComputeInstanceID: 0,
 	}
 	mockNVMLProvider.EXPECT().GetMIGDeviceInfoByID(gomock.Any()).Return(migDeviceInfo, nil).AnyTimes()
+	previousNVML := nvmlprovider.Client()
+	t.Cleanup(func() { nvmlprovider.SetClient(previousNVML) })
 	nvmlprovider.SetClient(mockNVMLProvider)
 
 	// Create PodMapper with socket path
@@ -1042,9 +1048,13 @@ func TestPodMapperProcess_WhenMIGDevicesAvailableAndPodRunning(t *testing.T) {
 		KubernetesVirtualGPUs:     false,
 	})
 	require.NotNil(t, podMapper)
+	defer podMapper.Stop()
 
 	// Store original metrics count for verification
 	originalMetricsCount := len(metrics)
+
+	originalMetrics, err := unmarshalSampleMetrics()
+	require.NoError(t, err)
 
 	// Process the metrics
 	err = podMapper.Process(metrics, &deviceInfo)
@@ -1053,73 +1063,91 @@ func TestPodMapperProcess_WhenMIGDevicesAvailableAndPodRunning(t *testing.T) {
 	// Verify that metrics still exist after processing
 	require.Equal(t, originalMetricsCount, len(metrics), "Number of metric types should remain the same")
 
-	// Verify that metrics have been processed and maintain their structure
+	// Check every counter against its original GPU and MIG inventory.
+	assertMIGMappedMetrics(t, metrics, originalMetrics)
+}
+
+// assertMIGMappedMetrics checks that pod attribution preserves each counter's GPU and MIG inventory.
+func assertMIGMappedMetrics(t *testing.T, metrics, original collector.MetricsByCounter) {
+	t.Helper()
 	for counter, metricList := range metrics {
-		require.NotEmpty(t, metricList, "Metric list should not be empty")
+		assertMIGCounterMetrics(t, counter, metricList, original[counter])
+	}
+}
 
-		// Track which GPUs we've seen for this counter
-		gpusSeen := make(map[string]bool)
+// assertMIGCounterMetrics checks metric structure, device identities, and counter metadata.
+func assertMIGCounterMetrics(t *testing.T, counter counters.Counter, metricList, original []collector.Metric) {
+	t.Helper()
+	require.NotEmpty(t, metricList, "Metric list should not be empty")
+	assertMIGMetricStructure(t, metricList)
+	assertMIGGPUInventory(t, counter, metricList, original)
+	assertMIGGPUInstanceInventory(t, counter, metricList, original)
+	require.NotEmpty(t, counter.FieldName, "Counter field name should not be empty")
+	require.NotZero(t, counter.FieldID, "Counter field ID should not be zero")
+	require.NotEmpty(t, counter.PromType, "Counter prom type should not be empty")
+}
 
-		// Extract expected GPUs from the sample data at runtime
-		expectedGPUs := make(map[string]bool)
-		for _, metric := range metricList {
-			expectedGPUs[metric.GPU] = true
+// assertMIGMetricStructure checks required fields and the expected profile for GPU 0.
+func assertMIGMetricStructure(t *testing.T, metricList []collector.Metric) {
+	t.Helper()
+	for _, metric := range metricList {
+		require.NotEmpty(t, metric.GPU, "GPU field should not be empty")
+		require.NotEmpty(t, metric.GPUUUID, "GPUUUID field should not be empty")
+		require.NotEmpty(t, metric.Value, "Value field should not be empty")
+		require.NotNil(t, metric.Attributes, "Attributes map should not be nil")
+		require.NotNil(t, metric.Labels, "Labels map should not be nil")
+		if metric.MigProfile == "" {
+			continue
 		}
-
-		// Verify that metrics still have their original structure
-		for _, metric := range metricList {
-			require.NotEmpty(t, metric.GPU, "GPU field should not be empty")
-			require.NotEmpty(t, metric.GPUUUID, "GPUUUID field should not be empty")
-			require.NotEmpty(t, metric.Value, "Value field should not be empty")
-			require.NotNil(t, metric.Attributes, "Attributes map should not be nil")
-			require.NotNil(t, metric.Labels, "Labels map should not be nil")
-
-			// Track this GPU for this counter
-			gpusSeen[metric.GPU] = true
-
-			// MIG-specific validation
-			if metric.MigProfile != "" {
-				// This is a MIG metric, verify it has proper structure
-				require.NotEmpty(t, metric.GPUInstanceID, "MIG metric should have GPU instance ID")
-				require.NotEmpty(t, metric.MigProfile, "MIG metric should have MIG profile")
-				require.NotEmpty(t, metric.GPU, "MIG metric should have GPU ID")
-
-				// Verify the MIG profile matches what we expect from device info
-				if metric.GPU == "0" {
-					require.Equal(t, "1g.10gb", metric.MigProfile, "GPU 0 should have 1g.10gb MIG profile")
-				}
-			}
+		require.NotEmpty(t, metric.GPUInstanceID, "MIG metric should have GPU instance ID")
+		require.NotEmpty(t, metric.MigProfile, "MIG metric should have MIG profile")
+		require.NotEmpty(t, metric.GPU, "MIG metric should have GPU ID")
+		if metric.GPU == "0" {
+			require.Equal(t, "1g.10gb", metric.MigProfile, "GPU 0 should have 1g.10gb MIG profile")
 		}
+	}
+}
 
-		// Assert that each expected GPU has a metric for this counter
-		for expectedGPU := range expectedGPUs {
-			require.True(t, gpusSeen[expectedGPU],
-				"Counter %s should have a metric for GPU %s", counter.FieldName, expectedGPU)
+// assertMIGGPUInventory checks that every source GPU remains represented for each counter.
+func assertMIGGPUInventory(
+	t *testing.T, counter counters.Counter, metricList, original []collector.Metric,
+) {
+	t.Helper()
+	expectedGPUs := make(map[string]bool)
+	for _, metric := range original {
+		expectedGPUs[metric.GPU] = true
+	}
+	gpusSeen := make(map[string]bool)
+	for _, metric := range metricList {
+		gpusSeen[metric.GPU] = true
+	}
+	for expectedGPU := range expectedGPUs {
+		require.True(t, gpusSeen[expectedGPU],
+			"Counter %s should have a metric for GPU %s", counter.FieldName, expectedGPU)
+	}
+}
+
+// assertMIGGPUInstanceInventory checks that each source MIG instance remains represented.
+func assertMIGGPUInstanceInventory(
+	t *testing.T, counter counters.Counter, metricList, original []collector.Metric,
+) {
+	t.Helper()
+	gpuInstancesSeen := make(map[string]bool)
+	for _, metric := range metricList {
+		if metric.MigProfile != "" && metric.GPUInstanceID != "" {
+			gpuInstanceKey := fmt.Sprintf("%s-%s", metric.GPU, metric.GPUInstanceID)
+			gpuInstancesSeen[gpuInstanceKey] = true
 		}
-
-		// Verify GPU instances are present for MIG metrics
-		gpuInstancesSeen := make(map[string]bool)
-		expectedGPUInstances := make(map[string]bool)
-
-		for _, metric := range metricList {
-			if metric.MigProfile != "" && metric.GPUInstanceID != "" {
-				// Track GPU instances for MIG metrics
-				gpuInstanceKey := fmt.Sprintf("%s-%s", metric.GPU, metric.GPUInstanceID)
-				gpuInstancesSeen[gpuInstanceKey] = true
-				expectedGPUInstances[gpuInstanceKey] = true
-			}
+	}
+	expectedGPUInstances := make(map[string]bool)
+	for _, metric := range original {
+		if metric.MigProfile != "" && metric.GPUInstanceID != "" {
+			expectedGPUInstances[fmt.Sprintf("%s-%s", metric.GPU, metric.GPUInstanceID)] = true
 		}
-
-		// Assert that each expected GPU instance has a metric for this counter
-		for expectedGPUInstance := range expectedGPUInstances {
-			require.True(t, gpuInstancesSeen[expectedGPUInstance],
-				"Counter %s should have a metric for GPU instance %s", counter.FieldName, expectedGPUInstance)
-		}
-
-		// Verify counter structure
-		require.NotEmpty(t, counter.FieldName, "Counter field name should not be empty")
-		require.NotZero(t, counter.FieldID, "Counter field ID should not be zero")
-		require.NotEmpty(t, counter.PromType, "Counter prom type should not be empty")
+	}
+	for expectedGPUInstance := range expectedGPUInstances {
+		require.True(t, gpuInstancesSeen[expectedGPUInstance],
+			"Counter %s should have a metric for GPU instance %s", counter.FieldName, expectedGPUInstance)
 	}
 }
 
@@ -1129,6 +1157,7 @@ type CustomMockPodResourcesServer struct {
 	sampleData string
 }
 
+// List decodes and returns the complete recorded pod allocation.
 func (s *CustomMockPodResourcesServer) List(
 	ctx context.Context, req *podresourcesapi.ListPodResourcesRequest,
 ) (*podresourcesapi.ListPodResourcesResponse, error) {
@@ -1140,6 +1169,7 @@ func (s *CustomMockPodResourcesServer) List(
 	return &response, nil
 }
 
+// Get decodes and returns the first recorded pod or an empty result.
 func (s *CustomMockPodResourcesServer) Get(
 	ctx context.Context, req *podresourcesapi.GetPodResourcesRequest,
 ) (*podresourcesapi.GetPodResourcesResponse, error) {
@@ -1158,6 +1188,7 @@ func (s *CustomMockPodResourcesServer) Get(
 	return &podresourcesapi.GetPodResourcesResponse{}, nil
 }
 
+// GetAllocatableResources returns no inventory because this fixture tests allocated devices.
 func (s *CustomMockPodResourcesServer) GetAllocatableResources(
 	ctx context.Context, req *podresourcesapi.AllocatableResourcesRequest,
 ) (*podresourcesapi.AllocatableResourcesResponse, error) {

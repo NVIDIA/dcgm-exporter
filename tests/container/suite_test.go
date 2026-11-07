@@ -36,7 +36,7 @@ import (
 const (
 	// Default configuration for local images
 	defaultRegistry        = "nvidia"
-	fallbackDefaultVersion = "4.5.3-4.8.2"
+	fallbackDefaultVersion = "4.8.2"
 
 	// Test configuration
 	testPort          = 9400
@@ -47,15 +47,13 @@ const (
 
 var testConfig TestConfig
 
+// TestConfig holds the images and port the specs use.
 type TestConfig struct {
-	Images    []ImageInfo
+	// ExporterImage is the distroless exporter image; empty when it is not configured.
+	ExporterImage string
+	// DCGMImage runs nv-hostengine for the remote DCGM specs; empty when it is not configured.
 	DCGMImage string
 	TestPort  int
-}
-
-type ImageInfo struct {
-	FullName string
-	Variant  string
 }
 
 // TestDockerImages runs the Ginkgo suite for container image validation.
@@ -70,61 +68,60 @@ var _ = resultmarker.RegisterSuite(
 )
 
 var _ = BeforeSuite(func(ctx context.Context) {
-	var images []ImageInfo
-
-	// Get image configuration from environment (or use defaults)
 	registry := getEnvOrDefault("REGISTRY", defaultRegistry)
 	version := getEnvOrDefault("VERSION", defaultImageVersion())
 
-	// Get specific images for each variant (or build default from registry/version)
-	imageUbuntu := getEnvOrDefault("EXPORTER_UBUNTU_IMAGE",
-		fmt.Sprintf("%s/dcgm-exporter:%s-ubuntu26.04", registry, version))
-	imageDistroless := getEnvOrDefault("EXPORTER_DISTROLESS_IMAGE",
-		fmt.Sprintf("%s/dcgm-exporter:%s-distroless", registry, version))
-	dcgmImage := getEnvOrDefault("DCGM_IMAGE", imageUbuntu)
-
-	// Add images that are configured
-	if imageUbuntu != "" {
-		images = append(images, ImageInfo{
-			FullName: imageUbuntu,
-			Variant:  "ubuntu26.04",
-		})
-	}
-	if imageDistroless != "" {
-		images = append(images, ImageInfo{
-			FullName: imageDistroless,
-			Variant:  "distroless",
-		})
-	}
-
 	testConfig = TestConfig{
-		Images:    images,
-		DCGMImage: dcgmImage,
+		ExporterImage: getEnvOrDefault("EXPORTER_DISTROLESS_IMAGE",
+			fmt.Sprintf("%s/dcgm-exporter:%s", registry, version)),
+		DCGMImage: os.Getenv("DCGM_IMAGE"),
 		TestPort:  testPort,
 	}
 
-	By(fmt.Sprintf("Testing %d image(s)", len(images)))
-	for _, img := range images {
-		By(fmt.Sprintf("  - %s [%s]", img.FullName, img.Variant))
-	}
+	By(fmt.Sprintf("Testing exporter image %q", testConfig.ExporterImage))
 
 	By("Validating Docker is available")
 	available := dockerAvailable()
 	Expect(available).To(BeTrue(), "Docker must be available to run tests")
 
 	By("Cleaning up any leftover test containers")
-	cleanupTestContainers(ctx)
+	removeLeftoverTestContainers(ctx)
 })
 
+// requireExporterImage returns the configured exporter image once it is available to Docker. When
+// the image is not configured or not found, the spec fails if E2E_REQUIRE_CONTAINER_IMAGES=1 and
+// is skipped otherwise.
+func requireExporterImage(ctx context.Context) string {
+	image := testConfig.ExporterImage
+	required := os.Getenv("E2E_REQUIRE_CONTAINER_IMAGES") == "1"
+	if image == "" {
+		if required {
+			Fail("required exporter image is not configured")
+		}
+		Skip("Exporter image is not configured. Run 'task build:image:local' to build.")
+	}
+
+	exists, err := imageExists(ctx, image)
+	Expect(err).NotTo(HaveOccurred())
+	if !exists {
+		if required {
+			Fail(fmt.Sprintf("required image not found: %s", image))
+		}
+		Skip(fmt.Sprintf("Image not found: %s. Run 'task build:image:local' to build.", image))
+	}
+
+	return image
+}
+
+// defaultImageVersion returns EXPORTER_VERSION from hack/versions.env, or the local fallback when it is not set.
 func defaultImageVersion() string {
-	dcgm := versionValue("DCGM_VERSION")
-	exporter := versionValue("EXPORTER_VERSION")
-	if dcgm != "" && exporter != "" {
-		return dcgm + "-" + exporter
+	if exporter := versionValue("EXPORTER_VERSION"); exporter != "" {
+		return exporter
 	}
 	return fallbackDefaultVersion
 }
 
+// versionValue reads a named pin from hack/versions.env in source or package mode.
 func versionValue(key string) string {
 	for _, candidate := range []string{
 		filepath.Clean(filepath.Join("hack", "versions.env")),

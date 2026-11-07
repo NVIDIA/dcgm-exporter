@@ -24,7 +24,9 @@ import (
 	"net"
 	"net/http"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +41,12 @@ import (
 )
 
 const (
-	nvidiaResourceName = "nvidia.com/gpu"
+	// NVIDIAGPUResourceName is the extended resource the NVIDIA device
+	// plugin advertises for whole GPUs by default.
+	NVIDIAGPUResourceName corev1.ResourceName = "nvidia.com/gpu"
+	// NVIDIASharedGPUResourceName is the resource the NVIDIA device plugin
+	// advertises for time-sliced GPUs when its config sets renameByDefault.
+	NVIDIASharedGPUResourceName corev1.ResourceName = "nvidia.com/gpu.shared"
 	// maxLogBytes limits the amount of log data read into memory to prevent OOM
 	maxLogBytes = 10 * 1024 * 1024 // 10MB limit
 )
@@ -89,17 +96,27 @@ func (c *KubeClient) GetNamespace(ctx context.Context, namespace string) (*corev
 	return c.client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 }
 
-// DeleteNamespace deletes the namespace
-func (c *KubeClient) DeleteNamespace(
-	ctx context.Context,
-	namespace string,
-) error {
-	err := c.client.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
+// DeleteNamespace deletes the configured test namespace only if its UID still
+// matches the object whose ownership was checked by the caller.
+func (c *KubeClient) DeleteNamespace(ctx context.Context, namespace string, uid types.UID) error {
+	err := c.client.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{
+		Preconditions: &metav1.Preconditions{UID: &uid},
+	})
 	if err != nil && k8serrors.IsNotFound(err) {
 		// Namespace doesn't exist, which is fine for cleanup operations
 		return nil
 	}
 	return err
+}
+
+// GetSecret returns one Secret without logging its data.
+func (c *KubeClient) GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error) {
+	return c.client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// CreateSecret creates a Secret prepared by the caller.
+func (c *KubeClient) CreateSecret(ctx context.Context, secret *corev1.Secret) (*corev1.Secret, error) {
+	return c.client.CoreV1().Secrets(secret.Namespace).Create(ctx, secret, metav1.CreateOptions{})
 }
 
 // GetPodsByLabel returns a list of pods that matches with the label selector
@@ -113,6 +130,61 @@ func (c *KubeClient) GetPodsByLabel(ctx context.Context, namespace string, label
 		return nil, err
 	}
 	return podList.Items, nil
+}
+
+// GetPod returns the current Pod object. E2E helpers use it after scheduling to
+// learn the node that Kubernetes assigned to a workload.
+func (c *KubeClient) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
+	return c.client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+// ServiceAccountCan asks the API server whether a ServiceAccount may perform an
+// action. The review uses the groups Kubernetes puts in every ServiceAccount
+// token, so bindings to those groups count as they would for the running pod.
+func (c *KubeClient) ServiceAccountCan(
+	ctx context.Context, namespace, name string, attributes authorizationv1.ResourceAttributes,
+) (bool, error) {
+	review := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			User: fmt.Sprintf("system:serviceaccount:%s:%s", namespace, name),
+			Groups: []string{
+				"system:serviceaccounts",
+				"system:serviceaccounts:" + namespace,
+				"system:authenticated",
+			},
+			ResourceAttributes: &attributes,
+		},
+	}
+
+	result, err := c.client.AuthorizationV1().SubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+	if err != nil {
+		return false, fmt.Errorf("review access for service account %s/%s: %w", namespace, name, err)
+	}
+	if result.Status.EvaluationError != "" {
+		return false, fmt.Errorf("review access for service account %s/%s: incomplete review: %s",
+			namespace, name, result.Status.EvaluationError)
+	}
+	return result.Status.Allowed, nil
+}
+
+// GetNodesByLabel returns nodes that match a label selector.
+func (c *KubeClient) GetNodesByLabel(ctx context.Context, labelMap map[string]string) ([]corev1.Node, error) {
+	nodeList, err := c.client.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labelMap).String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return nodeList.Items, nil
+}
+
+// GetEvents returns events from one namespace.
+func (c *KubeClient) GetEvents(ctx context.Context, namespace string) ([]corev1.Event, error) {
+	eventList, err := c.client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list events in namespace %q: %w", namespace, err)
+	}
+	return eventList.Items, nil
 }
 
 // GetServicesByLabel returns services that match the label selector.
@@ -152,7 +224,10 @@ func (c *KubeClient) CheckPodStatus(
 	return false, nil
 }
 
-// CreatePod creates a new pod in the defined namespace
+// CreatePod creates a long-running pod in the namespace that requests one
+// unit of gpuResourceName, such as NVIDIAGPUResourceName. The pod only sleeps,
+// so it turns off the image's CUDA version requirement, which the runtime
+// otherwise enforces against an older driver on some GPUs.
 func (c *KubeClient) CreatePod(
 	ctx context.Context,
 	namespace string,
@@ -162,6 +237,7 @@ func (c *KubeClient) CreatePod(
 	image string,
 	runtimeClassName string,
 	nodeSelector map[string]string,
+	gpuResourceName corev1.ResourceName,
 ) (*corev1.Pod, error) {
 	// RuntimeClassName does not accept a reference to empty string, however nil is acceptable.
 	var runtimeClassNameRef *string
@@ -186,9 +262,10 @@ func (c *KubeClient) CreatePod(
 					Name:    containerName,
 					Image:   image,
 					Command: []string{"sleep", "infinity"},
+					Env:     []corev1.EnvVar{{Name: "NVIDIA_DISABLE_REQUIRE", Value: "true"}},
 					Resources: corev1.ResourceRequirements{
 						Limits: corev1.ResourceList{
-							nvidiaResourceName: quantity,
+							gpuResourceName: quantity,
 						},
 					},
 				},
@@ -232,6 +309,13 @@ func (c *KubeClient) DeleteConfigMap(
 	return err
 }
 
+// ConfigMapExists reports whether the ConfigMap exists in the namespace.
+func (c *KubeClient) ConfigMapExists(ctx context.Context, namespace, name string) (bool, error) {
+	_, err := c.client.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+
+	return existsResult(err, "ConfigMap", namespace, name)
+}
+
 // CreateConfigMap creates a ConfigMap in the defined namespace.
 func (c *KubeClient) CreateConfigMap(
 	ctx context.Context,
@@ -250,7 +334,74 @@ func (c *KubeClient) CreateConfigMap(
 	return c.client.CoreV1().ConfigMaps(namespace).Create(ctx, configMap, metav1.CreateOptions{})
 }
 
-// GetPodLogs retrieves logs from a pod
+// RoleExists reports whether the Role exists in the namespace.
+func (c *KubeClient) RoleExists(ctx context.Context, namespace, name string) (bool, error) {
+	_, err := c.client.RbacV1().Roles(namespace).Get(ctx, name, metav1.GetOptions{})
+
+	return existsResult(err, "Role", namespace, name)
+}
+
+// GrantConfigMapRead lets a ServiceAccount read one ConfigMap by creating a Role
+// and a RoleBinding named name in the namespace. A failed call can leave the Role
+// behind, so callers register DeleteConfigMapReadGrant before calling it.
+func (c *KubeClient) GrantConfigMapRead(ctx context.Context, namespace, name, configMapName, serviceAccount string) error {
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups:     []string{""},
+			Resources:     []string{"configmaps"},
+			ResourceNames: []string{configMapName},
+			Verbs:         []string{"get"},
+		}},
+	}
+	if _, err := c.client.RbacV1().Roles(namespace).Create(ctx, role, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create Role %s/%s: %w", namespace, name, err)
+	}
+
+	binding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: serviceAccount, Namespace: namespace}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
+	}
+	if _, err := c.client.RbacV1().RoleBindings(namespace).Create(ctx, binding, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("create RoleBinding %s/%s: %w", namespace, name, err)
+	}
+
+	return nil
+}
+
+// DeleteConfigMapReadGrant deletes the Role and RoleBinding that GrantConfigMapRead
+// created, and tolerates ones that are already gone.
+func (c *KubeClient) DeleteConfigMapReadGrant(ctx context.Context, namespace, name string) error {
+	err := c.client.RbacV1().RoleBindings(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("delete RoleBinding %s/%s: %w", namespace, name, err)
+	}
+
+	err = c.client.RbacV1().Roles(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("delete Role %s/%s: %w", namespace, name, err)
+	}
+
+	return nil
+}
+
+// existsResult turns the error of a Get call into whether the object exists:
+// not found means no, and any other error is returned with the object's kind,
+// namespace and name.
+func existsResult(err error, kind, namespace, name string) (bool, error) {
+	if err == nil {
+		return true, nil
+	}
+
+	if k8serrors.IsNotFound(err) {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("get %s %s/%s: %w", kind, namespace, name, err)
+}
+
+// GetPodLogs retrieves up to 10 MiB of logs from a pod.
 func (c *KubeClient) GetPodLogs(
 	ctx context.Context,
 	namespace string,
@@ -269,21 +420,14 @@ func (c *KubeClient) GetPodLogs(
 	}
 	defer stream.Close()
 
-	// Limit memory usage by capping the amount of data read
-	var reader io.Reader = stream
-
-	// If tailLines is nil (reading full logs), apply a byte limit to prevent OOM
-	if tailLines == nil {
-		reader = io.LimitReader(stream, maxLogBytes)
-	}
-
-	logs, err := io.ReadAll(reader)
+	// Cap both full-log and tailed responses before reading them into memory.
+	logs, err := io.ReadAll(io.LimitReader(stream, maxLogBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("failed to read logs for pod %s/%s container %s: %w", namespace, podName, containerName, err)
 	}
 
-	// If we hit the limit, add a warning to the logs
-	if tailLines == nil && len(logs) == maxLogBytes {
+	if len(logs) > maxLogBytes {
+		logs = logs[:maxLogBytes]
 		logs = append(logs, []byte("\n\n[WARNING: Logs truncated due to size limit (10MB)]")...)
 	}
 

@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
@@ -21,10 +21,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strings"
-	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,8 +33,7 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	e2eimage "github.com/NVIDIA/dcgm-exporter/internal/e2e/image"
-
+	"github.com/NVIDIA/dcgm-exporter/tests/internal/imageref"
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
 	"github.com/NVIDIA/dcgm-exporter/tests/k8s/internal/framework"
 )
@@ -55,62 +54,90 @@ func shouldResolvePath() {
 		"cannot resolve path to kubeconfig: %s, err: %v", testContext.kubeconfig, err)
 }
 
-// namespaceIsManagedByValidation reports whether the suite owns a namespace and may delete it.
-func namespaceIsManagedByValidation(namespace *corev1.Namespace) bool {
-	if namespace == nil {
-		return false
-	}
-	return namespace.Labels[validationManagedByLabel] == validationManagedByValue
-}
-
-// shouldCreateNamespace creates a fresh test namespace and clears only validation-owned stale namespaces.
+// shouldCreateNamespace creates a clean environment for this run, resetting a
+// same-run namespace left behind by an interrupted invocation.
 func shouldCreateNamespace(ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string) {
 	By(fmt.Sprintf("Creating namespace: %q started.", testContext.namespace))
 
-	// First, check if namespace already exists and is stuck
-	existingNamespace, err := kubeClient.GetNamespace(ctx, testContext.namespace)
-	if err == nil {
-		if !namespaceIsManagedByValidation(existingNamespace) {
-			Fail(fmt.Sprintf(
-				"Creating namespace: namespace %q already exists and is not managed by this test suite",
-				testContext.namespace,
-			))
-		}
+	pullSecret := shouldResetOwnedNamespace(ctx, kubeClient)
+	_, err := kubeClient.CreateNamespace(ctx, testContext.namespace, labels)
+	if k8serrors.IsAlreadyExists(err) {
+		shouldAcceptConcurrentNamespace(ctx, kubeClient)
+		shouldRestorePullSecret(ctx, kubeClient, pullSecret)
+		return
+	}
+	Expect(err).ShouldNot(HaveOccurred(), "Creating namespace: failed")
+	shouldRestorePullSecret(ctx, kubeClient, pullSecret)
+	By(fmt.Sprintf("Creating namespace: %q completed\n", testContext.namespace))
+}
 
-		// Namespace exists, check if it's stuck in terminating state
-		if existingNamespace.Status.Phase == corev1.NamespaceTerminating {
-			By(fmt.Sprintf("Creating namespace: %q exists but is stuck in terminating state, waiting for cleanup.", testContext.namespace))
-			// Wait for the namespace to be fully deleted
-			Eventually(func() bool {
-				_, err := kubeClient.GetNamespace(ctx, testContext.namespace)
-				if err == nil {
-					// Namespace still exists
-					return false
-				}
-				// Check if the error is specifically a "NotFound" error
-				if k8serrors.IsNotFound(err) {
-					// Namespace was successfully deleted
-					return true
-				}
-				// Other errors (network, auth, etc.) should not be treated as success
-				return false
-			}).WithTimeout(namespaceStuckCheckTimeout).WithPolling(pollingIntervalVerySlow).Should(BeTrue(),
-				fmt.Sprintf("Creating namespace: Namespace %q was not deleted within the timeout period.", testContext.namespace))
-		} else {
-			// Namespace exists and is active, clean it up first to ensure a clean state
-			By(fmt.Sprintf("Creating namespace: %q already exists and is active, cleaning up first.", testContext.namespace))
-			shouldDeleteNamespace(ctx, kubeClient)
-		}
-	} else if !k8serrors.IsNotFound(err) {
-		// If the error is not "NotFound", it's likely a network, auth, or other issue
-		// Fail the test instead of attempting to create the namespace
+// shouldResetOwnedNamespace deletes, or waits out, an existing namespace this run
+// owns so setup starts clean. It returns the configured pull Secret to restore.
+func shouldResetOwnedNamespace(ctx context.Context, kubeClient *framework.KubeClient) *corev1.Secret {
+	existingNamespace, err := kubeClient.GetNamespace(ctx, testContext.namespace)
+	if k8serrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		// A non-NotFound error is normally connectivity or authorization failure.
 		Fail(fmt.Sprintf("Creating namespace: Failed to check if namespace %q exists due to error: %v", testContext.namespace, err))
 	}
+	if !namespaceOwnedByRun(existingNamespace) {
+		Fail(fmt.Sprintf(
+			"Creating namespace: namespace %q is not owned by run %q",
+			testContext.namespace,
+			testContext.runName,
+		))
+	}
+	phase := existingNamespace.Status.Phase
+	if phase != corev1.NamespaceActive && phase != corev1.NamespaceTerminating {
+		Fail(fmt.Sprintf("Creating namespace: namespace %q has unexpected phase %q", testContext.namespace, phase))
+	}
+	var pullSecret *corev1.Secret
+	if testContext.k8sImagePullSecret != "" {
+		pullSecret, err = snapshotPullSecret(ctx, kubeClient, testContext.namespace, testContext.k8sImagePullSecret)
+		Expect(err).ShouldNot(HaveOccurred(), "snapshot image pull Secret %s/%s", testContext.namespace, testContext.k8sImagePullSecret)
+	}
+	if phase == corev1.NamespaceActive {
+		By(fmt.Sprintf("Creating namespace: resetting owned environment %q", testContext.namespace))
+		shouldDeleteNamespace(ctx, kubeClient, testContext.namespace)
+		return pullSecret
+	}
+	By(fmt.Sprintf("Creating namespace: waiting for terminating environment %q", testContext.namespace))
+	Eventually(func() bool {
+		_, getErr := kubeClient.GetNamespace(ctx, testContext.namespace)
+		return k8serrors.IsNotFound(getErr)
+	}).WithTimeout(namespaceDeletionTimeout).WithPolling(pollingIntervalSlow).Should(BeTrue(),
+		fmt.Sprintf("Creating namespace: namespace %q did not finish deleting", testContext.namespace))
+	return pullSecret
+}
 
-	// Now try to create the namespace (only if it doesn't exist or was cleaned up)
-	_, err = kubeClient.CreateNamespace(ctx, testContext.namespace, labels)
-	Expect(err).ShouldNot(HaveOccurred(), "Creating namespace: failed")
-	By(fmt.Sprintf("Creating namespace: %q completed\n", testContext.namespace))
+// shouldAcceptConcurrentNamespace accepts a namespace created concurrently only when this run owns it and it is active.
+func shouldAcceptConcurrentNamespace(ctx context.Context, kubeClient *framework.KubeClient) {
+	existingNamespace, err := kubeClient.GetNamespace(ctx, testContext.namespace)
+	Expect(err).ShouldNot(HaveOccurred(), "Creating namespace: failed to inspect a concurrent namespace")
+	if !namespaceOwnedByRun(existingNamespace) {
+		Fail(fmt.Sprintf("Creating namespace: concurrent namespace %q is not owned by run %q", testContext.namespace, testContext.runName))
+	}
+	if existingNamespace.Status.Phase != corev1.NamespaceActive {
+		Fail(fmt.Sprintf("Creating namespace: concurrent namespace %q is in phase %q", testContext.namespace, existingNamespace.Status.Phase))
+	}
+}
+
+// shouldRestorePullSecret recreates the pull Secret captured before the namespace was reset.
+func shouldRestorePullSecret(ctx context.Context, kubeClient *framework.KubeClient, pullSecret *corev1.Secret) {
+	if pullSecret == nil {
+		return
+	}
+	Expect(restorePullSecret(ctx, kubeClient, testContext.namespace, testContext.k8sImagePullSecret, pullSecret)).To(Succeed(),
+		"restore image pull Secret %s/%s", testContext.namespace, testContext.k8sImagePullSecret)
+}
+
+// namespaceOwnedByRun requires both harness ownership labels to match the current run.
+func namespaceOwnedByRun(namespace *corev1.Namespace) bool {
+	return namespace != nil &&
+		namespace.Labels[validationManagedByLabel] == validationManagedByValue &&
+		namespace.Labels[e2eRunNameLabel] == testContext.runName
 }
 
 // shouldCreateKubeClient constructs the framework Kubernetes client for the suite.
@@ -185,7 +212,7 @@ func shouldInstallHelmChartWithJSONValues(
 
 	helmReleaseName, err := helmClient.Install(
 		ctx, framework.HelmChartOptions{
-			CleanupOnFail: true,
+			CleanupOnFail: false,
 			GenerateName:  true,
 			Timeout:       helmInstallTimeout,
 			Wait:          true,
@@ -206,6 +233,44 @@ func shouldInstallHelmChartWithJSONValues(
 	return helmReleaseName
 }
 
+// shouldInstallPreviousChart installs the last released chart from its
+// published repository with the suite's default values plus additionalValues,
+// and returns the release name. The values must use that chart's own keys.
+func shouldInstallPreviousChart(ctx context.Context, additionalValues []string) string {
+	By(fmt.Sprintf("Helm chart installation: released chart %s started.", previousChartVersion))
+
+	previousClient, err := framework.NewHelmClient(
+		framework.HelmWithNamespace(testContext.namespace),
+		framework.HelmWithKubeConfig(shouldCreateK8SConfig()),
+		framework.HelmWithChart(previousChartRepositoryName+"/"+chartName),
+	)
+	Expect(err).ShouldNot(HaveOccurred(), "Creating helm client for the released chart")
+	defer func() {
+		if cleanupErr := previousClient.Cleanup(); cleanupErr != nil {
+			By(fmt.Sprintf("Warning: released chart client cleanup failed: %v", cleanupErr))
+		}
+	}()
+
+	Expect(previousClient.AddRepository(previousChartRepositoryName, previousChartRepositoryURL)).To(Succeed())
+
+	values := mergeHelmValues(getDefaultHelmValues(), additionalValues)
+	releaseName, err := previousClient.Install(
+		ctx, framework.HelmChartOptions{
+			GenerateName: true,
+			Version:      previousChartVersion,
+			Timeout:      helmInstallTimeout,
+			Wait:         true,
+		},
+		framework.WithValues(values...),
+		framework.WithStringValues(getDefaultHelmStringValues()...),
+	)
+	Expect(err).ShouldNot(HaveOccurred(), "Helm chart installation: released chart %s failed", previousChartVersion)
+
+	addHelmRelease(releaseName)
+
+	return releaseName
+}
+
 // shouldUpgradeHelmChart upgrades an existing release with merged default and scenario-specific values.
 func shouldUpgradeHelmChart(ctx context.Context, helmClient *framework.HelmClient, releaseName string, additionalValues []string, additionalJSONValues []string) string {
 	By(fmt.Sprintf("Helm chart upgrade: %q release started.", releaseName))
@@ -217,7 +282,7 @@ func shouldUpgradeHelmChart(ctx context.Context, helmClient *framework.HelmClien
 
 	helmReleaseName, err := helmClient.Upgrade(
 		ctx, releaseName, framework.HelmChartOptions{
-			CleanupOnFail: true,
+			CleanupOnFail: false,
 			Timeout:       helmInstallTimeout,
 			Wait:          true,
 			DryRun:        false,
@@ -362,96 +427,118 @@ func shouldCleanupHelmResources(ctx context.Context, kubeClient *framework.KubeC
 
 	// Clean up ConfigMap that might be left from previous tests
 	By("Cleaning up ConfigMap from previous tests")
-	for _, configMapName := range []string{"exporter-metrics-config-map", hpcJobMappingConfigMapName} {
-		err := kubeClient.DeleteConfigMap(ctx, testContext.namespace, configMapName)
-		if err != nil && !k8serrors.IsNotFound(err) {
-			By(fmt.Sprintf("Warning: Failed to delete ConfigMap %q: %v", configMapName, err))
-		}
+	err := kubeClient.DeleteConfigMap(ctx, testContext.namespace, hpcJobMappingConfigMapName)
+	if err != nil && !k8serrors.IsNotFound(err) {
+		By(fmt.Sprintf("Warning: Failed to delete ConfigMap %q: %v", hpcJobMappingConfigMapName, err))
 	}
 
 	By("Helm resources cleanup completed")
 }
 
-// shouldDeleteNamespace deletes the suite namespace and waits for it to disappear.
-func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient) {
-	By(fmt.Sprintf("Namespace deletion: %q namespace started.", testContext.namespace))
-	if kubeClient != nil {
-		namespace, err := kubeClient.GetNamespace(ctx, testContext.namespace)
-		if k8serrors.IsNotFound(err) {
-			By(fmt.Sprintf("Namespace deletion: %q namespace already absent.", testContext.namespace))
-			return
-		}
-		Expect(err).ShouldNot(HaveOccurred(), "Namespace deletion: failed to inspect namespace ownership")
-		if !namespaceIsManagedByValidation(namespace) {
-			By(fmt.Sprintf("Namespace deletion: %q is not managed by this test suite; skipping.", testContext.namespace))
-			return
-		}
-
-		err = kubeClient.DeleteNamespace(ctx, testContext.namespace)
-		if err != nil {
-			// Log warning but don't fail - namespace might already be deleted
-			By(fmt.Sprintf("Warning: Namespace deletion: Failed to delete namespace %q with error: %v", testContext.namespace, err))
-		} else {
-			By(fmt.Sprintf("Namespace deletion: %q deletion initiated.", testContext.namespace))
-		}
-
-		By(fmt.Sprintf("Namespace deletion: %q waiting for completion.", testContext.namespace))
-
-		// Try normal deletion first
-		deletionSucceeded := false
-		Eventually(func() bool {
-			// Directly check if namespace exists - more efficient than listing pods
-			_, err := kubeClient.GetNamespace(ctx, testContext.namespace)
-			if err == nil {
-				// Namespace still exists
-				return false
-			}
-			// Check if the error is specifically a "NotFound" error
-			if k8serrors.IsNotFound(err) {
-				// Namespace was successfully deleted
-				deletionSucceeded = true
-				return true
-			}
-			// Other errors (network, auth, etc.) should not be treated as success
-			return false
-		}).WithTimeout(namespaceDeletionTimeout).WithPolling(pollingIntervalSlow).Should(BeTrue(),
-			fmt.Sprintf("Namespace deletion: Namespace %q was not deleted within the timeout period.", testContext.namespace))
-
-		// If normal deletion failed, log a warning
-		if !deletionSucceeded {
-			By(fmt.Sprintf("Warning: Namespace deletion: %q stuck, but continuing without force cleanup.", testContext.namespace))
-		}
-
-		By(fmt.Sprintf("Namespace deletion: %q namespace fully deleted.", testContext.namespace))
+// shouldDeleteNamespace deletes a configured test environment by name and
+// waits for completion. Repeated cleanup succeeds when the namespace is gone.
+func shouldDeleteNamespace(ctx context.Context, kubeClient *framework.KubeClient, namespaceName string) {
+	if kubeClient == nil || namespaceName == "" {
+		return
 	}
+	By(fmt.Sprintf("Namespace deletion: %q namespace started.", namespaceName))
+	namespace, err := kubeClient.GetNamespace(ctx, namespaceName)
+	if k8serrors.IsNotFound(err) {
+		By(fmt.Sprintf("Namespace deletion: %q namespace already absent.", namespaceName))
+		return
+	}
+	Expect(err).ShouldNot(HaveOccurred(), "Namespace deletion: failed to inspect ownership")
+	if !namespaceOwnedByRun(namespace) {
+		By(fmt.Sprintf("Namespace deletion: %q is not owned by run %q; skipping.", namespaceName, testContext.runName))
+		return
+	}
+	err = kubeClient.DeleteNamespace(ctx, namespaceName, namespace.UID)
+	Expect(err).ShouldNot(HaveOccurred(), "Namespace deletion: failed")
+	By(fmt.Sprintf("Namespace deletion: %q deletion initiated.", namespaceName))
+
+	By(fmt.Sprintf("Namespace deletion: %q waiting for completion.", namespaceName))
+
+	Eventually(func() bool {
+		// Directly check if namespace exists - more efficient than listing pods.
+		_, err := kubeClient.GetNamespace(ctx, namespaceName)
+		if err == nil {
+			// Namespace still exists.
+			return false
+		}
+		// Check if the error is specifically a NotFound error.
+		if k8serrors.IsNotFound(err) {
+			// Namespace was successfully deleted.
+			return true
+		}
+		// Other errors (network, auth, etc.) should not be treated as success.
+		return false
+	}).WithTimeout(namespaceDeletionTimeout).WithPolling(pollingIntervalSlow).Should(BeTrue(),
+		fmt.Sprintf("Namespace deletion: Namespace %q was not deleted within the timeout period.", namespaceName))
+
+	By(fmt.Sprintf("Namespace deletion: %q namespace fully deleted.", namespaceName))
 }
 
-// shouldCheckIfPodCreated waits until exactly one exporter pod matching labels exists.
-func shouldCheckIfPodCreated(
+// shouldFindExporterPod waits for a ready, non-terminating exporter Pod in
+// scenarios that do not create a workload to anchor the scrape to a node.
+func shouldFindExporterPod(
 	ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string,
 ) *corev1.Pod {
 	By("Pod creation verification: started")
 
-	var dcgmExpPod *corev1.Pod
+	var dcgmExpPod corev1.Pod
 
-	Eventually(func(ctx context.Context) bool {
+	Eventually(func(ctx context.Context) error {
 		pods, err := kubeClient.GetPodsByLabel(ctx, testContext.namespace, labels)
 		if err != nil {
-			Fail(fmt.Sprintf("Pod creation: Failed with error: %v", err))
-			return false
+			return fmt.Errorf("list exporter pods: %w", err)
 		}
 
-		if len(pods) == 1 {
-			dcgmExpPod = &pods[0]
-			return true
-		}
-
-		return false
-	}).WithPolling(pollingIntervalFast).Within(podCreationTimeout).WithContext(ctx).Should(BeTrue())
+		dcgmExpPod, err = firstReadyExporterPod(pods)
+		return err
+	}).WithPolling(pollingIntervalFast).Within(podCreationTimeout + podReadinessTimeout).WithContext(ctx).Should(Succeed())
 
 	By("Pod creation verification: completed")
 
-	return dcgmExpPod
+	return &dcgmExpPod
+}
+
+// shouldFindReadyExporterPodOnNode waits for the ready exporter that observes
+// nodeName. Workload scenarios use it to avoid reading metrics from another node.
+func shouldFindReadyExporterPodOnNode(
+	ctx context.Context, kubeClient *framework.KubeClient, nodeName string,
+) *corev1.Pod {
+	Expect(strings.TrimSpace(nodeName)).NotTo(BeEmpty(), "workload node is required to select its local exporter")
+	By(fmt.Sprintf("Node-local exporter selection: waiting for an exporter on node %q", nodeName))
+
+	var exporterPod corev1.Pod
+	Eventually(func(ctx context.Context) error {
+		pods, err := kubeClient.GetPodsByLabel(ctx, testContext.namespace, dcgmExporterPodLabels)
+		if err != nil {
+			return fmt.Errorf("list dcgm-exporter pods: %w", err)
+		}
+		exporterPod, err = readyExporterPodOnNode(pods, nodeName)
+		if err != nil {
+			return fmt.Errorf(
+				"%w; exporter status on node %q: %s",
+				err,
+				nodeName,
+				exporterPodReadinessSummaryOnNode(pods, nodeName),
+			)
+		}
+		return nil
+	}).WithPolling(pollingIntervalNormal).Within(podReadinessTimeout).WithContext(ctx).Should(Succeed())
+
+	By(fmt.Sprintf("Node-local exporter selection: found ready exporter %q", exporterPod.Name))
+	return &exporterPod
+}
+
+// shouldFindReadyExporterPodForWorkload selects the ready exporter on the node
+// assigned to workload. Call it after the workload reaches Running.
+func shouldFindReadyExporterPodForWorkload(
+	ctx context.Context, kubeClient *framework.KubeClient, workload *corev1.Pod,
+) *corev1.Pod {
+	Expect(workload).NotTo(BeNil(), "workload is required to select its node-local exporter")
+	return shouldFindReadyExporterPodOnNode(ctx, kubeClient, workload.Spec.NodeName)
 }
 
 // shouldCheckIfReplacementPodCreated waits for a newly created replacement pod after deletion.
@@ -463,33 +550,21 @@ func shouldCheckIfReplacementPodCreated(
 ) *corev1.Pod {
 	By("Replacement pod creation verification: started")
 
-	var replacementPod *corev1.Pod
+	var replacementPod corev1.Pod
 
-	Eventually(func(ctx context.Context) bool {
+	Eventually(func(ctx context.Context) error {
 		pods, err := kubeClient.GetPodsByLabel(ctx, testContext.namespace, labels)
 		if err != nil {
-			Fail(fmt.Sprintf("Replacement pod creation: Failed with error: %v", err))
-			return false
+			return fmt.Errorf("list replacement exporter pods: %w", err)
 		}
 
-		for i := range pods {
-			pod := &pods[i]
-			if pod.DeletionTimestamp != nil ||
-				pod.Spec.NodeName != previousPod.Spec.NodeName ||
-				pod.UID == previousPod.UID ||
-				!pod.CreationTimestamp.After(previousPod.CreationTimestamp.Time) {
-				continue
-			}
-			replacementPod = pod
-			return true
-		}
-
-		return false
-	}).WithPolling(pollingIntervalFast).Within(podCreationTimeout).WithContext(ctx).Should(BeTrue())
+		replacementPod, err = replacementExporterPod(pods, *previousPod)
+		return err
+	}).WithPolling(pollingIntervalFast).Within(podCreationTimeout).WithContext(ctx).Should(Succeed())
 
 	By("Replacement pod creation verification: completed")
 
-	return replacementPod
+	return &replacementPod
 }
 
 // getDefaultHelmValues returns Helm values common to all exporter e2e installs.
@@ -503,9 +578,6 @@ func getDefaultHelmValues() []string {
 		"resources.limits.memory=1024Mi",
 		// Optimize image pull policy for faster startup
 		"image.pullPolicy=IfNotPresent",
-		// Reduce readiness delay for faster test execution while keeping liveness conservative.
-		"readinessProbe.initialDelaySeconds=5",
-		"livenessProbe.initialDelaySeconds=45",
 	}
 
 	if testContext.arguments != "" {
@@ -513,7 +585,7 @@ func getDefaultHelmValues() []string {
 	}
 
 	if testContext.exporterImage != "" {
-		ref, err := e2eimage.Parse(testContext.exporterImage)
+		ref, err := imageref.Parse(testContext.exporterImage)
 		Expect(err).NotTo(HaveOccurred())
 		values = append(values, fmt.Sprintf("image.repository=%s", ref.Repository()))
 		if ref.Tag() != "" {
@@ -531,6 +603,7 @@ func getDefaultHelmValues() []string {
 	if testContext.runtimeClass != "" {
 		values = append(values, fmt.Sprintf("runtimeClassName=%s", testContext.runtimeClass))
 	}
+	values = appendNvidiaVisibleDevicesHelmValues(values, testContext.nvidiaVisibleDevices)
 
 	return values
 }
@@ -648,42 +721,31 @@ func shouldCheckIfPodIsReady(ctx context.Context, kubeClient *framework.KubeClie
 	By("Checking pod status: completed")
 }
 
-func podReadinessSummary(status corev1.PodStatus) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "phase=%s", status.Phase)
-	for _, condition := range status.Conditions {
-		fmt.Fprintf(&b, " condition[%s]=%s", condition.Type, condition.Status)
-		if condition.Reason != "" {
-			fmt.Fprintf(&b, " reason=%s", condition.Reason)
-		}
-		if condition.Message != "" {
-			fmt.Fprintf(&b, " message=%s", condition.Message)
-		}
-	}
-	for _, container := range status.ContainerStatuses {
-		fmt.Fprintf(&b, " container[%s].ready=%t", container.Name, container.Ready)
-		switch {
-		case container.State.Waiting != nil:
-			fmt.Fprintf(&b, " waiting=%s", container.State.Waiting.Reason)
-			if container.State.Waiting.Message != "" {
-				fmt.Fprintf(&b, " message=%s", container.State.Waiting.Message)
-			}
-		case container.State.Terminated != nil:
-			fmt.Fprintf(&b, " terminated=%s exit=%d", container.State.Terminated.Reason, container.State.Terminated.ExitCode)
-			if container.State.Terminated.Message != "" {
-				fmt.Fprintf(&b, " message=%s", container.State.Terminated.Message)
-			}
-		case container.State.Running != nil:
-			fmt.Fprint(&b, " running=true")
-		}
-	}
-	return b.String()
+// shouldCreateWorkloadPod creates a long-running workload that requests one
+// nvidia.com/gpu and returns its current Pod object after Kubernetes assigns
+// its node.
+func shouldCreateWorkloadPod(ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string) *corev1.Pod {
+	return shouldCreateWorkloadPodRequesting(ctx, kubeClient, labels, framework.NVIDIAGPUResourceName, "")
 }
 
-// shouldCreateWorkloadPod creates the long-running GPU workload used for attribution checks.
-func shouldCreateWorkloadPod(ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string) {
+// shouldCreateWorkloadPodRequesting creates a long-running workload that
+// requests one unit of gpuResourceName and returns its current Pod object
+// after Kubernetes assigns its node. A non-empty nodeName pins the workload to
+// that node, in addition to the suite's node selector.
+func shouldCreateWorkloadPodRequesting(
+	ctx context.Context, kubeClient *framework.KubeClient, labels map[string]string, gpuResourceName corev1.ResourceName,
+	nodeName string,
+) *corev1.Pod {
 	By("Workload pod creation: started")
 	Expect(testContext.cudaWorkloadImage).NotTo(BeEmpty(), "E2E_CUDA_WORKLOAD_IMAGE or -cuda-workload-image is required")
+
+	nodeSelector := maps.Clone(getE2ENodeSelector())
+	if nodeName != "" {
+		if nodeSelector == nil {
+			nodeSelector = map[string]string{}
+		}
+		nodeSelector[corev1.LabelHostname] = nodeName
+	}
 
 	// Create a long-running pod instead of a completing one
 	workloadPod, err := kubeClient.CreatePod(
@@ -694,7 +756,8 @@ func shouldCreateWorkloadPod(ctx context.Context, kubeClient *framework.KubeClie
 		workloadContainerName,
 		testContext.cudaWorkloadImage,
 		testContext.runtimeClass,
-		getE2ENodeSelector(),
+		nodeSelector,
+		gpuResourceName,
 	)
 
 	Expect(err).ShouldNot(HaveOccurred(),
@@ -714,7 +777,12 @@ func shouldCreateWorkloadPod(ctx context.Context, kubeClient *framework.KubeClie
 		return isReady
 	}).WithPolling(pollingIntervalNormal).Within(podReadinessTimeout).WithContext(ctx).Should(BeTrue())
 
+	currentWorkload, err := kubeClient.GetPod(ctx, testContext.namespace, workloadPod.Name)
+	Expect(err).NotTo(HaveOccurred(), "get scheduled workload pod")
+	Expect(strings.TrimSpace(currentWorkload.Spec.NodeName)).NotTo(BeEmpty(), "running workload must have an assigned node")
+
 	By("Workload pod creation: completed - long-running pod is now active")
+	return currentWorkload
 }
 
 // shouldReadMetrics scrapes metrics from the exporter pod through the Kubernetes client.
@@ -745,20 +813,15 @@ func shouldReadMetrics(ctx context.Context, kubeClient *framework.KubeClient, dc
 
 // cleanupTestContext removes per-context workloads and Helm releases without deleting the namespace.
 func cleanupTestContext(ctx context.Context, kubeClient *framework.KubeClient, helmClient *framework.HelmClient) {
+	// Each context releases its workloads and Helm charts; --no-cleanup retains the suite environment.
 	By("Test context cleanup: Starting cleanup")
 
-	var wg sync.WaitGroup
+	// Cleanup runs on the Ginkgo test goroutine so assertion failures are
+	// reported to the active spec instead of panicking in a background goroutine.
+	By("Test context cleanup: Cleaning up workload pods")
+	shouldCleanupWorkloadPods(ctx, kubeClient)
 
-	// Start workload pod cleanup in parallel with Helm operations
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		By("Test context cleanup: Cleaning up workload pods (parallel)")
-		shouldCleanupWorkloadPods(ctx, kubeClient)
-	}()
-
-	// Clean up Helm releases in parallel with workload cleanup
-	By("Test context cleanup: Uninstalling Helm releases (parallel)")
+	By("Test context cleanup: Uninstalling Helm releases")
 	releases := getHelmReleases()
 	for _, releaseName := range releases {
 		if releaseName != "" {
@@ -769,11 +832,6 @@ func cleanupTestContext(ctx context.Context, kubeClient *framework.KubeClient, h
 	// Clear the releases list
 	clearHelmReleases()
 
-	// Wait for workload cleanup to complete
-	By("Test context cleanup: Waiting for workload cleanup to complete")
-	wg.Wait()
-	By("Test context cleanup: Workload cleanup completed")
-
 	// Clean up any remaining Helm resources
 	By("Test context cleanup: Cleaning up Helm resources")
 	shouldCleanupHelmResources(ctx, kubeClient)
@@ -783,20 +841,17 @@ func cleanupTestContext(ctx context.Context, kubeClient *framework.KubeClient, h
 
 // safeCleanup performs comprehensive cleanup that can be called multiple times safely.
 func safeCleanup(ctx context.Context, kubeClient *framework.KubeClient, helmClient *framework.HelmClient, deleteNamespace bool) {
+	if testContext.noCleanup {
+		By("Safe cleanup: Retaining test resources (--no-cleanup)")
+		return
+	}
 	By("Safe cleanup: Starting comprehensive cleanup")
 
-	var wg sync.WaitGroup
+	// Keep assertion-bearing cleanup on the active Ginkgo goroutine.
+	By("Safe cleanup: Cleaning up workload pods")
+	shouldCleanupWorkloadPods(ctx, kubeClient)
 
-	// Start workload pod cleanup in parallel with Helm operations
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		By("Safe cleanup: Cleaning up workload pods (parallel)")
-		shouldCleanupWorkloadPods(ctx, kubeClient)
-	}()
-
-	// Clean up Helm releases in parallel with workload cleanup
-	By("Safe cleanup: Uninstalling Helm releases (parallel)")
+	By("Safe cleanup: Uninstalling Helm releases")
 	releases := getHelmReleases()
 	for _, releaseName := range releases {
 		if releaseName != "" {
@@ -806,11 +861,6 @@ func safeCleanup(ctx context.Context, kubeClient *framework.KubeClient, helmClie
 	}
 	// Clear the releases list
 	clearHelmReleases()
-
-	// Wait for workload cleanup to complete
-	By("Safe cleanup: Waiting for workload cleanup to complete")
-	wg.Wait()
-	By("Safe cleanup: Workload cleanup completed")
 
 	// Clean up any remaining Helm resources
 	By("Safe cleanup: Cleaning up Helm resources")
@@ -823,7 +873,7 @@ func safeCleanup(ctx context.Context, kubeClient *framework.KubeClient, helmClie
 	// Delete namespace only if requested (typically only from AfterSuite)
 	if deleteNamespace {
 		By("Safe cleanup: Deleting namespace")
-		shouldDeleteNamespace(ctx, kubeClient)
+		shouldDeleteNamespace(ctx, kubeClient, testContext.namespace)
 	}
 
 	By("Safe cleanup: Comprehensive cleanup completed")

@@ -16,19 +16,106 @@
 
 package capability
 
-// nvswitchCapability reports whether DCGM discovery found NVSwitch entities.
-func nvswitchCapability(discovery string) Capability {
-	switch {
-	case nvswitchEvidence(discovery):
-		return hostCapability("nvswitch", StatusSupported, "DCGM container discovery -l", "DCGM reported NVSwitch entities", firstLine(discovery))
-	case dcgmProbeUnavailable(discovery):
-		return hostCapability("nvswitch", StatusUnknown, "DCGM container discovery -l", dcgmProbeUnavailableReason("switch-discovery", discovery), firstLine(discovery))
-	default:
-		return hostCapability("nvswitch", StatusUnsupported, "DCGM container discovery -l", "DCGM did not report NVSwitch entities", firstLine(discovery))
+// nvswitchCapability reports physical switch-backed topology without requiring DCGM telemetry.
+func nvswitchCapability(fabric fabricSignals, nvidiaQ, topo string) Capability {
+	if fabric.nvswitchPresent() {
+		return hostCapability(
+			"nvswitch",
+			StatusSupported,
+			"nvidia-smi topology and fabric inventory",
+			"host advertises NVSwitch-backed topology",
+			fabric.evidence(nvidiaQ, topo),
+		)
+	}
+	if probeOutputFailed(nvidiaQ, topo) {
+		return hostCapability(
+			"nvswitch",
+			StatusUnknown,
+			"nvidia-smi topology and fabric inventory",
+			"NVSwitch hardware inventory could not be determined",
+			firstLine(nvidiaQ+"\n"+topo),
+		)
+	}
+	return hostCapability(
+		"nvswitch",
+		StatusUnsupported,
+		"nvidia-smi topology and fabric inventory",
+		"host does not advertise NVSwitch-backed topology",
+		firstLine(topo),
+	)
+}
+
+// nvswitchApplicability reports the local provider contracts available to switch scenarios.
+func nvswitchApplicability(
+	inventory Capability,
+	fabric fabricSignals,
+) (Capability, Capability, Capability) {
+	local := inheritedApplicability("nvswitch_local_telemetry", inventory)
+	if inventory.Status == StatusSupported {
+		if fabric.nvlink5 && fabric.arm64 {
+			local = hostCapability(
+				"nvswitch_local_telemetry",
+				StatusUnsupported,
+				"CPU architecture and NVLink generation",
+				"local NVSDM switch telemetry is not published for ARM/SBSA compute nodes",
+				"architecture=ARM64, provider=NVSDM",
+			)
+		} else {
+			local = hostCapability(
+				"nvswitch_local_telemetry",
+				StatusSupported,
+				"CPU architecture and NVLink generation",
+				"platform supports a local NVSwitch telemetry provider",
+				fabric.providerEvidence(),
+			)
+		}
+	}
+
+	nscq := providerApplicability(
+		"nvswitch_nscq",
+		local,
+		!fabric.nvlink5,
+		"legacy NSCQ NVSwitch field contract",
+	)
+	nvsdm := providerApplicability(
+		"nvswitch_nvsdm",
+		local,
+		fabric.nvlink5,
+		"NVSDM NVSwitch field contract",
+	)
+	return local, nscq, nvsdm
+}
+
+// inheritedApplicability carries a coarse feature result into a dependent applicability gate.
+func inheritedApplicability(name string, feature Capability) Capability {
+	return Capability{
+		Name:     "host:" + name,
+		Status:   feature.Status,
+		Source:   feature.Source,
+		Reason:   feature.Reason,
+		Evidence: feature.Evidence,
 	}
 }
 
-// nvswitchEvidence finds positive NVSwitch evidence while ignoring negative wording.
-func nvswitchEvidence(output string) bool {
-	return positiveEvidence(output, nvswitchRE, "no nvswitch", "not nvswitch", "0 nvswitch")
+// providerApplicability identifies which switch field contract applies to the host.
+func providerApplicability(name string, local Capability, applies bool, contract string) Capability {
+	if local.Status != StatusSupported {
+		return inheritedApplicability(name, local)
+	}
+	if !applies {
+		return hostCapability(
+			name,
+			StatusUnsupported,
+			"NVLink protocol generation",
+			"scenario requires the "+contract,
+			local.Evidence,
+		)
+	}
+	return hostCapability(
+		name,
+		StatusSupported,
+		"NVLink protocol generation",
+		"platform uses the "+contract,
+		local.Evidence,
+	)
 }

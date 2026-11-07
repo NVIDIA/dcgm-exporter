@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -21,7 +21,6 @@ package k8s
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,7 +31,10 @@ import (
 
 var _ = Describe("dcgm-exporter metric scenarios", func() {
 	Context("DCGM exporter is deployed on kubernetes and uses a default helm configuration", Ordered, Label("default"), func() {
-		var dcgmExpPod *corev1.Pod
+		var (
+			dcgmExpPod *corev1.Pod
+			workload   *corev1.Pod
+		)
 
 		AfterAll(func(ctx context.Context) {
 			cleanupTestContext(ctx, kubeClient, helmClient)
@@ -42,16 +44,9 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 			shouldInstallHelmChart(ctx, helmClient, []string{})
 		})
 
-		It("should create dcgm-exporter pod [default]", func(ctx context.Context) {
-			dcgmExpPod = shouldCheckIfPodCreated(ctx, kubeClient, dcgmExporterPodLabels)
-		})
-
-		It("should ensure that the dcgm-exporter pod is ready [default]", func(ctx context.Context) {
-			shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
-		})
-
-		It("should create a workload pod [default]", func(ctx context.Context) {
-			shouldCreateWorkloadPod(ctx, kubeClient, testRunLabels)
+		It("should create a workload pod and select its node-local exporter [default]", func(ctx context.Context) {
+			workload = shouldCreateWorkloadPod(ctx, kubeClient, testRunLabels)
+			dcgmExpPod = shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
 		})
 
 		It("should wait for metrics to be available [default]", func(ctx context.Context) {
@@ -69,8 +64,18 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 				metricsResponse = shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
 				g.Expect(metricsResponse).ShouldNot(BeEmpty())
 
-				g.Expect(baselineMetricContractError(metricsResponse, true)).Should(Succeed())
+				g.Expect(defaultCSVMetricContractError(metricsResponse)).Should(Succeed())
 			}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
+		})
+
+		It("should match the GPUs nvidia-smi reports [default]", func(ctx context.Context) {
+			shouldMatchGPUInventory(ctx, workload, dcgmExpPod)
+		})
+
+		It("should name the workload pod on its GPU only, without pod_uid [default]", func(ctx context.Context) {
+			want := shouldReadWorkloadAttribution(ctx, workload)
+			want.ForbidPodUID = true
+			shouldAttributeOnlyWorkloadGPU(ctx, dcgmExpPod, want)
 		})
 	})
 
@@ -88,16 +93,9 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 			helmReleaseName = shouldInstallHelmChart(ctx, helmClient, []string{})
 		})
 
-		It("should create dcgm-exporter pod [configMatrix]", func(ctx context.Context) {
-			dcgmExpPod = shouldCheckIfPodCreated(ctx, kubeClient, dcgmExporterPodLabels)
-		})
-
-		It("should ensure that the dcgm-exporter pod is ready [configMatrix]", func(ctx context.Context) {
-			shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
-		})
-
-		It("should create a workload pod [configMatrix]", func(ctx context.Context) {
-			shouldCreateWorkloadPod(ctx, kubeClient, testRunLabels)
+		It("should create a workload pod and select its node-local exporter [configMatrix]", func(ctx context.Context) {
+			workload := shouldCreateWorkloadPod(ctx, kubeClient, testRunLabels)
+			dcgmExpPod = shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
 		})
 
 		It("should wait for metrics to be available [configMatrix]", func(ctx context.Context) {
@@ -115,15 +113,15 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 		It("should upgrade custom metrics and restart the exporter pod [configMatrix]", func(ctx context.Context) {
 			jsonValues := []string{
 				customMetricsJSONValue(
-					"DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).",
-					"DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).",
+					"DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature (in C).",
+					"DCGM_FI_DEV_FB_USED_BYTES, gauge, Framebuffer memory used (in bytes).",
 					"DCGM_FI_DRIVER_VERSION, label, Driver Version",
 				),
 			}
 			shouldUpgradeHelmChart(ctx, helmClient, helmReleaseName, nil, jsonValues)
 
 			Expect(kubeClient.DeletePod(ctx, dcgmExpPod.Namespace, dcgmExpPod.Name)).Should(Succeed(),
-				"configMap-backed metrics file uses subPath; the exporter pod must restart after customMetrics changes")
+				"replace the pod so this check does not wait for the kubelet's ConfigMap sync; the defaultChartMounts scenario checks the reload in a running pod")
 			dcgmExpPod = shouldCheckIfReplacementPodCreated(ctx, kubeClient, dcgmExporterPodLabels, dcgmExpPod)
 			shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
 			shouldWaitForMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
@@ -144,22 +142,48 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 		})
 
 		It("should use --configmap-data as the metrics source", func(ctx context.Context) {
-			_, _ = shouldInstallExporterAndReadMetrics(ctx,
-				[]string{
-					exporterArguments(
-						"--configmap-data="+testContext.namespace+":exporter-metrics-config-map",
-						"--kubernetes-enable-pod-labels",
-					),
-					"kubernetes.enablePodLabels=true",
-					"kubernetes.rbac.create=true",
-				},
-				[]string{customMetricsJSONValue(
-					"DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).",
-					"DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).",
-					"DCGM_FI_DRIVER_VERSION, label, Driver Version",
-				)},
-				testRunLabels,
-				customMetricsContractError)
+			values := []string{
+				"config.sources.kubernetes.pod_labels.enabled=true",
+				"config.sources.kubernetes.pod_labels.allow[0]=.*",
+				"kubernetes.rbac.create=true",
+			}
+			jsonValues := []string{customMetricsJSONValue(
+				"DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature (in C).",
+				"DCGM_FI_DEV_FB_USED_BYTES, gauge, Framebuffer memory used (in bytes).",
+				"DCGM_FI_DRIVER_VERSION, label, Driver Version",
+			)}
+
+			// The ConfigMap's name holds the Helm release name, which Helm picks at install.
+			// The chart creates no Role for the deprecated flag, so the test grants the read.
+			releaseName := shouldInstallHelmChartWithJSONValues(ctx, helmClient, values, jsonValues)
+
+			grantName := chartFullName(releaseName) + "-read-cm"
+			DeferCleanup(func(ctx context.Context) {
+				Expect(kubeClient.DeleteConfigMapReadGrant(ctx, testContext.namespace, grantName)).To(Succeed())
+			})
+			Expect(kubeClient.GrantConfigMapRead(ctx, testContext.namespace, grantName,
+				chartMetricsConfigMapName(releaseName), chartFullName(releaseName))).To(Succeed())
+
+			configMapData := "--configmap-data=" + testContext.namespace + ":" + chartMetricsConfigMapName(releaseName)
+			shouldUpgradeHelmChart(ctx, helmClient, releaseName,
+				append(values, exporterArguments(configMapData)), jsonValues)
+
+			workload := shouldCreateWorkloadPod(ctx, kubeClient, testRunLabels)
+
+			// Only the upgraded pod has the flag, so wait for it: the metrics must come from that pod.
+			var dcgmExpPod *corev1.Pod
+			Eventually(func(g Gomega) {
+				dcgmExpPod = shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
+				exporter := findContainer(dcgmExpPod.Spec.Containers, exporterContainerName)
+				g.Expect(exporter).NotTo(BeNil(), "exporter container")
+				g.Expect(exporter.Args).To(ContainElement(configMapData))
+			}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
+
+			Eventually(func(g Gomega) {
+				metrics := shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
+				g.Expect(metrics).NotTo(BeEmpty())
+				g.Expect(customMetricsContractError(metrics)).To(Succeed())
+			}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
 		})
 	})
 
@@ -170,41 +194,41 @@ var _ = Describe("dcgm-exporter metric scenarios", func() {
 
 		It("should use inline YAML metrics from the generated config ConfigMap", func(ctx context.Context) {
 			yamlConfig := strings.TrimSpace(`
-version: 1
+version: 2
 metrics:
-  fields:
-    - name: DCGM_FI_DEV_GPU_TEMP
-      prometheusType: gauge
-      help: GPU temperature (in C).
-    - name: DCGM_FI_DEV_FB_USED
-      prometheusType: gauge
-      help: Framebuffer memory used (in MiB).
-collection:
-  interval: 1s
+  - name: gpu
+    every: 1s
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature (in C).
+      - name: DCGM_FI_DEV_FB_USED_BYTES
+        prometheus_type: gauge
+        help: Framebuffer memory used (in bytes).
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1
 `)
 
 			_, _ = shouldInstallExporterAndReadMetrics(ctx,
 				[]string{
 					"arguments={}",
-					"config.enabled=true",
-					"config.create=true",
-					"config.key=dcgm-exporter.yaml",
-					"config.mountPath=/etc/dcgm-exporter/config.yaml",
 				},
-				[]string{"config.data=" + strconv.Quote(yamlConfig)},
+				[]string{"config=" + configJSON(yamlConfig)},
 				nil,
 				func(metrics []byte) error {
-					omitted, err := missingMetricFamilies(metrics, []string{"DCGM_FI_DEV_POWER_USAGE"})
+					omitted, err := missingMetricFamilies(metrics, []string{"DCGM_FI_DEV_BOARD_POWER_WATTS"})
 					if err != nil {
 						return err
 					}
 					var defaultMetricErr error
 					if len(omitted) == 0 {
-						defaultMetricErr = errors.New("YAML config should replace the default DCGM_FI_DEV_POWER_USAGE metric")
+						defaultMetricErr = errors.New("YAML config should replace the default DCGM_FI_DEV_BOARD_POWER_WATTS metric")
 					}
 					return errors.Join(
-						metricsHaveFamilyName(metrics, "DCGM_FI_DEV_GPU_TEMP"),
-						metricsHaveFamilyName(metrics, "DCGM_FI_DEV_FB_USED"),
+						metricsHaveFamilyName(metrics, "DCGM_FI_DEV_GPU_TEMP_CELSIUS"),
+						metricsHaveFamilyName(metrics, "DCGM_FI_DEV_FB_USED_BYTES"),
 						defaultMetricErr,
 					)
 				})
@@ -219,8 +243,9 @@ collection:
 		It("should use old pod_name, pod_namespace, and container_name labels", func(ctx context.Context) {
 			_, _ = shouldInstallExporterAndReadMetrics(ctx,
 				[]string{
-					exporterArguments("--use-old-namespace", "--kubernetes-enable-pod-labels"),
-					"kubernetes.enablePodLabels=true",
+					exporterArguments("--use-old-namespace"),
+					"config.sources.kubernetes.pod_labels.enabled=true",
+					"config.sources.kubernetes.pod_labels.allow[0]=.*",
 					"kubernetes.rbac.create=true",
 				},
 				nil,
@@ -246,8 +271,7 @@ collection:
 			_, _ = shouldInstallExporterAndReadMetrics(ctx,
 				nil,
 				[]string{customMetricsJSONValue(
-					"DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).",
-					"DCGM_FI_DEV_CLOCKS_EVENT_REASONS, gauge, Current clock event reasons.",
+					"DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature (in C).",
 					"DCGM_EXP_CLOCK_EVENTS_COUNT, gauge, Clock events observed during the configured time window.",
 					"DCGM_EXP_CLOCK_EVENTS_TOTAL, counter, Total clock events observed since exporter start.",
 				)},

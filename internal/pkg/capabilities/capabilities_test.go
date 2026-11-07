@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestGetCurrentCapabilities checks the host capability report is nonempty.
 func TestGetCurrentCapabilities(t *testing.T) {
 	caps := GetCurrentCapabilities()
 	if caps == "" {
@@ -32,6 +33,7 @@ func TestGetCurrentCapabilities(t *testing.T) {
 	t.Logf("Current capabilities: %s", caps)
 }
 
+// TestCheckSysAdmin exercises the host capability query without assuming its result.
 func TestCheckSysAdmin(t *testing.T) {
 	// This test will vary depending on how it's run
 	// Just verify it doesn't panic
@@ -39,17 +41,20 @@ func TestCheckSysAdmin(t *testing.T) {
 	t.Logf("Has CAP_SYS_ADMIN: %v", hasCap)
 }
 
+// TestIsRunningAsRoot exercises the effective-UID query without assuming root access.
 func TestIsRunningAsRoot(t *testing.T) {
 	// Just verify it doesn't panic
 	isRoot := IsRunningAsRoot()
 	t.Logf("Running as root: %v", isRoot)
 }
 
+// TestLogCapabilityInfo exercises capability diagnostics without panicking.
 func TestLogCapabilityInfo(t *testing.T) {
 	// Just verify it doesn't panic
 	LogCapabilityInfo()
 }
 
+// withProcStatus installs a proc-status fixture and restores the original reader after the test.
 func withProcStatus(t *testing.T, status string, err error) {
 	t.Helper()
 	prev := readProcStatus
@@ -62,7 +67,9 @@ func withProcStatus(t *testing.T, status string, err error) {
 	t.Cleanup(func() { readProcStatus = prev })
 }
 
+// TestHasCapabilityTable checks capability ranges, proc failures, mask parsing, and bit selection.
 func TestHasCapabilityTable(t *testing.T) {
+	// Proc fixtures pair one requested bit with its expected result or diagnostic.
 	tests := []struct {
 		name    string
 		cap     int
@@ -98,6 +105,7 @@ func TestHasCapabilityTable(t *testing.T) {
 	}
 }
 
+// TestCapabilityReportingBranches checks capability names, empty masks, and diagnostic error strings.
 func TestCapabilityReportingBranches(t *testing.T) {
 	withProcStatus(t, "CapEff:\t0000000000200002\n", nil)
 	assert.True(t, CheckSysAdmin())
@@ -117,11 +125,11 @@ func TestCapabilityReportingBranches(t *testing.T) {
 	assert.Equal(t, "unknown", GetCurrentCapabilities())
 }
 
-func TestWarnAndDropCapabilities(t *testing.T) {
+// TestWarnIfMissingProfilingCapabilities checks warning paths with profiling enabled and disabled.
+func TestWarnIfMissingProfilingCapabilities(t *testing.T) {
 	withProcStatus(t, "CapEff:\t0000000000000000\n", nil)
 	assert.NotPanics(t, func() {
 		WarnIfMissingProfilingCapabilities(false)
 		WarnIfMissingProfilingCapabilities(true)
 	})
-	require.NoError(t, DropAllCapabilitiesExcept([]int{CAP_SYS_ADMIN}))
 }

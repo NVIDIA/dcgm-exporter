@@ -29,23 +29,23 @@ import (
 	"testing"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
-
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
+// metricContractRow pairs a parsed CSV record with its source line number.
 type metricContractRow struct {
 	record []string
 	lineNo int
 }
 
+// TestShippedMetricSourcesLoadThroughCounterExtraction loads every active row of each shipped metric CSV
+// and the host test CSVs through ExtractCounters and expects no row to fail and no field to be listed twice.
 func TestShippedMetricSourcesLoadThroughCounterExtraction(t *testing.T) {
 	sources := []string{
 		"etc/default-counters.csv",
 		"etc/dcp-metrics-included.csv",
 		"etc/1.x-compatibility-metrics.csv",
-		"tests/host/testdata/default-counters.csv",
 		"tests/host/testdata/dcp-counters.csv",
-		"deployment/templates/metrics-configmap.yaml",
+		"tests/host/testdata/latest-value-batching-counters.csv",
 	}
 
 	repoRoot := repoRootFromThisTest(t)
@@ -57,8 +57,14 @@ func TestShippedMetricSourcesLoadThroughCounterExtraction(t *testing.T) {
 				t.Fatalf("%s: no active metric rows found", source)
 			}
 
+			firstLine := map[string]int{}
 			for _, row := range rows {
-				_, err := ExtractCounters([][]string{row.record}, metricContractConfig(row.record))
+				if line, seen := firstLine[row.record[0]]; seen {
+					t.Errorf("%s:%d: %s is already listed on line %d", source, row.lineNo, row.record[0], line)
+				}
+				firstLine[row.record[0]] = row.lineNo
+
+				_, err := ExtractCounters([][]string{row.record}, metricContractCapabilities(row.record))
 				if err != nil {
 					t.Errorf("%s:%d: row does not satisfy counter extraction contract: %v", source, row.lineNo, err)
 				}
@@ -67,8 +73,12 @@ func TestShippedMetricSourcesLoadThroughCounterExtraction(t *testing.T) {
 	}
 }
 
+// repoRootFromThisTest resolves the checkout root from the Go test environment.
 func repoRootFromThisTest(t *testing.T) string {
 	t.Helper()
+	if testSrcDir, workspace := stdos.Getenv("TEST_SRCDIR"), stdos.Getenv("TEST_WORKSPACE"); testSrcDir != "" && workspace != "" {
+		return filepath.Join(testSrcDir, workspace)
+	}
 
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
@@ -78,6 +88,7 @@ func repoRootFromThisTest(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "../../.."))
 }
 
+// readMetricContractRows parses non-comment metric rows and keeps their source lines.
 func readMetricContractRows(t *testing.T, path string, source string) []metricContractRow {
 	t.Helper()
 
@@ -112,6 +123,7 @@ func readMetricContractRows(t *testing.T, path string, source string) []metricCo
 	return rows
 }
 
+// isMetricContractRow reports whether a CSV line contains metric data.
 func isMetricContractRow(line string) bool {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return false
@@ -120,6 +132,7 @@ func isMetricContractRow(line string) bool {
 	return strings.HasPrefix(line, "DCGM_") || strings.HasPrefix(line, "dcgm_")
 }
 
+// parseMetricContractRecord parses one metric CSV record without enforcing its column count.
 func parseMetricContractRecord(line string) ([]string, error) {
 	reader := csv.NewReader(strings.NewReader(line))
 	reader.TrimLeadingSpace = true
@@ -142,23 +155,22 @@ func parseMetricContractRecord(line string) ([]string, error) {
 	return record, nil
 }
 
-func metricContractConfig(record []string) *appconfig.Config {
-	cfg := &appconfig.Config{CollectDCP: false}
-
+// metricContractCapabilities provides fixed profiling support for metric contract tests.
+func metricContractCapabilities(record []string) DCPCapabilities {
 	if len(record) == 0 {
-		return cfg
+		return DCPCapabilities{}
 	}
 
 	fieldID, ok := dcgm.GetFieldID(record[0])
 	if !ok || fieldID < dcpFieldsStart || fieldID >= cpuFieldsStart {
-		return cfg
+		return DCPCapabilities{}
 	}
 
-	cfg.CollectDCP = true
-	cfg.MetricGroups = []dcgm.MetricGroup{{FieldIds: []uint{uint(fieldID)}}}
-	return cfg
+	return NewDCPCapabilities([]dcgm.MetricGroup{{FieldIds: []uint{uint(fieldID)}}})
 }
 
+// TestParseMetricContractRecordRejectsExtraRecords expects an error naming the extra record when
+// the input holds two CSV rows instead of one.
 func TestParseMetricContractRecordRejectsExtraRecords(t *testing.T) {
 	record, err := parseMetricContractRecord("DCGM_FI_DEV_GPU_TEMP,gauge,temp\nDCGM_FI_DEV_POWER_USAGE,gauge,power")
 

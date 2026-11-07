@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "signalcatalog",
+    srcs = [
+        "catalog.go",
+        "types.go",
+        "watch_sources.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/signalcatalog",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "signalcatalog_test",
+    srcs = ["catalog_test.go"],
+    embed = [":signalcatalog"],
+    deps = [
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

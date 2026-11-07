@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "dcgmprovider",
+    srcs = [
+        "dcgm.go",
+        "diagnostics.go",
+        "entity_listing.go",
+        "types.go",
+        "watch_client.go",
+        "watch_pairs.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/capabilities",
+        "//internal/pkg/dcgmerrors",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "dcgmprovider_test",
+    srcs = [
+        "dcgm_test.go",
+        "diagnostics_test.go",
+        "entity_listing_test.go",
+        "watch_client_test.go",
+        "watch_pairs_test.go",
+    ],
+    embed = [":dcgmprovider"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/dcgmerrors",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

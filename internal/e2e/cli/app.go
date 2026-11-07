@@ -23,10 +23,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	urfavecli "github.com/urfave/cli/v2"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/e2e/clioutput"
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
@@ -52,6 +55,41 @@ type Options struct {
 	Stdout io.Writer
 	Stderr io.Writer
 	Runner e2eexec.Runner
+}
+
+// resolveE2ERoot finds the source or packaged artifact root from a supported
+// working directory. Source runs are rooted at go.mod; package runs are rooted
+// at the directory that supplies bin/dcgm-exporter-*.test binaries.
+func resolveE2ERoot(start string) (string, error) {
+	path, err := filepath.Abs(start)
+	if err != nil {
+		return "", err
+	}
+	for {
+		if fileExists(filepath.Join(path, "go.mod")) || packageTestBinariesPresent(filepath.Join(path, "bin")) {
+			return path, nil
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", fmt.Errorf("could not locate repo root with go.mod or a package root with bin/ suite test binaries from %s", start)
+		}
+		path = parent
+	}
+}
+
+// packageTestBinariesPresent reports whether binDir contains a packaged suite binary.
+func packageTestBinariesPresent(binDir string) bool {
+	entries, err := os.ReadDir(binDir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && strings.HasPrefix(name, "dcgm-exporter-") && strings.HasSuffix(name, ".test") {
+			return true
+		}
+	}
+	return false
 }
 
 // exitError preserves the harness-specific process code while carrying the original failure.
@@ -109,11 +147,6 @@ func runWithRunner(args []string, stdout, stderr io.Writer, runner e2eexec.Runne
 	return runWithRunnerContext(context.Background(), args, stdout, stderr, runner)
 }
 
-// RunWithRunnerContext runs the e2e CLI command tree with the supplied runner.
-func RunWithRunnerContext(ctx context.Context, args []string, stdout, stderr io.Writer, runner e2eexec.Runner) error {
-	return runWithRunnerContext(ctx, args, stdout, stderr, runner)
-}
-
 // runWithRunnerContext binds command execution to the caller's cancellation context.
 func runWithRunnerContext(ctx context.Context, args []string, stdout, stderr io.Writer, runner e2eexec.Runner) error {
 	root, err := os.Getwd()
@@ -147,81 +180,41 @@ func NewApp(opts Options) *urfavecli.App {
 	}
 	app := urfavecli.NewApp()
 	app.Name = "e2e"
-	app.Usage = "run dcgm-exporter validation"
-	app.HideHelp = true
+	app.Usage = "Run dcgm-exporter validation"
+	app.UsageText = "e2e <command> [options]"
+	app.Description = `Run dcgm-exporter validation suites or manage the Kubernetes target used by them.
+
+Use "e2e tests --help" or "e2e cluster --help" for command options.`
 	app.HideVersion = true
-	app.SkipFlagParsing = true
 	app.Writer = opts.Stdout
 	app.ErrWriter = opts.Stderr
 	app.Action = func(c *urfavecli.Context) error {
-		args := c.Args().Slice()
-		if len(args) == 0 || helpRequested(args) {
-			writeRootHelp(opts.Stdout)
-			return nil
+		if c.NArg() == 0 {
+			return urfavecli.ShowAppHelp(c)
 		}
-		return fmt.Errorf("unknown e2e command %q", args[0])
+		return fmt.Errorf("unknown e2e command %q", c.Args().First())
 	}
 	app.Commands = []*urfavecli.Command{
 		testsCommand(opts),
 		clusterCommand(opts),
-		{
-			Name:            "help",
-			SkipFlagParsing: true,
-			Action: func(c *urfavecli.Context) error {
-				writeRootHelp(opts.Stdout)
-				return nil
-			},
-		},
 	}
+	clioutput.ConfigureUsageErrors(app)
 	return app
 }
 
-// testsCommand wires the tests subcommand while keeping flag parsing in tests.go.
+// testsCommand wires the parser-owned tests command to suite execution.
 func testsCommand(opts Options) *urfavecli.Command {
-	return &urfavecli.Command{
-		Name:            "tests",
-		Usage:           "Run e2e validation suites",
-		HideHelp:        true,
-		SkipFlagParsing: true,
-		Action: func(c *urfavecli.Context) error {
-			return runTests(c.Context, c.Args().Slice(), opts.Stdout, opts.Stderr, opts.Root, opts.Runner)
-		},
+	testOpts, envErr := testsFromEnv()
+	command := newTestsCLICommand(&testOpts, true)
+	parseAction := command.Action
+	command.Before = func(_ *urfavecli.Context) error {
+		return envErr
 	}
-}
-
-// clusterCommand wires the cluster subcommand while keeping operation parsing in cluster.go.
-func clusterCommand(opts Options) *urfavecli.Command {
-	return &urfavecli.Command{
-		Name:            "cluster",
-		Usage:           "Manage a local or external e2e Kubernetes target",
-		HideHelp:        true,
-		SkipFlagParsing: true,
-		Action: func(c *urfavecli.Context) error {
-			return runCluster(c.Context, c.Args().Slice(), opts.Stdout, opts.Stderr, opts.Root, opts.Runner)
-		},
+	command.Action = func(c *urfavecli.Context) error {
+		if err := parseAction(c); err != nil {
+			return err
+		}
+		return runTests(c.Context, opts.Stdout, opts.Root, opts.Runner, testOpts)
 	}
-}
-
-// writeRootHelp prints the hand-authored top-level help used by humans and fixtures.
-func writeRootHelp(w io.Writer) {
-	fmt.Fprint(w, `Usage: e2e <command> [options]
-
-Commands:
-  tests     Run e2e validation suites
-  cluster   Manage a local or external e2e Kubernetes target
-  help      Show this help
-
-Examples:
-  e2e tests --list-scenarios
-  e2e tests --suite k8s --exporter-image registry.example/dcgm-exporter:dev
-  e2e cluster up
-  e2e cluster deploy --exporter-image registry.example/dcgm-exporter:dev
-
-Run "e2e tests --help" or "e2e cluster --help" for command options.
-`)
-}
-
-// helpRequested recognizes the help forms accepted before urfave/cli flag parsing runs.
-func helpRequested(args []string) bool {
-	return len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help")
+	return command
 }

@@ -1,0 +1,56 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "configinspect",
+    srcs = [
+        "diagnostics.go",
+        "doc.go",
+        "explain.go",
+        "explain_text.go",
+        "inactive.go",
+        "local_inputs.go",
+        "origins.go",
+        "output.go",
+        "settings.go",
+        "show.go",
+        "validate.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/configinspect",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/counters",
+        "//internal/pkg/devicewatchlistmanager",
+        "@com_github_prometheus_exporter_toolkit//web",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)
+
+go_test(
+    name = "configinspect_test",
+    srcs = [
+        "diagnostics_test.go",
+        "explain_test.go",
+        "explain_text_test.go",
+        "helpers_test.go",
+        "inactive_test.go",
+        "local_inputs_test.go",
+        "origins_test.go",
+        "output_test.go",
+        "settings_test.go",
+        "show_test.go",
+        "validate_test.go",
+    ],
+    data = [
+        "explain.go",
+        "inactive.go",
+        "settings.go",
+    ],
+    embed = [":configinspect"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@in_gopkg_yaml_v3//:yaml_v3",
+    ],
+)

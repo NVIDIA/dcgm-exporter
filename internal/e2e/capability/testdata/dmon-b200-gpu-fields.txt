@@ -1,0 +1,9 @@
+# dcgmi dmon -e 1,150,155,203,1001 -c 3 output on a B200 with DCGM 4.7.0 (private nv-hostengine); GPUs 0 and 1 of 8 kept, trailing spaces removed.
+#Entity         DRVER          TMPTR        POWER             GPUTL             GRACT
+ID              #               C            W
+GPU 0           620.64         39           191.098           0                 N/A
+GPU 1           620.64         40           194.800           0                 N/A
+GPU 0           620.64         39           190.990           0                 0.000
+GPU 1           620.64         40           194.813           0                 0.000
+GPU 0           620.64         39           190.999           0                 0.000
+GPU 1           620.64         40           194.826           0                 0.000

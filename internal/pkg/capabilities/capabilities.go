@@ -32,6 +32,7 @@ const (
 	CAP_SYS_ADMIN = 21
 )
 
+// readProcStatus owns the proc read and permits deterministic package-test fixtures.
 var readProcStatus = func() ([]byte, error) {
 	return os.ReadFile("/proc/self/status")
 }
@@ -95,7 +96,7 @@ func WarnIfMissingProfilingCapabilities(hasProfilingMetrics bool) {
 	}
 
 	if CheckSysAdmin() {
-		// Capability present - profiling metrics will work
+		// The capability check passed; field and module support are checked elsewhere
 		return
 	}
 
@@ -175,18 +176,6 @@ func GetCurrentCapabilities() string {
 	}
 
 	return "unknown"
-}
-
-// DropAllCapabilitiesExcept drops all capabilities except the specified ones.
-// This is a placeholder for future implementation if needed.
-// Note: Dropping capabilities requires CAP_SETPCAP.
-func DropAllCapabilitiesExcept(keep []int) error {
-	// This would require using the cap library or syscalls
-	// For now, we rely on container runtime to handle capability dropping
-	// via securityContext.capabilities.drop in Kubernetes
-	slog.Debug("Capability dropping is handled by container runtime",
-		slog.String("method", "securityContext.capabilities.drop"))
-	return nil
 }
 
 // LogCapabilityInfo logs information about current capabilities.

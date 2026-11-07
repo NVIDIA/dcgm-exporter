@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,21 +40,42 @@ import (
 
 const unknownErr = "Unknown Error"
 
+// maxLatestValueFieldBatch matches DCGM_MAX_FIELD_IDS_PER_FIELD_GROUP, the
+// fixed field-ID capacity used by DCGM's latest-value request structs.
+const maxLatestValueFieldBatch = 128
+
 // DCGMCollector owns the watched DCGM fields for one entity type and converts
 // their latest values into exporter metrics during each Prometheus collection.
 type DCGMCollector struct {
-	mu                       sync.Mutex
-	counters                 []counters.Counter
-	cleanups                 []func()
-	useOldNamespace          bool
-	deviceWatchList          devicewatchlistmanager.WatchList
-	hostname                 string
-	replaceBlanksInModelName bool
+	mu                          sync.Mutex
+	client                      dcgmprovider.DCGM
+	counters                    []counters.Counter
+	watchResult                 *devicewatcher.WatchResult
+	useOldNamespace             bool
+	deviceWatchList             devicewatchlistmanager.WatchList
+	scrapeFields                []dcgm.Short
+	nonComputeInstanceFields    []dcgm.Short
+	computeInstanceScrapeFields []dcgm.Short
+	parentGPUScrapeFields       []dcgm.Short
+	inheritedLabelFields        []dcgm.Short
+	hostname                    string
+	replaceBlanksInModelName    bool
+	enableOTLP                  bool
 
 	profilingStaleWindows map[dcgm.Short]time.Duration
 	profilingSamples      map[profilingSampleKey]profilingSample
 	nextProfilingRepair   time.Time
 	now                   func() time.Time
+}
+
+// dcgmClient returns the client captured when this collector and its watches
+// were created. The fallback keeps direct test fixtures compatible while the
+// registry factory always supplies a concrete generation client.
+func (c *DCGMCollector) dcgmClient() dcgmprovider.DCGM {
+	if c.client != nil {
+		return c.client
+	}
+	return dcgmprovider.Client()
 }
 
 // profilingSampleKey identifies one profiling stream within a collector.
@@ -92,7 +114,22 @@ func (r *profilingRepairReason) String() string {
 		r.key.fieldID, r.key.entityGroup, r.key.entityID, r.timestamp, r.staleFor)
 }
 
+// NewDCGMCollector creates a collector using the current process client for
+// direct callers. Registry factories use the client-specific helper below.
 func NewDCGMCollector(
+	c []counters.Counter,
+	hostname string,
+	config *appconfig.Config,
+	deviceWatchList devicewatchlistmanager.WatchList,
+) (*DCGMCollector, error) {
+	return newDCGMCollectorWithClient(dcgmprovider.Client(), c, hostname, config, deviceWatchList)
+}
+
+// newDCGMCollectorWithClient creates one scraper and its field watches with
+// client. Collector factories use it so cleanup and later reads retain the
+// same native session across reload generations.
+func newDCGMCollectorWithClient(
+	client dcgmprovider.DCGM,
 	c []counters.Counter,
 	hostname string,
 	config *appconfig.Config,
@@ -102,10 +139,34 @@ func NewDCGMCollector(
 		return nil, errors.New("deviceWatchList is empty")
 	}
 
+	scrapeFields := fieldsToScrape(deviceWatchList)
+	computeInstanceFields := deviceWatchList.ComputeInstanceFields()
+	fieldsAtMultipleScopes := deviceWatchList.FieldsAtMultipleScopes()
+	gpuLevelFields := deviceWatchList.GPULevelFields()
+	nonComputeInstanceFields, computeInstanceScrapeFields := devicewatchlistmanager.SplitInstanceFields(
+		scrapeFields,
+		computeInstanceFields,
+		fieldsAtMultipleScopes,
+		deviceWatchList.LabelDeviceFields(),
+		gpuLevelFields,
+	)
+	gpuLevelSourceFields := withoutFieldIDs(gpuLevelFields, deviceWatchList.LabelDeviceFields())
+
+	parentGPUScrapeFields := []dcgm.Short(nil)
+	if parentFields := dedupeFieldIDs(append(fieldsAtMultipleScopes, gpuLevelSourceFields...)); len(parentFields) > 0 {
+		parentGPUScrapeFields = dedupeFieldIDs(append(parentFields, deviceWatchList.LabelDeviceFields()...))
+	}
+
 	collector := &DCGMCollector{
-		counters:        c,
-		deviceWatchList: deviceWatchList,
-		hostname:        hostname,
+		client:                      client,
+		counters:                    c,
+		deviceWatchList:             deviceWatchList,
+		scrapeFields:                scrapeFields,
+		nonComputeInstanceFields:    nonComputeInstanceFields,
+		computeInstanceScrapeFields: computeInstanceScrapeFields,
+		parentGPUScrapeFields:       parentGPUScrapeFields,
+		inheritedLabelFields:        deviceWatchList.InheritedLabelFields(),
+		hostname:                    hostname,
 	}
 
 	if config == nil {
@@ -113,6 +174,7 @@ func NewDCGMCollector(
 		return collector, nil
 	}
 
+	collector.enableOTLP = config.EnableOTLP
 	collector.useOldNamespace = config.UseOldNamespace
 	collector.replaceBlanksInModelName = config.ReplaceBlanksInModelName
 
@@ -130,13 +192,12 @@ func NewDCGMCollector(
 		collector.profilingSamples = make(map[profilingSampleKey]profilingSample)
 	}
 
-	cleanups, err := collector.deviceWatchList.Watch()
+	watchResult, err := collector.deviceWatchList.Watch()
 	if err != nil {
-		runCleanups(cleanups)
 		return nil, err
 	}
 
-	collector.cleanups = cleanups
+	collector.watchResult = watchResult
 
 	return collector, nil
 }
@@ -190,6 +251,9 @@ func (c *DCGMCollector) repairProfilingWatch(
 	)
 	if err := c.rearmProfilingWatch(); err != nil {
 		slog.Error("Failed to repair DCGM profiling watch", slog.String("error", err.Error()))
+		if dcgmerrors.IsFatalScrapeError(err) {
+			return nil, err
+		}
 		return fallback, nil
 	}
 
@@ -197,6 +261,9 @@ func (c *DCGMCollector) repairProfilingWatch(
 	metrics, retryReason, err := c.getMetricsOnce()
 	if err != nil {
 		slog.Error("Failed to collect metrics after repairing DCGM profiling watch", slog.String("error", err.Error()))
+		if dcgmerrors.IsFatalScrapeError(err) {
+			return nil, err
+		}
 		return fallback, nil
 	}
 	if retryReason != nil {
@@ -213,16 +280,29 @@ func (c *DCGMCollector) repairProfilingWatch(
 
 // getMetricsOnce performs one scrape and reports stale profiling state separately from API errors.
 func (c *DCGMCollector) getMetricsOnce() (MetricsByCounter, *profilingRepairReason, error) {
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
-	metrics := make(MetricsByCounter)
-	var firstReason *profilingRepairReason
+	readTimestamp := c.currentTime().UnixMicro()
+	reads, err := c.collectionReads()
+	if err != nil {
+		return nil, nil, err
+	}
 
-	for _, mi := range monitoringInfo {
-		vals, err := c.latestValues(mi)
+	metrics := make(MetricsByCounter)
+	var parents map[uint]*SourceIdentity
+	shared := c.deviceWatchList.HasOTLPWatches()
+	if shared {
+		parents = make(map[uint]*SourceIdentity)
+	}
+	var firstReason *profilingRepairReason
+	gpuReads := make(map[uint][]dcgm.FieldValue_v1)
+
+	for _, read := range reads {
+		mi := read.Entity
+		vals, err := c.valuesForRead(scrapeRead{entity: mi, fields: read.Fields}, gpuReads)
 		if err != nil {
 			if reason := c.repairReasonForError(err); reason != nil {
 				return metrics, reason, nil
 			}
+
 			handleScrapeError(err)
 			return nil, nil, err
 		}
@@ -231,12 +311,149 @@ func (c *DCGMCollector) getMetricsOnce() (MetricsByCounter, *profilingRepairReas
 			firstReason = reason
 		}
 
-		c.addMetrics(metrics, vals, mi)
+		if shared {
+			c.addScopedMetrics(metrics, read, vals, readTimestamp, parents)
+		} else {
+			c.addMetrics(metrics, vals, mi, readTimestamp)
+		}
 	}
 
 	return metrics, firstReason, nil
 }
 
+// collectionReads chooses the resolved scoped plan or Prometheus entity and parent reads.
+func (c *DCGMCollector) collectionReads() ([]devicewatchlistmanager.ReadRequest, error) {
+	if c.deviceWatchList.HasOTLPWatches() {
+		return c.deviceWatchList.Reads()
+	}
+
+	prometheus := c.scrapeReads()
+	reads := make([]devicewatchlistmanager.ReadRequest, 0, len(prometheus))
+	for _, read := range prometheus {
+		reads = append(reads, devicewatchlistmanager.ReadRequest{Entity: read.entity, Fields: read.fields})
+	}
+
+	return reads, nil
+}
+
+// addScopedMetrics shares parent PCIe identity within one collection and converts the selected metrics.
+func (c *DCGMCollector) addScopedMetrics(
+	metrics MetricsByCounter,
+	read devicewatchlistmanager.ReadRequest,
+	values []dcgm.FieldValue_v1,
+	readTimestamp int64,
+	parents map[uint]*SourceIdentity,
+) {
+	var source *SourceIdentity
+	if c.enableOTLP {
+		source = sourceIdentity(read.Entity, values, c.deviceWatchList.DeviceInfo())
+		if read.Entity.Entity.EntityGroupId == dcgm.FE_GPU {
+			parents[read.Entity.DeviceInfo.GPU] = source
+		} else {
+			source.preserveParentPCIe(parents[read.Entity.DeviceInfo.GPU])
+		}
+	}
+	selected := countersForFields(c.counters, read.PrometheusFields)
+	c.toSelectedMetrics(metrics, values, read.Entity, readTimestamp, source, selected)
+}
+
+// countersForFields keeps selected metrics and their configured label counters.
+func countersForFields(all []counters.Counter, fields []dcgm.Short) []counters.Counter {
+	allowed := make(map[dcgm.Short]struct{}, len(fields))
+	for _, field := range fields {
+		allowed[field] = struct{}{}
+	}
+	var selected []counters.Counter
+	for _, counter := range all {
+		if _, ok := allowed[counter.FieldID]; ok || counter.IsLabel() {
+			selected = append(selected, counter)
+		}
+	}
+	return selected
+}
+
+// scrapeRead is one entity and the fields one scrape reads on it.
+type scrapeRead struct {
+	entity devicemonitoring.Info
+	fields []dcgm.Short
+}
+
+// scrapeReads lists the reads of one scrape: each unselected parent GPU of a
+// selected GPU instance with the fields DCGM keeps on physical GPUs, then each
+// selected entity with the fields of its scope. Parent GPUs come first so their
+// label values are at hand when the instances that inherit them are read.
+func (c *DCGMCollector) scrapeReads() []scrapeRead {
+	deviceInfo := c.deviceWatchList.DeviceInfo()
+	var reads []scrapeRead
+	if len(c.parentGPUScrapeFields) > 0 {
+		for _, mi := range devicemonitoring.GetParentGPUsForMonitoredGPUInstances(deviceInfo) {
+			reads = append(reads, scrapeRead{entity: mi, fields: c.parentGPUScrapeFields})
+		}
+	}
+
+	var monitoringInfo []devicemonitoring.Info
+	if len(c.computeInstanceScrapeFields) > 0 {
+		monitoringInfo = devicemonitoring.GetMonitoredEntitiesIncludingComputeInstances(deviceInfo)
+	} else {
+		monitoringInfo = devicemonitoring.GetMonitoredEntities(deviceInfo)
+	}
+	for _, mi := range monitoringInfo {
+		reads = append(reads, scrapeRead{entity: mi, fields: c.fieldsForScrape(mi)})
+	}
+	return reads
+}
+
+// valuesForRead reads one entity's fields and adds its inherited GPU labels.
+func (c *DCGMCollector) valuesForRead(read scrapeRead, gpuReads map[uint][]dcgm.FieldValue_v1) ([]dcgm.FieldValue_v1, error) {
+	values, err := c.latestValuesForFields(read.entity, read.fields)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.withInheritedLabels(read, values, gpuReads)
+}
+
+// withInheritedLabels adds to the values of a GPU-instance or compute-instance
+// read the GPU-level label values of its physical GPU. gpuReads holds the
+// values of physical GPUs read so far in this scrape; a physical GPU that was
+// not read yet is read for its labels only. Physical GPU reads are recorded and
+// returned unchanged, as are reads without fields.
+func (c *DCGMCollector) withInheritedLabels(
+	read scrapeRead,
+	values []dcgm.FieldValue_v1,
+	gpuReads map[uint][]dcgm.FieldValue_v1,
+) ([]dcgm.FieldValue_v1, error) {
+	if len(c.inheritedLabelFields) == 0 || len(read.fields) == 0 {
+		return values, nil
+	}
+
+	gpu := read.entity.DeviceInfo.GPU
+	if read.entity.Entity.EntityGroupId == dcgm.FE_GPU {
+		gpuReads[gpu] = values
+		return values, nil
+	}
+
+	gpuValues, ok := gpuReads[gpu]
+	if !ok {
+		physicalGPU := devicemonitoring.Info{Entity: dcgm.GroupEntityPair{EntityGroupId: dcgm.FE_GPU, EntityId: gpu}}
+		var err error
+		gpuValues, err = c.latestValuesForFields(physicalGPU, c.inheritedLabelFields)
+		if err != nil {
+			return nil, err
+		}
+		gpuReads[gpu] = gpuValues
+	}
+
+	inherited := make([]dcgm.FieldValue_v1, 0, len(c.inheritedLabelFields))
+	for _, value := range gpuValues {
+		if slices.Contains(c.inheritedLabelFields, value.FieldID) {
+			inherited = append(inherited, value)
+		}
+	}
+	return append(values, inherited...), nil
+}
+
+// nonProfilingMetrics retains the scrape's non-profiling families during a profiling retry.
 func nonProfilingMetrics(metrics MetricsByCounter) MetricsByCounter {
 	healthy := make(MetricsByCounter)
 	for counter, values := range metrics {
@@ -249,22 +466,72 @@ func nonProfilingMetrics(metrics MetricsByCounter) MetricsByCounter {
 
 // latestValues reads one monitored entity through the DCGM API appropriate for its type.
 func (c *DCGMCollector) latestValues(mi devicemonitoring.Info) ([]dcgm.FieldValue_v1, error) {
-	fields := fieldsToScrape(c.deviceWatchList)
+	return c.latestValuesForFields(mi, c.fieldsForScrape(mi))
+}
 
-	if mi.Entity.EntityGroupId == dcgm.FE_LINK {
-		return dcgmprovider.Client().LinkGetLatestValues(
-			mi.Entity.EntityId,
-			mi.ParentType,
-			mi.ParentId,
-			fields,
+// latestValuesForFields reads the supplied fields for one entity in batches that
+// DCGM accepts. Callers use it when an entity needs a different field set from
+// the collector's default scrape fields.
+func (c *DCGMCollector) latestValuesForFields(
+	mi devicemonitoring.Info,
+	fields []dcgm.Short,
+) ([]dcgm.FieldValue_v1, error) {
+	values := make([]dcgm.FieldValue_v1, 0, len(fields))
+	for start := 0; start < len(fields); start += maxLatestValueFieldBatch {
+		end := min(start+maxLatestValueFieldBatch, len(fields))
+		batch := fields[start:end]
+
+		var (
+			batchValues []dcgm.FieldValue_v1
+			err         error
 		)
+		if mi.Entity.EntityGroupId == dcgm.FE_LINK {
+			batchValues, err = c.dcgmClient().LinkGetLatestValues(
+				mi.Entity.EntityId,
+				mi.ParentType,
+				mi.ParentId,
+				batch,
+			)
+		} else {
+			batchValues, err = c.dcgmClient().EntityGetLatestValues(
+				mi.Entity.EntityGroupId,
+				mi.Entity.EntityId,
+				batch,
+			)
+		}
+		if err != nil {
+			return nil, fmt.Errorf(
+				"get latest values for entity group %d entity %d field batch [%d:%d]: %w",
+				mi.Entity.EntityGroupId,
+				mi.Entity.EntityId,
+				start,
+				end,
+				err,
+			)
+		}
+		values = append(values, batchValues...)
 	}
+	return values, nil
+}
 
-	return dcgmprovider.Client().EntityGetLatestValues(
-		mi.Entity.EntityGroupId,
-		mi.Entity.EntityId,
-		fields,
-	)
+// fieldsForScrape resolves the fields to read at the scopes selected for this entity.
+func (c *DCGMCollector) fieldsForScrape(mi devicemonitoring.Info) []dcgm.Short {
+	if mi.Entity.EntityGroupId == dcgm.FE_GPU_CI {
+		return c.computeInstanceScrapeFields
+	}
+	// A selected whole GPU keeps the legacy full field set. DCGM reports some
+	// fields at both GPU and compute-instance scope even when their metadata uses
+	// FE_GPU_CI. Parent-only MIG reads bypass this method and remain narrow.
+	if mi.Entity.EntityGroupId == dcgm.FE_GPU && c.scrapeFields != nil {
+		return c.scrapeFields
+	}
+	if c.nonComputeInstanceFields != nil {
+		return c.nonComputeInstanceFields
+	}
+	if c.scrapeFields != nil {
+		return c.scrapeFields
+	}
+	return fieldsToScrape(c.deviceWatchList)
 }
 
 // addMetrics renders values with the labels and identity fields for their entity type.
@@ -272,44 +539,38 @@ func (c *DCGMCollector) addMetrics(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
 	mi devicemonitoring.Info,
+	readTimestamp int64,
 ) {
+	var source *SourceIdentity
+	if c.enableOTLP {
+		source = sourceIdentity(mi, values, c.deviceWatchList.DeviceInfo())
+	}
+
 	// InstanceInfo is nil for whole-GPU entities.
 	switch c.deviceWatchList.DeviceInfo().InfoType() {
 	case dcgm.FE_LINK:
 		if mi.ParentType == dcgm.FE_SWITCH {
-			toSwitchMetric(metrics, values, c.counters, mi, c.useOldNamespace, c.hostname)
+			c.toSwitchMetric(metrics, values, mi, readTimestamp, source)
 		} else {
-			toGPUNvLinkMetric(metrics, values, c.counters, mi, c.hostname)
+			c.toGPUNvLinkMetric(metrics, values, mi, readTimestamp, source)
 		}
 	case dcgm.FE_SWITCH:
-		toSwitchMetric(metrics, values, c.counters, mi, c.useOldNamespace, c.hostname)
+		c.toSwitchMetric(metrics, values, mi, readTimestamp, source)
 	case dcgm.FE_CPU:
 		serial := cpuSerialForEntity(c.deviceWatchList.DeviceInfo(), mi.Entity.EntityId)
-		toCPUMetric(metrics, values, c.counters, mi, c.useOldNamespace, c.hostname, serial)
+		c.toCPUMetric(metrics, values, mi, serial, readTimestamp, source)
 	case dcgm.FE_CPU_CORE:
-		toCPUMetric(metrics, values, c.counters, mi, c.useOldNamespace, c.hostname, "")
+		c.toCPUMetric(metrics, values, mi, "", readTimestamp, source)
 	default:
-		toMetric(metrics,
-			values,
-			c.counters,
-			mi,
-			c.useOldNamespace,
-			c.hostname,
-			c.replaceBlanksInModelName)
+		c.toMetric(metrics, values, mi, readTimestamp, source)
 	}
 }
 
-// cleanupWatches runs and clears the collector-owned watch cleanup callbacks.
+// cleanupWatches closes and clears the collector-owned watch result.
 func (c *DCGMCollector) cleanupWatches() {
-	cleanups := c.cleanups
-	c.cleanups = nil
-	runCleanups(cleanups)
-}
-
-// runCleanups invokes the cleanup callbacks returned by a watch operation.
-func runCleanups(cleanups []func()) {
-	for _, cleanup := range cleanups {
-		cleanup()
+	if c.watchResult != nil {
+		c.watchResult.Close()
+		c.watchResult = nil
 	}
 }
 
@@ -319,14 +580,13 @@ func (c *DCGMCollector) rearmProfilingWatch() error {
 	// old watch after replacement can remove the replacement too.
 	c.cleanupWatches()
 
-	cleanups, err := c.deviceWatchList.Watch()
+	watchResult, err := c.deviceWatchList.Watch()
 	if err != nil {
-		runCleanups(cleanups)
 		return fmt.Errorf("failed to recreate DCGM field watches: %w", err)
 	}
-	c.cleanups = cleanups
+	c.watchResult = watchResult
 
-	if err := dcgmprovider.Client().UpdateAllFields(); err != nil {
+	if err := c.dcgmClient().UpdateAllFields(); err != nil {
 		return fmt.Errorf("failed to update fields after recreating DCGM field watches: %w", err)
 	}
 
@@ -358,27 +618,32 @@ func resolveProfilingStaleWindows(
 		return nil, nil
 	}
 
-	// Each profiling field inherits the interval of its resolved watch group.
+	if err := setProfilingWindows(windows, watchGroups); err != nil {
+		return nil, err
+	}
+	for fieldID, window := range windows {
+		if window == 0 {
+			return nil, fmt.Errorf("profiling field %d has no configured watch interval", fieldID)
+		}
+	}
+	return windows, nil
+}
+
+// setProfilingWindows validates group intervals and sets each tracked field's freshness window.
+func setProfilingWindows(windows map[dcgm.Short]time.Duration, watchGroups []devicewatcher.FieldWatchGroup) error {
 	for _, watchGroup := range watchGroups {
 		for _, fieldID := range watchGroup.Fields {
 			if _, ok := windows[fieldID]; !ok {
 				continue
 			}
 			if watchGroup.IntervalMSec <= 0 {
-				return nil, fmt.Errorf("profiling field %d has invalid watch interval %dms", fieldID, watchGroup.IntervalMSec)
+				return fmt.Errorf("profiling field %d has invalid watch interval %dms", fieldID, watchGroup.IntervalMSec)
 			}
-			windows[fieldID] = 2 * time.Duration(watchGroup.IntervalMSec) * time.Millisecond
+			// A slower entity scope must not appear stale because another scope updates faster.
+			windows[fieldID] = max(windows[fieldID], 2*time.Duration(watchGroup.IntervalMSec)*time.Millisecond)
 		}
 	}
-
-	// A watched profiling field without an interval cannot be checked safely.
-	for fieldID, window := range windows {
-		if window == 0 {
-			return nil, fmt.Errorf("profiling field %d has no configured watch interval", fieldID)
-		}
-	}
-
-	return windows, nil
+	return nil
 }
 
 // observeProfilingSamples returns the first status- or timestamp-based repair signal.
@@ -532,7 +797,8 @@ func isRepairableProfilingStatus(status int) bool {
 	return status == dcgm.DCGM_ST_NOT_WATCHED || status == dcgm.DCGM_ST_STALE_DATA
 }
 
-// handleScrapeError logs actionable DCGM diagnostics and preserves fatal exit behavior.
+// handleScrapeError logs DCGM diagnostics while leaving application shutdown
+// policy to the server and command loop that receive the returned scrape error.
 func handleScrapeError(err error) {
 	if diagnostic, ok := dcgmerrors.Classify(err); ok {
 		slog.Error(
@@ -541,18 +807,33 @@ func handleScrapeError(err error) {
 			slog.String("error", err.Error()),
 			slog.String("hint", diagnostic.Hint),
 		)
-		if isFatalScrapeDCGMStatus(diagnostic.Code) {
-			os.Exit(1)
-		}
 	}
 }
 
+// fieldsToScrape returns the unique fields watched by a resolved device watch list.
 func fieldsToScrape(deviceWatchList devicewatchlistmanager.WatchList) []dcgm.Short {
 	fields := append([]dcgm.Short{}, deviceWatchList.DeviceFields()...)
 	fields = append(fields, deviceWatchList.LabelDeviceFields()...)
 	return dedupeFieldIDs(fields)
 }
 
+// withoutFieldIDs returns fields without the IDs in removed, keeping their
+// order. It returns fields itself when nothing is removed.
+func withoutFieldIDs(fields, removed []dcgm.Short) []dcgm.Short {
+	if len(removed) == 0 {
+		return fields
+	}
+
+	kept := make([]dcgm.Short, 0, len(fields))
+	for _, field := range fields {
+		if !slices.Contains(removed, field) {
+			kept = append(kept, field)
+		}
+	}
+	return kept
+}
+
+// dedupeFieldIDs preserves the first occurrence of each DCGM field ID.
 func dedupeFieldIDs(fields []dcgm.Short) []dcgm.Short {
 	if len(fields) == 0 {
 		return nil
@@ -571,19 +852,7 @@ func dedupeFieldIDs(fields []dcgm.Short) []dcgm.Short {
 	return deduped
 }
 
-func isFatalScrapeDCGMStatus(code int) bool {
-	switch code {
-	case dcgm.DCGM_ST_CONNECTION_NOT_VALID,
-		dcgm.DCGM_ST_UNINITIALIZED,
-		dcgm.DCGM_ST_LIBRARY_NOT_FOUND,
-		dcgm.DCGM_ST_INIT_ERROR,
-		dcgm.DCGM_ST_NVML_NOT_LOADED:
-		return true
-	default:
-		return false
-	}
-}
-
+// findCounterField returns the counter for fieldID or an error when none is configured.
 func findCounterField(c []counters.Counter, fieldID dcgm.Short) (counters.Counter, error) {
 	for i := 0; i < len(c); i++ {
 		if c[i].FieldID == fieldID {
@@ -607,17 +876,35 @@ func cpuSerialForEntity(deviceInfo deviceinfo.Provider, entityID uint) string {
 	return ""
 }
 
-func toSwitchMetric(
+// metricTimestamp preserves native sample times and substitutes only missing ones.
+func metricTimestamp(sourceTimestamp, readTimestamp int64) int64 {
+	if sourceTimestamp != 0 {
+		return sourceTimestamp
+	}
+	return readTimestamp
+}
+
+// toSwitchMetric translates switch and switch NVLink samples using the collector's label settings.
+func (c *DCGMCollector) toSwitchMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []counters.Counter, mi devicemonitoring.Info, useOld bool, hostname string,
+	values []dcgm.FieldValue_v1,
+	mi devicemonitoring.Info,
+	readTimestamp int64,
+	source *SourceIdentity,
 ) {
-	labels := labelsFromValues(values, c, hostname)
+	labels := labelsFromValues(values, c.counters, c.hostname)
+	nvSwitchID := mi.Entity.EntityId
+	nvLinkID := ""
+	if mi.Entity.EntityGroupId == dcgm.FE_LINK {
+		nvSwitchID = mi.ParentId
+		nvLinkID = fmt.Sprintf("%d", mi.Entity.EntityId)
+	}
 
 	for _, val := range values {
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldID)
+		counter, err := findCounterField(c.counters, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -635,16 +922,18 @@ func toSwitchMetric(
 			continue
 		}
 		uuid := "UUID"
-		if useOld {
+		if c.useOldNamespace {
 			uuid = "uuid"
 		}
 		m := Metric{
+			Source:     source,
 			Counter:    counter,
 			Value:      v,
+			Timestamp:  metricTimestamp(val.TS, readTimestamp),
 			UUID:       uuid,
-			NvLink:     fmt.Sprintf("%d", mi.Entity.EntityId),
-			NvSwitch:   fmt.Sprintf("nvswitch%d", mi.ParentId),
-			Hostname:   hostname,
+			NvLink:     nvLinkID,
+			NvSwitch:   fmt.Sprintf("nvswitch%d", nvSwitchID),
+			Hostname:   c.hostname,
 			Labels:     labels,
 			Attributes: nil,
 			ParentType: mi.ParentType,
@@ -654,17 +943,29 @@ func toSwitchMetric(
 	}
 }
 
-func toCPUMetric(
+// toCPUMetric translates one CPU or CPU-core entity sample into metrics with
+// explicit CPU and core identities for the renderer.
+func (c *DCGMCollector) toCPUMetric(
 	metrics MetricsByCounter,
-	values []dcgm.FieldValue_v1, c []counters.Counter, mi devicemonitoring.Info, useOld bool, hostname string, cpuSerial string,
+	values []dcgm.FieldValue_v1,
+	mi devicemonitoring.Info,
+	cpuSerial string,
+	readTimestamp int64,
+	source *SourceIdentity,
 ) {
-	labels := labelsFromValues(values, c, hostname)
+	labels := labelsFromValues(values, c.counters, c.hostname)
+	cpu := fmt.Sprintf("%d", mi.Entity.EntityId)
+	cpuCore := ""
+	if mi.Entity.EntityGroupId == dcgm.FE_CPU_CORE {
+		cpu = fmt.Sprintf("%d", mi.ParentId)
+		cpuCore = fmt.Sprintf("%d", mi.Entity.EntityId)
+	}
 
 	for _, val := range values {
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldID)
+		counter, err := findCounterField(c.counters, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -682,19 +983,22 @@ func toCPUMetric(
 			continue
 		}
 		uuid := "UUID"
-		if useOld {
+		if c.useOldNamespace {
 			uuid = "uuid"
 		}
 		m := Metric{
+			Source:       source,
 			Counter:      counter,
 			Value:        v,
+			Timestamp:    metricTimestamp(val.TS, readTimestamp),
 			UUID:         uuid,
-			GPU:          fmt.Sprintf("%d", mi.Entity.EntityId),
+			CPU:          cpu,
+			CPUCore:      cpuCore,
 			GPUUUID:      "",
 			GPUDevice:    fmt.Sprintf("%d", mi.ParentId),
 			GPUModelName: "",
 			GPUPCIBusID:  "",
-			Hostname:     hostname,
+			Hostname:     c.hostname,
 			CPUSerial:    cpuSerial,
 			Labels:       labels,
 			Attributes:   nil,
@@ -705,20 +1009,22 @@ func toCPUMetric(
 	}
 }
 
-func toGPUNvLinkMetric(
+// toGPUNvLinkMetric adds one metric per non-label value for an NVLink link
+// that belongs to a GPU. The model name follows the replace-blanks setting.
+func (c *DCGMCollector) toGPUNvLinkMetric(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
-	c []counters.Counter,
 	mi devicemonitoring.Info,
-	hostname string,
+	readTimestamp int64,
+	source *SourceIdentity,
 ) {
-	labels := labelsFromValues(values, c, hostname)
+	labels := labelsFromValues(values, c.counters, c.hostname)
 
 	for _, val := range values {
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 
-		counter, err := findCounterField(c, val.FieldID)
+		counter, err := findCounterField(c.counters, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -739,16 +1045,18 @@ func toGPUNvLinkMetric(
 		attrs := map[string]string{}
 
 		m := Metric{
+			Source:       source,
 			Counter:      counter,
 			Value:        v,
+			Timestamp:    metricTimestamp(val.TS, readTimestamp),
 			UUID:         uuid,
 			GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
 			GPUUUID:      mi.DeviceInfo.UUID,
 			NvLink:       fmt.Sprintf("%d", mi.Entity.EntityId),
 			GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
-			GPUModelName: getGPUModel(mi.DeviceInfo, false),
+			GPUModelName: getGPUModel(mi.DeviceInfo, c.replaceBlanksInModelName),
 			GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
-			Hostname:     hostname,
+			Hostname:     c.hostname,
 			Labels:       labels,
 			Attributes:   attrs,
 			ParentType:   mi.ParentType,
@@ -758,16 +1066,44 @@ func toGPUNvLinkMetric(
 	}
 }
 
-func toMetric(
+// toMetric converts one supported entity sample into metrics for its configured counters.
+func (c *DCGMCollector) toMetric(
 	metrics MetricsByCounter,
 	values []dcgm.FieldValue_v1,
-	c []counters.Counter,
 	mi devicemonitoring.Info,
-	useOld bool,
-	hostname string,
-	replaceBlanksInModelName bool,
+	readTimestamp int64,
+	source *SourceIdentity,
 ) {
-	labels := labelsFromValues(values, c, hostname)
+	c.toSelectedMetrics(metrics, values, mi, readTimestamp, source, c.counters)
+}
+
+// toSelectedMetrics applies Prometheus value and label rules to the supplied counter selection.
+func (c *DCGMCollector) toSelectedMetrics(
+	metrics MetricsByCounter,
+	values []dcgm.FieldValue_v1,
+	mi devicemonitoring.Info,
+	readTimestamp int64,
+	source *SourceIdentity,
+	selected []counters.Counter,
+) {
+	labels := labelsFromValues(values, selected, c.hostname)
+	uuid := "UUID"
+	if c.useOldNamespace {
+		uuid = "uuid"
+	}
+	gpu := strconv.FormatUint(uint64(mi.DeviceInfo.GPU), 10)
+	gpuDevice := "nvidia" + gpu
+	gpuModel := getGPUModel(mi.DeviceInfo, c.replaceBlanksInModelName)
+	migProfile := ""
+	gpuInstanceID := ""
+	computeInstanceID := ""
+	if mi.InstanceInfo != nil {
+		migProfile = mi.InstanceInfo.ProfileName
+		gpuInstanceID = strconv.FormatUint(uint64(mi.InstanceInfo.Info.NvmlInstanceId), 10)
+	}
+	if mi.ComputeInstanceInfo != nil {
+		computeInstanceID = strconv.FormatUint(uint64(mi.ComputeInstanceInfo.InstanceInfo.NvmlComputeInstanceId), 10)
+	}
 
 	for _, val := range values {
 		v := toString(val)
@@ -775,13 +1111,13 @@ func toMetric(
 		if v == skipDCGMValue {
 			logFieldValueSkipped(
 				val,
-				counterFieldNameOrUnknown(c, val.FieldID),
+				counterFieldNameOrUnknown(selected, val.FieldID),
 				mi.Entity.EntityGroupId,
 				mi.Entity.EntityId,
 			)
 			continue
 		}
-		counter, err := findCounterField(c, val.FieldID)
+		counter, err := findCounterField(selected, val.FieldID)
 		if err != nil {
 			continue
 		}
@@ -789,52 +1125,50 @@ func toMetric(
 		if counter.IsLabel() {
 			continue
 		}
-		uuid := "UUID"
-		if useOld {
-			uuid = "uuid"
-		}
-
-		gpuModel := getGPUModel(mi.DeviceInfo, replaceBlanksInModelName)
-
 		attrs := map[string]string{}
 		if counter.FieldID == dcgm.DCGM_FI_DEV_XID_ERRORS {
 			errCode := int(val.Int64())
 			attrs["err_code"] = strconv.Itoa(errCode)
-			if 0 <= errCode && errCode < len(xidErrCodeToText) {
-				attrs["err_msg"] = xidErrCodeToText[errCode]
-			} else {
-				attrs["err_msg"] = unknownErr
-			}
+			attrs["err_msg"] = xidErrorMessage(errCode)
 		}
 
 		m := Metric{
-			Counter: counter,
-			Value:   v,
+			Source:    source,
+			Counter:   counter,
+			Value:     v,
+			Timestamp: metricTimestamp(val.TS, readTimestamp),
 
 			UUID:         uuid,
-			GPU:          fmt.Sprintf("%d", mi.DeviceInfo.GPU),
+			GPU:          gpu,
 			GPUUUID:      mi.DeviceInfo.UUID,
-			GPUDevice:    fmt.Sprintf("nvidia%d", mi.DeviceInfo.GPU),
+			GPUDevice:    gpuDevice,
 			GPUModelName: gpuModel,
 			GPUPCIBusID:  mi.DeviceInfo.PCI.BusID,
-			Hostname:     hostname,
+			Hostname:     c.hostname,
 
-			Labels:     labels,
-			Attributes: attrs,
-			ParentType: mi.ParentType,
-		}
-		if mi.InstanceInfo != nil {
-			m.MigProfile = mi.InstanceInfo.ProfileName
-			m.GPUInstanceID = fmt.Sprintf("%d", mi.InstanceInfo.Info.NvmlInstanceId)
-		} else {
-			m.MigProfile = ""
-			m.GPUInstanceID = ""
+			Labels:               labels,
+			Attributes:           attrs,
+			ParentType:           mi.ParentType,
+			MigProfile:           migProfile,
+			GPUInstanceID:        gpuInstanceID,
+			GPUComputeInstanceID: computeInstanceID,
 		}
 
 		metrics[m.Counter] = append(metrics[m.Counter], m)
 	}
 }
 
+// xidErrorMessage returns the description of a known XID, or the unknown-error text.
+func xidErrorMessage(errCode int) string {
+	if 0 <= errCode && errCode < len(xidErrCodeToText) {
+		return xidErrCodeToText[errCode]
+	}
+	return unknownErr
+}
+
+// labelsFromValues builds labels from the label counters present in values,
+// skipping failed or blank samples. A "hostname" label counter is dropped when
+// hostname is empty.
 func labelsFromValues(values []dcgm.FieldValue_v1, c []counters.Counter, hostname string) map[string]string {
 	labels := map[string]string{}
 	for _, val := range values {
@@ -853,6 +1187,7 @@ func labelsFromValues(values []dcgm.FieldValue_v1, c []counters.Counter, hostnam
 	return labels
 }
 
+// getGPUModel returns the model, optionally collapsing whitespace and replacing spaces with hyphens.
 func getGPUModel(d dcgm.Device, replaceBlanksInModelName bool) string {
 	gpuModel := d.Identifiers.Model
 
@@ -864,6 +1199,8 @@ func getGPUModel(d dcgm.Device, replaceBlanksInModelName bool) string {
 	return gpuModel
 }
 
+// addMetricLabel stores value under the counter's field name, except that a
+// "hostname" label is dropped when hostname is empty.
 func addMetricLabel(labels map[string]string, counter counters.Counter, value string, hostname string) {
 	if hostname == "" && strings.EqualFold(counter.FieldName, "hostname") {
 		return
@@ -872,6 +1209,8 @@ func addMetricLabel(labels map[string]string, counter counters.Counter, value st
 	labels[counter.FieldName] = value
 }
 
+// toString formats an OK DCGM value by its field type. It returns skipDCGMValue
+// for failed, blank, or unsupported values.
 func toString(value dcgm.FieldValue_v1) string {
 	if value.Status != dcgm.DCGM_ST_OK {
 		return skipDCGMValue
@@ -883,13 +1222,13 @@ func toString(value dcgm.FieldValue_v1) string {
 		if isInt64Blank(v) {
 			return skipDCGMValue
 		}
-		return fmt.Sprintf("%d", v)
+		return strconv.FormatInt(v, 10)
 	case dcgm.DCGM_FT_DOUBLE:
 		v := value.Float64()
 		if isFloat64Blank(v) {
 			return skipDCGMValue
 		}
-		return fmt.Sprintf("%f", v)
+		return strconv.FormatFloat(v, 'f', 6, 64)
 	case dcgm.DCGM_FT_STRING:
 		v := value.String()
 		if isStringBlank(v) {

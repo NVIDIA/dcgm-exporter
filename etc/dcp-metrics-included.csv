@@ -3,41 +3,82 @@
 # DCGM FIELD, Prometheus metric type, help message
 
 # Clocks
-DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
-DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
+DCGM_FI_DEV_SM_CLOCK_HERTZ, gauge, SM clock frequency in hertz.
+DCGM_FI_DEV_MEMORY_CLOCK_HERTZ, gauge, Memory clock frequency in hertz.
+# DCGM_FI_DEV_VIDEO_CLOCK_HERTZ,      gauge, Video clock frequency in hertz.
+# DCGM_FI_DEV_SM_APP_CLOCK_HERTZ,     gauge, SM application clock target in hertz.
+# DCGM_FI_DEV_MEMORY_APP_CLOCK_HERTZ, gauge, Memory application clock target in hertz.
+# DCGM_FI_DEV_SM_MAX_CLOCK_HERTZ,     gauge, Maximum SM clock in hertz.
+# DCGM_FI_DEV_MEMORY_MAX_CLOCK_HERTZ, gauge, Maximum memory clock in hertz.
+# DCGM_FI_DEV_VIDEO_MAX_CLOCK_HERTZ,  gauge, Maximum video clock in hertz.
 
 # Temperature
-DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in C).
-DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
+DCGM_FI_DEV_MEMORY_TEMP_CELSIUS, gauge, Memory temperature (in C).
+DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature (in C).
+# DCGM_FI_DEV_GPU_TEMP_MARGIN_CELSIUS,    gauge, Distance to the nearest GPU slowdown temperature threshold (in C).
+# DCGM_FI_DEV_GPU_MAX_OP_TEMP_CELSIUS,    gauge, Maximum operating GPU temperature (in C).
+# DCGM_FI_DEV_MEMORY_MAX_OP_TEMP_CELSIUS, gauge, Maximum operating memory temperature (in C).
+# DCGM_FI_DEV_GPU_TEMP_SLOWDOWN_CELSIUS,  gauge, GPU temperature at which clocks slow down (in C).
+# DCGM_FI_DEV_GPU_TEMP_SHUTDOWN_CELSIUS,  gauge, GPU temperature at which the GPU shuts down (in C).
 
 # Power
-DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
-DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
+DCGM_FI_DEV_BOARD_POWER_WATTS, gauge, Power draw (in W).
+# DCGM_FI_DEV_BOARD_POWER_LIMIT_REQUESTED_WATTS, gauge, Configured board power limit (in W).
+# DCGM_FI_DEV_BOARD_POWER_LIMIT_ENFORCED_WATTS,  gauge, Effective board power limit enforced by the driver after all limiters (in W).
+# DCGM_FI_DEV_GPU_PSTATE,                        gauge, Performance state from 0 (highest) to 15.
+DCGM_FI_DEV_GPU_ENERGY_JOULES_TOTAL, counter, GPU energy consumed since the driver was reloaded in joules.
+# DCGM_FI_DEV_FAN_SPEED_RATIO,                       gauge, Fan speed as a ratio of its maximum speed.
+# DCGM_FI_DEV_GPU_POWER_THROTTLE_SECONDS_TOTAL,     counter, Time below application clocks due to power policy in seconds.
+# DCGM_FI_DEV_GPU_THERMAL_THROTTLE_SECONDS_TOTAL,   counter, Time below application clocks due to thermal policy in seconds.
+# DCGM_FI_DEV_GPU_SYNC_BOOST_THROTTLE_SECONDS_TOTAL, counter, Time below application clocks due to sync boost in seconds.
+# DCGM_FI_DEV_GPU_LIMIT_THROTTLE_SECONDS_TOTAL,     counter, Time below application clocks due to board limit in seconds.
+# DCGM_FI_DEV_GPU_LOW_UTIL_THROTTLE_SECONDS_TOTAL,  counter, Time below application clocks due to low utilization in seconds.
+# DCGM_FI_DEV_GPU_RELIABILITY_THROTTLE_SECONDS_TOTAL, counter, Time below application clocks due to reliability policy in seconds.
+# DCGM_FI_DEV_GPU_APP_THROTTLE_SECONDS_TOTAL,       counter, Time below application clocks from all limiters in seconds.
+# DCGM_FI_DEV_GPU_BASE_THROTTLE_SECONDS_TOTAL,      counter, Time below base clocks in seconds.
 
 # PCIE
-# DCGM_FI_PROF_PCIE_TX_BYTES,  counter, Total number of bytes transmitted through PCIe TX via NVML.
-# DCGM_FI_PROF_PCIE_RX_BYTES,  counter, Total number of bytes received through PCIe RX via NVML.
-DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
+DCGM_FI_DEV_PCIE_REPLAY_TOTAL, counter, Total number of PCIe retries.
+# DCGM_FI_DEV_PCIE_LINK_GEN,                gauge,   Current PCIe link generation.
+# DCGM_FI_DEV_PCIE_LINK_WIDTH,              gauge,   Current PCIe link width in lanes.
+# DCGM_FI_DEV_PCIE_CORRECTABLE_ERROR_TOTAL, counter, Total number of correctable PCIe errors.
 
 # Utilization (the sample period varies depending on the product)
-DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
-DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
-DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
-DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
+DCGM_FI_DEV_GPU_UTIL_RATIO, gauge, GPU utilization as a ratio.
+DCGM_FI_DEV_MEMORY_UTIL_RATIO, gauge, Memory utilization as a ratio.
+DCGM_FI_DEV_ENC_UTIL_RATIO, gauge, Encoder utilization as a ratio.
+DCGM_FI_DEV_DEC_UTIL_RATIO, gauge, Decoder utilization as a ratio.
 
 # Errors and violations
-DCGM_FI_DEV_XID_ERRORS,            gauge,   Value of the last XID error encountered.
-# DCGM_FI_DEV_POWER_VIOLATION,       counter, Throttling duration due to power constraints (in ns).
-# DCGM_FI_DEV_THERMAL_VIOLATION,     counter, Throttling duration due to thermal constraints (in ns).
-# DCGM_FI_DEV_SYNC_BOOST_VIOLATION,  counter, Throttling duration due to sync-boost constraints (in ns).
-# DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limit constraints (in ns).
-# DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in ns).
-# DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in ns).
+DCGM_FI_DEV_XID_ERROR, gauge, Value of the last XID error encountered.
+
+# DCGM Exporter fields
+
+# DCGM_EXP_CLOCK_EVENTS_COUNT, gauge,   Clock events observed during the configured time window.
+# DCGM_EXP_CLOCK_EVENTS_TOTAL, counter, Total clock events observed since the counter was last reset (edge-counted).
+# DCGM_EXP_XID_ERRORS_COUNT,   gauge,   XID errors observed during the configured time window.
+# DCGM_EXP_XID_ERRORS_TOTAL,   counter, Total XID errors observed since the counter was last reset.
+# DCGM_EXP_GPU_HEALTH_STATUS,  gauge,   Current DCGM-reported GPU health status.
+# DCGM_EXP_SYSTEM_HEALTH_STATUS, gauge, Current DCGM-reported host-level health status; currently the IMEX health watch only.
+# DCGM_EXP_P2P_STATUS,         gauge,   Current NVLink P2P status per peer link.
+# DCGM_EXP_FIELD_POLICY_ENABLED,                     gauge, Whether a DCGM field policy is enabled.
+# DCGM_EXP_FIELD_POLICY_CURRENT_VALUE,               gauge, Current value recorded by a DCGM field policy.
+# DCGM_EXP_FIELD_POLICY_THRESHOLD,                   gauge, Threshold configured for a DCGM field policy.
+# DCGM_EXP_FIELD_POLICY_VIOLATION_COUNT,             gauge, Number of violations recorded by a DCGM field policy.
+# DCGM_EXP_FIELD_POLICY_LAST_TRIGGER_TIMESTAMP_SECONDS, gauge, Most recent DCGM field policy violation time in seconds since the Unix epoch.
+
+# Fabric health
+# DCGM_FI_DEV_FABRIC_HEALTH_SUMMARY, gauge, Overall health of the GPU fabric.
+# DCGM_FI_DEV_FABRIC_MANAGER_STATUS, gauge, Status of the fabric manager.
 
 # Memory usage
-DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
-DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
-DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
+DCGM_FI_DEV_FB_CAPACITY_BYTES, gauge, Total framebuffer capacity in bytes.
+DCGM_FI_DEV_FB_FREE_BYTES, gauge, Free framebuffer memory in bytes.
+DCGM_FI_DEV_FB_USED_BYTES, gauge, Used framebuffer memory in bytes.
+DCGM_FI_DEV_FB_RESERVED_BYTES, gauge, Reserved framebuffer memory in bytes.
+# DCGM_FI_DEV_BAR1_CAPACITY_BYTES, gauge, Total BAR1 capacity in bytes.
+# DCGM_FI_DEV_BAR1_USED_BYTES,     gauge, Used BAR1 memory in bytes.
+# DCGM_FI_DEV_BAR1_FREE_BYTES,     gauge, Free BAR1 memory in bytes.
 
 # ECC
 # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
@@ -46,48 +87,83 @@ DCGM_FI_DEV_FB_RESERVED, gauge, Framebuffer memory reserved (in MiB).
 # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
 
 # Retired pages
-# DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
-# DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
-# DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
+# DCGM_FI_DEV_PAGE_RETIRED_SBE_TOTAL, counter, Total number of retired pages due to single-bit errors.
+# DCGM_FI_DEV_PAGE_RETIRED_DBE_TOTAL, counter, Total number of retired pages due to double-bit errors.
+# DCGM_FI_DEV_PAGE_RETIRED_PENDING,   gauge,   Whether pages are pending retirement (1 means pending and 0 means not pending).
+
+# C2C
+# DCGM_FI_DEV_C2C_MAX_BANDWIDTH_BYTES_PER_SECOND, gauge, Maximum C2C bandwidth in bytes per second.
 
 # NVLink
-# DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
-# DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
-# DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
-# DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
-DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            gauge,   Total number of NVLink bandwidth counters for all lanes.
-# DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
+# NVLink error counters for pre-Hopper GPUs
+# DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_TOTAL, counter, Total number of NVLink flow-control CRC errors across all lanes.
+# DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_TOTAL, counter, Total number of NVLink data CRC errors across all lanes.
+# DCGM_FI_DEV_NVLINK_REPLAY_ERROR_TOTAL,   counter, Total number of NVLink replay errors across all lanes.
+# DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_TOTAL, counter, Total number of NVLink recovery errors across all lanes.
+# NVLink data-link error counters for Hopper GPUs
+# DCGM_FI_DEV_NVLINK_CRC_ERROR_TOTAL, counter, Total number of NVLink data-link CRC errors.
+# DCGM_FI_DEV_NVLINK_RECOVERY_TOTAL,  counter, Total number of NVLink data-link recovery errors.
+# DCGM_FI_DEV_NVLINK_REPLAY_TOTAL,    counter, Total number of NVLink data-link replay errors.
+# NVLink recovery counters for Blackwell and newer GPUs
+# DCGM_FI_DEV_NVLINK_RECOVERY_SUCCESSFUL_TOTAL, counter, Total number of successful NVLink recovery events across all links.
+# DCGM_FI_DEV_NVLINK_RECOVERY_FAILED_TOTAL,     counter, Total number of failed NVLink recovery events across all links.
+# DCGM_FI_DEV_NVLINK_RECOVERY_EVENT_TOTAL,      counter, Total number of NVLink recovery events across all links.
+# NVLink throughput
+DCGM_FI_DEV_NVLINK_THROUGHPUT_BYTES_PER_SECOND, gauge, Total NVLink throughput across all lanes in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L0_BYTES_PER_SECOND,  gauge, NVLink lane 0 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L1_BYTES_PER_SECOND,  gauge, NVLink lane 1 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L2_BYTES_PER_SECOND,  gauge, NVLink lane 2 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L3_BYTES_PER_SECOND,  gauge, NVLink lane 3 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L4_BYTES_PER_SECOND,  gauge, NVLink lane 4 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L5_BYTES_PER_SECOND,  gauge, NVLink lane 5 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L6_BYTES_PER_SECOND,  gauge, NVLink lane 6 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L7_BYTES_PER_SECOND,  gauge, NVLink lane 7 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L8_BYTES_PER_SECOND,  gauge, NVLink lane 8 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L9_BYTES_PER_SECOND,  gauge, NVLink lane 9 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L10_BYTES_PER_SECOND, gauge, NVLink lane 10 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L11_BYTES_PER_SECOND, gauge, NVLink lane 11 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L12_BYTES_PER_SECOND, gauge, NVLink lane 12 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L13_BYTES_PER_SECOND, gauge, NVLink lane 13 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L14_BYTES_PER_SECOND, gauge, NVLink lane 14 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L15_BYTES_PER_SECOND, gauge, NVLink lane 15 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L16_BYTES_PER_SECOND, gauge, NVLink lane 16 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_THROUGHPUT_L17_BYTES_PER_SECOND, gauge, NVLink lane 17 throughput in bytes per second.
+# DCGM_FI_DEV_NVLINK_PPCNT_RECOVERY_LAST_GAP_SECONDS, gauge, Time between the two most recent NVLink PRM recoveries in seconds.
 
 # VGPU License status
 DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
+# DCGM_FI_DEV_VGPU_FB_USED_BYTES, gauge, vGPU framebuffer memory used in bytes.
 
 # Remapped rows
-DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
-DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
-DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
+DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL, counter, Number of remapped rows for uncorrectable errors
+DCGM_FI_DEV_ROW_REMAP_CORRECTABLE_TOTAL, counter, Number of remapped rows for correctable errors
+DCGM_FI_DEV_ROW_REMAP_FAILED, gauge, Whether remapping of rows has failed
 
 # Static configuration information. These appear as labels on the other metrics
-DCGM_FI_DRIVER_VERSION,        label, Driver Version
-# DCGM_FI_NVML_VERSION,          label, NVML Version
-# DCGM_FI_DEV_BRAND,             label, Device Brand
-# DCGM_FI_DEV_SERIAL,            label, Device Serial Number
-# DCGM_FI_DEV_OEM_INFOROM_VER,   label, OEM inforom version
-# DCGM_FI_DEV_ECC_INFOROM_VER,   label, ECC inforom version
-# DCGM_FI_DEV_POWER_INFOROM_VER, label, Power management object inforom version
-# DCGM_FI_DEV_INFOROM_IMAGE_VER, label, Inforom image version
+DCGM_FI_SYSTEM_DRIVER_VERSION, label, Driver Version
+# DCGM_FI_SYSTEM_NVML_VERSION,        label, NVML Version
+# DCGM_FI_DEV_GPU_BRAND,              label, Device Brand
+# DCGM_FI_DEV_BOARD_SERIAL,           label, Device Serial Number
+# DCGM_FI_DEV_INFOROM_OEM_VERSION,    label, OEM inforom version
+# DCGM_FI_DEV_INFOROM_ECC_VERSION,    label, ECC inforom version
+# DCGM_FI_DEV_INFOROM_POWER_VERSION,  label, Power management object inforom version
+# DCGM_FI_DEV_INFOROM_IMAGE_VERSION,  label, Inforom image version
 # DCGM_FI_DEV_VBIOS_VERSION,     label, VBIOS version of the device
 
-# DCP metrics
-DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
-# DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
-# DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
-DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
-DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
-# DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
-# DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
-# DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
+# Datacenter Profiling (DCP) metrics
+# NOTE: supported on Nvidia datacenter Volta GPUs and newer
+DCGM_FI_PROF_GR_ENGINE_UTIL_RATIO, gauge, Ratio of time the graphics engine is active.
+# DCGM_FI_PROF_SM_UTIL_RATIO,      gauge, The ratio of cycles an SM has at least 1 warp assigned.
+# DCGM_FI_PROF_SM_OCCUPANCY_RATIO, gauge, The ratio of number of warps resident on an SM.
+DCGM_FI_PROF_TENSOR_UTIL_RATIO, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
+DCGM_FI_PROF_DRAM_UTIL_RATIO, gauge, Ratio of cycles the device memory interface is active sending or receiving data.
+# DCGM_FI_PROF_FP64_UTIL_RATIO,    gauge, Ratio of cycles the fp64 pipes are active.
+# DCGM_FI_PROF_FP32_UTIL_RATIO,    gauge, Ratio of cycles the fp32 pipes are active.
+# DCGM_FI_PROF_FP16_UTIL_RATIO,    gauge, Ratio of cycles the fp16 pipes are active.
 DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
 DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
+# DCGM_FI_PROF_NVLINK_TX_BYTES,    gauge, The rate of data transmitted over NVLink in bytes per second.
+# DCGM_FI_PROF_NVLINK_RX_BYTES,    gauge, The rate of data received over NVLink in bytes per second.
 # DCGM_FI_PROF_SM_CYCLES_ELAPSED_TOTAL, counter, Total elapsed SM cycles.
 # DCGM_FI_PROF_SM_CYCLES_ACTIVE_TOTAL,  counter, Total SM cycles with active warps.
 # DCGM_FI_PROF_MMA_CYCLES_ACTIVE_TOTAL, counter, Total MMA tensor cycles active.

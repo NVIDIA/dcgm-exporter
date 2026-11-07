@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "devicewatcher",
+    srcs = [
+        "mock_device_watcher.go",
+        "mock_device_watcher_legacy.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatcher",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/counters",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicewatcher",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@org_uber_go_mock//gomock",
+    ],
+)

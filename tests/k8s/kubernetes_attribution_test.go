@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -21,12 +21,18 @@ package k8s
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/NVIDIA/dcgm-exporter/tests/k8s/internal/framework"
 )
+
+// draMetricsJSONValue is the --set-json value that turns DRA labels on in the
+// chart's metrics entry. The chart also needs config.sources.dra.mode=kubernetes.
+const draMetricsJSONValue = `config.metrics=[{"name":"default","file":"` + chartMetricsFile +
+	`","every":"30s","enrichment":{"kubernetes":"auto","dra":true}}]`
 
 var _ = Describe("dcgm-exporter Kubernetes attribution scenarios", func() {
 	Context("DCGM exporter with pod labels collection enabled", Ordered, Label("podLabels"), func() {
@@ -37,36 +43,25 @@ var _ = Describe("dcgm-exporter Kubernetes attribution scenarios", func() {
 				"key-with-dashes": "value-dashes",
 				"key.with.dots":   "value-dots",
 			}
-			labelMap        = map[string]string{dcgmExporterPodNameLabel: dcgmExporterPodNameLabelValue}
 			metricsResponse []byte
 		)
 
 		AfterAll(func(ctx context.Context) {
-			if testContext.noCleanup {
-				_, _ = fmt.Fprintln(GinkgoWriter, "Clean up: skipped")
-				return
-			}
 			cleanupTestContext(ctx, kubeClient, helmClient)
 		})
 
 		It("should install dcgm-exporter helm chart with pod labels enabled", func(ctx context.Context) {
 			shouldInstallHelmChart(ctx, helmClient, []string{
-				exporterArguments("--kubernetes-enable-pod-labels"),
-				"kubernetes.enablePodLabels=true",
+				exporterArguments(),
+				"config.sources.kubernetes.pod_labels.enabled=true",
+				"config.sources.kubernetes.pod_labels.allow[0]=.*",
 				"kubernetes.rbac.create=true",
 			})
 		})
 
-		It("should create dcgm-exporter pod", func(ctx context.Context) {
-			dcgmExpPod = shouldCheckIfPodCreated(ctx, kubeClient, labelMap)
-		})
-
-		It("should ensure that the dcgm-exporter pod is ready", func(ctx context.Context) {
-			shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
-		})
-
-		It("should create a workload pod with custom labels", func(ctx context.Context) {
-			shouldCreateWorkloadPod(ctx, kubeClient, customLabels)
+		It("should create a workload pod and select its node-local exporter", func(ctx context.Context) {
+			workload := shouldCreateWorkloadPod(ctx, kubeClient, customLabels)
+			dcgmExpPod = shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
 		})
 
 		It("should wait for metrics to be available", func(ctx context.Context) {
@@ -96,21 +91,23 @@ var _ = Describe("dcgm-exporter Kubernetes attribution scenarios", func() {
 			cleanupTestContext(ctx, kubeClient, helmClient)
 		})
 
-		It("should include pod_uid when pod UID collection is enabled", func(ctx context.Context) {
-			_, _ = shouldInstallExporterAndReadMetrics(ctx,
+		It("should set pod_uid to the workload pod's metadata.uid on its GPU only", func(ctx context.Context) {
+			exporterPod, _ := shouldInstallExporterAndReadMetrics(ctx,
 				[]string{
-					exporterArguments("--kubernetes-enable-pod-uid"),
-					"kubernetes.enablePodUID=true",
+					exporterArguments(),
+					"config.sources.kubernetes.pod_uid=true",
 					"kubernetes.rbac.create=true",
 				},
 				nil,
 				testRunLabels,
 				func(metrics []byte) error {
-					return errors.Join(
-						baselineMetricContractError(metrics, true),
-						metricsHaveAnyLabel(metrics, "pod_uid"),
-					)
+					return baselineMetricContractError(metrics, true)
 				})
+
+			workload := shouldGetWorkloadPod(ctx)
+			want := shouldReadWorkloadAttribution(ctx, workload)
+			want.PodUID = string(workload.UID)
+			shouldAttributeOnlyWorkloadGPU(ctx, exporterPod, want)
 		})
 	})
 
@@ -128,10 +125,10 @@ var _ = Describe("dcgm-exporter Kubernetes attribution scenarios", func() {
 		It("should include allowed labels and suppress blocked labels", func(ctx context.Context) {
 			_, _ = shouldInstallExporterAndReadMetrics(ctx,
 				[]string{
-					exporterArguments("--kubernetes-enable-pod-labels"),
-					"kubernetes.enablePodLabels=true",
+					exporterArguments(),
+					"config.sources.kubernetes.pod_labels.enabled=true",
 					"kubernetes.rbac.create=true",
-					"kubernetes.podLabelAllowlistRegex[0]=^valid_key$",
+					"config.sources.kubernetes.pod_labels.allow[0]=^valid_key$",
 				},
 				nil,
 				customLabels,
@@ -145,43 +142,133 @@ var _ = Describe("dcgm-exporter Kubernetes attribution scenarios", func() {
 		})
 	})
 
-	Context("DCGM exporter maps Kubernetes GPU IDs by UID", Ordered, Label("kubernetesGpuId"), func() {
-		AfterAll(func(ctx context.Context) {
-			cleanupTestContext(ctx, kubeClient, helmClient)
-		})
-
-		It("should keep workload attribution valid when UID mapping is selected", func(ctx context.Context) {
-			_, _ = shouldInstallExporterAndReadMetrics(ctx,
-				[]string{exporterArguments("--kubernetes-gpu-id-type=uid")},
-				nil,
-				testRunLabels,
-				func(metrics []byte) error {
-					return defaultMetricsContractError(metrics, true)
+	Context("DCGM exporter maps Kubernetes GPU IDs", Label("kubernetesGpuId"), func() {
+		// The NVIDIA device plugin gives the kubelet GPU UUIDs as device IDs.
+		// uid mode matches them; device-name mode looks for nvidia<N> names, so
+		// it matches no pod. TestProcessPodMapper_WithD_Different_Format_Of_DeviceID
+		// in internal/pkg/transformation covers device-name matching.
+		for _, mode := range []struct {
+			idType     string
+			spec       string
+			attributed bool
+		}{
+			{idType: "uid", spec: "should name the workload pod on its GPU only", attributed: true},
+			{idType: "device-name", spec: "should name the workload pod on no GPU"},
+		} {
+			Context(mode.idType+" mode", Ordered, func() {
+				AfterAll(func(ctx context.Context) {
+					cleanupTestContext(ctx, kubeClient, helmClient)
 				})
-		})
+
+				It(mode.spec, func(ctx context.Context) {
+					exporterPod, _ := shouldInstallExporterAndReadMetrics(ctx,
+						[]string{exporterArguments("--kubernetes-gpu-id-type=" + mode.idType)},
+						nil,
+						testRunLabels,
+						func(metrics []byte) error {
+							return baselineMetricContractError(metrics, mode.attributed)
+						})
+
+					want := shouldReadWorkloadAttribution(ctx, shouldGetWorkloadPod(ctx))
+					if mode.attributed {
+						shouldAttributeOnlyWorkloadGPU(ctx, exporterPod, want)
+					} else {
+						shouldNotAttributeWorkload(ctx, exporterPod, want)
+					}
+				})
+			})
+		}
 	})
 
-	Context("DCGM exporter emits DRA attribution", Ordered, Label("dra"), func() {
-		AfterAll(func(ctx context.Context) {
-			cleanupTestContext(ctx, kubeClient, helmClient)
-		})
+	Context("DCGM exporter maps renamed NVIDIA GPU resources", Label("customResourceNames"), func() {
+		// The scenario group time-slices GPUs with renameByDefault, so the
+		// device plugin advertises them as nvidia.com/gpu.shared. The exporter
+		// attributes pods holding that resource only when it is named in
+		// --nvidia-resource-names.
+		for _, mode := range []struct {
+			name       string
+			spec       string
+			args       []string
+			attributed bool
+		}{
+			{name: "without --nvidia-resource-names", spec: "should name the workload pod on no GPU"},
+			{
+				name:       "with --nvidia-resource-names",
+				spec:       "should name the workload pod on its GPU only",
+				args:       []string{"--nvidia-resource-names=" + string(framework.NVIDIASharedGPUResourceName)},
+				attributed: true,
+			},
+		} {
+			Context(mode.name, Ordered, func() {
+				AfterAll(func(ctx context.Context) {
+					cleanupTestContext(ctx, kubeClient, helmClient)
+				})
 
-		It("should emit DRA labels when Kubernetes DRA resources are present", func(ctx context.Context) {
-			shouldInstallHelmChartWithJSONValues(ctx, helmClient, []string{"kubernetesDRA.enabled=true"}, nil)
-			dcgmExpPod := shouldCheckIfPodCreated(ctx, kubeClient, dcgmExporterPodLabels)
-			shouldCheckIfPodIsReady(ctx, kubeClient, dcgmExpPod.Namespace, dcgmExpPod.Name)
-			shouldCreateDRAWorkload(ctx)
-			shouldWaitForMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
+				It(mode.spec, func(ctx context.Context) {
+					shouldInstallHelmChart(ctx, helmClient, []string{exporterArguments(mode.args...)})
+					workload := shouldCreateWorkloadPodRequesting(ctx, kubeClient, testRunLabels, framework.NVIDIASharedGPUResourceName, "")
+					exporterPod := shouldFindReadyExporterPodForWorkload(ctx, kubeClient, workload)
+					shouldWaitForMetrics(ctx, kubeClient, exporterPod, dcgmExporterPort)
 
-			var metricsResponse []byte
-			Eventually(func(g Gomega) {
-				metricsResponse = shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
-				g.Expect(errors.Join(
-					metricsHaveAnyLabel(metricsResponse, "dra_driver_name"),
-					metricsHaveAnyLabel(metricsResponse, "dra_device_name"),
-				)).To(Succeed())
-			}).WithTimeout(metricsWaitTimeout).WithPolling(pollingIntervalSlow).Should(Succeed())
-		})
+					want := shouldReadWorkloadAttribution(ctx, workload)
+					if mode.attributed {
+						shouldAttributeOnlyWorkloadGPU(ctx, exporterPod, want)
+					} else {
+						shouldNotAttributeWorkload(ctx, exporterPod, want)
+					}
+				})
+			})
+		}
+	})
+
+	Context("DCGM exporter emits DRA attribution", Label("dra"), func() {
+		// Each mode owns a separate Helm release and claim workload, so the
+		// virtual-GPU pass must preserve live DRA identity without stale samples.
+		for _, mode := range []struct {
+			name        string
+			virtualGPUs bool
+		}{
+			{name: "dedicated GPU mode"},
+			{name: "virtual GPU mode", virtualGPUs: true},
+		} {
+			Context(mode.name, Ordered, func() {
+				AfterAll(func(ctx context.Context) {
+					cleanupTestContext(ctx, kubeClient, helmClient)
+				})
+
+				It("should emit DRA labels when Kubernetes DRA resources are present", func(ctx context.Context) {
+					values := []string{"config.sources.dra.mode=kubernetes"}
+					if mode.virtualGPUs {
+						values = append(values, exporterArguments("--kubernetes-virtual-gpus"))
+					}
+					shouldInstallHelmChartWithJSONValues(ctx, helmClient, values, []string{draMetricsJSONValue})
+					shouldCreateDRAWorkload(ctx)
+
+					var allocation regularDRAAllocation
+					var workloadNode string
+					Eventually(func(g Gomega) {
+						observedAllocation, observedNode, err := readRegularDRAAllocation(ctx)
+						g.Expect(err).NotTo(HaveOccurred())
+						allocation = observedAllocation
+						workloadNode = observedNode
+					}).WithTimeout(podReadinessTimeout).WithPolling(pollingIntervalNormal).Should(Succeed())
+
+					dcgmExpPod := shouldFindReadyExporterPodOnNode(ctx, kubeClient, workloadNode)
+					shouldMatchExporterAccess(ctx, dcgmExpPod, exporterAccessChecks(dcgmExpPod.Namespace, true, true))
+					shouldWaitForMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
+
+					Eventually(func(g Gomega) {
+						metrics := shouldReadMetrics(ctx, kubeClient, dcgmExpPod, dcgmExporterPort)
+						g.Expect(regularDRAAttributionContract(metrics, regularDRAMetricExpectation{
+							Pod:                  workloadPodName,
+							Namespace:            testContext.namespace,
+							Container:            workloadContainerName,
+							regularDRAAllocation: allocation,
+						})).To(Succeed())
+					}).WithTimeout(metricsWaitTimeout).WithPolling(pollingIntervalSlow).Should(Succeed())
+				})
+			})
+		}
 	})
 
 	Context("DCGM exporter emits shared GPU attribution", Ordered, Label("sharedGpu"), func() {
@@ -203,48 +290,3 @@ var _ = Describe("dcgm-exporter Kubernetes attribution scenarios", func() {
 		})
 	})
 })
-
-// shouldCreateDRAWorkload creates a ResourceClaimTemplate-backed GPU workload for DRA attribution.
-func shouldCreateDRAWorkload(ctx context.Context) {
-	Expect(testContext.cudaWorkloadImage).NotTo(BeEmpty(), "E2E_CUDA_WORKLOAD_IMAGE or -cuda-workload-image is required")
-	manifest := fmt.Sprintf(`
-apiVersion: resource.k8s.io/v1
-kind: ResourceClaimTemplate
-metadata:
-  name: gpu-claim-template
-  namespace: %s
-spec:
-  spec:
-    devices:
-      requests:
-      - name: gpu
-        exactly:
-          deviceClassName: gpu.nvidia.com
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: %s
-  namespace: %s
-  labels:
-    app: %s
-    e2eRunID: %s
-spec:
-  restartPolicy: Never
-  resourceClaims:
-  - name: gpu
-    resourceClaimTemplateName: gpu-claim-template
-  containers:
-  - name: %s
-    image: %s
-    command: ["sh", "-c", "nvidia-smi && sleep 120"]
-    resources:
-      claims:
-      - name: gpu
-`, testContext.namespace, workloadPodName, testContext.namespace, workloadPodName, runID.String(), workloadContainerName, testContext.cudaWorkloadImage)
-	shouldRunKubectlWithInput(ctx, manifest, "apply", "-f", "-")
-	Eventually(func(g Gomega) {
-		output := shouldRunKubectl(ctx, "-n", testContext.namespace, "get", "pod", workloadPodName, "-o", "jsonpath={.status.phase}")
-		g.Expect(output).To(Equal("Running"))
-	}).WithTimeout(podReadinessTimeout).WithPolling(pollingIntervalNormal).Should(Succeed())
-}

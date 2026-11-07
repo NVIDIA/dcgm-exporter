@@ -1,8 +1,11 @@
-FROM nvcr.io/nvidia/cuda:13.3.0-base-ubuntu26.04
-ARG GOLANG_VERSION=1.26.4
+FROM nvcr.io/nvidia/cuda:13.4.3-base-ubuntu26.04@sha256:e2eb43e25d404e2c48716f80afdb8989a84c4da588f5509330322842084d97b0
+ARG DCGM_VERSION=4.7.0
+# This is the local development account name, not a credential.
+# hadolint ignore=DL3064
 ARG USERNAME=developer
 ARG USER_UID=1000
 ARG USER_GID=1000
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Create or reuse a UID=1000 user named 'developer', and add it to 'sudo'.
 RUN set -eux; \
 	getent group $USER_GID || groupadd -g $USER_GID $USERNAME; \
@@ -14,32 +17,46 @@ RUN set -eux; \
 	elif id -u $USERNAME >/dev/null 2>&1; then \
 		usermod -u $USER_UID -g $USER_GID $USERNAME; \
 	else \
-		useradd -m -u $USER_UID -g $USER_GID -s /bin/bash $USERNAME; \
+	useradd -m -l -u $USER_UID -g $USER_GID -s /bin/bash $USERNAME; \
 	fi; \
 	usermod -aG sudo $USERNAME
 # Allow 'developer' to use sudo without a password
 RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
+# /etc/os-release is provided by the Ubuntu base image at build time.
+# hadolint ignore=SC1091
 RUN --mount=type=cache,target=/var/cache/apt \
 	set -eux; \
 	apt-get update; \
+	DCGM_PACKAGE_VERSION="1:${DCGM_VERSION}-2"; \
+	# APT prefers newer split-package builds over the requested DCGM build.
+	# Remove this pin when APT can resolve the requested build without it.
+	printf '%s\n' \
+	    'Package: datacenter-gpu-manager-4* libdcgm dcgmi nv-hostengine' \
+	    "Pin: version ${DCGM_PACKAGE_VERSION}" \
+	    'Pin-Priority: 1000' \
+	    > /etc/apt/preferences.d/dcgm; \
 	apt-get install -y --no-install-recommends \
 	git \
 	ca-certificates \
 	curl \
+	file \
 	g++ \
 	gcc \
-	gcc-aarch64-linux-gnu \
+	jq \
 	libc6-dev \
-	libc6-dev-arm64-cross \
-	make \
 	pkg-config \
-	shellcheck \
+	python3 \
+	ripgrep \
+	ruby \
 	wget \
-	datacenter-gpu-manager-4-core \
+	"datacenter-gpu-manager-4-core=${DCGM_PACKAGE_VERSION}" \
+	"datacenter-gpu-manager-4-dev=${DCGM_PACKAGE_VERSION}" \
+	"datacenter-gpu-manager-4-proprietary=${DCGM_PACKAGE_VERSION}" \
 	libcap2-bin \
+	&& rm /etc/apt/preferences.d/dcgm \
 	&& install -m 0755 -d /etc/apt/keyrings \
-	&& wget -O /etc/apt/keyrings/docker.asc https://download.docker.com/linux/ubuntu/gpg \
+	&& wget --progress=dot:giga -O /etc/apt/keyrings/docker.asc https://download.docker.com/linux/ubuntu/gpg \
 	&& chmod a+r /etc/apt/keyrings/docker.asc \
 	&& echo \
 	"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
@@ -50,57 +67,20 @@ RUN --mount=type=cache,target=/var/cache/apt \
 	&& apt-get autoremove -y \
 	&& rm -rfd /usr/local/dcgm/bindings /usr/local/dcgm/sdk_samples /usr/share/nvidia-validation-suite \
 	# DCGM exporter doesn't use libdcgm_cublas_proxy*.so.
-	&& rm -rf /usr/lib/x86_64-linux-gnu/libdcgm_cublas_proxy*.so \
+	&& rm -rf /usr/lib/*-linux-gnu/libdcgm_cublas_proxy*.so \
 	&& rm -rf /var/lib/apt/lists/*
 
+COPY .bazelversion bootstrap.sh mise.toml mise.lock Taskfile.yml /opt/dcgm-exporter/
+COPY hack/mise-bootstrap.env hack/versions.env /opt/dcgm-exporter/hack/
+COPY hack/task /opt/dcgm-exporter/hack/task/
+ENV MISE_DATA_DIR=/opt/mise \
+    PATH=/opt/mise/bin:/opt/mise/shims:${PATH}
 RUN set -eux; \
-	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
-	url=; \
-	filename=; \
-	echo "$arch"; \
-	case "$arch" in \
-	'amd64') \
-	filename="go${GOLANG_VERSION}.linux-amd64.tar.gz"; \
-	url="https://dl.google.com/go/${filename}"; \
-	;; \
-	'arm64') \
-	filename="go${GOLANG_VERSION}.linux-arm64.tar.gz"; \
-	url="https://dl.google.com/go/${filename}"; \
-	;; \
-	*) echo >&2 "error: unsupported architecture '$arch' (likely packaging update needed)"; exit 1 ;; \
-	esac; \
-	build=; \
-	if [ -z "$url" ]; then \
-	# https://github.com/golang/go/issues/38536#issuecomment-616897960
-	build=1; \
-	filename="go${GOLANG_VERSION}.src.tar.gz"; \
-	url="https://dl.google.com/go/${filename}"; \
-	echo >&2; \
-	echo >&2 "warning: current architecture ($arch) does not have a compatible Go binary release; will be building from source"; \
-	echo >&2; \
-	fi; \
-	wget -O go.tgz "$url" --progress=dot:giga; \
-	\
-	echo "Verifying SHA256 checksum..."; \
-	wget -O go.sha256 "https://dl.google.com/go/${filename}.sha256"; \
-	expected_sha256=$(cat go.sha256); \
-	actual_sha256=$(sha256sum go.tgz | awk '{print $1}'); \
-	if [ "$expected_sha256" != "$actual_sha256" ]; then \
-		echo >&2 "error: SHA256 checksum verification failed"; \
-		echo >&2 "expected: $expected_sha256"; \
-		echo >&2 "actual:   $actual_sha256"; \
-		exit 1; \
-	fi; \
-	echo "SHA256 checksum verified successfully"; \
-	rm go.sha256; \
-	\
-	tar -C /usr/local -xzf go.tgz; \
-	rm go.tgz
-ENV GOTOOLCHAIN=local
-ENV GOPATH=/go
-ENV PATH=$GOPATH/bin:$PATH
-RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 1777 "$GOPATH"
-ENV PATH=$PATH:/usr/local/go/bin
+	/opt/dcgm-exporter/bootstrap.sh --bin-dir /usr/local/bin; \
+	task --dir /opt/dcgm-exporter deps:install; \
+	mise --cd /opt/dcgm-exporter reshim; \
+	task --dir /opt/dcgm-exporter deps:check; \
+	chmod -R a+rX /opt/dcgm-exporter "${MISE_DATA_DIR}"
 
 # Required for DCGM metrics
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,compat32

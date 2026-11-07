@@ -17,6 +17,9 @@
 package nvmlinjection
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -24,9 +27,11 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// pointer builds pointer-valued Prometheus fixture fields.
 func pointer[T any](value T) *T { return &value }
 
-func TestBatchesUseDCGMLimits(t *testing.T) {
+// TestBatchesUseDCGMLimitsWithoutMIG checks regular and profiling field limits on whole-GPU topology.
+func TestBatchesUseDCGMLimitsWithoutMIG(t *testing.T) {
 	contract := Contract{Version: CurrentVersion}
 	for id := 1; id <= 130; id++ {
 		contract.Metrics = append(contract.Metrics, Metric{ID: id, Name: "DCGM_FI_REGULAR", Samples: []Sample{{EntityGroup: "GPU", Labels: map[string]string{"gpu": "0"}}}})
@@ -35,19 +40,51 @@ func TestBatchesUseDCGMLimits(t *testing.T) {
 		contract.Metrics = append(contract.Metrics, Metric{ID: id, Name: "DCGM_FI_PROF", Profiling: true, Samples: []Sample{{EntityGroup: "GPU", Labels: map[string]string{"gpu": "0"}}}})
 	}
 	batches := contract.Batches()
-	want := []int{127, 3, 64, 2}
-	if len(batches) != len(want) {
-		t.Fatalf("batches = %d, want %d", len(batches), len(want))
+	if len(batches) != 4 {
+		t.Fatalf("batches = %d, want 4", len(batches))
 	}
-	for index := range want {
-		if len(batches[index]) != want[index] {
-			t.Fatalf("batch %d size = %d, want %d", index, len(batches[index]), want[index])
-		}
+	if len(batches[0]) != 127 || len(batches[1]) != 3 {
+		t.Fatalf("regular batch sizes = %d, %d; want 127, 3", len(batches[0]), len(batches[1]))
+	}
+	if len(batches[2]) != 64 || len(batches[3]) != 2 {
+		t.Fatalf("whole-GPU profiling batch sizes = %d, %d; want 64, 2", len(batches[2]), len(batches[3]))
 	}
 }
 
+// TestBatchesIsolateAllProfilingFieldsForMIGTopology checks that either MIG entity type isolates every profiling field.
+func TestBatchesIsolateAllProfilingFieldsForMIGTopology(t *testing.T) {
+	for _, entityGroup := range []string{gpuInstanceEntity, computeInstanceEntity} {
+		t.Run(entityGroup, func(t *testing.T) {
+			contract := Contract{Metrics: []Metric{
+				{ID: 1001, Profiling: true, Samples: []Sample{{EntityGroup: "GPU"}}},
+				{ID: 1002, Profiling: true, Samples: []Sample{{EntityGroup: "GPU"}}},
+				{ID: 150, Samples: []Sample{{EntityGroup: entityGroup}}},
+			}}
+
+			batches := contract.Batches()
+			if len(batches) != 3 || len(batches[0]) != 1 || batches[0][0].ID != 150 {
+				t.Fatalf("Batches() = %#v", batches)
+			}
+			for index := 1; index < len(batches); index++ {
+				if len(batches[index]) != 1 {
+					t.Fatalf("MIG profiling batch %d size = %d, want 1", index-1, len(batches[index]))
+				}
+			}
+		})
+	}
+}
+
+// TestValidateFamilies checks family type, sample count, entity labels, values, and unexpected families.
 func TestValidateFamilies(t *testing.T) {
-	metric := Metric{Name: "DCGM_FI_DEV_GPU_TEMP", Samples: []Sample{{EntityGroup: "GPU", Labels: map[string]string{"gpu": "0", "UUID": "GPU-0"}}}}
+	metric := Metric{
+		Name: "DCGM_FI_DEV_GPU_TEMP",
+		Samples: []Sample{{
+			EntityGroup: "GPU",
+			Labels:      map[string]string{"gpu": "0", "UUID": "GPU-0"},
+			Value:       42,
+		}},
+	}
+	// Each case gets a fresh valid scrape before applying its isolated mutation.
 	validFamilies := func() map[string]*dto.MetricFamily {
 		return map[string]*dto.MetricFamily{
 			metric.Name: {
@@ -60,6 +97,7 @@ func TestValidateFamilies(t *testing.T) {
 			},
 		}
 	}
+	// Each mutation breaks one scrape contract and names its expected diagnostic.
 	tests := []struct {
 		name   string
 		mutate func(map[string]*dto.MetricFamily)
@@ -110,6 +148,13 @@ func TestValidateFamilies(t *testing.T) {
 			want: "has type COUNTER, expected GAUGE",
 		},
 		{
+			name: "wrong value",
+			mutate: func(families map[string]*dto.MetricFamily) {
+				families[metric.Name].Metric[0].Gauge.Value = pointer(43.0)
+			},
+			want: "has value 43, expected 42",
+		},
+		{
 			name: "unexpected family",
 			mutate: func(families map[string]*dto.MetricFamily) {
 				name := "DCGM_FI_DEV_POWER_USAGE"
@@ -138,6 +183,7 @@ func TestValidateFamilies(t *testing.T) {
 	}
 }
 
+// TestSaneValueRejectsDCGMSentinels checks nonfinite and sentinel rejection while allowing ordinary values.
 func TestSaneValueRejectsDCGMSentinels(t *testing.T) {
 	for _, value := range []float64{math.NaN(), math.Inf(1), float64(int32Blank), int64BlankFloat, fp64Blank + 2} {
 		if saneValue(value) {
@@ -148,5 +194,212 @@ func TestSaneValueRejectsDCGMSentinels(t *testing.T) {
 		if !saneValue(value) {
 			t.Fatalf("saneValue(%v) = false", value)
 		}
+	}
+}
+
+// TestValidateRejectsInvalidObservedValue rejects a nonfinite value in a direct-DCGM contract.
+func TestValidateRejectsInvalidObservedValue(t *testing.T) {
+	contract := Contract{
+		Version:     CurrentVersion,
+		DeviceCount: 1,
+		Metrics: []Metric{{
+			ID:   150,
+			Name: "DCGM_FI_DEV_GPU_TEMP",
+			Samples: []Sample{{
+				EntityGroup: "GPU",
+				Labels:      map[string]string{"gpu": "0"},
+				Value:       math.NaN(),
+			}},
+		}},
+	}
+
+	err := contract.Validate()
+	if err == nil || !strings.Contains(err.Error(), "metrics[0].samples[0] has an invalid value") {
+		t.Fatalf("Validate() error = %v, want invalid observed value", err)
+	}
+}
+
+// TestValidateZeroDeviceContractHasNoMetrics accepts empty topology and rejects GPU metrics without devices.
+func TestValidateZeroDeviceContractHasNoMetrics(t *testing.T) {
+	if err := (Contract{Version: CurrentVersion}).Validate(); err != nil {
+		t.Fatalf("Validate() zero-device contract error = %v", err)
+	}
+	contract := Contract{
+		Version: CurrentVersion,
+		Metrics: []Metric{{
+			ID:   150,
+			Name: "DCGM_FI_DEV_GPU_TEMP",
+			Samples: []Sample{{
+				EntityGroup: "GPU",
+				Labels:      map[string]string{"gpu": "0"},
+				Value:       42,
+			}},
+		}},
+	}
+	err := contract.Validate()
+	if err == nil || !strings.Contains(err.Error(), "zero-device fixture must not expose GPU metrics") {
+		t.Fatalf("Validate() error = %v, want zero-device metric rejection", err)
+	}
+}
+
+// TestValidateRejectsPreviousContractVersion rejects an obsolete probe schema.
+func TestValidateRejectsPreviousContractVersion(t *testing.T) {
+	err := (Contract{Version: CurrentVersion - 1}).Validate()
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("version must be %d", CurrentVersion)) {
+		t.Fatalf("Validate() error = %v, want current contract version", err)
+	}
+}
+
+// TestValidateComputeInstanceSamples checks instance labels, topology counts, and repeated identities across fields.
+func TestValidateComputeInstanceSamples(t *testing.T) {
+	// Start each count/label check with one fully identified compute instance.
+	newContract := func(entityGroup string) Contract {
+		return Contract{ComputeInstanceCount: 1, Metrics: []Metric{{
+			Name: "DCGM_FI_DEV_FB_USED",
+			Samples: []Sample{{
+				EntityGroup: entityGroup,
+				Labels: map[string]string{
+					"GPU_I_ID":      "3",
+					"GPU_I_PROFILE": "1g.10gb",
+					"GPU_CI_ID":     "1",
+				},
+			}},
+		}}}
+	}
+
+	if err := newContract(computeInstanceEntity).ValidateComputeInstanceSamples(); err != nil {
+		t.Fatalf("ValidateComputeInstanceSamples() error = %v", err)
+	}
+
+	for _, label := range []string{"GPU_I_ID", "GPU_I_PROFILE", "GPU_CI_ID"} {
+		t.Run("missing "+label, func(t *testing.T) {
+			contract := newContract(computeInstanceEntity)
+			contract.Metrics[0].Samples[0].Labels[label] = ""
+			err := contract.ValidateComputeInstanceSamples()
+			if err == nil || !strings.Contains(err.Error(), label) {
+				t.Fatalf("ValidateComputeInstanceSamples() error = %v, want %s", err, label)
+			}
+		})
+	}
+
+	withoutComputeInstances := newContract("GPU")
+	withoutComputeInstances.Metrics[0].Samples[0].Labels = nil
+	err := withoutComputeInstances.ValidateComputeInstanceSamples()
+	if err == nil || !strings.Contains(err.Error(), "no compute-instance field samples") {
+		t.Fatalf("ValidateComputeInstanceSamples() error = %v, want missing compute-instance sample", err)
+	}
+
+	// add callbacks vary sampled topology without changing the common starting fixture.
+	for _, test := range []struct {
+		name  string
+		count int
+		add   func(*Contract)
+		want  string
+	}{
+		{
+			name:  "missing declared compute instance",
+			count: 2,
+			want:  "count 2 does not match 1 sampled compute instances",
+		},
+		{
+			name:  "extra sampled compute instance",
+			count: 1,
+			add: func(contract *Contract) {
+				other := contract.Metrics[0].Samples[0]
+				other.Labels = map[string]string{
+					"GPU_I_ID":      "3",
+					"GPU_I_PROFILE": "1g.10gb",
+					"GPU_CI_ID":     "2",
+				}
+				contract.Metrics[0].Samples = append(contract.Metrics[0].Samples, other)
+			},
+			want: "count 1 does not match 2 sampled compute instances",
+		},
+		{
+			name:  "same compute instance across fields",
+			count: 1,
+			add: func(contract *Contract) {
+				contract.Metrics = append(contract.Metrics, Metric{
+					Name:    "DCGM_FI_DEV_GPU_TEMP",
+					Samples: contract.Metrics[0].Samples,
+				})
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contract := newContract(computeInstanceEntity)
+			contract.ComputeInstanceCount = test.count
+			if test.add != nil {
+				test.add(&contract)
+			}
+
+			err := contract.ValidateComputeInstanceSamples()
+			if test.want == "" && err != nil {
+				t.Fatalf("ValidateComputeInstanceSamples() error = %v", err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("ValidateComputeInstanceSamples() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+// TestReadRejectsDeclaredComputeInstanceWithoutSample checks that validation is
+// applied when a saved fixture is read, not only when it is produced.
+func TestReadRejectsDeclaredComputeInstanceWithoutSample(t *testing.T) {
+	contract := Contract{
+		Version:              CurrentVersion,
+		DeviceCount:          1,
+		ComputeInstanceCount: 1,
+		Metrics: []Metric{{
+			ID:   150,
+			Name: "DCGM_FI_DEV_GPU_TEMP",
+			Samples: []Sample{{
+				EntityGroup: "GPU",
+				Labels:      map[string]string{"gpu": "0"},
+				Value:       42,
+			}},
+		}},
+	}
+
+	encoded, err := json.Marshal(contract)
+	if err != nil {
+		t.Fatalf("marshal contract: %v", err)
+	}
+	_, err = Read(bytes.NewReader(encoded))
+	if err == nil || !strings.Contains(err.Error(), "no compute-instance field samples") {
+		t.Fatalf("Read() error = %v, want missing compute-instance sample", err)
+	}
+}
+
+// TestReadRejectsIncompleteComputeInstanceCoverage checks that a fixture cannot
+// claim more compute instances than its field samples cover.
+func TestReadRejectsIncompleteComputeInstanceCoverage(t *testing.T) {
+	contract := Contract{
+		Version:              CurrentVersion,
+		DeviceCount:          1,
+		ComputeInstanceCount: 2,
+		Metrics: []Metric{{
+			ID:   150,
+			Name: "DCGM_FI_DEV_GPU_TEMP",
+			Samples: []Sample{{
+				EntityGroup: computeInstanceEntity,
+				Labels: map[string]string{
+					"GPU_I_ID":      "3",
+					"GPU_I_PROFILE": "1g.10gb",
+					"GPU_CI_ID":     "1",
+				},
+				Value: 42,
+			}},
+		}},
+	}
+
+	encoded, err := json.Marshal(contract)
+	if err != nil {
+		t.Fatalf("marshal contract: %v", err)
+	}
+	_, err = Read(bytes.NewReader(encoded))
+	if err == nil || !strings.Contains(err.Error(), "count 2 does not match 1 sampled compute instances") {
+		t.Fatalf("Read() error = %v, want incomplete compute-instance coverage", err)
 	}
 }

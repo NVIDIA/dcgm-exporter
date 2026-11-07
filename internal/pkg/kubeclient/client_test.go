@@ -27,6 +27,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// TestGetKubeClientReturnsInClusterConfigErrorOutsideCluster rejects absent cluster service configuration.
 func TestGetKubeClientReturnsInClusterConfigErrorOutsideCluster(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBERNETES_SERVICE_PORT", "")
@@ -37,16 +38,19 @@ func TestGetKubeClientReturnsInClusterConfigErrorOutsideCluster(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// restoreKubeClientSeams restores the package client factories after an injected test.
 func restoreKubeClientSeams(t *testing.T) {
 	t.Helper()
 	prevInClusterConfig := inClusterConfigFunc
 	prevNewClient := newKubernetesClientFunc
+	// These tests own both global factory overrides until their cleanup runs.
 	t.Cleanup(func() {
 		inClusterConfigFunc = prevInClusterConfig
 		newKubernetesClientFunc = prevNewClient
 	})
 }
 
+// TestGetKubeClientWithInjectedConfig returns the client constructed from an injected in-cluster configuration.
 func TestGetKubeClientWithInjectedConfig(t *testing.T) {
 	restoreKubeClientSeams(t)
 	wantClient := fake.NewClientset()
@@ -63,6 +67,7 @@ func TestGetKubeClientWithInjectedConfig(t *testing.T) {
 	assert.Same(t, wantClient, client)
 }
 
+// TestGetKubeClientReturnsClientConstructionError preserves client-factory errors after configuration succeeds.
 func TestGetKubeClientReturnsClientConstructionError(t *testing.T) {
 	restoreKubeClientSeams(t)
 	inClusterConfigFunc = func() (*rest.Config, error) {

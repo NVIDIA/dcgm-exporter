@@ -18,9 +18,8 @@ package capability
 
 import (
 	"context"
+	"fmt"
 	"strings"
-
-	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
 // dcgmFieldSupport records the resolved DCGM field name and numeric field ID.
@@ -29,34 +28,74 @@ type dcgmFieldSupport struct {
 	ID   string
 }
 
-// unsupportedFieldCapability reports whether a DCGM field can exercise unsupported-field handling.
-func unsupportedFieldCapability(fields, candidate, evidence string) Capability {
-	switch {
-	case candidate != "":
-		return hostCapability("unsupported_field", StatusSupported, "DCGM container dmon", "DCGM reported an unsupported field sentinel for "+candidate, evidence)
-	case dcgmProbeUnavailable(fields):
-		return hostCapability("unsupported_field", StatusUnknown, "DCGM container dmon -l", dcgmProbeUnavailableReason("unsupported-field", fields), firstLine(fields))
-	default:
-		return hostCapability("unsupported_field", StatusUnsupported, "DCGM container dmon", "DCGM did not report an unsupported sentinel for the candidate fields", strings.Join(unsupportedFieldCandidates(), ","))
-	}
+// unsupportedFieldSelection distinguishes a selected candidate from a successful not-applicable result.
+// Probe failures are returned separately as errors.
+type unsupportedFieldSelection struct {
+	Candidate           string
+	Evidence            string
+	NotApplicableReason string
 }
 
 // selectUnsupportedFieldCandidate probes likely retired/ECC fields until DCGM returns an unsupported sentinel.
-func selectUnsupportedFieldCandidate(ctx context.Context, runner e2eexec.Runner, opts ProbeOptions, fields string) (string, string) {
-	if opts.DryRun || opts.DCGMImage == "" {
-		return "", ""
+func selectUnsupportedFieldCandidate(
+	ctx context.Context,
+	dcgm *dcgmProbeSession,
+	fields string,
+) (unsupportedFieldSelection, error) {
+	if dcgm.opts.DryRun {
+		return unsupportedFieldSelection{}, fmt.Errorf("unsupported-field probe was not run in dry-run mode")
 	}
+	if dcgm.opts.DCGMImage == "" {
+		return unsupportedFieldSelection{}, fmt.Errorf("unsupported-field probe requires a DCGM image")
+	}
+	if strings.TrimSpace(fields) == "" {
+		return unsupportedFieldSelection{}, fmt.Errorf("DCGM field-list probe returned no output")
+	}
+	if dcgmProbeUnavailable(fields) {
+		return unsupportedFieldSelection{}, fmt.Errorf(
+			"resolve unsupported-field scenario: %s: %s",
+			dcgmProbeUnavailableReason("field-list", fields),
+			firstLine(fields),
+		)
+	}
+
+	probed := 0
 	for _, candidate := range unsupportedFieldCandidates() {
 		field := resolveDCGMFieldSupport(fields, candidate, "")
 		if field.ID == "" {
 			continue
 		}
-		output := dcgmContainerProbe(ctx, runner, opts, "dmon", "-e", field.ID, "-c", "1")
-		if dcgmFieldProbeReportsUnsupported(output) {
-			return candidate, "field_id=" + field.ID + "; " + firstLine(output)
+		output := dcgm.run(ctx, "dmon", "-e", field.ID, "-c", "1")
+		if dcgmProbeUnavailable(output) {
+			return unsupportedFieldSelection{}, fmt.Errorf(
+				"resolve unsupported-field scenario: probe %s (field %s): %s: %s",
+				candidate,
+				field.ID,
+				dcgmProbeUnavailableReason("field-sample", output),
+				firstLine(output),
+			)
 		}
+		if dcgmFieldProbeReportsUnsupported(output) {
+			return unsupportedFieldSelection{
+				Candidate: candidate,
+				Evidence:  "field_id=" + field.ID + "; " + firstLine(output),
+			}, nil
+		}
+		if strings.TrimSpace(output) == "" {
+			return unsupportedFieldSelection{}, fmt.Errorf(
+				"resolve unsupported-field scenario: probe %s (field %s) returned no output",
+				candidate,
+				field.ID,
+			)
+		}
+		probed++
 	}
-	return "", ""
+
+	reason := "none of the unsupported-field candidates are present in the DCGM field inventory"
+	if probed != 0 {
+		reason = "all probed DCGM field candidates return valid samples"
+	}
+	return unsupportedFieldSelection{NotApplicableReason: reason}, nil
 }
 
 // resolveDCGMFieldSupport finds a field ID from dcgmi output or falls back to a known ID.
@@ -68,22 +107,6 @@ func resolveDCGMFieldSupport(fields, name, fallbackID string) dcgmFieldSupport {
 		return dcgmFieldSupport{Name: name, ID: fallbackID}
 	}
 	return dcgmFieldSupport{Name: name}
-}
-
-// dmonSource describes the exact dmon probe used for result evidence.
-func (field dcgmFieldSupport) dmonSource() string {
-	if field.ID == "" {
-		return "DCGM container dmon"
-	}
-	return "DCGM container dmon -e " + field.ID
-}
-
-// label formats a field name with its numeric ID when available.
-func (field dcgmFieldSupport) label() string {
-	if field.ID == "" {
-		return field.Name
-	}
-	return field.Name + " (" + field.ID + ")"
 }
 
 // unsupportedFieldCandidates lists DCGM fields that commonly expose sentinel values on newer GPUs.
@@ -153,7 +176,7 @@ func dcgmFieldProbeReportsUnsupported(output string) bool {
 		strings.Contains(lower, "not supported") ||
 		strings.Contains(lower, "not_supported") ||
 		strings.Contains(lower, "not-supported") ||
-		strings.Contains(lower, "not found") ||
+		(strings.Contains(lower, "field") && strings.Contains(lower, "not found")) ||
 		strings.Contains(lower, "not permissioned") ||
 		strings.Contains(lower, "blank") ||
 		strings.Contains(lower, "n/a")
@@ -174,19 +197,4 @@ func dcgmSentinelEvidence(output string) string {
 	default:
 		return ""
 	}
-}
-
-// dcgmDmonHasRealSample reports whether dmon returned a concrete sample instead of a sentinel or n/a.
-func dcgmDmonHasRealSample(output string) bool {
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || fields[0] != "GPU" {
-			continue
-		}
-		value := strings.ToLower(fields[len(fields)-1])
-		if value != "n/a" && dcgmSentinelEvidence(value) == "" {
-			return true
-		}
-	}
-	return false
 }

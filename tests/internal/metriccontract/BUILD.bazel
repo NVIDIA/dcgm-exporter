@@ -1,0 +1,51 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+filegroup(
+    name = "field_support_document",
+    srcs = ["testdata/field-support-document.json"],
+    visibility = ["//internal/e2e/capability:__pkg__"],
+)
+
+filegroup(
+    name = "source_files",
+    srcs = glob(["*.go"]),
+    visibility = ["//tests/static:__pkg__"],
+)
+
+go_library(
+    name = "metriccontract",
+    srcs = [
+        "field_support.go",
+        "gpu_inventory.go",
+        "gpu_link.go",
+        "kubernetes_attribution.go",
+        "metrics.go",
+        "mig_series.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract",
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        "//tests/internal/nvidiasmi",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//expfmt",
+        "@com_github_prometheus_common//model",
+    ],
+)
+
+go_test(
+    name = "metriccontract_test",
+    srcs = [
+        "field_support_test.go",
+        "gpu_inventory_test.go",
+        "kubernetes_attribution_test.go",
+        "metrics_test.go",
+        "mig_series_test.go",
+    ],
+    data = ["testdata/field-support-document.json"],
+    embed = [":metriccontract"],
+    deps = [
+        "//tests/internal/nvidiasmi",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+    ],
+)

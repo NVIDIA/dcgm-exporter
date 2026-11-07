@@ -20,27 +20,101 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 )
 
+// MIGDeviceInfo identifies a MIG device within its parent GPU.
 type MIGDeviceInfo struct {
 	ParentUUID        string
 	GPUInstanceID     int
 	ComputeInstanceID int
 }
 
+// gpuInstanceAPI isolates NVML profile discovery and dynamic DRA MIG placement calls.
+type gpuInstanceAPI interface {
+	// deviceHandleByUUID returns the NVML device handle for a UUID.
+	deviceHandleByUUID(string) (nvml.Device, nvml.Return)
+	// deviceMinorNumber returns the device node minor associated with a GPU handle.
+	deviceMinorNumber(nvml.Device) (int, nvml.Return)
+	// gpuInstanceProfileInfoByID returns the version 2 metadata for a profile ID.
+	gpuInstanceProfileInfoByID(nvml.Device, int) (nvml.GpuInstanceProfileInfo_v2, nvml.Return)
+	// gpuInstances lists the live instances that match one profile.
+	gpuInstances(nvml.Device, *nvml.GpuInstanceProfileInfo) ([]nvml.GpuInstance, nvml.Return)
+	// gpuInstanceInfo returns the profile and placement of one live instance.
+	gpuInstanceInfo(nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return)
+}
+
+// goNVMLGPUInstanceAPI adapts package-level go-nvml calls to gpuInstanceAPI.
+// Package-level calls share the nvml.Init and nvml.Shutdown lifecycle owned by nvmlProvider.
+type goNVMLGPUInstanceAPI struct{}
+
+// newGPUInstanceAPI returns the production GPU instance API backed by the initialized package-level library.
+func newGPUInstanceAPI() gpuInstanceAPI {
+	return goNVMLGPUInstanceAPI{}
+}
+
+// deviceHandleByUUID resolves an NVML device handle from its UUID.
+func (goNVMLGPUInstanceAPI) deviceHandleByUUID(uuid string) (nvml.Device, nvml.Return) {
+	return nvml.DeviceGetHandleByUUID(uuid)
+}
+
+// deviceMinorNumber returns the device node minor number for an NVML device.
+func (goNVMLGPUInstanceAPI) deviceMinorNumber(device nvml.Device) (int, nvml.Return) {
+	return nvml.DeviceGetMinorNumber(device)
+}
+
+// lookupNVMLSymbol checks the library owned by the current provider session.
+// Keep it replaceable so missing-symbol tests never enter the unsafe native call.
+var lookupNVMLSymbol = nvml.Extensions().LookupSymbol
+
+// gpuInstanceProfileInfoByID guards the optional native entry point before requesting version 2 metadata.
+func (goNVMLGPUInstanceAPI) gpuInstanceProfileInfoByID(
+	device nvml.Device,
+	profileID int,
+) (nvml.GpuInstanceProfileInfo_v2, nvml.Return) {
+	if err := lookupNVMLSymbol("nvmlDeviceGetGpuInstanceProfileInfoByIdV"); err != nil {
+		return nvml.GpuInstanceProfileInfo_v2{}, nvml.ERROR_FUNCTION_NOT_FOUND
+	}
+
+	return nvml.DeviceGetGpuInstanceProfileInfoByIdV(device, profileID).V2()
+}
+
+// gpuInstances lists the live GPU instances matching a profile.
+func (goNVMLGPUInstanceAPI) gpuInstances(
+	device nvml.Device,
+	profile *nvml.GpuInstanceProfileInfo,
+) ([]nvml.GpuInstance, nvml.Return) {
+	return nvml.DeviceGetGpuInstances(device, profile)
+}
+
+// gpuInstanceInfo returns placement metadata for a live GPU instance.
+func (goNVMLGPUInstanceAPI) gpuInstanceInfo(instance nvml.GpuInstance) (nvml.GpuInstanceInfo, nvml.Return) {
+	return nvml.GpuInstanceGetInfo(instance)
+}
+
 var nvmlInterface NVML
+
+// newNVMLProviderFunc keeps Initialize deterministic in package tests without
+// changing the production NVML adapter selection.
+var newNVMLProviderFunc = newNVMLProvider
+
+// initNVML and shutdownNVML keep lifecycle tests independent of a live NVIDIA driver.
+var (
+	initNVML     = nvml.Init
+	shutdownNVML = nvml.Shutdown
+)
 
 // Initialize sets up the Singleton NVML interface.
 func Initialize() error {
-	var err error
-	nvmlInterface, err = newNVMLProvider()
+	provider, err := newNVMLProviderFunc()
 	if err != nil {
 		return err
 	}
+	nvmlInterface = provider
 	return nil
 }
 
@@ -66,27 +140,43 @@ func SetClient(n NVML) {
 
 // nvmlProvider implements NVML Interface
 type nvmlProvider struct {
-	initialized bool
+	initialized    bool
+	gpuInstanceAPI gpuInstanceAPI
 }
 
+// newNVMLProvider returns the already published NVML client when present, or
+// creates the concrete adapter for a new process session. It checks the stored
+// interface directly so tests and future adapters need not be nvmlProvider.
 func newNVMLProvider() (NVML, error) {
-	// Check if a NVML client already exists and return it if so.
-	if Client() != nil && Client().(nvmlProvider).initialized {
+	if nvmlInterface != nil {
 		slog.Info("NVML already initialized.")
-		return Client(), nil
+		return nvmlInterface, nil
 	}
 
 	slog.Info("Attempting to initialize NVML library.")
-	ret := nvml.Init()
+	ret := initNVML()
 	if ret != nvml.SUCCESS {
-		err := errors.New(nvml.ErrorString(ret))
+		err := nvmlInitializationError(ret)
 		slog.Error(fmt.Sprintf("Cannot init NVML library; err: %v", err))
 		return nvmlProvider{initialized: false}, err
 	}
 
-	return nvmlProvider{initialized: true}, nil
+	return nvmlProvider{
+		initialized:    true,
+		gpuInstanceAPI: newGPUInstanceAPI(),
+	}, nil
 }
 
+// nvmlInitializationError adds driver-library guidance to NVML initialization failures.
+func nvmlInitializationError(ret nvml.Return) error {
+	if ret == nvml.ERROR_LIBRARY_NOT_FOUND {
+		return fmt.Errorf("%s: libnvidia-ml.so.1 is unavailable; ensure the NVIDIA driver is installed and accessible; in a container, configure the NVIDIA runtime to inject driver libraries (for Helm, set runtimeClassName to the cluster's NVIDIA RuntimeClass)", nvml.ErrorString(ret))
+	}
+
+	return errors.New(nvml.ErrorString(ret))
+}
+
+// preCheck returns an error unless NVML was initialized for this provider.
 func (n nvmlProvider) preCheck() error {
 	if !n.initialized {
 		return errors.New("NVML library not initialized")
@@ -107,6 +197,178 @@ func (n nvmlProvider) GetMIGDeviceInfoByID(uuid string) (*MIGDeviceInfo, error) 
 	}
 
 	return getMIGDeviceInfoForOldDriver(uuid)
+}
+
+// GetGPUInstanceProfileName returns the canonical NVML name for a MIG GPU instance profile.
+func (n nvmlProvider) GetGPUInstanceProfileName(parentGPUUUID string, profileID uint) (string, error) {
+	if err := n.preCheck(); err != nil {
+		return "", fmt.Errorf("failed to get GPU instance profile name: %w", err)
+	}
+
+	if profileID > uint(math.MaxInt) {
+		return "", fmt.Errorf("GPU instance profile ID %d exceeds maximum int value %d", profileID, math.MaxInt)
+	}
+
+	if n.gpuInstanceAPI == nil {
+		return "", errors.New("failed to get GPU instance profile name: NVML GPU instance API is unavailable")
+	}
+
+	device, ret := n.gpuInstanceAPI.deviceHandleByUUID(parentGPUUUID)
+	if ret != nvml.SUCCESS {
+		return "", fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentGPUUUID, nvml.ErrorString(ret))
+	}
+
+	profileIDInt := int(profileID)
+	infoV2, ret := n.gpuInstanceAPI.gpuInstanceProfileInfoByID(device, profileIDInt)
+	if ret != nvml.SUCCESS {
+		return "", fmt.Errorf("failed to get GPU instance profile info for UUID %s profile %d: %s",
+			parentGPUUUID, profileID, nvml.ErrorString(ret))
+	}
+
+	return migProfileNameFromBytes(infoV2.Name[:])
+}
+
+// migProfileNameFromBytes decodes a null-terminated NVML profile name.
+func migProfileNameFromBytes[T ~int8 | ~uint8](name []T) (string, error) {
+	var builder strings.Builder
+	for _, b := range name {
+		if b == 0 {
+			break
+		}
+		builder.WriteByte(byte(b))
+	}
+
+	profileName := builder.String()
+	if profileName == "" {
+		return "", errors.New("GPU instance profile name is empty")
+	}
+
+	return profileName, nil
+}
+
+// GetGPUInstanceIDByProfileAndPlacement resolves a dynamic DRA MIG
+// specification to a live NVML GPU instance.
+func (n nvmlProvider) GetGPUInstanceIDByProfileAndPlacement(
+	parentUUID string,
+	parentMinor,
+	profileID,
+	placementStart uint32,
+) (uint, error) {
+	if err := n.preCheck(); err != nil {
+		return 0, fmt.Errorf("failed to resolve GPU instance placement: %w", err)
+	}
+	if n.gpuInstanceAPI == nil {
+		return 0, errors.New("failed to resolve GPU instance placement: NVML GPU instance API is unavailable")
+	}
+
+	parentDevice, ret := n.gpuInstanceAPI.deviceHandleByUUID(parentUUID)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf("failed to get parent device handle for UUID %s: %s", parentUUID, nvml.ErrorString(ret))
+	}
+
+	actualMinor, ret := n.gpuInstanceAPI.deviceMinorNumber(parentDevice)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf("failed to get minor number for parent UUID %s: %s", parentUUID, nvml.ErrorString(ret))
+	}
+	if actualMinor < 0 || uint64(actualMinor) != uint64(parentMinor) {
+		return 0, fmt.Errorf(
+			"parent UUID %s has minor number %d, expected %d from DRA device name",
+			parentUUID,
+			actualMinor,
+			parentMinor,
+		)
+	}
+
+	const maxInt32 = uint32(^uint32(0) >> 1)
+	if strconv.IntSize == 32 && profileID > maxInt32 {
+		return 0, fmt.Errorf("GPU instance profile ID %d exceeds the platform int range", profileID)
+	}
+	profileV2, ret := n.gpuInstanceAPI.gpuInstanceProfileInfoByID(
+		parentDevice,
+		int(profileID), //nolint:gosec // G115: bounded above on 32-bit platforms
+	)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf(
+			"failed to get GPU instance profile ID %d for parent UUID %s: %s",
+			profileID,
+			parentUUID,
+			nvml.ErrorString(ret),
+		)
+	}
+	if profileV2.Id != profileID {
+		return 0, fmt.Errorf(
+			"NVML returned GPU instance profile ID %d for requested ID %d on parent UUID %s",
+			profileV2.Id,
+			profileID,
+			parentUUID,
+		)
+	}
+	profile := gpuInstanceProfileInfoFromV2(profileV2)
+
+	instances, ret := n.gpuInstanceAPI.gpuInstances(parentDevice, &profile)
+	if ret != nvml.SUCCESS {
+		return 0, fmt.Errorf(
+			"failed to enumerate GPU instances for profile ID %d on parent UUID %s: %s",
+			profileID,
+			parentUUID,
+			nvml.ErrorString(ret),
+		)
+	}
+
+	var matchedID uint32
+	matches := 0
+	for _, instance := range instances {
+		info, ret := n.gpuInstanceAPI.gpuInstanceInfo(instance)
+		if ret != nvml.SUCCESS {
+			return 0, fmt.Errorf(
+				"failed to inspect GPU instance for profile ID %d on parent UUID %s: %s",
+				profileID,
+				parentUUID,
+				nvml.ErrorString(ret),
+			)
+		}
+		if info.ProfileId != profileID || info.Placement.Start != placementStart {
+			continue
+		}
+		matchedID = info.Id
+		matches++
+	}
+
+	switch matches {
+	case 0:
+		return 0, fmt.Errorf(
+			"no GPU instance matches profile ID %d and placement start %d on parent UUID %s",
+			profileID,
+			placementStart,
+			parentUUID,
+		)
+	case 1:
+		return uint(matchedID), nil
+	default:
+		return 0, fmt.Errorf(
+			"multiple GPU instances match profile ID %d and placement start %d on parent UUID %s",
+			profileID,
+			placementStart,
+			parentUUID,
+		)
+	}
+}
+
+// gpuInstanceProfileInfoFromV2 converts version 2 profile metadata for NVML's instance enumeration API.
+func gpuInstanceProfileInfoFromV2(info nvml.GpuInstanceProfileInfo_v2) nvml.GpuInstanceProfileInfo {
+	return nvml.GpuInstanceProfileInfo{
+		Id:                  info.Id,
+		IsP2pSupported:      info.IsP2pSupported,
+		SliceCount:          info.SliceCount,
+		InstanceCount:       info.InstanceCount,
+		MultiprocessorCount: info.MultiprocessorCount,
+		CopyEngineCount:     info.CopyEngineCount,
+		DecoderCount:        info.DecoderCount,
+		EncoderCount:        info.EncoderCount,
+		JpegCount:           info.JpegCount,
+		OfaCount:            info.OfaCount,
+		MemorySizeMB:        info.MemorySizeMB,
+	}
 }
 
 // getMIGDeviceInfoForNewDriver identifies MIG Device Information for drivers >= R470 (470.42.01+),
@@ -285,7 +547,7 @@ func (n nvmlProvider) Cleanup() {
 	}
 
 	slog.Info("Attempting to shutdown NVML library")
-	ret := nvml.Shutdown()
+	ret := shutdownNVML()
 	if ret != nvml.SUCCESS {
 		slog.Error(fmt.Sprintf("Failed to shutdown NVML library: %v", nvml.ErrorString(ret)))
 	}

@@ -29,15 +29,18 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
-	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 )
 
+// clockEventsTotalKey identifies one clock-reason total for a DCGM entity.
 type clockEventsTotalKey struct {
 	entity dcgm.GroupEntityPair
 	reason clockEventBitmask
 }
 
+// clockEventsTotalCollector counts each reason bit that turns on between two
+// consecutive DCGM samples of an entity. An entity's first sample only sets the
+// baseline.
 type clockEventsTotalCollector struct {
 	expCollector
 	poller cumulativeCollectorPoller
@@ -49,15 +52,17 @@ type clockEventsTotalCollector struct {
 	// updates cannot overlap.
 	collectMu sync.Mutex
 	stateMu   sync.RWMutex
-	cursors   map[dcgm.GroupHandle]time.Time
+	cursors   map[cumulativeWatchCursorKey]time.Time
 	totals    map[clockEventsTotalKey]int
 	previous  map[dcgm.GroupEntityPair]clockEventBitmask
 }
 
+// GetMetrics renders the accumulated reason totals for currently monitored entities.
 func (c *clockEventsTotalCollector) GetMetrics() (MetricsByCounter, error) {
 	totals := c.snapshotTotals()
+	observed := c.currentTime().UnixMicro()
 	metrics := make(MetricsByCounter)
-	monitoringInfo := devicemonitoring.GetMonitoredEntities(c.deviceWatchList.DeviceInfo())
+	monitoringInfo := c.deviceWatchList.MonitoredEntities()
 
 	uuid := "UUID"
 	if c.config.UseOldNamespace {
@@ -78,48 +83,63 @@ func (c *clockEventsTotalCollector) GetMetrics() (MetricsByCounter, error) {
 			}
 
 			metricValueLabels := maps.Clone(labels)
-			metricValueLabels["clock_event"] = key.reason.String()
-			metrics[c.counter] = append(metrics[c.counter], c.createMetric(metricValueLabels, mi, uuid, total))
+			metricValueLabels[ClockEventLabel] = key.reason.String()
+			metric := c.createMetric(metricValueLabels, mi, uuid, total, c.deviceWatchList.DeviceInfo(), observed)
+			metric.StartTimestamp = c.initialSince.UnixMicro()
+			metrics[c.counter] = append(metrics[c.counter], metric)
 		}
 	}
 
 	return metrics, nil
 }
 
+// collectNewEvents reads each watched field group and commits its results only after all reads succeed.
 func (c *clockEventsTotalCollector) collectNewEvents() error {
 	c.collectMu.Lock()
 	defer c.collectMu.Unlock()
 
-	if err := dcgmprovider.Client().UpdateAllFields(); err != nil {
+	if err := c.dcgmClient().UpdateAllFields(); err != nil {
 		return fmt.Errorf("update fields for clock events total collector: %w", err)
 	}
 
-	fieldGroup := c.deviceWatchList.DeviceFieldGroup()
-	for _, group := range c.deviceWatchList.DeviceGroups() {
-		since := c.cursorForGroup(group)
-		values, nextSince, err := dcgmprovider.Client().GetValuesSince(
-			group,
-			fieldGroup,
+	polls := make([]cumulativeWatchPoll, 0)
+	for _, binding := range c.watchBindings() {
+		since := cumulativeWatchCursor(&c.stateMu, c.cursors, c.initialSince, binding.Group, binding.FieldGroup)
+		values, nextSince, err := c.dcgmClient().GetValuesSince(
+			binding.Group,
+			binding.FieldGroup,
 			since,
 		)
 		if err != nil {
-			return newCumulativePollContextError("get clock event values since cursor", group, fieldGroup, since, err)
+			return newCumulativePollContextError(
+				"get clock event values since cursor", binding.Group, binding.FieldGroup, since, err,
+			)
 		}
 
-		c.accumulateGroupEvents(group, values, nextSince)
+		polls = append(polls, cumulativeWatchPoll{
+			group:      binding.Group,
+			fieldGroup: binding.FieldGroup,
+			values:     values,
+			nextSince:  nextSince,
+		})
+	}
+
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	for _, poll := range polls {
+		c.accumulateGroupEvents(poll.group, poll.fieldGroup, poll.values, poll.nextSince)
 	}
 
 	return nil
 }
 
+// accumulateGroupEvents updates reason transitions and the cursor for one successful watch read.
 func (c *clockEventsTotalCollector) accumulateGroupEvents(
 	group dcgm.GroupHandle,
+	fieldGroup dcgm.FieldHandle,
 	values []dcgm.FieldValue_v2,
 	nextSince time.Time,
 ) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-
 	for _, val := range values {
 		if val.Status != 0 || isBlankValue(val) {
 			continue
@@ -140,9 +160,10 @@ func (c *clockEventsTotalCollector) accumulateGroupEvents(
 		}
 		c.previous[entity] = current
 	}
-	c.cursors[group] = nextSince
+	c.cursors[newCumulativeWatchCursorKey(group, fieldGroup)] = nextSince
 }
 
+// snapshotTotals returns an independent copy so metric rendering can proceed without the state lock.
 func (c *clockEventsTotalCollector) snapshotTotals() map[clockEventsTotalKey]int {
 	c.stateMu.RLock()
 	defer c.stateMu.RUnlock()
@@ -150,21 +171,35 @@ func (c *clockEventsTotalCollector) snapshotTotals() map[clockEventsTotalKey]int
 	return maps.Clone(c.totals)
 }
 
-func (c *clockEventsTotalCollector) cursorForGroup(group dcgm.GroupHandle) time.Time {
-	c.stateMu.RLock()
-	defer c.stateMu.RUnlock()
-
-	if cursor, exists := c.cursors[group]; exists {
-		return cursor
-	}
-	return c.initialSince
-}
-
+// Cleanup stops the poller, waiting at most a bounded time, so it can return
+// while a DCGM call is still running. Wait for CleanupComplete before tearing
+// down DCGM.
 func (c *clockEventsTotalCollector) Cleanup() {
 	c.poller.Cleanup()
 }
 
+// CleanupComplete reports when the poller has stopped and released this
+// collector's DCGM watches. Registry retirement waits for it before provider
+// teardown, even when Cleanup returned after its bounded stop request.
+func (c *clockEventsTotalCollector) CleanupComplete() <-chan struct{} {
+	return c.poller.CleanupComplete()
+}
+
+// NewClockEventsTotalCollector creates the cumulative clock-event collector
+// with the current process client for direct callers.
 func NewClockEventsTotalCollector(
+	counterList counters.CounterList,
+	hostname string,
+	config *appconfig.Config,
+	deviceWatchList devicewatchlistmanager.WatchList,
+) (Collector, error) {
+	return newClockEventsTotalCollectorWithClient(dcgmprovider.Client(), counterList, hostname, config, deviceWatchList)
+}
+
+// newClockEventsTotalCollectorWithClient creates the cumulative clock-event
+// collector with client, which remains valid until poller cleanup completes.
+func newClockEventsTotalCollectorWithClient(
+	client dcgmprovider.DCGM,
 	counterList counters.CounterList,
 	hostname string,
 	config *appconfig.Config,
@@ -175,9 +210,22 @@ func NewClockEventsTotalCollector(
 		return nil, fmt.Errorf("%s collector is disabled", counters.DCGMExpClockEventsTotal)
 	}
 
-	initialSince := time.Now()
-	deviceWatchList.SetDeviceFieldsWithoutLabelWatches([]dcgm.Short{dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS})
-	expCollector, err := newExpCollector(
+	source, err := countSource(counters.DCGMExpClockEventsCount)
+	if err != nil {
+		return nil, err
+	}
+
+	collector := &clockEventsTotalCollector{
+		cursors:  map[cumulativeWatchCursorKey]time.Time{},
+		totals:   map[clockEventsTotalKey]int{},
+		previous: map[dcgm.GroupEntityPair]clockEventBitmask{},
+	}
+	collector.initialSince = collector.currentTime()
+	// DCGM declares the clock event reasons field at GPU level, so it is
+	// watched and reported on physical GPUs, never on MIG instances.
+	deviceWatchList.SetDeviceFieldsForPhysicalGPUs([]dcgm.Short{source.FieldID})
+	expCollector, err := newExpCollectorWithClient(
+		client,
 		counterList.LabelCounters(),
 		hostname,
 		config,
@@ -187,22 +235,15 @@ func NewClockEventsTotalCollector(
 		return nil, fmt.Errorf("create clock events total collector watch: %w", err)
 	}
 
-	collector := &clockEventsTotalCollector{
-		expCollector: expCollector,
-		initialSince: initialSince,
-		cursors:      map[dcgm.GroupHandle]time.Time{},
-		totals:       map[clockEventsTotalKey]int{},
-		previous:     map[dcgm.GroupEntityPair]clockEventBitmask{},
-	}
+	collector.expCollector = expCollector
+
 	collector.poller = newCumulativeCollectorPoller(
 		counters.DCGMExpClockEventsTotal,
 		cumulativeCollectorPollInterval(counters.DCGMExpClockEventsTotal, config.CollectInterval),
 		collector.collectNewEvents,
 		collector.expCollector.Cleanup,
 	)
-	collector.sourceFields = map[dcgm.Short]string{
-		dcgm.DCGM_FI_DEV_CLOCKS_EVENT_REASONS: "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",
-	}
+	collector.sourceFields = map[dcgm.Short]string{source.FieldID: source.Name}
 	collector.counter = counterList[slices.IndexFunc(counterList, func(c counters.Counter) bool {
 		return c.FieldName == counters.DCGMExpClockEventsTotal
 	})]

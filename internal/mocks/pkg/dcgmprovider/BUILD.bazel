@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "dcgmprovider",
+    srcs = ["mock_client.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/dcgmprovider",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/dcgmprovider",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@org_uber_go_mock//gomock",
+    ],
+)

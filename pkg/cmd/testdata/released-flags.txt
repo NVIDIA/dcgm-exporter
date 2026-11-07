@@ -1,0 +1,54 @@
+# Flags of an earlier release that scripts and deployments still use. Each line
+# is one flag: its name, then its aliases (a dash and letters), then its
+# environment variables, then default=VALUE, the flag's default (empty for no
+# default, a comma-joined list for a list flag). NewApp must keep every name
+# and every default on every line.
+--address -a DCGM_EXPORTER_LISTEN default=:9400
+--clock-events-count-window-size DCGM_EXPORTER_CLOCK_EVENTS_COUNT_WINDOW_SIZE default=300000
+--collect-interval -c DCGM_EXPORTER_INTERVAL default=30000
+--collectors -f DCGM_EXPORTER_COLLECTORS default=/etc/dcgm-exporter/default-counters.csv
+--config-file DCGM_EXPORTER_CONFIG_FILE default=
+--configmap-data -m DCGM_EXPORTER_CONFIGMAP_DATA default=none
+--container-labels DCGM_EXPORTER_CONTAINER_LABELS default=false
+--container-runtime-socket DCGM_CONTAINER_RUNTIME_SOCKET default=
+--cpu-devices -p DCGM_EXPORTER_CPU_DEVICES_STR default=f
+--dcgm-log-level DCGM_EXPORTER_DCGM_LOG_LEVEL default=NONE
+--debug DCGM_EXPORTER_DEBUG default=false
+--devices -d DCGM_EXPORTER_DEVICES_STR default=f
+--disable-startup-validate DISABLE_STARTUP_VALIDATE default=false
+--dump-compression DCGM_EXPORTER_DUMP_COMPRESSION default=true
+--dump-directory DCGM_EXPORTER_DUMP_DIRECTORY default=/tmp/dcgm-exporter-debug
+--dump-enabled DCGM_EXPORTER_DUMP_ENABLED default=false
+--dump-retention DCGM_EXPORTER_DUMP_RETENTION default=24
+--enable-dcgm-log DCGM_EXPORTER_ENABLE_DCGM_LOG default=false
+--enable-exporter-metrics DCGM_EXPORTER_ENABLE_EXPORTER_METRICS default=false
+--enable-gpu-bind-unbind-watch DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH default=false
+--enable-pprof DCGM_EXPORTER_ENABLE_PPROF default=false
+--fake-gpus DCGM_EXPORTER_USE_FAKE_GPUS default=false
+--gpu-bind-unbind-poll-interval DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL default=1s
+--help -h
+--hpc-job-mapping-dir DCGM_HPC_JOB_MAPPING_DIR default=
+--kubernetes -k DCGM_EXPORTER_KUBERNETES default=false
+--kubernetes-enable-dra KUBERNETES_ENABLE_DRA default=false
+--kubernetes-enable-pod-labels DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS default=false
+--kubernetes-enable-pod-uid DCGM_EXPORTER_KUBERNETES_ENABLE_POD_UID default=false
+--kubernetes-gpu-id-type DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE default=uid
+--kubernetes-pod-label-allowlist-regex DCGM_EXPORTER_KUBERNETES_POD_LABEL_ALLOWLIST_REGEX default=
+--kubernetes-virtual-gpus KUBERNETES_VIRTUAL_GPUS default=false
+--log-format DCGM_EXPORTER_LOG_FORMAT default=text
+--max-concurrent-scrapes DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES default=16
+--no-hostname -n DCGM_EXPORTER_NO_HOSTNAME default=false
+--nvidia-resource-names NVIDIA_RESOURCE_NAMES default=
+--pod-resources-kubelet-socket DCGM_POD_RESOURCES_KUBELET_SOCKET default=/var/lib/kubelet/pod-resources/kubelet.sock
+--remote-hostengine-info -r DCGM_REMOTE_HOSTENGINE_INFO default=localhost:5555
+--replace-blanks-in-model-name --rbmn DCGM_EXPORTER_REPLACE_BLANKS_IN_MODEL_NAME default=false
+--switch-devices -s DCGM_EXPORTER_OTHER_DEVICES_STR default=f
+--use-old-namespace -o DCGM_EXPORTER_USE_OLD_NAMESPACE default=false
+--version -v
+--watch-max-keep-age DCGM_EXPORTER_WATCH_MAX_KEEP_AGE default=10m0s
+--watch-max-keep-samples DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES default=0
+--web-config-file DCGM_EXPORTER_WEB_CONFIG_FILE default=
+--web-read-timeout DCGM_EXPORTER_WEB_READ_TIMEOUT default=10s
+--web-systemd-socket DCGM_EXPORTER_SYSTEMD_SOCKET default=false
+--web-write-timeout DCGM_EXPORTER_WEB_WRITE_TIMEOUT default=30s
+--xid-count-window-size -x DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE default=300000

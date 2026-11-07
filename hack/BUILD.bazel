@@ -1,0 +1,5 @@
+exports_files([
+    "e2e-local-node.Dockerfile",
+    "utils.sh",
+    "versions.env",
+])

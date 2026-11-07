@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Validate dcgm-exporter package tarballs by installing and running them.
+# Inspect and install-test dcgm-exporter package tarballs.
 #
 # This compatibility guard consumes repo-produced
 # dist/dcgm_exporter-*.tar.gz payload tarballs, creates temporary CI-only
@@ -21,11 +21,12 @@
 # uses more Buildx Dockerfile RUN steps to install those packages in target
 # distro images and run /usr/bin/dcgm-exporter --version.
 #
-# A failed Buildx build means package creation, image setup, native package
-# install, expected file checks, or the installed-binary smoke test failed.
-# The temporary packages are not byte-for-byte release artifacts.
+# The inspect command does not require Docker. The install command
+# creates temporary CI-only packages; they are not byte-for-byte release
+# artifacts.
 
 set -Eeuo pipefail
+export LC_ALL=C
 
 ARG0="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,29 +42,40 @@ source "${ROOT_DIR}/hack/utils.sh"
 source "${ROOT_DIR}/hack/versions.env"
 
 PACKAGE_NAME="${PACKAGE_NAME:-datacenter-gpu-manager-exporter}"
-PACKAGE_VERSION="${PACKAGE_VERSION:-${EXPORTER_VERSION}.${PACKAGE_REVISION}}"
+PACKAGE_VERSION="${PACKAGE_VERSION:-${EXPORTER_VERSION}}"
 PACKAGE_RELEASE="${PACKAGE_RELEASE:-1}"
-PACKAGE_TARBALLS="${PACKAGE_TARBALLS:-dist/dcgm_exporter-*.tar.gz}"
+PACKAGE_TARBALLS="${PACKAGE_TARBALLS:-dist/dcgm_exporter-*-${PACKAGE_VERSION}.tar.gz}"
 PACKAGE_PLATFORM="${PACKAGE_PLATFORM:-linux/amd64}"
 PACKAGE_COMPONENT_DIR="${PACKAGE_COMPONENT_DIR:-dcgm_exporter}"
 PACKAGE_WORK_ROOT="${PACKAGE_WORK_ROOT:-${ROOT_DIR}}"
 PACKAGE_BUILDX_BUILDER="${PACKAGE_BUILDX_BUILDER:-${BUILDX_BUILDER:-}}"
 
-RPM_BUILDER_IMAGE="${RPM_BUILDER_IMAGE:-registry.access.redhat.com/ubi8/ubi:latest}"
-RPM_TEST_IMAGES="${RPM_TEST_IMAGES:-registry.access.redhat.com/ubi8/ubi:latest registry.access.redhat.com/ubi9/ubi:latest}"
-DEB_BUILDER_IMAGE="${DEB_BUILDER_IMAGE:-ubuntu:22.04}"
-DEB_TEST_IMAGES="${DEB_TEST_IMAGES:-ubuntu:22.04 ubuntu:24.04 ubuntu:26.04}"
+RPM_BUILDER_IMAGE_DEFAULT="${UBI8_IMAGE_REPOSITORY}:${UBI8_IMAGE_TAG}@${UBI8_IMAGE_DIGEST}"
+RPM_TEST_IMAGES_DEFAULT="${RPM_BUILDER_IMAGE_DEFAULT}"
+RPM_TEST_IMAGES_DEFAULT+=" ${UBI9_IMAGE_REPOSITORY}:${UBI9_IMAGE_TAG}@${UBI9_IMAGE_DIGEST}"
+DEB_BUILDER_IMAGE_DEFAULT="${UBUNTU_IMAGE_REPOSITORY}:${UBUNTU_2204_IMAGE_TAG}@${UBUNTU_2204_IMAGE_DIGEST}"
+DEB_TEST_IMAGES_DEFAULT="${DEB_BUILDER_IMAGE_DEFAULT}"
+DEB_TEST_IMAGES_DEFAULT+=" ${UBUNTU_IMAGE_REPOSITORY}:${UBUNTU_2404_IMAGE_TAG}@${UBUNTU_2404_IMAGE_DIGEST}"
+DEB_TEST_IMAGES_DEFAULT+=" ${UBUNTU_IMAGE_REPOSITORY}:${UBUNTU_2604_IMAGE_TAG}@${UBUNTU_2604_IMAGE_DIGEST}"
+
+RPM_BUILDER_IMAGE="${RPM_BUILDER_IMAGE:-${RPM_BUILDER_IMAGE_DEFAULT}}"
+RPM_TEST_IMAGES="${RPM_TEST_IMAGES:-${RPM_TEST_IMAGES_DEFAULT}}"
+DEB_BUILDER_IMAGE="${DEB_BUILDER_IMAGE:-${DEB_BUILDER_IMAGE_DEFAULT}}"
+DEB_TEST_IMAGES="${DEB_TEST_IMAGES:-${DEB_TEST_IMAGES_DEFAULT}}"
 
 PACKAGE_CLEANUP_DIR=""
 PACKAGE_TARBALL_ARGS=()
+PACKAGE_ACTION="install"
+PACKAGE_TARBALL_PATHS=()
+PACKAGE_TEST_DIR=""
 
 # usage_info prints the short command summary.
 usage_info() {
     cat <<EOF
-Usage: ${ARG0} [tarball ...]
+Usage: ${ARG0} [inspect|install] [tarball ...]
 
-Build temporary CI-only RPM/DEB packages from dcgm-exporter package tarballs,
-install them in supported distro containers, and run dcgm-exporter --version.
+Inspect package payload contracts, install temporary RPM/DEB packages in
+supported distro containers.
 EOF
 }
 
@@ -99,9 +111,8 @@ Environment:
                           (default: ${PACKAGE_BUILDX_BUILDER:-docker buildx default})
 
 Examples:
-  ${ARG0}
-  ${ARG0} dist/dcgm_exporter-linux-x86-64-${PACKAGE_VERSION}.tar.gz
-  ${ARG0} --package-platform linux/arm64 dist/dcgm_exporter-linux-sbsa-${PACKAGE_VERSION}.tar.gz
+  ${ARG0} inspect dist/dcgm_exporter-linux-x86-64-${PACKAGE_VERSION}.tar.gz
+  ${ARG0} install dist/dcgm_exporter-linux-x86-64-${PACKAGE_VERSION}.tar.gz
 EOF
     exit 0
 }
@@ -115,6 +126,13 @@ need_value() {
 
 # flags parses command-line options and records positional tarball paths.
 flags() {
+    case "${1:-}" in
+        inspect|install)
+            PACKAGE_ACTION="$1"
+            shift
+            ;;
+    esac
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --package-name)
@@ -202,6 +220,17 @@ docker_buildx_build() {
 # require_buildx verifies that Docker Buildx is available.
 require_buildx() {
     docker buildx version >/dev/null 2>&1 || die "docker buildx is required"
+}
+
+# pull_image retries only the network transfer, never package creation or tests.
+pull_image() {
+    local platform="${1}"
+    local image="${2}"
+
+    bash "${ROOT_DIR}/hack/ci/retry.sh" \
+        --attempts 3 \
+        --delay 10 \
+        -- docker pull --platform "${platform}" "${image}"
 }
 
 # abs_path prints an absolute path rooted at the repository for relative input.
@@ -300,6 +329,139 @@ deb_arch_for_platform() {
     esac
 }
 
+# expected_elf_machine prints the readelf machine expected for a platform.
+expected_elf_machine() {
+    case "${1}" in
+        linux/amd64) printf '%s\n' "Advanced Micro Devices X86-64" ;;
+        linux/arm64) printf '%s\n' "AArch64" ;;
+        *) die "Unsupported package platform for ELF inspection: ${1}" ;;
+    esac
+}
+
+# needed_libraries prints the binary's direct ELF NEEDED entries.
+needed_libraries() {
+    local binary="${1}"
+
+    readelf -W -d "${binary}" |
+        sed -n 's/.*Shared library: \[\([^]]*\)\].*/\1/p' |
+        LC_ALL=C sort
+}
+
+# assert_mode checks one installed path's permission bits.
+assert_mode() {
+    local path="${1}"
+    local expected="${2}"
+    local actual
+
+    actual="$(stat -c '%a' "${path}")"
+    [[ "${actual}" = "${expected}" ]] ||
+        die "Expected mode ${expected} for ${path}, got ${actual}"
+}
+
+# inspect_metric_presets verifies packaged metric files and archive ownership.
+inspect_metric_presets() {
+    local component_root="${1}"
+    local tarball="${2:-}"
+    local metric_path metric_preset tar_listing
+
+    for metric_preset in \
+        1.x-compatibility-metrics.csv \
+        config.yaml \
+        dcp-metrics-included.csv \
+        default-counters.csv; do
+        metric_path="etc/dcgm-exporter/${metric_preset}"
+        [[ -f "${component_root}/${metric_path}" ]] ||
+            die "Packaged metric preset is missing: ${metric_preset}"
+        assert_mode "${component_root}/${metric_path}" 644
+
+        if [[ -n "${tarball}" ]]; then
+            tar_listing="$(tar --numeric-owner -tvzf \
+                "${tarball}" "${PACKAGE_COMPONENT_DIR}/${metric_path}")"
+            [[ "${tar_listing}" =~ ^-rw-r--r--[[:space:]]+0/0[[:space:]] ]] ||
+                die "Packaged metric preset is not owned by root: ${metric_preset}"
+        fi
+    done
+}
+
+# assert_systemd_logging rejects the legacy exporter log-file override so the
+# packaged unit can retain systemd's default journald output.
+assert_systemd_logging() {
+    local systemd_unit="${1}"
+    local logging_pattern
+
+    logging_pattern='^[[:space:]]*Standard(Output|Error)[[:space:]]*='
+    logging_pattern+='[[:space:]]*(append:|file:|truncate:)?/var/log/dcgm-exporter\.log'
+    logging_pattern+='([[:space:]]|$)'
+
+    if grep -Eq "${logging_pattern}" "${systemd_unit}"; then
+        die "Packaged systemd unit must log through journald"
+    fi
+}
+
+# inspect_payload checks the archive contract without building distro packages.
+inspect_payload() {
+    local payload_dir="${1}"
+    local platform="${2}"
+    local tarball="${3:-}"
+    local component_root="${payload_dir}/${PACKAGE_COMPONENT_DIR}"
+    local binary="${component_root}/usr/bin/dcgm-exporter"
+    local systemd_unit="${component_root}/lib/systemd/system/nvidia-dcgm-exporter.service"
+    local expected_machine
+    local actual_machine
+    local expected_version="DCGM Exporter version ${EXPORTER_VERSION}"
+    local actual_version
+    local libraries
+
+    [[ -d "${component_root}" ]] || die "Package component directory is missing: ${component_root}"
+    if [[ ! -x "${binary}" ]]; then
+        log_error "expected executable not found in package payload"
+        diagnose_payload_binary "${binary}"
+        return 1
+    fi
+
+    [[ -f "${component_root}/LICENSE" ]] || die "Packaged LICENSE is missing"
+    [[ -s "${component_root}/THIRD_PARTY_NOTICES" ]] || die "Packaged THIRD_PARTY_NOTICES is missing or empty"
+    [[ -f "${systemd_unit}" ]] || die "Packaged systemd unit is missing"
+
+    assert_mode "${binary}" 755
+    assert_mode "${component_root}/LICENSE" 644
+    assert_mode "${component_root}/THIRD_PARTY_NOTICES" 644
+    assert_mode "${systemd_unit}" 644
+
+    inspect_metric_presets "${component_root}" "${tarball}"
+    assert_systemd_logging "${systemd_unit}"
+
+    expected_machine="$(expected_elf_machine "${platform}")"
+    actual_machine="$(readelf -W -h "${binary}" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')"
+    [[ "${actual_machine}" = "${expected_machine}" ]] ||
+        die "Expected ELF machine ${expected_machine}, got ${actual_machine:-missing}"
+
+    libraries="$(needed_libraries "${binary}")"
+    [[ -n "${libraries}" ]] || die "Packaged exporter has no ELF NEEDED libraries"
+    grep -Fxq 'libc.so.6' <<< "${libraries}" ||
+        die "Packaged exporter does not declare libc.so.6"
+
+    actual_version="$("${binary}" --version)"
+    [[ "${actual_version}" = "${expected_version}" ]] ||
+        die "Expected version output '${expected_version}', got '${actual_version}'"
+
+    log_info "Payload ELF machine: ${actual_machine}"
+    log_info "Payload linked libraries: ${libraries//$'\n'/, }"
+    log_info "Payload version: ${actual_version}"
+}
+
+# extract_and_inspect_tarball expands one archive and checks its payload.
+extract_and_inspect_tarball() {
+    local tarball="${1}"
+    local destination="${2}"
+    local platform
+
+    platform="$(infer_platform "$(basename "${tarball}")")"
+    mkdir -p "${destination}"
+    tar -xzf "${tarball}" -C "${destination}"
+    inspect_payload "${destination}" "${platform}" "${tarball}"
+}
+
 # diagnose_payload_binary prints ELF diagnostics for a missing or invalid payload binary.
 diagnose_payload_binary() {
     local binary="${1}"
@@ -323,6 +485,15 @@ diagnose_payload_binary() {
 # write_rpm_spec writes the temporary CI RPM spec file.
 write_rpm_spec() {
     local spec_path="${1}"
+    local payload_etc_dir="${2}"
+    local config_lines=""
+    local config_file
+
+    # Every file under /etc/dcgm-exporter is a configuration file whose local
+    # edits an upgrade keeps. Listing the payload covers files added later.
+    while IFS= read -r config_file; do
+        config_lines+="%config(noreplace) %attr(0644,root,root) /etc/dcgm-exporter/${config_file}"$'\n'
+    done < <(find "${payload_etc_dir}" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 
     cat > "${spec_path}" <<EOF
 Name:           ${PACKAGE_NAME}
@@ -343,15 +514,17 @@ cp -a /payload/${PACKAGE_COMPONENT_DIR}/. %{buildroot}/
 
 %files
 %license /LICENSE
+%license /THIRD_PARTY_NOTICES
 /usr/bin/dcgm-exporter
-/etc/dcgm-exporter/1.x-compatibility-metrics.csv
-/etc/dcgm-exporter/dcp-metrics-included.csv
-/etc/dcgm-exporter/default-counters.csv
+%dir %attr(0755,root,root) /etc/dcgm-exporter
+${config_lines%$'\n'}
 /lib/systemd/system/nvidia-dcgm-exporter.service
 EOF
 }
 
 # build_rpm builds a temporary RPM package from the unpacked tarball payload.
+# It also builds a second RPM with a higher version whose config.yaml differs,
+# written to out/newer, for the upgrade check in validate_rpm.
 build_rpm() {
     local platform="${1}"
     local rpm_arch="${2}"
@@ -362,20 +535,28 @@ build_rpm() {
     rm -rf "${context_dir}"
     mkdir -p "${context_dir}/payload"
     cp -a "${payload_dir}/${PACKAGE_COMPONENT_DIR}" "${context_dir}/payload/${PACKAGE_COMPONENT_DIR}"
-    write_rpm_spec "${context_dir}/package.spec"
+    write_rpm_spec "${context_dir}/package.spec" \
+        "${context_dir}/payload/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter"
+
+    mkdir -p "${context_dir}/payload-newer"
+    cp -a "${payload_dir}/${PACKAGE_COMPONENT_DIR}" "${context_dir}/payload-newer/${PACKAGE_COMPONENT_DIR}"
+    echo "# new default" >> "${context_dir}/payload-newer/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter/config.yaml"
+    sed -e 's/^Version:.*/&.1/' -e 's|cp -a /payload/|cp -a /payload-newer/|' \
+        "${context_dir}/package.spec" > "${context_dir}/package-newer.spec"
 
     # Buildx runs rpmbuild inside the target-platform container and exports
     # only the generated RPM file to the local output directory.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG RPM_BUILDER_IMAGE=registry.access.redhat.com/ubi8/ubi:latest
+ARG RPM_BUILDER_IMAGE=scratch
 FROM ${RPM_BUILDER_IMAGE} AS package-build
 
 ARG PACKAGE_COMPONENT_DIR
 ARG RPM_ARCH
 
 WORKDIR /work
-COPY package.spec /work/package.spec
+COPY package.spec package-newer.spec /work/
 COPY payload /payload
+COPY payload-newer /payload-newer
 
 RUN set -eux; \
     dnf install -y --setopt=install_weak_deps=False cpio findutils gzip rpm-build tar; \
@@ -384,15 +565,21 @@ RUN set -eux; \
         --define "_topdir /work/rpmbuild" \
         --target "${RPM_ARCH}" \
         /work/package.spec; \
-    mkdir -p /out; \
-    cp /work/rpmbuild/RPMS/*/*.rpm /out/
+    mkdir -p /out/newer; \
+    cp /work/rpmbuild/RPMS/*/*.rpm /out/; \
+    rm -rf /work/rpmbuild/RPMS; \
+    rpmbuild -bb \
+        --define "_topdir /work/rpmbuild" \
+        --target "${RPM_ARCH}" \
+        /work/package-newer.spec; \
+    cp /work/rpmbuild/RPMS/*/*.rpm /out/newer/
 
 FROM scratch
 COPY --from=package-build /out/ /
 EOF
 
     log_info "==> Building temporary RPM package (${platform}, ${rpm_arch})"
-    docker pull --platform "${platform}" "${RPM_BUILDER_IMAGE}" >/dev/null
+    pull_image "${platform}" "${RPM_BUILDER_IMAGE}" >/dev/null
     log_info "RPM builder image: $(image_digest "${RPM_BUILDER_IMAGE}")"
 
     docker_buildx_build \
@@ -441,7 +628,7 @@ build_deb() {
     # Buildx runs dpkg-deb inside the target-platform container and exports
     # only the generated DEB file to the local output directory.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG DEB_BUILDER_IMAGE=ubuntu:22.04
+ARG DEB_BUILDER_IMAGE=scratch
 FROM ${DEB_BUILDER_IMAGE} AS package-build
 
 ARG PACKAGE_COMPONENT_DIR
@@ -459,7 +646,9 @@ RUN set -eux; \
     mkdir -p /work/pkg/DEBIAN /out; \
     cp -a "/payload/${PACKAGE_COMPONENT_DIR}/." /work/pkg/; \
     cp /work/control /work/pkg/DEBIAN/control; \
+    (cd /work/pkg && find etc/dcgm-exporter -type f | LC_ALL=C sort | sed "s|^|/|") > /work/pkg/DEBIAN/conffiles; \
     chmod 0755 /work/pkg/DEBIAN; \
+    chmod 0644 /work/pkg/DEBIAN/conffiles; \
     dpkg-deb --build --root-owner-group /work/pkg "/out/${PACKAGE_FILE}"
 
 FROM scratch
@@ -467,7 +656,7 @@ COPY --from=package-build /out/ /
 EOF
 
     log_info "==> Building temporary DEB package (${platform}, ${deb_arch})"
-    docker pull --platform "${platform}" "${DEB_BUILDER_IMAGE}" >/dev/null
+    pull_image "${platform}" "${DEB_BUILDER_IMAGE}" >/dev/null
     log_info "DEB builder image: $(image_digest "${DEB_BUILDER_IMAGE}")"
 
     docker_buildx_build \
@@ -486,44 +675,64 @@ validate_rpm() {
     local platform="${1}"
     local image="${2}"
     local rpm_file="${3}"
+    local newer_rpm_file="${4}"
     local context_dir
 
     log_info "==> Installing $(basename "${rpm_file}") on ${image} (${platform})"
-    docker pull --platform "${platform}" "${image}" >/dev/null
+    pull_image "${platform}" "${image}" >/dev/null
     log_info "Resolved image: $(image_digest "${image}")"
 
     context_dir="$(mktemp -d "${PACKAGE_CLEANUP_DIR}/rpm-validate.XXXXXX")"
     cp "${rpm_file}" "${context_dir}/package.rpm"
+    cp "${newer_rpm_file}" "${context_dir}/newer.rpm"
 
     # Buildx is the cross-arch execution environment. If this image build
     # succeeds, every RPM install and smoke-test RUN step passed.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG TEST_IMAGE=registry.access.redhat.com/ubi8/ubi:latest
+ARG TEST_IMAGE=scratch
 FROM ${TEST_IMAGE}
 
 ARG PACKAGE_NAME
+ARG EXPECTED_VERSION
 COPY package.rpm /pkg/package.rpm
+COPY newer.rpm /pkg/newer.rpm
 
 RUN set -eux; \
     rpm -qpi /pkg/package.rpm; \
     rpm -qpl /pkg/package.rpm; \
     rpm -qp --requires /pkg/package.rpm || true; \
+    rpm -qp --configfiles /pkg/package.rpm | LC_ALL=C sort | tee /tmp/configfiles; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        grep -Fx "/etc/dcgm-exporter/${preset}" /tmp/configfiles; \
+    done; \
+    test "$(wc -l < /tmp/configfiles)" = 4; \
     dnf install -y --setopt=install_weak_deps=False file binutils findutils; \
     dnf install -y /pkg/package.rpm; \
     rpm -q "${PACKAGE_NAME}"; \
     rpm -ql "${PACKAGE_NAME}" | sort; \
+    rpm -ql "${PACKAGE_NAME}" | grep -Fx /etc/dcgm-exporter; \
     test -x /usr/bin/dcgm-exporter; \
-    test -f /etc/dcgm-exporter/1.x-compatibility-metrics.csv; \
-    test -f /etc/dcgm-exporter/dcp-metrics-included.csv; \
-    test -f /etc/dcgm-exporter/default-counters.csv; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        test -f "/etc/dcgm-exporter/${preset}"; \
+        test "$(stat -c '%a:%u:%g' "/etc/dcgm-exporter/${preset}")" = 644:0:0; \
+    done; \
     test -f /lib/systemd/system/nvidia-dcgm-exporter.service; \
+    test -s /LICENSE; \
+    test -s /THIRD_PARTY_NOTICES; \
     file /usr/bin/dcgm-exporter; \
     ldd /usr/bin/dcgm-exporter || true; \
     readelf -W -d /usr/bin/dcgm-exporter || true; \
     readelf -W --version-info /usr/bin/dcgm-exporter 2>/dev/null \
         | sed -n "/Name: /p" \
         | sort -u || true; \
-    /usr/bin/dcgm-exporter --version
+    test "$(/usr/bin/dcgm-exporter --version)" = "DCGM Exporter version ${EXPECTED_VERSION}"; \
+    echo "# local edit" >> /etc/dcgm-exporter/config.yaml; \
+    rpm -U /pkg/newer.rpm; \
+    grep -Fx "# local edit" /etc/dcgm-exporter/config.yaml; \
+    ! grep -Fx "# new default" /etc/dcgm-exporter/config.yaml; \
+    ls /etc/dcgm-exporter/; \
+    grep -Fx "# new default" /etc/dcgm-exporter/config.yaml.rpmnew; \
+    echo "upgrade kept the edited config.yaml and left the new default beside it"
 EOF
 
     docker_buildx_build \
@@ -532,6 +741,7 @@ EOF
         --platform "${platform}" \
         --build-arg "TEST_IMAGE=${image}" \
         --build-arg "PACKAGE_NAME=${PACKAGE_NAME}" \
+        --build-arg "EXPECTED_VERSION=${EXPORTER_VERSION}" \
         "${context_dir}"
 }
 
@@ -543,7 +753,7 @@ validate_deb() {
     local context_dir
 
     log_info "==> Installing $(basename "${deb_file}") on ${image} (${platform})"
-    docker pull --platform "${platform}" "${image}" >/dev/null
+    pull_image "${platform}" "${image}" >/dev/null
     log_info "Resolved image: $(image_digest "${image}")"
 
     context_dir="$(mktemp -d "${PACKAGE_CLEANUP_DIR}/deb-validate.XXXXXX")"
@@ -552,38 +762,59 @@ validate_deb() {
     # Buildx is the cross-arch execution environment. If this image build
     # succeeds, every DEB install and smoke-test RUN step passed.
     cat > "${context_dir}/Dockerfile" <<'EOF'
-ARG TEST_IMAGE=ubuntu:22.04
+ARG TEST_IMAGE=scratch
 FROM ${TEST_IMAGE}
 
 ARG PACKAGE_NAME
+ARG EXPECTED_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 COPY package.deb /pkg/package.deb
 
 RUN set -eux; \
     dpkg-deb -I /pkg/package.deb; \
     dpkg-deb -c /pkg/package.deb; \
+    dpkg-deb -I /pkg/package.deb conffiles | tee /tmp/conffiles; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        grep -Fx "/etc/dcgm-exporter/${preset}" /tmp/conffiles; \
+    done; \
+    test "$(wc -l < /tmp/conffiles)" = 4; \
     mkdir -p /tmp/package-contents; \
     dpkg-deb -x /pkg/package.deb /tmp/package-contents; \
-    test -f /tmp/package-contents/etc/dcgm-exporter/1.x-compatibility-metrics.csv; \
-    test -f /tmp/package-contents/etc/dcgm-exporter/dcp-metrics-included.csv; \
-    test -f /tmp/package-contents/etc/dcgm-exporter/default-counters.csv; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        test -f "/tmp/package-contents/etc/dcgm-exporter/${preset}"; \
+        test "$(stat -c '%a:%u:%g' "/tmp/package-contents/etc/dcgm-exporter/${preset}")" = 644:0:0; \
+    done; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates file binutils; \
     apt-get install -y /pkg/package.deb; \
     dpkg -s "${PACKAGE_NAME}"; \
     dpkg -L "${PACKAGE_NAME}" | sort; \
     test -x /usr/bin/dcgm-exporter; \
-    test -f /etc/dcgm-exporter/1.x-compatibility-metrics.csv; \
-    test -f /etc/dcgm-exporter/dcp-metrics-included.csv; \
-    test -f /etc/dcgm-exporter/default-counters.csv; \
+    for preset in 1.x-compatibility-metrics.csv config.yaml dcp-metrics-included.csv default-counters.csv; do \
+        test -f "/etc/dcgm-exporter/${preset}"; \
+        test "$(stat -c '%a:%u:%g' "/etc/dcgm-exporter/${preset}")" = 644:0:0; \
+    done; \
     test -f /lib/systemd/system/nvidia-dcgm-exporter.service; \
+    test -s /LICENSE; \
+    test -s /THIRD_PARTY_NOTICES; \
     file /usr/bin/dcgm-exporter; \
     ldd /usr/bin/dcgm-exporter || true; \
     readelf -W -d /usr/bin/dcgm-exporter || true; \
     readelf -W --version-info /usr/bin/dcgm-exporter 2>/dev/null \
         | sed -n "/Name: /p" \
         | sort -u || true; \
-    /usr/bin/dcgm-exporter --version
+    test "$(/usr/bin/dcgm-exporter --version)" = "DCGM Exporter version ${EXPECTED_VERSION}"; \
+    echo "# local edit" >> /etc/dcgm-exporter/config.yaml; \
+    dpkg-deb -R /pkg/package.deb /tmp/newer; \
+    echo "# new default" >> /tmp/newer/etc/dcgm-exporter/config.yaml; \
+    sed -i "s/^Version: .*/&.1/" /tmp/newer/DEBIAN/control; \
+    dpkg-deb --build --root-owner-group /tmp/newer /tmp/newer.deb; \
+    dpkg -i --force-confdef --force-confold /tmp/newer.deb; \
+    grep -Fx "# local edit" /etc/dcgm-exporter/config.yaml; \
+    ! grep -Fx "# new default" /etc/dcgm-exporter/config.yaml; \
+    ls /etc/dcgm-exporter/; \
+    grep -Fx "# new default" /etc/dcgm-exporter/config.yaml.dpkg-dist; \
+    echo "upgrade kept the edited config.yaml and left the new default beside it"
 EOF
 
     docker_buildx_build \
@@ -592,6 +823,7 @@ EOF
         --platform "${platform}" \
         --build-arg "TEST_IMAGE=${image}" \
         --build-arg "PACKAGE_NAME=${PACKAGE_NAME}" \
+        --build-arg "EXPECTED_VERSION=${EXPORTER_VERSION}" \
         "${context_dir}"
 }
 
@@ -607,6 +839,7 @@ validate_tarball() {
     local rpm_dir
     local deb_dir
     local rpm_file
+    local newer_rpm_file
     local deb_file
     local image
     local -a rpm_images=()
@@ -628,32 +861,20 @@ validate_tarball() {
     log_info "==> Unpacking ${tarball}"
     mkdir -p "${payload_dir}"
     tar -xzf "${tarball}" -C "${payload_dir}"
-
-    if [[ ! -x "${payload_dir}/${PACKAGE_COMPONENT_DIR}/usr/bin/dcgm-exporter" ]]; then
-        log_error "expected executable not found in package payload"
-        diagnose_payload_binary "${payload_dir}/${PACKAGE_COMPONENT_DIR}/usr/bin/dcgm-exporter"
-        return 1
-    fi
-
-    test -f "${payload_dir}/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter/1.x-compatibility-metrics.csv"
-    test -f "${payload_dir}/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter/dcp-metrics-included.csv"
-    test -f "${payload_dir}/${PACKAGE_COMPONENT_DIR}/etc/dcgm-exporter/default-counters.csv"
-    local systemd_unit="${payload_dir}/${PACKAGE_COMPONENT_DIR}/lib/systemd/system/nvidia-dcgm-exporter.service"
-    test -f "${systemd_unit}"
-    if grep -Eq '^[[:space:]]*Standard(Output|Error)[[:space:]]*=[[:space:]]*(append:|file:|truncate:)?/var/log/dcgm-exporter\.log([[:space:]]|$)' "${systemd_unit}"; then
-        die "Packaged systemd unit must log through journald"
-    fi
+    inspect_payload "${payload_dir}" "${platform}" "${tarball}"
 
     build_rpm "${platform}" "${rpm_arch}" "${payload_dir}" "${rpm_dir}"
     build_deb "${platform}" "${deb_arch}" "${payload_dir}" "${deb_dir}"
 
-    rpm_file="$(find "${rpm_dir}/out" -type f -name '*.rpm' | sort | head -n1)"
+    rpm_file="$(find "${rpm_dir}/out" -maxdepth 1 -type f -name '*.rpm' | sort | head -n1)"
+    newer_rpm_file="$(find "${rpm_dir}/out/newer" -type f -name '*.rpm' | sort | head -n1)"
     deb_file="$(find "${deb_dir}/out" -type f -name '*.deb' | sort | head -n1)"
     [[ -n "${rpm_file}" ]] || die "No RPM package was built for ${tarball_name}"
+    [[ -n "${newer_rpm_file}" ]] || die "No newer RPM package was built for ${tarball_name}"
     [[ -n "${deb_file}" ]] || die "No DEB package was built for ${tarball_name}"
 
     for image in "${rpm_images[@]}"; do
-        validate_rpm "${platform}" "${image}" "${rpm_file}"
+        validate_rpm "${platform}" "${image}" "${rpm_file}" "${newer_rpm_file}"
     done
 
     for image in "${deb_images[@]}"; do
@@ -661,38 +882,76 @@ validate_tarball() {
     done
 }
 
-# main parses options, resolves tarballs, and validates every package payload.
-main() {
-    local resolved_tarballs
-    local tarball
-    local tmpdir
-    local -a tarballs=()
+# validate_configuration checks package settings and action-specific inputs.
+validate_configuration() {
+    local command
 
-    flags "$@"
-
-    require_command docker
-    require_buildx
     [[ -n "${PACKAGE_COMPONENT_DIR}" ]] || die "PACKAGE_COMPONENT_DIR is required"
     [[ "${PACKAGE_COMPONENT_DIR}" != */* ]] || die "PACKAGE_COMPONENT_DIR must not contain slashes"
     [[ -d "${PACKAGE_WORK_ROOT}" ]] || die "PACKAGE_WORK_ROOT does not exist: ${PACKAGE_WORK_ROOT}"
 
+    for command in find grep readelf sed sort stat tar; do
+        require_command "${command}"
+    done
+
+    if [[ "${PACKAGE_ACTION}" = "install" ]]; then
+        require_command docker
+        require_buildx
+    fi
+}
+
+# resolve_package_tarballs expands inputs and creates the temporary workspace.
+resolve_package_tarballs() {
+    local resolved_tarballs
+
     if ! resolved_tarballs="$(cd "${ROOT_DIR}" && resolve_tarballs "${PACKAGE_TARBALL_ARGS[@]}")"; then
         exit 1
     fi
-    mapfile -t tarballs <<< "${resolved_tarballs}"
-    [[ "${#tarballs[@]}" -gt 0 && -n "${tarballs[0]}" ]] \
+    mapfile -t PACKAGE_TARBALL_PATHS <<< "${resolved_tarballs}"
+    [[ "${#PACKAGE_TARBALL_PATHS[@]}" -gt 0 && -n "${PACKAGE_TARBALL_PATHS[0]}" ]] \
         || die "No package tarballs found for: ${PACKAGE_TARBALLS}"
-
-    tmpdir="$(mktemp -d "${PACKAGE_WORK_ROOT%/}/.test-package.XXXXXX")"
-    PACKAGE_CLEANUP_DIR="${tmpdir}"
+    PACKAGE_TEST_DIR="$(mktemp -d "${PACKAGE_WORK_ROOT%/}/.test-package.XXXXXX")"
+    PACKAGE_CLEANUP_DIR="${PACKAGE_TEST_DIR}"
     trap cleanup EXIT
+}
+
+# inspect_tarballs checks each resolved payload without building packages.
+inspect_tarballs() {
+    local index=0
+    local tarball
+
+    for tarball in "${PACKAGE_TARBALL_PATHS[@]}"; do
+        index=$((index + 1))
+        log_info "==> Inspecting $(basename "${tarball}")"
+        extract_and_inspect_tarball "${tarball}" "${PACKAGE_TEST_DIR}/inspect-${index}"
+    done
+}
+
+# install_tarballs builds and validates packages for every resolved payload.
+install_tarballs() {
+    local tarball
+
+    for tarball in "${PACKAGE_TARBALL_PATHS[@]}"; do
+        validate_tarball "${tarball}" "${PACKAGE_TEST_DIR}"
+    done
+}
+
+# main dispatches the selected package inspection or installation.
+main() {
+    validate_configuration
+    resolve_package_tarballs
 
     log_info "Package name: ${PACKAGE_NAME}"
     log_info "Package version: ${PACKAGE_VERSION}-${PACKAGE_RELEASE}"
 
-    for tarball in "${tarballs[@]}"; do
-        validate_tarball "${tarball}" "${tmpdir}"
-    done
+    case "${PACKAGE_ACTION}" in
+        inspect) inspect_tarballs ;;
+        install) install_tarballs ;;
+        *)
+            die "Unsupported package action: ${PACKAGE_ACTION}"
+            ;;
+    esac
 }
 
-main "$@"
+flags "$@"
+main
