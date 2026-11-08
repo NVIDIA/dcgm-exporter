@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -19,11 +19,11 @@
 package k8s
 
 import (
-	"github.com/NVIDIA/dcgm-exporter/internal/e2e/scenario"
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/resultmarker"
+	"github.com/NVIDIA/dcgm-exporter/tests/k8smarkers"
 )
 
 var _ = resultmarker.Register(
 	func() bool { return testContext.resultMarkers },
-	scenario.MarkerBaseNames(scenario.Catalog, scenario.SuiteK8s),
+	k8smarkers.ResultMarkerBaseNames,
 )

@@ -18,77 +18,135 @@ package capability
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
-// ProbeHost probes host/DCGM signals used by scenario selection.
-func ProbeHost(ctx context.Context, runner e2eexec.Runner, opts ProbeOptions) ProbeResult {
-	nvidiaL := runText(ctx, runner, "nvidia-smi", "-L")
+// ProbeHost probes only hardware and protocol facts used for scenario selection.
+func ProbeHost(ctx context.Context, runner e2eexec.Runner, opts ProbeOptions) Snapshot {
 	query := runText(ctx, runner, "nvidia-smi", "--query-gpu=index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending", "--format=csv,noheader")
 	topo := runText(ctx, runner, "nvidia-smi", "topo", "-m")
-	nvlink := runText(ctx, runner, "nvidia-smi", "nvlink", "-s")
+	nvlinkStatus := runText(ctx, runner, "nvidia-smi", "nvlink", "-s")
 	nvidiaQ := runText(ctx, runner, "nvidia-smi", "-q")
 	lscpu := runText(ctx, runner, "lscpu")
 	migProfiles := runMIGProfileProbe(ctx, runner, query)
-	dcgmDiscovery := dcgmContainerProbe(ctx, runner, opts, "discovery", "-l")
-	dcgmHierarchy := dcgmContainerProbe(ctx, runner, opts, "discovery", "--compute-hierarchy")
-	dcgmProfile := dcgmContainerProbe(ctx, runner, opts, "profile", "--list")
-	dcgmFields := dcgmContainerProbe(ctx, runner, opts, "dmon", "-l")
-	dcgmVersion := dcgmRemoteVersion(ctx, runner, opts)
+	dcgm := newDCGMProbeSession(runner, opts)
+	dcgmDiscovery := dcgm.run(ctx, "discovery", "-l")
+	dcgmProfile := dcgm.run(ctx, "profile", "--list")
+	dcgmFields := dcgm.run(ctx, "dmon", "-l")
 
 	gpuCount := GPUCount(query)
-	fullGPUs := fullGPUCount(query)
-	migEvidence := migInstanceLine(nvidiaL)
-	migProfilesAvailable := hasMIGProfiles(migProfiles)
-	migPresent := migEvidence != ""
-	activeNVLink := HasActiveNVLink(nvlink, topo)
-	migEntityID, migNVMLID := migInstanceSelectionPair(dcgmHierarchy)
-	unsupportedCandidate, unsupportedEvidence := selectUnsupportedFieldCandidate(ctx, runner, opts, dcgmFields)
-
-	migCanConfigure := boolModeRequired(opts.MIGConfigure)
+	fabric := probeFabricSignals(query, nvidiaQ, topo, nvlinkStatus, lscpu)
+	mig := migCapability(migProfiles)
+	migOn, migOff := migModeCounts(query)
+	// DCGM lists GPU instances only while MIG is on; migStateCapabilities reads migOn before the hierarchy.
+	migHierarchy := ""
+	if migOn > 0 {
+		migHierarchy = dcgm.run(ctx, "discovery", "--compute-hierarchy")
+	}
+	migActive, mixedMIG := migStateCapabilities(query, migOn, migOff, migHierarchy)
+	nvswitch := nvswitchCapability(fabric, nvidiaQ, topo)
+	nvswitchLocal, nvswitchNSCQ, nvswitchNVSDM := nvswitchApplicability(nvswitch, fabric)
 	entries := runChecks(
 		func() Capability { return gpuCapability(query, gpuCount) },
 		func() Capability { return profilingCapability(dcgmProfile) },
-		func() Capability {
-			return migCapability(migPresent, migProfilesAvailable, migCanConfigure, migProfiles, migEvidence)
-		},
-		func() Capability {
-			return mixedMIGCapability(migPresent, migProfilesAvailable, migCanConfigure, fullGPUs, migProfiles, migEvidence)
-		},
-		func() Capability {
-			return migInstanceCapability(migPresent || (migProfilesAvailable && migCanConfigure), dcgmHierarchy, migEntityID, migNVMLID)
-		},
-		func() Capability {
-			return unsupportedFieldCapability(dcgmFields, unsupportedCandidate, unsupportedEvidence)
-		},
-		func() Capability { return nvlinkCapability(activeNVLink, topo) },
-		func() Capability { return p2pCapability(gpuCount, activeNVLink) },
-		func() Capability { return nvswitchCapability(dcgmDiscovery) },
+		func() Capability { return mig },
+		func() Capability { return nvlinkFabricCapability(fabric, nvidiaQ, topo, nvlinkStatus) },
+		func() Capability { return nvswitch },
 		func() Capability { return graceCapability(lscpu, dcgmDiscovery) },
 		func() Capability { return c2cCapability(nvidiaQ, dcgmDiscovery, dcgmProfile, dcgmFields) },
+		func() Capability { return multiGPUApplicability(gpuCount) },
+		func() Capability { return migActive },
+		func() Capability { return mixedMIG },
+		func() Capability { return nvlink5Applicability(query) },
+		func() Capability { return nvswitchLocal },
+		func() Capability { return nvswitchNSCQ },
+		func() Capability { return nvswitchNVSDM },
 	)
 
 	entries = append(entries, unprobedClusterCapabilities()...)
+	return NewSnapshot(entries)
+}
 
-	remoteDcgm := remoteDcgmCapability(opts, dcgmVersion, dcgmDiscovery)
-	failureInjection := failureInjectionCapability(opts, remoteDcgm)
-	entries = append(entries, remoteDcgm, failureInjection, nvlinkFailureInjectionCapability(ctx, runner, opts, failureInjection, dcgmFields))
-
-	return ProbeResult{
-		Snapshot:                  NewSnapshot(entries),
-		MIGInstanceEntityID:       migEntityID,
-		MIGInstanceNVMLID:         migNVMLID,
-		UnsupportedFieldCandidate: unsupportedCandidate,
-		UnsupportedFieldEvidence:  unsupportedEvidence,
+// ResolveScenarioInputs gathers readiness data only after the corresponding scenarios are selected.
+func ResolveScenarioInputs(
+	ctx context.Context,
+	runner e2eexec.Runner,
+	opts ProbeOptions,
+	needMIGSelection bool,
+	needUnsupportedField bool,
+) (ScenarioInputs, error) {
+	var inputs ScenarioInputs
+	dcgm := newDCGMProbeSession(runner, opts)
+	if needMIGSelection {
+		hierarchy := dcgm.run(ctx, "discovery", "--compute-hierarchy")
+		if dcgmProbeUnavailable(hierarchy) {
+			return ScenarioInputs{}, fmt.Errorf(
+				"resolve MIG instance scenario: %s: %s",
+				dcgmProbeUnavailableReason("compute-hierarchy", hierarchy),
+				dcgmProbeFailureDetail(hierarchy),
+			)
+		}
+		var found bool
+		inputs.MIGInstanceEntityID, inputs.MIGInstanceNVMLID, found = migInstanceSelectionPair(hierarchy)
+		if !found {
+			return ScenarioInputs{}, fmt.Errorf(
+				"selected MIG instance scenario requires DCGM to enumerate a GPU instance, " +
+					"but dcgmi discovery --compute-hierarchy returned no instance rows",
+			)
+		}
 	}
+	if needUnsupportedField {
+		fields := dcgm.run(ctx, "dmon", "-l")
+		selection, err := selectUnsupportedFieldCandidate(
+			ctx,
+			dcgm,
+			fields,
+		)
+		if err != nil {
+			return ScenarioInputs{}, err
+		}
+		inputs.UnsupportedFieldCandidate = selection.Candidate
+		inputs.UnsupportedFieldEvidence = selection.Evidence
+		inputs.UnsupportedFieldNotApplicableReason = selection.NotApplicableReason
+	}
+	return inputs, nil
 }
 
 // runText captures a command's text output with ANSI escape sequences stripped.
 func runText(ctx context.Context, runner e2eexec.Runner, name string, args ...string) string {
 	result := runner.Run(ctx, e2eexec.Command{Name: name, Args: args})
-	if len(result.Stdout) != 0 {
-		return stripANSI(string(result.Stdout))
+	return commandResultText(result)
+}
+
+// commandResultText preserves command failure as the primary probe state while retaining diagnostic output.
+func commandResultText(result e2eexec.Result) string {
+	stdout := stripANSI(string(result.Stdout))
+	stderr := stripANSI(string(result.Stderr))
+	if result.Err == nil && result.ExitCode == 0 {
+		if stdout != "" {
+			return stdout
+		}
+		return stderr
 	}
-	return stripANSI(string(result.Stderr))
+
+	failure := "command failed:"
+	if result.Err != nil {
+		failure += " " + result.Err.Error()
+	} else {
+		failure += fmt.Sprintf(" exit code %d", result.ExitCode)
+	}
+	return strings.Join(nonEmptyStrings(failure, stdout, stderr), "\n")
+}
+
+func nonEmptyStrings(values ...string) []string {
+	nonEmpty := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			nonEmpty = append(nonEmpty, value)
+		}
+	}
+	return nonEmpty
 }

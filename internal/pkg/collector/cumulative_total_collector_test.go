@@ -38,6 +38,9 @@ var (
 	slogDefaultTestMu sync.Mutex
 )
 
+// TestXIDTotalCollectorCleanupTimesOutAndDefersWatchCleanup checks that Cleanup on a started XID total poller
+// that never exits returns after the timeout and logs an error naming the collector; the watch cleanup waits
+// until the poller stops, then runs once and closes CleanupComplete.
 func TestXIDTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testing.T) {
 	withCumulativeCollectorCleanupTimeout(t, 50*time.Millisecond)
 	logs := captureSlogOutput(t)
@@ -45,11 +48,11 @@ func TestXIDTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testing.T) {
 	collector := &xidTotalCollector{
 		expCollector: expCollector{baseExpCollector: baseExpCollector{
 			counter: counters.Counter{FieldName: counters.DCGMExpXIDErrorsTotal},
-			cleanups: []func(){
+			watchResult: watchResultFromCleanups([]func(){
 				func() {
 					cleanupCalled <- struct{}{}
 				},
-			},
+			}),
 		}},
 	}
 	collector.poller = newCumulativeCollectorPoller(
@@ -78,11 +81,28 @@ func TestXIDTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testing.T) {
 	default:
 	}
 
-	close(collector.poller.doneCh)
+	select {
+	case <-collector.CleanupComplete():
+		t.Fatal("cleanup completion closed before deferred watch cleanup finished")
+	default:
+	}
+
+	collector.poller.run()
+	select {
+	case <-collector.poller.doneCh:
+	default:
+		t.Fatal("poller exit did not close its completion channel")
+	}
 	select {
 	case <-cleanupCalled:
 	case <-time.After(time.Second):
 		t.Fatal("watch cleanup was not called after poller stopped")
+	}
+
+	select {
+	case <-collector.CleanupComplete():
+	case <-time.After(time.Second):
+		t.Fatal("cleanup completion did not close after deferred watch cleanup")
 	}
 
 	select {
@@ -94,6 +114,9 @@ func TestXIDTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testing.T) {
 	assert.Contains(t, logs.String(), counters.DCGMExpXIDErrorsTotal)
 }
 
+// TestClockEventsTotalCollectorCleanupTimesOutAndDefersWatchCleanup checks that Cleanup on a started clock
+// events total poller that never exits returns after the timeout and logs an error naming the collector; the
+// watch cleanup waits until the poller stops, then runs once and closes CleanupComplete.
 func TestClockEventsTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testing.T) {
 	withCumulativeCollectorCleanupTimeout(t, 50*time.Millisecond)
 	logs := captureSlogOutput(t)
@@ -101,11 +124,11 @@ func TestClockEventsTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testin
 	collector := &clockEventsTotalCollector{
 		expCollector: expCollector{baseExpCollector: baseExpCollector{
 			counter: counters.Counter{FieldName: counters.DCGMExpClockEventsTotal},
-			cleanups: []func(){
+			watchResult: watchResultFromCleanups([]func(){
 				func() {
 					cleanupCalled <- struct{}{}
 				},
-			},
+			}),
 		}},
 	}
 	collector.poller = newCumulativeCollectorPoller(
@@ -134,11 +157,28 @@ func TestClockEventsTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testin
 	default:
 	}
 
-	close(collector.poller.doneCh)
+	select {
+	case <-collector.CleanupComplete():
+		t.Fatal("cleanup completion closed before deferred watch cleanup finished")
+	default:
+	}
+
+	collector.poller.run()
+	select {
+	case <-collector.poller.doneCh:
+	default:
+		t.Fatal("poller exit did not close its completion channel")
+	}
 	select {
 	case <-cleanupCalled:
 	case <-time.After(time.Second):
 		t.Fatal("watch cleanup was not called after poller stopped")
+	}
+
+	select {
+	case <-collector.CleanupComplete():
+	case <-time.After(time.Second):
+		t.Fatal("cleanup completion did not close after deferred watch cleanup")
 	}
 
 	select {
@@ -150,6 +190,8 @@ func TestClockEventsTotalCollectorCleanupTimesOutAndDefersWatchCleanup(t *testin
 	assert.Contains(t, logs.String(), counters.DCGMExpClockEventsTotal)
 }
 
+// TestCumulativeCollectorPollIntervalFallbackWarns checks that a zero poll interval falls back to 30 seconds and
+// logs a warning with the collector name, the bad interval, and the default.
 func TestCumulativeCollectorPollIntervalFallbackWarns(t *testing.T) {
 	logs := captureSlogOutput(t)
 
@@ -162,6 +204,9 @@ func TestCumulativeCollectorPollIntervalFallbackWarns(t *testing.T) {
 	assert.Contains(t, logs.String(), "default_interval=30s")
 }
 
+// TestCumulativeEventPollFailureLogIncludesPollContext checks that a poll failure is logged as one WARN JSON
+// record carrying the collector name as a field, plus the group handle, field group handle, and since
+// timestamp both as fields and inside the error text.
 func TestCumulativeEventPollFailureLogIncludesPollContext(t *testing.T) {
 	logs := captureSlogJSONOutput(t)
 	group := testGroupHandle(7)
@@ -190,6 +235,8 @@ func TestCumulativeEventPollFailureLogIncludesPollContext(t *testing.T) {
 	assert.Contains(t, got["error"], "since_timestamp=1970-01-01T00:02:03Z")
 }
 
+// TestPollerSkipsCollectAfterStop checks that collectIfRunning on a stopped poller returns false and never calls
+// collect.
 func TestPollerSkipsCollectAfterStop(t *testing.T) {
 	collectCalled := false
 	poller := newCumulativeCollectorPoller(
@@ -207,6 +254,9 @@ func TestPollerSkipsCollectAfterStop(t *testing.T) {
 	assert.False(t, collectCalled)
 }
 
+// TestPollerCleanupBeforeStart checks that Cleanup on a poller that never started closes its done channel and
+// runs the watch cleanup without calling collect; a second Cleanup and a later start do not run the watch
+// cleanup again.
 func TestPollerCleanupBeforeStart(t *testing.T) {
 	withCumulativeCollectorCleanupTimeout(t, 20*time.Millisecond)
 	cleanupCalled := make(chan struct{}, 2)
@@ -244,12 +294,14 @@ func TestPollerCleanupBeforeStart(t *testing.T) {
 	}
 }
 
+// markPollerStarted prepares a poller in the state reached after start launches its loop.
 func markPollerStarted(poller *cumulativeCollectorPoller) {
 	poller.lifecycleMu.Lock()
 	defer poller.lifecycleMu.Unlock()
 	poller.started = true
 }
 
+// withCumulativeCollectorCleanupTimeout overrides and restores the cleanup wait for one test.
 func withCumulativeCollectorCleanupTimeout(t *testing.T, timeout time.Duration) {
 	t.Helper()
 
@@ -262,6 +314,7 @@ func withCumulativeCollectorCleanupTimeout(t *testing.T, timeout time.Duration) 
 	})
 }
 
+// captureSlogOutput redirects the default logger to a buffer until test cleanup.
 func captureSlogOutput(t *testing.T) *bytes.Buffer {
 	t.Helper()
 
@@ -276,6 +329,7 @@ func captureSlogOutput(t *testing.T) *bytes.Buffer {
 	return &logs
 }
 
+// captureSlogJSONOutput captures structured JSON log records for assertions.
 func captureSlogJSONOutput(t *testing.T) *bytes.Buffer {
 	t.Helper()
 

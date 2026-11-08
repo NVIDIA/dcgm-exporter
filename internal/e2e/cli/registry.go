@@ -37,51 +37,153 @@ type registryLogin struct {
 	passwordFile string
 }
 
-// prepareRegistryAuth creates pull secrets in every namespace selected k8s scenarios may use.
-func prepareRegistryAuth(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, clusterCfg cluster.Config, opts *config.Tests) error {
+// prepareRegistryAuth creates pull secrets in the exporter and DCGM namespaces.
+func prepareRegistryAuth(
+	ctx context.Context,
+	stdout io.Writer,
+	runner e2eexec.Runner,
+	clusterCfg cluster.Config,
+	opts *config.TestOptions,
+) (string, func(), error) {
 	namespaces := []string{clusterCfg.Namespace, clusterCfg.DCGMNamespace}
-	if selectedScenarioUsesCapability(*opts, "cluster:gpu_operator") {
-		namespaces = append(namespaces, "gpu-operator")
-	}
-	return prepareRegistryAuthForNamespaces(ctx, stdout, runner, clusterCfg, opts, namespaces)
+	return prepareRegistryAuthSessionForNamespaces(ctx, stdout, runner, clusterCfg, opts, namespaces)
 }
 
 // prepareRegistryAuthForNamespaces logs in locally and mirrors Docker credentials into named namespaces.
-func prepareRegistryAuthForNamespaces(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, clusterCfg cluster.Config, opts *config.Tests, namespaces []string) error {
-	logins, err := registryLogins(*opts)
-	if err != nil {
-		return err
+func prepareRegistryAuthForNamespaces(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, clusterCfg cluster.Config, opts *config.TestOptions, namespaces []string) error {
+	_, cleanup, err := prepareRegistryAuthSessionForNamespaces(ctx, stdout, runner, clusterCfg, opts, namespaces)
+	if cleanup != nil {
+		cleanup()
 	}
-	if len(namespaces) == 0 || len(logins) == 0 {
-		return nil
+	return err
+}
+
+// prepareRegistryAuthSessionForNamespaces keeps generated Docker credentials available to later setup steps.
+func prepareRegistryAuthSessionForNamespaces(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, clusterCfg cluster.Config, opts *config.TestOptions, namespaces []string) (string, func(), error) {
+	if len(namespaces) == 0 {
+		return "", nil, nil
+	}
+	var logins []registryLogin
+	if !opts.CreateK8sImagePullSecret {
+		var err error
+		logins, err = registryLogins(*opts)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(logins) == 0 {
+			return "", nil, nil
+		}
 	}
 	for _, namespace := range namespaces {
 		if err := cluster.EnsureManagedNamespace(ctx, runner, stdout, clusterCfg, namespace); err != nil {
-			return err
+			return "", nil, err
 		}
 	}
-	cleanupDockerConfig, err := runDockerRegistryLogins(ctx, stdout, runner, opts, logins)
+	dockerConfig, cleanupDockerConfig, err := prepareRegistrySecretSource(ctx, stdout, runner, opts, logins)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	defer cleanupDockerConfig()
+	for _, namespace := range namespaces {
+		if err := cluster.EnsureImagePullSecret(ctx, runner, stdout, clusterCfg, namespace, opts.K8sImagePullSecret, dockerConfig); err != nil {
+			cleanupDockerConfigIfPresent(cleanupDockerConfig)
+			return "", nil, err
+		}
+	}
+	return dockerConfig, cleanupDockerConfig, nil
+}
+
+// prepareRegistrySecretSource runs registry login when needed and resolves the Docker config used to create a pull secret.
+func prepareRegistrySecretSource(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts *config.TestOptions, logins []registryLogin) (string, func(), error) {
+	var cleanupDockerConfig func()
+	if !opts.CreateK8sImagePullSecret {
+		var err error
+		cleanupDockerConfig, err = runDockerRegistryLogins(ctx, stdout, runner, opts, logins)
+		if err != nil {
+			return "", nil, err
+		}
+		opts.CreateK8sImagePullSecret = true
+	}
 	if opts.K8sImagePullSecret == "" {
 		opts.K8sImagePullSecret = "dcgm-exporter-e2e-registry-auth"
 	}
 	dockerConfig, err := dockerConfigJSONPath(*opts)
 	if err != nil {
-		return err
+		cleanupDockerConfigIfPresent(cleanupDockerConfig)
+		return "", nil, err
 	}
-	for _, namespace := range namespaces {
-		if err := cluster.EnsureImagePullSecret(ctx, runner, stdout, clusterCfg, namespace, opts.K8sImagePullSecret, dockerConfig); err != nil {
-			return err
+	return dockerConfig, cleanupDockerConfig, nil
+}
+
+// cleanupDockerConfigIfPresent runs the Docker config cleanup callback only when one was returned.
+func cleanupDockerConfigIfPresent(cleanup func()) {
+	if cleanup != nil {
+		cleanup()
+	}
+}
+
+// prepareDockerRunSession isolates Docker client state before bootstrap and
+// returns the explicit login step to run after the Docker client is ready.
+func prepareDockerRunSession(
+	ctx context.Context,
+	stdout io.Writer,
+	runner e2eexec.Runner,
+	opts *config.TestOptions,
+	required bool,
+) (e2eexec.Runner, func() error, func() error, error) {
+	if !required {
+		return runner, func() error { return nil }, func() error { return nil }, nil
+	}
+
+	logins, err := registryLogins(*opts)
+	if err != nil {
+		return runner, nil, nil, fmt.Errorf("prepare Docker credentials: %w", err)
+	}
+
+	callerOwned := opts.DockerConfigDir != ""
+	if !callerOwned {
+		dir, err := os.MkdirTemp("", "dcgm-exporter-e2e-docker-config-")
+		if err != nil {
+			return runner, nil, nil, fmt.Errorf("create isolated Docker configuration: %w", err)
 		}
+		opts.DockerConfigDir = dir
 	}
-	return nil
+
+	cleanup := func() error {
+		if callerOwned {
+			return nil
+		}
+		dir := opts.DockerConfigDir
+		opts.DockerConfigDir = ""
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove isolated Docker configuration %s: %w", dir, err)
+		}
+		return nil
+	}
+
+	sessionRunner := e2eexec.EnvironmentRunner{Runner: runner, Env: dockerConfigEnv(*opts)}
+	login := func() error {
+		if err := executeDockerRegistryLogins(ctx, stdout, sessionRunner, opts, logins); err != nil {
+			return fmt.Errorf("prepare Docker credentials: %w", err)
+		}
+
+		if len(logins) != 0 {
+			opts.CreateK8sImagePullSecret = true
+			if opts.K8sImagePullSecret == "" {
+				opts.K8sImagePullSecret = "dcgm-exporter-e2e-registry-auth"
+			}
+		}
+
+		// Nested suite and cluster paths consume the authenticated session instead of logging in again.
+		opts.DockerRegistryLogins = nil
+		opts.DockerRegistryLoginFile = ""
+		return nil
+	}
+
+	return sessionRunner, login, cleanup, nil
 }
 
 // prepareDockerRegistryLogin performs local Docker logins needed by Docker pulls or manifest checks.
-func prepareDockerRegistryLogin(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts *config.Tests) (func(), bool, error) {
+func prepareDockerRegistryLogin(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts *config.TestOptions) (func(), bool, error) {
 	logins, err := registryLogins(*opts)
 	if err != nil {
 		return nil, false, err
@@ -100,16 +202,23 @@ func prepareDockerRegistryLogin(ctx context.Context, stdout io.Writer, runner e2
 }
 
 // runDockerRegistryLogins executes docker login commands using password files and an isolated config when needed.
-func runDockerRegistryLogins(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts *config.Tests, logins []registryLogin) (func(), error) {
+func runDockerRegistryLogins(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts *config.TestOptions, logins []registryLogin) (func(), error) {
 	cleanupDockerConfig, err := ensureDockerConfigDir(opts)
 	if err != nil {
 		return nil, err
 	}
+	if err := executeDockerRegistryLogins(ctx, stdout, runner, opts, logins); err != nil {
+		cleanupDockerConfig()
+		return nil, err
+	}
+	return cleanupDockerConfig, nil
+}
+
+func executeDockerRegistryLogins(ctx context.Context, stdout io.Writer, runner e2eexec.Runner, opts *config.TestOptions, logins []registryLogin) error {
 	for _, login := range logins {
 		password, err := os.ReadFile(login.passwordFile)
 		if err != nil {
-			cleanupDockerConfig()
-			return nil, fmt.Errorf("read Docker registry password file %s: %w", login.passwordFile, err)
+			return fmt.Errorf("read Docker registry password file %s: %w", login.passwordFile, err)
 		}
 		writeStep(stdout, "step", "docker_login")
 		result := runner.Run(ctx, e2eexec.Command{
@@ -123,15 +232,14 @@ func runDockerRegistryLogins(ctx context.Context, stdout io.Writer, runner e2eex
 			QuietOnSuccess: true,
 		})
 		if result.ExitCode != 0 {
-			cleanupDockerConfig()
-			return nil, fmt.Errorf("docker login %s failed: %s", login.registry, result.Stderr)
+			return fmt.Errorf("docker login %s failed: %s", login.registry, resultText(result))
 		}
 	}
-	return cleanupDockerConfig, nil
+	return nil
 }
 
 // ensureDockerConfigDir creates a temporary Docker config unless the caller supplied one.
-func ensureDockerConfigDir(opts *config.Tests) (func(), error) {
+func ensureDockerConfigDir(opts *config.TestOptions) (func(), error) {
 	if opts.DockerConfigDir != "" {
 		return func() {}, nil
 	}
@@ -147,7 +255,7 @@ func ensureDockerConfigDir(opts *config.Tests) (func(), error) {
 }
 
 // registryLogins parses registry login specs from flags and optional login files.
-func registryLogins(opts config.Tests) ([]registryLogin, error) {
+func registryLogins(opts config.TestOptions) ([]registryLogin, error) {
 	specs := append([]string{}, opts.DockerRegistryLogins...)
 	if opts.DockerRegistryLoginFile != "" {
 		file, err := os.Open(opts.DockerRegistryLoginFile)
@@ -187,7 +295,7 @@ func registryLogins(opts config.Tests) ([]registryLogin, error) {
 }
 
 // dockerConfigEnv returns the DOCKER_CONFIG environment for Docker subcommands.
-func dockerConfigEnv(opts config.Tests) []string {
+func dockerConfigEnv(opts config.TestOptions) []string {
 	if opts.DockerConfigDir != "" {
 		return []string{"DOCKER_CONFIG=" + opts.DockerConfigDir}
 	}
@@ -195,7 +303,7 @@ func dockerConfigEnv(opts config.Tests) []string {
 }
 
 // dockerConfigJSONPath resolves the config.json path that Kubernetes pull-secret creation should read.
-func dockerConfigJSONPath(opts config.Tests) (string, error) {
+func dockerConfigJSONPath(opts config.TestOptions) (string, error) {
 	if opts.DockerConfigDir != "" {
 		if err := os.MkdirAll(opts.DockerConfigDir, 0o700); err != nil {
 			return "", err

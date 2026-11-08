@@ -1,6 +1,6 @@
 ---
 description: Shell, CI, Docker, packaging, and security rules
-globs: ["**/*.sh", ".gitlab/**/*.yml", ".gitlab-ci.yml", ".github/workflows/**", "docker/**", "packaging/**", "hack/**", "Dockerfile*"]
+globs: ["**/*.sh", "**/ci/**", ".github/workflows/**", "docker/**", "packaging/**", "hack/**", "Dockerfile*"]
 alwaysApply: false
 ---
 

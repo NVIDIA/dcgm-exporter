@@ -32,10 +32,12 @@ const (
 	unknownFieldName = "unknown"
 )
 
+// isDebugLoggingEnabled reports whether slog currently accepts debug records.
 func isDebugLoggingEnabled() bool {
 	return slog.Default().Enabled(context.Background(), slog.LevelDebug)
 }
 
+// counterFieldNameOrUnknown returns the configured name for fieldID or a readable fallback.
 func counterFieldNameOrUnknown(c []counters.Counter, fieldID dcgm.Short) string {
 	counter, err := findCounterField(c, fieldID)
 	if err != nil {
@@ -44,6 +46,7 @@ func counterFieldNameOrUnknown(c []counters.Counter, fieldID dcgm.Short) string 
 	return counter.FieldName
 }
 
+// logBlankValueSkipped records why a blank DCGM sample was omitted from metrics.
 func logBlankValueSkipped(
 	fieldID dcgm.Short,
 	fieldName string,
@@ -63,6 +66,8 @@ func logBlankValueSkipped(
 	)
 }
 
+// logFieldValueSkipped logs why a sample was omitted from metrics: a blank
+// value with OK status, or a non-OK status.
 func logFieldValueSkipped(
 	value dcgm.FieldValue_v1,
 	fieldName string,

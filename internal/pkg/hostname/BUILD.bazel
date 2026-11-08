@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hostname",
+    srcs = ["hostname.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/hostname",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/os",
+    ],
+)
+
+go_test(
+    name = "hostname_test",
+    srcs = ["hostname_test.go"],
+    embed = [":hostname"],
+    deps = [
+        "//internal/mocks/pkg/os",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/os",
+        "@com_github_stretchr_testify//assert",
+        "@org_uber_go_mock//gomock",
+    ],
+)

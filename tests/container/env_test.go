@@ -43,6 +43,16 @@ func TestGetEnvOrDefaultUsesDefaultWhenUnset(t *testing.T) {
 	}
 }
 
+// TestContainerNamesDoNotCollideWithinThisProcess verifies sequential helper
+// calls produce distinct names for concurrently running container scenarios.
+func TestContainerNamesDoNotCollideWithinThisProcess(t *testing.T) {
+	first := testContainerName("exporter")
+	second := testContainerName("exporter")
+	if first == second {
+		t.Fatalf("testContainerName() returned duplicate name %q", first)
+	}
+}
+
 // TestGetEnvOrDefaultPreservesExplicitEmpty verifies an explicitly empty image variable disables that image.
 func TestGetEnvOrDefaultPreservesExplicitEmpty(t *testing.T) {
 	t.Setenv("E2E_TEST_EMPTY_IMAGE", "")

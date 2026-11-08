@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -21,8 +21,6 @@ package k8s
 import (
 	"fmt"
 	"strings"
-
-	dto "github.com/prometheus/client_model/go"
 
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/exportercontract"
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
@@ -186,13 +184,4 @@ func metricLabelValuesDoNotContain(metrics []byte, labelName string, disallowed 
 		return fmt.Errorf("no metric sample contains label %q", labelName)
 	}
 	return nil
-}
-
-// metricLabels converts one Prometheus metric's labels into a lookup map.
-func metricLabels(metric *dto.Metric) map[string]string {
-	labels := map[string]string{}
-	for _, label := range metric.GetLabel() {
-		labels[label.GetName()] = label.GetValue()
-	}
-	return labels
 }

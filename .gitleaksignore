@@ -1,0 +1,10 @@
+# Reviewed gitleaks findings in past commits, as <commit>:<path>:<rule>:<line>,
+# each under a comment that says why it is not a secret. Allow current files in
+# .gitleaks.toml instead. Secret scans read both files from a reviewed commit
+# (the default branch, or a pull request's base), never from the change under
+# scan, so a new entry takes effect only once it is merged.
+
+# A test map key, not a secret.
+a1f2f8e44787a7e48551d3d8afdab0b1330a6e86:internal/e2e/scenario/requirements_test.go:generic-api-key:156
+# Throwaway TLS key for the integration test web server, since removed.
+c3919a5fce2464f79606c028dc05000a7dfa1540:tests/integration/testdata/tlsCertificate.key:private-key:1

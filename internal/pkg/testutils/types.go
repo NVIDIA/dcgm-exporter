@@ -16,6 +16,7 @@
 
 package testutils
 
+// WatchedEntityKey identifies a watched core or link within its parent entity.
 type WatchedEntityKey struct {
 	ParentID uint
 	ChildID  uint

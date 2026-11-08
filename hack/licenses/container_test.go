@@ -22,11 +22,13 @@ import (
 	"testing"
 )
 
+// fakePackageDatabase supplies installed package identities without querying the host.
 type fakePackageDatabase struct {
 	owners   map[string]string
 	metadata map[string]packageMetadata
 }
 
+// Owner returns the fixture owner or rejects files absent from the staged inventory.
 func (database fakePackageDatabase) Owner(path string) (string, error) {
 	owner := database.owners[path]
 	if owner == "" {
@@ -35,6 +37,7 @@ func (database fakePackageDatabase) Owner(path string) (string, error) {
 	return owner, nil
 }
 
+// Metadata returns the fixture version data needed to attribute a legal document.
 func (database fakePackageDatabase) Metadata(binaryPackage string) (packageMetadata, error) {
 	metadata, found := database.metadata[binaryPackage]
 	if !found {
@@ -43,6 +46,8 @@ func (database fakePackageDatabase) Metadata(binaryPackage string) (packageMetad
 	return metadata, nil
 }
 
+// TestAssembleContainerNotices checks package attribution, exact supplied legal text,
+// common-license inclusion, and deterministic assembly while excluding first-party terms.
 func TestAssembleContainerNotices(t *testing.T) {
 	t.Parallel()
 
@@ -80,6 +85,7 @@ func TestAssembleContainerNotices(t *testing.T) {
 	}
 }
 
+// TestAssembleContainerNoticesRequiresDCGMInput prevents publishing an empty DCGM notice section.
 func TestAssembleContainerNoticesRequiresDCGMInput(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +98,8 @@ func TestAssembleContainerNoticesRequiresDCGMInput(t *testing.T) {
 	}
 }
 
+// TestAssembleContainerNoticesRequiresShippedDCGMPackage rejects manifests that
+// cannot connect the supplied DCGM notice to a shipped package.
 func TestAssembleContainerNoticesRequiresShippedDCGMPackage(t *testing.T) {
 	t.Parallel()
 
@@ -104,6 +112,8 @@ func TestAssembleContainerNoticesRequiresShippedDCGMPackage(t *testing.T) {
 	}
 }
 
+// TestReadRuntimeManifestRejectsDuplicateDestination prevents conflicting provenance
+// records from attributing the same image path to two different source files.
 func TestReadRuntimeManifestRejectsDuplicateDestination(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +128,7 @@ func TestReadRuntimeManifestRejectsDuplicateDestination(t *testing.T) {
 	}
 }
 
+// TestParseDpkgOwner checks exact ownership and rejects ambiguous package attribution.
 func TestParseDpkgOwner(t *testing.T) {
 	t.Parallel()
 
@@ -133,6 +144,8 @@ func TestParseDpkgOwner(t *testing.T) {
 	}
 }
 
+// newContainerNoticeFixture stages independent Go, DCGM, and runtime legal inputs
+// beneath temporary roots with a matching package database and provenance manifest.
 func newContainerNoticeFixture(t *testing.T) containerNoticeConfig {
 	t.Helper()
 
@@ -184,6 +197,7 @@ func newContainerNoticeFixture(t *testing.T) containerNoticeConfig {
 	}
 }
 
+// writeFixtureFile writes a legal-file fixture using the same rooted path rules as assembly.
 func writeFixtureFile(t *testing.T, root, logicalPath, contents string) {
 	t.Helper()
 	path, err := rootedPath(root, logicalPath)

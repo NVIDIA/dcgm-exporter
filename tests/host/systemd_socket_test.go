@@ -53,6 +53,7 @@ func runSystemdSocketActivation(t testing.TB) {
 		os.Environ(),
 		"HOST_SYSTEMD_SOCKET_HELPER=1",
 		fmt.Sprintf("HOST_SYSTEMD_SOCKET_EXPORTER_BINARY=%s", requireExporterBinary(t)),
+		fmt.Sprintf("HOST_SYSTEMD_SOCKET_DEFAULT_COUNTERS_FILE=%s", defaultCollectorsFile(t)),
 		"LISTEN_FDS=1",
 	)
 	helper.ExtraFiles = []*os.File{listenerFile}
@@ -74,6 +75,7 @@ func runSystemdSocketActivation(t testing.TB) {
 	}()
 
 	url := fmt.Sprintf("http://%s/metrics", listener.Addr().String())
+	supported := hostSupportedFamilies(t, defaultCollectorsFile(t))
 	metricsResp, err := retry.DoWithData(
 		func() (string, error) {
 			resp, _, err := httpGet(t, url, &http.Client{Timeout: 5 * time.Second})
@@ -82,6 +84,15 @@ func runSystemdSocketActivation(t testing.TB) {
 			}
 			if len(resp) == 0 {
 				return "", errors.New("empty response")
+			}
+
+			// Rows DCGM supports can lack a value in the first samples.
+			families, err := parseMetricFamilies(resp)
+			if err != nil {
+				return "", err
+			}
+			if !includesAllMetricFamilies(families, supported) {
+				return "", errors.New("supported CSV rows are not all emitted yet")
 			}
 			return resp, nil
 		},
@@ -100,6 +111,11 @@ func runSystemdSocketHelper() int {
 		fmt.Fprintln(os.Stderr, "HOST_SYSTEMD_SOCKET_EXPORTER_BINARY is required")
 		return 1
 	}
+	collectorsFile := os.Getenv("HOST_SYSTEMD_SOCKET_DEFAULT_COUNTERS_FILE")
+	if collectorsFile == "" {
+		fmt.Fprintln(os.Stderr, "HOST_SYSTEMD_SOCKET_DEFAULT_COUNTERS_FILE is required")
+		return 1
+	}
 	if err := os.Setenv("LISTEN_PID", fmt.Sprintf("%d", os.Getpid())); err != nil {
 		fmt.Fprintf(os.Stderr, "set LISTEN_PID: %v\n", err)
 		return 1
@@ -107,10 +123,12 @@ func runSystemdSocketHelper() int {
 
 	argv := []string{
 		binary,
-		"--collectors", "./testdata/default-counters.csv",
+		"--collectors", collectorsFile,
 		"--address", "127.0.0.1:1",
 		"--web-systemd-socket",
 	}
+	argv = append(argv, hostCleanupTimeoutArgs...)
+	argv = append(argv, fastCollectionArgs...)
 	// #nosec G702 -- this test-only helper must exec the explicit product binary in place so LISTEN_PID matches the systemd socket consumer.
 	if err := syscall.Exec(binary, argv, os.Environ()); err != nil {
 		fmt.Fprintf(os.Stderr, "exec dcgm-exporter: %v\n", err)

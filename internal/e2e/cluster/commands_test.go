@@ -19,141 +19,65 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"sigs.k8s.io/yaml"
-
-	"github.com/NVIDIA/dcgm-exporter/internal/e2e/capability"
-	"github.com/NVIDIA/dcgm-exporter/internal/e2e/config"
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
-const clusterTestDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+// TestCheckAPIReadyUsesConfiguredKubeconfig verifies the readiness command uses the selected cluster.
+func TestCheckAPIReadyUsesConfiguredKubeconfig(t *testing.T) {
+	runner := &recordingRunner{}
+	cfg := DefaultConfig()
+	cfg.Kubeconfig = "/tmp/external-kubeconfig"
 
-func testDependencies() config.Dependencies {
-	return config.Dependencies{
-		K3SVersion:          "v1.35.3-k3s1",
-		DevicePluginVersion: "0.19.0",
-		GPUOperatorVersion:  "v26.3.2",
-		DRADriverVersion:    "25.12.0",
+	if err := CheckAPIReady(context.Background(), runner, io.Discard, cfg); err != nil {
+		t.Fatalf("CheckAPIReady() error = %v", err)
+	}
+	if !runner.has("kubectl", "get", "--raw=/readyz") {
+		t.Fatalf("CheckAPIReady() did not run kubectl readiness check: %#v", runner.commands)
+	}
+	if !runner.hasEnv("KUBECONFIG=/tmp/external-kubeconfig") {
+		t.Fatalf("CheckAPIReady() did not use the configured kubeconfig: %#v", runner.commands)
 	}
 }
 
-func testLocalOptions() config.Tests {
-	return config.Tests{
-		K3SImage:           "mirror.example/rancher/k3s:v1.35.3-k3s1",
-		K3DNodeBaseImage:   "nvcr.io/nvidia/cuda:13.2.1-base-ubuntu24.04",
-		K3DNodeOutputImage: "dcgm-exporter/k3s-nvidia:v1.35.3-test",
-		Dependencies:       testDependencies(),
-	}
-}
-
-func versionRootForTest(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "hack"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	content := strings.Join([]string{
-		"K3S_VERSION=v1.35.3-k3s1",
-		"CUDA_BASE_TAG=13.2.1-base",
-		"CUDA_UBUNTU_TAG=24.04",
-		"K3D_NODE_BASE_UBUNTU_TAG=24.04",
-		"NVIDIA_DEVICE_PLUGIN_VERSION=0.19.0",
-		"GPU_OPERATOR_VERSION=v26.3.2",
-		"NVIDIA_DRA_DRIVER_VERSION=25.12.0",
-		"BUSYBOX_IMAGE_TAG=1.36.1",
-		"",
-	}, "\n")
-	if err := os.WriteFile(filepath.Join(root, "hack", "versions.env"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return root
-}
-
-func defaultLocalConfigForTest(t *testing.T) LocalConfig {
-	t.Helper()
-	cfg, err := DefaultLocalConfig(versionRootForTest(t), testLocalOptions())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cfg
-}
-
-func TestDefaultLocalConfigUsesK3DNodeBaseUbuntuTag(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "hack"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	content := strings.Join([]string{
-		"K3S_VERSION=v1.35.3-k3s1",
-		"CUDA_BASE_TAG=13.2.1-base",
-		"CUDA_UBUNTU_TAG=26.04",
-		"K3D_NODE_BASE_UBUNTU_TAG=24.04",
-		"NVIDIA_DEVICE_PLUGIN_VERSION=0.19.0",
-		"",
-	}, "\n")
-	if err := os.WriteFile(filepath.Join(root, "hack", "versions.env"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := testLocalOptions()
-	opts.K3DNodeBaseImage = "nvcr.io/nvidia/cuda:13.2.1-base-ubuntu24.04"
-	cfg, err := DefaultLocalConfig(root, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(cfg.CUDAImage, "ubuntu24.04") {
-		t.Fatalf("CUDAImage = %q, want k3d node Ubuntu tag", cfg.CUDAImage)
-	}
-	if strings.Contains(cfg.CUDAImage, "ubuntu26.04") {
-		t.Fatalf("CUDAImage = %q, used exporter CUDA Ubuntu tag", cfg.CUDAImage)
-	}
-}
-
-func TestEnsureNodeImageBuildsFromMirroredK3SRepository(t *testing.T) {
-	cfg := defaultLocalConfigForTest(t)
+// TestCheckAPIReadyKeepsKubectlFailure verifies readiness errors retain the kubectl result.
+func TestCheckAPIReadyKeepsKubectlFailure(t *testing.T) {
 	runner := &recordingRunner{results: map[string]e2eexec.Result{
-		"docker image inspect " + cfg.NodeImage: {ExitCode: 1, Stderr: []byte("no such image")},
+		"kubectl get --raw=/readyz": {ExitCode: 1, Stderr: []byte("server is starting\n")},
 	}}
 
-	if err := ensureNodeImage(context.Background(), runner, io.Discard, cfg); err != nil {
-		t.Fatalf("ensureNodeImage() error = %v", err)
+	err := CheckAPIReady(context.Background(), runner, io.Discard, DefaultConfig())
+	if err == nil {
+		t.Fatal("CheckAPIReady() error = nil")
 	}
-	if !runner.has("docker", "--build-arg", "K3S_IMAGE=mirror.example/rancher/k3s:v1.35.3-k3s1") {
-		t.Fatalf("docker build missing mirrored K3S_IMAGE build arg: %#v", runner.commands)
+	for _, want := range []string{"kubernetes API readiness failed", "kubectl get --raw=/readyz", "server is starting"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("CheckAPIReady() error = %v, missing %q", err, want)
+		}
 	}
 }
 
-func TestDefaultLocalConfigK3SRepositoryDefaultsToDockerHub(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "hack"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	content := strings.Join([]string{
-		"K3S_VERSION=v1.35.3-k3s1",
-		"CUDA_BASE_TAG=13.2.1-base",
-		"CUDA_UBUNTU_TAG=24.04",
-		"K3D_NODE_BASE_UBUNTU_TAG=24.04",
-		"NVIDIA_DEVICE_PLUGIN_VERSION=0.19.0",
-		"",
-	}, "\n")
-	if err := os.WriteFile(filepath.Join(root, "hack", "versions.env"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := testLocalOptions()
-	opts.K3SImage = "rancher/k3s:v1.35.3-k3s1"
-	cfg, err := DefaultLocalConfig(root, opts)
+// TestConfigForRunNameUsesOneNameForTheResourceSet verifies derived resource names stay together.
+func TestConfigForRunNameUsesOneNameForTheResourceSet(t *testing.T) {
+	cfg, err := ConfigForRunName("ci-17")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.K3SImage != "rancher/k3s:v1.35.3-k3s1" {
-		t.Fatalf("K3SImage = %q, want Docker Hub reference", cfg.K3SImage)
+	if cfg.RunName != "ci-17" || cfg.ClusterName != "ci-17-gpu" || cfg.Namespace != "ci-17" || cfg.ReleaseName != "ci-17" || cfg.DCGMNamespace != "ci-17-dcgm" {
+		t.Fatalf("ConfigForRunName() = %#v", cfg)
+	}
+}
+
+// TestConfigForRunNameRejectsInvalidNames covers empty, uppercase, invalid punctuation, edge hyphens, and overlong names.
+func TestConfigForRunNameRejectsInvalidNames(t *testing.T) {
+	for _, runName := range []string{"", "Upper", "-bad", "bad-", "bad_name", strings.Repeat("a", 54)} {
+		if _, err := ConfigForRunName(runName); err == nil {
+			t.Errorf("ConfigForRunName(%q) succeeded, want invalid-name error", runName)
+		}
 	}
 }
 
@@ -198,9 +122,15 @@ func TestLogsFollowSkipsStandaloneDCGMLogs(t *testing.T) {
 }
 
 func TestDiagnosticsCommands(t *testing.T) {
-	runner := &recordingRunner{}
+	runner := &recordingRunner{
+		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
+		outputs: map[string]string{
+			"docker info --format {{.DockerRootDir}}":                                                          "/var/lib/docker\n",
+			"docker ps -a --filter name=^/k3d-dcgm-exporter-gpu- --format {{.Names}}\t{{.Image}}\t{{.Status}}": "k3d-dcgm-exporter-gpu-agent-0\tnode:test\tUp 1 minute\n",
+		},
+	}
 	var out bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := clusterConfigForTest(t)
 	cfg.LocalKubeconfig = "/tmp/local-kubeconfig"
 	if err := Diagnostics(context.Background(), runner, &out, cfg); err != nil {
 		t.Fatal(err)
@@ -212,6 +142,26 @@ func TestDiagnosticsCommands(t *testing.T) {
 		{"kubectl", "get", "events", "-A"},
 		{"kubectl", "-n", "dcgm-exporter", "describe", "pods"},
 		{"kubectl", "-n", "kube-system", "describe", "daemonset,pods"},
+		{"helm", "status", "nvidia-device-plugin"},
+		{"kubectl", "-n", "kube-system", "logs", "-l", "app.kubernetes.io/name=nvidia-device-plugin", "--all-containers=true", "--ignore-errors=true"},
+		{"kubectl", "-n", "kube-system", "logs", "-l", "app.kubernetes.io/name=nvidia-device-plugin", "--all-containers=true", "--ignore-errors=true", "--previous"},
+		{"kubectl", "get", "deviceclasses"},
+		{"kubectl", "get", "resourceslices"},
+		{"kubectl", "get", "resourceclaims", "-A"},
+		{"kubectl", "-n", "nvidia-dra-driver-gpu", "logs"},
+		{"nvidia-smi", "-L"},
+		{"nvidia-smi", "--query-gpu=index,name,mig.mode.current,mig.mode.pending"},
+		{"docker", "info", "--format", "{{.DockerRootDir}}"},
+		{"docker", "system", "df"},
+		{"nvidia-ctk", "--version"},
+		{"nvidia-container-cli", "--version"},
+		{"docker", "info", "--format", "{{json .Runtimes}}"},
+		{"docker", "inspect", "k3d-dcgm-exporter-gpu-agent-0", "--format", "{{json .State}}"},
+		{"docker", "logs", "--tail", "200", "k3d-dcgm-exporter-gpu-agent-0"},
+		{"docker", "exec", "k3d-dcgm-exporter-gpu-agent-0", "nvidia-ctk", "--version"},
+		{"docker", "exec", "k3d-dcgm-exporter-gpu-agent-0", "nvidia-container-cli", "--version"},
+		{"docker", "exec", "k3d-dcgm-exporter-gpu-agent-0", "sh", "-c", "grep -E"},
+		{"df", "-h", "/var/lib/docker"},
 		{"kubectl", "-n", "dcgm-exporter-dcgm", "describe", "pods,deploy,svc"},
 	} {
 		if !runner.has(want[0], want[1:]...) {
@@ -220,18 +170,403 @@ func TestDiagnosticsCommands(t *testing.T) {
 	}
 }
 
-func TestCleanupCommands(t *testing.T) {
-	runner := &recordingRunner{clusterList: "dcgm-exporter-gpu 1/1 1/1\n"}
+func TestDiagnosticsAbsentLocalClusterPreservesHostEvidence(t *testing.T) {
+	runner := &recordingRunner{outputs: map[string]string{
+		"docker info --format {{.DockerRootDir}}": "/var/lib/docker\n",
+	}}
 	var out bytes.Buffer
-	if err := Cleanup(context.Background(), runner, &out, DefaultConfig()); err != nil {
+	if err := Diagnostics(context.Background(), runner, &out, DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if runner.has("kubectl") {
+		t.Fatalf("diagnostics queried Kubernetes without a local cluster: %#v", runner.commands)
+	}
+	if !runner.has("nvidia-smi", "-L") || !runner.has("nvidia-smi", "--query-gpu=index,name,mig.mode.current,mig.mode.pending") {
+		t.Fatalf("diagnostics skipped host GPU evidence without a local cluster: %#v", runner.commands)
+	}
+	if !runner.has("df", "-h", "/var/lib/docker") || !runner.has("docker", "system", "df") {
+		t.Fatalf("diagnostics skipped local Docker storage evidence without a cluster: %#v", runner.commands)
+	}
+	if !strings.Contains(out.String(), "is absent; skipping Kubernetes diagnostics") {
+		t.Fatalf("missing absent-cluster diagnostic:\n%s", out.String())
+	}
+}
+
+func TestDiagnosticsExternalClusterSkipsRunnerLocalNVIDIASMI(t *testing.T) {
+	runner := &recordingRunner{}
+	var out bytes.Buffer
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/external-kubeconfig"
+	if err := Diagnostics(context.Background(), runner, &out, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, command := range runner.commands {
+		if command.Name == "nvidia-smi" {
+			t.Fatalf("external-cluster diagnostics ran runner-local nvidia-smi: %#v", runner.commands)
+		}
+	}
+	if !runner.has("kubectl", "get", "resourceslices") {
+		t.Fatalf("external-cluster diagnostics skipped Kubernetes DRA state: %#v", runner.commands)
+	}
+	if !runner.hasEnv("KUBECONFIG=/tmp/external-kubeconfig") {
+		t.Fatalf("external-cluster diagnostics did not use the configured kubeconfig: %#v", runner.commands)
+	}
+}
+
+// TestDiagnosticsIncludesGPUOperatorWhenNamespaceExists confirms the full diagnostics add the Operator evidence when the namespace exists.
+func TestDiagnosticsIncludesGPUOperatorWhenNamespaceExists(t *testing.T) {
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	runner := (&recordingRunner{}).respond("kubectl -n gpu-operator get pods -o json", e2eexec.Result{Stdout: []byte(operatorPodListJSON)})
+
+	if err := Diagnostics(context.Background(), runner, io.Discard, cfg); err != nil {
+		t.Fatalf("Diagnostics() error = %v, want none", err)
+	}
+
+	for _, want := range [][]string{
+		{"get", "clusterpolicy", "-o", "yaml"},
+		{"-n", "gpu-operator", "describe", "pods"},
+		{"-n", "gpu-operator", "logs", "operator-a", "-c", "plugin"},
+		{"-n", "gpu-operator", "logs", "operator-b", "-c", "main", "--previous"},
+	} {
+		if runner.commandIndex("kubectl", want...) < 0 {
+			t.Fatalf("missing Operator diagnostic %v: %#v", want, runner.commands)
+		}
+	}
+}
+
+// operatorPodListJSON lists operator-a with an init container and one container, and operator-b with one container.
+const operatorPodListJSON = `{"items":[
+{"metadata":{"name":"operator-a"},"spec":{"initContainers":[{"name":"init"}],"containers":[{"name":"plugin"}]}},
+{"metadata":{"name":"operator-b"},"spec":{"containers":[{"name":"main"}]}}]}`
+
+// TestGPUOperatorDiagnosticsSkippedWithoutNamespace confirms the Operator extras are skipped without error when the namespace is absent.
+func TestGPUOperatorDiagnosticsSkippedWithoutNamespace(t *testing.T) {
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	// A zero Result is what kubectl get namespace --ignore-not-found -o json prints for a missing namespace:
+	// exit 0 with empty output, which getNamespaceInfo treats as not found.
+	runner := (&recordingRunner{}).queue(gpuOperatorNamespaceLookup, e2eexec.Result{})
+
+	if err := errors.Join(gpuOperatorDiagnostics(context.Background(), runner, io.Discard, cfg)...); err != nil {
+		t.Fatalf("gpuOperatorDiagnostics() error = %v, want none", err)
+	}
+	if runner.commandIndex("kubectl", "-n", "gpu-operator", "describe", "pods") >= 0 || runner.commandIndex("kubectl", "get", "clusterpolicy") >= 0 {
+		t.Fatalf("Operator diagnostics ran without a namespace: %#v", runner.commands)
+	}
+}
+
+// TestGPUOperatorDiagnosticsCollectsEvidence confirms ClusterPolicy, pod descriptions, and current and previous logs are collected.
+func TestGPUOperatorDiagnosticsCollectsEvidence(t *testing.T) {
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	runner := (&recordingRunner{}).respond("kubectl -n gpu-operator get pods -o json", e2eexec.Result{Stdout: []byte(operatorPodListJSON)})
+
+	if err := errors.Join(gpuOperatorDiagnostics(context.Background(), runner, io.Discard, cfg)...); err != nil {
+		t.Fatalf("gpuOperatorDiagnostics() error = %v, want none", err)
+	}
+	for _, want := range [][]string{
+		{"get", "clusterpolicy", "-o", "yaml"},
+		{"-n", "gpu-operator", "get", "pods", "-o", "wide"},
+		{"-n", "gpu-operator", "get", "events", "--sort-by=.lastTimestamp"},
+		{"-n", "gpu-operator", "describe", "pods"},
+		{"-n", "gpu-operator", "logs", "operator-a", "-c", "init", "--tail=200"},
+		{"-n", "gpu-operator", "logs", "operator-a", "-c", "plugin", "--previous", "--tail=200"},
+		{"-n", "gpu-operator", "logs", "operator-b", "-c", "main", "--tail=200"},
+		{"-n", "gpu-operator", "logs", "operator-b", "-c", "main", "--previous", "--tail=200"},
+	} {
+		if runner.commandIndex("kubectl", want...) < 0 {
+			t.Fatalf("missing Operator diagnostic %v: %#v", want, runner.commands)
+		}
+	}
+}
+
+// TestGPUOperatorDiagnosticsReturnsNamespaceLookupError reports a failed namespace lookup instead of skipping silently.
+func TestGPUOperatorDiagnosticsReturnsNamespaceLookupError(t *testing.T) {
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	runner := (&recordingRunner{}).queue(gpuOperatorNamespaceLookup, e2eexec.Result{ExitCode: 1, Stderr: []byte("connection refused")})
+
+	err := errors.Join(gpuOperatorDiagnostics(context.Background(), runner, io.Discard, cfg)...)
+
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("gpuOperatorDiagnostics() error = %v, want namespace lookup error", err)
+	}
+}
+
+// TestRunClusterPolicyDiagnosticResults checks which ClusterPolicy lookup failures count as errors.
+func TestRunClusterPolicyDiagnosticResults(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		result     e2eexec.Result
+		wantErr    bool
+		wantOutput string
+	}{
+		{name: "found", result: e2eexec.Result{Stdout: []byte("kind: ClusterPolicy\n")}},
+		{name: "missing CRD", result: e2eexec.Result{ExitCode: 1, Stderr: []byte(`error: the server doesn't have a resource type "clusterpolicy"`)}, wantOutput: `kubectl_gpu_operator_clusterpolicy unavailable: error: the server doesn't have a resource type "clusterpolicy"`},
+		{name: "forbidden", result: e2eexec.Result{ExitCode: 1, Stderr: []byte(`clusterpolicies is forbidden`)}, wantErr: true, wantOutput: `kubectl_gpu_operator_clusterpolicy failed: clusterpolicies is forbidden`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := clusterConfigForTest(t)
+			cfg.Kubeconfig = "/tmp/kubeconfig"
+			runner := (&recordingRunner{}).respond("get clusterpolicy", test.result)
+
+			var output strings.Builder
+
+			err := runClusterPolicyDiagnostic(context.Background(), runner, &output, cfg)
+
+			if (err != nil) != test.wantErr {
+				t.Fatalf("runClusterPolicyDiagnostic() error = %v, wantErr %t", err, test.wantErr)
+			}
+			if test.wantOutput != "" && !strings.Contains(output.String(), test.wantOutput) {
+				t.Fatalf("output = %q, want it to contain %q", output.String(), test.wantOutput)
+			}
+		})
+	}
+}
+
+// TestGPUOperatorLogDiagnosticsMixedContainers reads every container, treating waiting and never-restarted containers as normal.
+func TestGPUOperatorLogDiagnosticsMixedContainers(t *testing.T) {
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	runner := &recordingRunner{matching: map[string]e2eexec.Result{
+		"kubectl -n gpu-operator get pods -o json": {Stdout: []byte(operatorPodListJSON)},
+		"operator-a -c init":                       {ExitCode: 1, Stderr: []byte(`container "init" in pod "operator-a" is waiting to start: PodInitializing`)},
+		"operator-b -c main --previous":            {ExitCode: 1, Stderr: []byte(`previous terminated container "main" in pod "operator-b" not found`)},
+		"operator-a -c plugin --previous":          {Stdout: []byte("crash log\n")},
+	}}
+
+	if err := errors.Join(gpuOperatorLogDiagnostics(context.Background(), runner, io.Discard, cfg)...); err != nil {
+		t.Fatalf("gpuOperatorLogDiagnostics() error = %v, want none", err)
+	}
+	for _, want := range [][]string{
+		{"operator-a", "-c", "init"},
+		{"operator-a", "-c", "init", "--previous"},
+		{"operator-a", "-c", "plugin"},
+		{"operator-a", "-c", "plugin", "--previous"},
+		{"operator-b", "-c", "main"},
+		{"operator-b", "-c", "main", "--previous"},
+	} {
+		if runner.commandIndex("kubectl", append([]string{"logs"}, want...)...) < 0 {
+			t.Fatalf("missing log command %v: %#v", want, runner.commands)
+		}
+	}
+}
+
+// TestGPUOperatorLogDiagnosticsReportsRealFailure keeps genuine log failures as errors.
+func TestGPUOperatorLogDiagnosticsReportsRealFailure(t *testing.T) {
+	cfg := clusterConfigForTest(t)
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	runner := &recordingRunner{matching: map[string]e2eexec.Result{
+		"kubectl -n gpu-operator get pods -o json": {Stdout: []byte(operatorPodListJSON)}, "operator-b -c main": {ExitCode: 1, Stderr: []byte("connection refused")},
+	}}
+
+	err := errors.Join(gpuOperatorLogDiagnostics(context.Background(), runner, io.Discard, cfg)...)
+
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("gpuOperatorLogDiagnostics() error = %v, want connection refused", err)
+	}
+}
+
+// TestEnsureManagedNamespaceReportsCreationAndKeepsRunOwnership covers new creation, same-run reuse, and foreign-run rejection.
+func TestEnsureManagedNamespaceReportsCreationAndKeepsRunOwnership(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		createError bool
+		labels      map[string]string
+		wantCreated bool
+		wantError   string
+	}{
+		{name: "created", wantCreated: true},
+		{name: "reuse same run", createError: true, labels: ownedNamespaceLabels("dcgm-exporter")},
+		{name: "reject other run", createError: true, labels: ownedNamespaceLabels("another-run"), wantError: `namespace "gpu-operator" already exists`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := clusterConfigForTest(t)
+			cfg.Kubeconfig = "/tmp/kubeconfig"
+			runner := (&recordingRunner{}).queue(gpuOperatorNamespaceLookup, namespaceResult(test.labels))
+			if test.createError {
+				runner.respond(namespaceCreate, namespaceExists)
+			}
+			created, err := ensureManagedNamespace(context.Background(), runner, io.Discard, cfg, "gpu-operator")
+			if created != test.wantCreated {
+				t.Fatalf("ensureManagedNamespace() created = %t, want %t", created, test.wantCreated)
+			}
+			requireErrorContains(t, "ensureManagedNamespace()", err, test.wantError)
+		})
+	}
+}
+
+// TestEnsureManagedNamespaceCreatesOwnedEnvironment adds the run name when it creates a namespace.
+func TestEnsureManagedNamespaceCreatesOwnedEnvironment(t *testing.T) {
+	runner := &recordingRunner{}
+	var out bytes.Buffer
+	cfg := DefaultConfig()
+	cfg.Kubeconfig = "/tmp/kubeconfig"
+	if err := EnsureManagedNamespace(context.Background(), runner, &out, cfg, "dcgm-exporter"); err != nil {
+		t.Fatalf("EnsureManagedNamespace() error = %v", err)
+	}
+	if !runner.has("kubectl", "create", "-f", "-") ||
+		!runner.stdinContains(`"kind":"Namespace"`) ||
+		!runner.stdinContains(`"name":"dcgm-exporter"`) ||
+		!runner.stdinContains(`"app.kubernetes.io/managed-by":"dcgm-exporter-e2e"`) ||
+		!runner.stdinContains(`"e2eRunName":"dcgm-exporter"`) ||
+		!runner.stdinContains(`"app.kubernetes.io/part-of":"dcgm-exporter"`) {
+		t.Fatalf("namespace was not created with run ownership labels: %#v", runner.commands)
+	}
+	if runner.has("kubectl", "get", "namespace", "dcgm-exporter") {
+		t.Fatalf("new namespace unexpectedly needed an ownership lookup: %#v", runner.commands)
+	}
+}
+
+// TestEnsureManagedNamespaceReusesOnlyTheSameRun reuses an active namespace without changing its ownership labels.
+func TestEnsureManagedNamespaceReusesOnlyTheSameRun(t *testing.T) {
+	create := "kubectl create -f -"
+	get := "kubectl get namespace ci-17 --ignore-not-found=true -o json"
+	runner := &recordingRunner{results: map[string]e2eexec.Result{
+		create: {ExitCode: 1, Stderr: []byte("already exists")},
+		get:    {Stdout: []byte(`{"metadata":{"uid":"test-namespace-uid","labels":{"app.kubernetes.io/managed-by":"dcgm-exporter-e2e","e2eRunName":"ci-17"}},"status":{"phase":"Active"}}`)},
+	}}
+	cfg, err := ConfigForRunName("ci-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureManagedNamespace(context.Background(), runner, io.Discard, cfg, cfg.Namespace); err != nil {
+		t.Fatalf("EnsureManagedNamespace() error = %v", err)
+	}
+	if runner.hasVerb("kubectl", "apply") || runner.hasVerb("kubectl", "label") {
+		t.Fatalf("namespace reuse changed its ownership labels: %#v", runner.commands)
+	}
+}
+
+// TestEnsureManagedNamespaceRejectsAnotherRun leaves a namespace owned by a different run untouched.
+func TestEnsureManagedNamespaceRejectsAnotherRun(t *testing.T) {
+	create := "kubectl create -f -"
+	get := "kubectl get namespace ci-17 --ignore-not-found=true -o json"
+	runner := &recordingRunner{results: map[string]e2eexec.Result{
+		create: {ExitCode: 1, Stderr: []byte("already exists")},
+		get:    {Stdout: []byte(`{"metadata":{"uid":"foreign-namespace-uid","labels":{"app.kubernetes.io/managed-by":"dcgm-exporter-e2e","e2eRunName":"ci-18"}},"status":{"phase":"Active"}}`)},
+	}}
+	cfg, err := ConfigForRunName("ci-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = EnsureManagedNamespace(context.Background(), runner, io.Discard, cfg, cfg.Namespace)
+	if err == nil || !strings.Contains(err.Error(), "not owned by run \"ci-17\"") {
+		t.Fatalf("EnsureManagedNamespace() error = %v, want an ownership conflict", err)
+	}
+	if runner.hasVerb("kubectl", "apply") || runner.hasVerb("kubectl", "label") || runner.hasVerb("kubectl", "delete") {
+		t.Fatalf("foreign namespace was modified: %#v", runner.commands)
+	}
+}
+
+// TestEnsureManagedNamespaceWaitsForOwnedNamespaceDeletion retries creation only after the owned terminating namespace is deleted.
+func TestEnsureManagedNamespaceWaitsForOwnedNamespaceDeletion(t *testing.T) {
+	create := "kubectl create -f -"
+	get := "kubectl get namespace ci-17 --ignore-not-found=true -o json"
+	runner := &recordingRunner{
+		results: map[string]e2eexec.Result{
+			get: {Stdout: []byte(`{"metadata":{"uid":"test-namespace-uid","labels":{"app.kubernetes.io/managed-by":"dcgm-exporter-e2e","e2eRunName":"ci-17"}},"status":{"phase":"Terminating"}}`)},
+		},
+		resultSequences: map[string][]e2eexec.Result{
+			create: {
+				{ExitCode: 1, Stderr: []byte("namespace is terminating")},
+				{},
+			},
+		},
+	}
+	cfg, err := ConfigForRunName("ci-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureManagedNamespace(context.Background(), runner, io.Discard, cfg, cfg.Namespace); err != nil {
+		t.Fatalf("EnsureManagedNamespace() error = %v", err)
+	}
+	firstCreate := runner.commandIndex("kubectl", "create", "-f", "-")
+	wait := runner.commandIndex("kubectl", "wait", "--for=delete", "namespace/ci-17", "--timeout=90s")
+	secondCreate := -1
+	createCount := 0
+	for index, command := range runner.commands {
+		if command.Name == "kubectl" && includesArgs(command.Args, "create", "-f", "-") {
+			createCount++
+			if createCount == 2 {
+				secondCreate = index
+			}
+		}
+	}
+	if firstCreate < 0 || wait < firstCreate || secondCreate < 0 || secondCreate < wait || createCount != 2 {
+		t.Fatalf("namespace was not recreated after waiting for deletion: %#v", runner.commands)
+	}
+}
+
+// TestEnsureManagedNamespaceRejectsTerminatingNamespaceWhenWaitFails does not reuse a namespace whose deletion wait failed.
+func TestEnsureManagedNamespaceRejectsTerminatingNamespaceWhenWaitFails(t *testing.T) {
+	create := "kubectl create -f -"
+	wait := "kubectl wait --for=delete namespace/ci-17 --timeout=90s"
+	runner := &recordingRunner{results: map[string]e2eexec.Result{
+		create: {ExitCode: 1, Stderr: []byte("namespace is terminating")},
+		"kubectl get namespace ci-17 --ignore-not-found=true -o json": {
+			Stdout: []byte(`{"metadata":{"uid":"test-namespace-uid","labels":{"app.kubernetes.io/managed-by":"dcgm-exporter-e2e","e2eRunName":"ci-17"}},"status":{"phase":"Terminating"}}`),
+		},
+		wait: {ExitCode: 1, Stderr: []byte("timed out waiting for namespace deletion")},
+	}}
+	cfg, err := ConfigForRunName("ci-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = EnsureManagedNamespace(context.Background(), runner, io.Discard, cfg, cfg.Namespace)
+	if err == nil || !strings.Contains(err.Error(), "finish deleting") {
+		t.Fatalf("EnsureManagedNamespace() error = %v, want a namespace deletion wait error", err)
+	}
+	if runner.commandIndex("kubectl", "create", "-f", "-") < 0 || runner.commandIndex("kubectl", "wait", "--for=delete") < 0 {
+		t.Fatalf("namespace was reused without a successful deletion wait: %#v", runner.commands)
+	}
+}
+
+// TestEnsureManagedNamespaceDoesNotReuseUnknownPhase avoids treating an unrecognized phase as active or terminating.
+func TestEnsureManagedNamespaceDoesNotReuseUnknownPhase(t *testing.T) {
+	runner := &recordingRunner{results: map[string]e2eexec.Result{
+		"kubectl create -f -": {ExitCode: 1, Stderr: []byte("already exists")},
+		"kubectl get namespace ci-17 --ignore-not-found=true -o json": {
+			Stdout: []byte(`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"dcgm-exporter-e2e","e2eRunName":"ci-17"}},"status":{"phase":"Unknown"}}`),
+		},
+	}}
+	cfg, err := ConfigForRunName("ci-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = EnsureManagedNamespace(context.Background(), runner, io.Discard, cfg, cfg.Namespace)
+	if err == nil || !strings.Contains(err.Error(), `has phase "Unknown"`) {
+		t.Fatalf("EnsureManagedNamespace() error = %v, want an unknown-phase error", err)
+	}
+	if runner.hasVerb("kubectl", "wait") {
+		t.Fatalf("namespace with an unknown phase was treated as terminating: %#v", runner.commands)
+	}
+}
+
+func TestCleanupCommands(t *testing.T) {
+	runner := &recordingRunner{
+		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
+		results: map[string]e2eexec.Result{
+			"docker network inspect k3d-dcgm-exporter-gpu":       {},
+			"docker volume inspect k3d-dcgm-exporter-gpu-images": {},
+		},
+	}
+	var out bytes.Buffer
+	if err := Cleanup(context.Background(), runner, &out, clusterConfigForTest(t)); err != nil {
 		t.Fatal(err)
 	}
 	if !runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
 		t.Fatalf("missing k3d cleanup: %#v", runner.commands)
 	}
+	if !runner.has("docker", "network", "rm", "k3d-dcgm-exporter-gpu") ||
+		!runner.has("docker", "volume", "rm", "k3d-dcgm-exporter-gpu-images") {
+		t.Fatalf("missing stale local resource cleanup: %#v", runner.commands)
+	}
 
 	runner = &recordingRunner{}
-	cfg := DefaultConfig()
+	cfg := clusterConfigForTest(t)
 	cfg.Kubeconfig = "/tmp/kubeconfig"
 	if err := Cleanup(context.Background(), runner, &out, cfg); err != nil {
 		t.Fatal(err)
@@ -242,9 +577,15 @@ func TestCleanupCommands(t *testing.T) {
 }
 
 func TestCleanupSkipsAbsentLocalCluster(t *testing.T) {
-	runner := &recordingRunner{clusterList: "other-cluster 1/1 1/1\n"}
+	runner := &recordingRunner{
+		clusterList: "other-cluster 1/1 1/1\n",
+		results: map[string]e2eexec.Result{
+			"docker network inspect k3d-dcgm-exporter-gpu":       {},
+			"docker volume inspect k3d-dcgm-exporter-gpu-images": {},
+		},
+	}
 	var out bytes.Buffer
-	if err := Cleanup(context.Background(), runner, &out, DefaultConfig()); err != nil {
+	if err := Cleanup(context.Background(), runner, &out, clusterConfigForTest(t)); err != nil {
 		t.Fatal(err)
 	}
 	if runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
@@ -253,6 +594,59 @@ func TestCleanupSkipsAbsentLocalCluster(t *testing.T) {
 	if !strings.Contains(out.String(), "already absent") {
 		t.Fatalf("missing absent-cluster message:\n%s", out.String())
 	}
+	if !runner.has("docker", "network", "rm", "k3d-dcgm-exporter-gpu") {
+		t.Fatalf("stale k3d network was not removed: %#v", runner.commands)
+	}
+	if !runner.has("docker", "volume", "rm", "k3d-dcgm-exporter-gpu-images") {
+		t.Fatalf("stale k3d image volume was not removed: %#v", runner.commands)
+	}
+}
+
+func TestCleanupReturnsStaleLocalResourceFailure(t *testing.T) {
+	runner := &recordingRunner{
+		clusterList: "other-cluster 1/1 1/1\n",
+		results: map[string]e2eexec.Result{
+			"docker network inspect k3d-dcgm-exporter-gpu":       {},
+			"docker volume inspect k3d-dcgm-exporter-gpu-images": {},
+			"docker network rm k3d-dcgm-exporter-gpu": {
+				ExitCode: 1,
+				Stderr:   []byte("network is in use\n"),
+			},
+		},
+	}
+
+	err := Cleanup(context.Background(), runner, io.Discard, clusterConfigForTest(t))
+	if err == nil || !strings.Contains(err.Error(), "docker network rm k3d-dcgm-exporter-gpu") {
+		t.Fatalf("Cleanup() error = %v, want stale network removal failure", err)
+	}
+	if !runner.has("docker", "volume", "rm", "k3d-dcgm-exporter-gpu-images") {
+		t.Fatalf("stale k3d image volume was not removed after network failure: %#v", runner.commands)
+	}
+}
+
+func TestCleanupReportsNetworkInspectFailureAndContinues(t *testing.T) {
+	runner := &recordingRunner{
+		clusterList: "other-cluster 1/1 1/1\n",
+		results: map[string]e2eexec.Result{
+			"docker network inspect k3d-dcgm-exporter-gpu": {
+				ExitCode: 1,
+				Stderr:   []byte("permission denied\n"),
+			},
+			"docker volume inspect k3d-dcgm-exporter-gpu-images": {},
+		},
+	}
+
+	err := Cleanup(context.Background(), runner, io.Discard, clusterConfigForTest(t))
+	if err == nil || !strings.Contains(err.Error(), "docker network inspect k3d-dcgm-exporter-gpu") ||
+		!strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("Cleanup() error = %v, want network inspect failure", err)
+	}
+	if runner.has("docker", "network", "rm", "k3d-dcgm-exporter-gpu") {
+		t.Fatalf("removed network after inspect failure: %#v", runner.commands)
+	}
+	if !runner.has("docker", "volume", "rm", "k3d-dcgm-exporter-gpu-images") {
+		t.Fatalf("stale volume was not removed after network inspect failure: %#v", runner.commands)
+	}
 }
 
 func TestCleanupReturnsLocalClusterListFailure(t *testing.T) {
@@ -260,7 +654,7 @@ func TestCleanupReturnsLocalClusterListFailure(t *testing.T) {
 		"k3d cluster list": {ExitCode: 1, Stderr: []byte("k3d failed\n")},
 	}}
 	var out bytes.Buffer
-	err := Cleanup(context.Background(), runner, &out, DefaultConfig())
+	err := Cleanup(context.Background(), runner, &out, clusterConfigForTest(t))
 	if err == nil || !strings.Contains(err.Error(), "k3d cluster list") {
 		t.Fatalf("Cleanup() error = %v, want k3d list failure", err)
 	}
@@ -269,725 +663,98 @@ func TestCleanupReturnsLocalClusterListFailure(t *testing.T) {
 	}
 }
 
-func TestCleanupSkipsUnmanagedExternalNamespace(t *testing.T) {
-	runner := &recordingRunner{namespaceLabels: map[string]string{
-		"dcgm-exporter":      "someone-else",
-		"dcgm-exporter-dcgm": managedByValue,
-	}}
+// TestCleanupDeletesConfiguredExternalNamespaces verifies cleanup removes
+// namespaces owned by the configured run name.
+func TestCleanupDeletesConfiguredExternalNamespaces(t *testing.T) {
+	runner := &recordingRunner{}
 	var out bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := clusterConfigForTest(t)
 	cfg.Kubeconfig = "/tmp/kubeconfig"
 	if err := Cleanup(context.Background(), runner, &out, cfg); err != nil {
 		t.Fatal(err)
 	}
 
-	if runner.deletedNamespace("dcgm-exporter") {
-		t.Fatalf("deleted unmanaged namespace: %#v", runner.commands)
+	if !runner.deletedNamespace("dcgm-exporter") {
+		t.Fatalf("configured namespace was not deleted: %#v", runner.commands)
 	}
 	if !runner.deletedNamespace("dcgm-exporter-dcgm") {
 		t.Fatalf("managed DCGM namespace was not deleted: %#v", runner.commands)
 	}
-	if !strings.Contains(out.String(), "WARN skipping cleanup for namespace dcgm-exporter") {
-		t.Fatalf("missing unmanaged namespace warning:\n%s", out.String())
+	for _, namespace := range []string{"dcgm-exporter", "dcgm-exporter-dcgm"} {
+		if !runner.has("kubectl", "delete", "namespace", namespace, "--ignore-not-found=true") {
+			t.Fatalf("cleanup did not delete owned namespace %s: %#v", namespace, runner.commands)
+		}
+	}
+	for _, command := range runner.commands {
+		if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "--preconditions") {
+			t.Fatalf("cleanup used an unsupported kubectl precondition flag: %#v", command)
+		}
 	}
 }
 
-func TestCleanupSkipsAbsentExternalNamespace(t *testing.T) {
-	runner := &recordingRunner{namespaceLabels: map[string]string{}}
+// TestCleanupSkipsAbsentExternalNamespaces verifies repeated cleanup handles missing namespaces.
+func TestCleanupSkipsAbsentExternalNamespaces(t *testing.T) {
+	runner := &recordingRunner{results: map[string]e2eexec.Result{
+		"kubectl get namespace dcgm-exporter --ignore-not-found=true -o json":      {},
+		"kubectl get namespace dcgm-exporter-dcgm --ignore-not-found=true -o json": {},
+	}}
 	var out bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := clusterConfigForTest(t)
 	cfg.Kubeconfig = "/tmp/kubeconfig"
 	if err := Cleanup(context.Background(), runner, &out, cfg); err != nil {
 		t.Fatal(err)
 	}
 
 	if runner.deletedNamespace("dcgm-exporter") || runner.deletedNamespace("dcgm-exporter-dcgm") {
-		t.Fatalf("deleted absent namespace: %#v", runner.commands)
+		t.Fatalf("cleanup tried to delete absent namespaces: %#v", runner.commands)
+	}
+	for _, command := range runner.commands {
+		if command.Name != "kubectl" || len(command.Args) < 2 || command.Args[0] != "get" || command.Args[1] != "namespace" {
+			continue
+		}
+		if !hasArg(command.Args, "--ignore-not-found=true") {
+			t.Fatalf("cleanup lookup did not tolerate an absent environment: %#v", command)
+		}
 	}
 }
 
-func TestCleanupReturnsExternalNamespaceLookupFailure(t *testing.T) {
-	runner := &recordingRunner{namespaceLookupFailures: map[string]e2eexec.Result{
-		"dcgm-exporter": {ExitCode: 1, Stderr: []byte("Unable to connect to the server\n")},
+// TestCleanupRefusesAnotherRunsNamespace prevents cleanup from deleting a namespace owned by another run.
+func TestCleanupRefusesAnotherRunsNamespace(t *testing.T) {
+	runner := &recordingRunner{results: map[string]e2eexec.Result{
+		"kubectl get namespace dcgm-exporter --ignore-not-found=true -o json": {
+			Stdout: []byte(`{"metadata":{"uid":"foreign-namespace-uid","labels":{"app.kubernetes.io/managed-by":"dcgm-exporter-e2e","e2eRunName":"other-run"}},"status":{"phase":"Active"}}`),
+		},
+		"kubectl get namespace dcgm-exporter-dcgm --ignore-not-found=true -o json": {},
 	}}
-	var out bytes.Buffer
-	cfg := DefaultConfig()
+	cfg := clusterConfigForTest(t)
 	cfg.Kubeconfig = "/tmp/kubeconfig"
-	err := Cleanup(context.Background(), runner, &out, cfg)
-
-	if err == nil || !strings.Contains(err.Error(), "kubectl get namespace dcgm-exporter") {
-		t.Fatalf("Cleanup() error = %v, want namespace lookup failure", err)
+	err := Cleanup(context.Background(), runner, io.Discard, cfg)
+	if err == nil || !strings.Contains(err.Error(), "refusing to delete namespace") {
+		t.Fatalf("Cleanup() error = %v, want an ownership error", err)
 	}
 	if runner.deletedNamespace("dcgm-exporter") {
-		t.Fatalf("deleted namespace after lookup failure: %#v", runner.commands)
+		t.Fatalf("cleanup deleted a namespace owned by another run: %#v", runner.commands)
 	}
 }
 
-func TestEnsureManagedNamespaceRejectsExistingUnlabeledNamespace(t *testing.T) {
-	runner := &recordingRunner{namespaceLabels: map[string]string{"dcgm-exporter": ""}}
-	var out bytes.Buffer
-	cfg := DefaultConfig()
-	cfg.Kubeconfig = "/tmp/kubeconfig"
-	err := EnsureManagedNamespace(context.Background(), runner, &out, cfg, "dcgm-exporter")
-	if err == nil || !strings.Contains(err.Error(), "already exists without app.kubernetes.io/managed-by=dcgm-exporter-e2e") {
-		t.Fatalf("EnsureManagedNamespace() error = %v, want unlabeled namespace", err)
-	}
-	if runner.has("kubectl", "label", "namespace", "dcgm-exporter") {
-		t.Fatalf("unlabeled namespace was adopted: %#v", runner.commands)
-	}
-}
-
-func TestDeployDCGMRejectsExistingUnlabeledNamespace(t *testing.T) {
-	runner := &recordingRunner{namespaceLabels: map[string]string{"dcgm-exporter-dcgm": ""}}
-	var out bytes.Buffer
-	cfg := DefaultConfig()
-	cfg.Kubeconfig = "/tmp/kubeconfig"
-	dcgm := DefaultDCGMConfig()
-	dcgm.Image = "dcgm:test"
-	err := DeployDCGM(context.Background(), runner, &out, cfg, dcgm)
-	if err == nil || !strings.Contains(err.Error(), "already exists without app.kubernetes.io/managed-by=dcgm-exporter-e2e") {
-		t.Fatalf("DeployDCGM() error = %v, want unlabeled namespace", err)
-	}
-	if runner.has("kubectl", "apply", "-f", "-") {
-		t.Fatalf("unlabeled DCGM namespace was adopted: %#v", runner.commands)
-	}
-}
-
-func TestDeployDCGMDoesNotApplyNamespaceManifest(t *testing.T) {
-	runner := &recordingRunner{namespaceLabels: map[string]string{"dcgm-exporter-dcgm": managedByValue}}
-	var out bytes.Buffer
-	dcgm := DefaultDCGMConfig()
-	dcgm.Image = "dcgm:test"
-	if err := DeployDCGM(context.Background(), runner, &out, DefaultConfig(), dcgm); err != nil {
-		t.Fatal(err)
-	}
-	if runner.stdinContains("kind: Namespace") {
-		t.Fatalf("standalone DCGM deploy applied a namespace manifest: %#v", runner.commands)
-	}
-}
-
-func TestDCGMManifestParsesAsYAML(t *testing.T) {
-	cfg := DefaultConfig()
-	dcgm := DefaultDCGMConfig()
-	dcgm.Image = "dcgm:test"
-	dcgm.ImagePullSecret = "pull-secret"
-
-	manifest := dcgmManifest(cfg, dcgm)
-	if strings.Contains(manifest, "\t") {
-		t.Fatalf("standalone DCGM manifest contains tab indentation:\n%s", manifest)
-	}
-	for _, document := range strings.Split(manifest, "\n---\n") {
-		document = strings.TrimSpace(document)
-		if document == "" {
-			continue
-		}
-		var resource map[string]any
-		if err := yaml.Unmarshal([]byte(document), &resource); err != nil {
-			t.Fatalf("standalone DCGM manifest did not parse:\n%s\nerror: %v", document, err)
-		}
-	}
-}
-
-func TestEnsureImagePullSecretRejectsPartialInputs(t *testing.T) {
-	err := EnsureImagePullSecret(context.Background(), &recordingRunner{}, io.Discard, DefaultConfig(), "dcgm-exporter", "pull-secret", "")
-	if err == nil || !strings.Contains(err.Error(), "requires both secret name and docker config path") {
-		t.Fatalf("EnsureImagePullSecret() error = %v, want partial input error", err)
-	}
-}
-
-func TestImportImageIfPresentDetectsK3dImportErrors(t *testing.T) {
+func TestDeployExporterDoesNotInvokeHelmWhenImagePullSecretPreflightFails(t *testing.T) {
 	runner := &recordingRunner{results: map[string]e2eexec.Result{
-		"k3d image import dcgm:test -c dcgm-exporter-gpu": {
-			Stderr: []byte("ERRO failed to import images in node 'k3d-dcgm-exporter-gpu-agent-0'\n"),
+		`kubectl -n dcgm-exporter get secret pull-secret -o jsonpath={.type}{"\t"}{.data.\.dockerconfigjson}`: {
+			Stdout: []byte("Opaque\te30="),
 		},
 	}}
-	var out bytes.Buffer
-
-	imported, err := ImportImageIfPresentWithResult(context.Background(), runner, &out, DefaultConfig(), "dcgm:test", "k3d_import_dcgm_image")
-	if !imported {
-		t.Fatal("ImportImageIfPresentWithResult() imported = false, want true")
-	}
-	if err == nil || !strings.Contains(err.Error(), "reported image import errors") {
-		t.Fatalf("ImportImageIfPresentWithResult() error = %v, want import error", err)
-	}
-	if !strings.Contains(out.String(), "failed to import images") {
-		t.Fatalf("import log did not include k3d error output:\n%s", out.String())
-	}
-}
-
-func TestEnsureLocalCreatesClusterAndDevicePlugin(t *testing.T) {
-	runner := &recordingRunner{}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-
-	kubeconfig, err := EnsureLocal(context.Background(), runner, &out, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if kubeconfig != cfg.Kubeconfig {
-		t.Fatalf("kubeconfig = %q, want %q", kubeconfig, cfg.Kubeconfig)
-	}
-	if !runner.has("k3d", "cluster", "create", "dcgm-exporter-gpu") {
-		t.Fatalf("missing k3d cluster create: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "apply", "-f", "-") {
-		t.Fatalf("missing RuntimeClass apply: %#v", runner.commands)
-	}
-	if !runner.has("helm", "upgrade", "--install", "nvidia-device-plugin") {
-		t.Fatalf("missing device plugin install: %#v", runner.commands)
-	}
-	if !runner.hasEnv("KUBECONFIG=" + cfg.Kubeconfig) {
-		t.Fatalf("missing kubeconfig env: %#v", runner.commands)
-	}
-}
-
-func TestEnsureLocalWaitsForGPUAllocatable(t *testing.T) {
-	runner := &recordingRunner{}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	if !runner.has("sh", "allocatable.nvidia") {
-		t.Fatalf("missing allocatable GPU wait: %#v", runner.commands)
-	}
-	if !strings.Contains(out.String(), "kubectl_wait_gpu_allocatable") {
-		t.Fatalf("missing allocatable GPU wait log:\n%s", out.String())
-	}
-}
-
-func TestEnsureLocalReturnsGPUAllocatableWaitFailure(t *testing.T) {
-	runner := &gpuWaitFailureRunner{}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	cfg.WaitTimeout = "1ms"
-
-	_, err := EnsureLocal(context.Background(), runner, &out, cfg)
-	if err == nil || !strings.Contains(err.Error(), "cluster did not report allocatable nvidia.com/gpu resources before timeout") {
-		t.Fatalf("EnsureLocal() error = %v, want allocatable GPU wait failure", err)
-	}
-}
-
-func TestResetDevicePluginReappliesRuntimeClass(t *testing.T) {
-	runner := &recordingRunner{}
-	var out bytes.Buffer
-
-	if err := ResetDevicePlugin(context.Background(), runner, &out, DefaultConfig(), defaultLocalConfigForTest(t)); err != nil {
-		t.Fatal(err)
-	}
-	if !runner.has("kubectl", "apply", "-f", "-") {
-		t.Fatalf("reset did not reapply RuntimeClass: %#v", runner.commands)
-	}
-	if !runner.has("helm", "upgrade", "--install", "nvidia-device-plugin") {
-		t.Fatalf("reset did not reinstall device plugin: %#v", runner.commands)
-	}
-}
-
-func TestEnsureLocalUsesDualStackK3DArgs(t *testing.T) {
-	runner := &recordingRunner{}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	cfg.IPFamily = "ipv6"
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	if !runner.has("k3d", "--network", "k3d-dcgm-exporter-gpu") {
-		t.Fatalf("missing k3d dual-stack network args: %#v", runner.commands)
-	}
-	if !runner.has("k3d", "--cluster-cidr=10.42.0.0/16,fd42::/56@server:*") {
-		t.Fatalf("missing dual-stack cluster CIDR: %#v", runner.commands)
-	}
-	if !strings.Contains(out.String(), "ipv6 uses dualstack") {
-		t.Fatalf("missing ipv6 dualstack warning:\n%s", out.String())
-	}
-}
-
-func TestEnsureLocalMountsNvidiaCapabilitiesAtRuntimePath(t *testing.T) {
-	runner := &recordingRunner{}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	cfg.NvidiaCapabilitiesPath = t.TempDir()
-	cfg.NvidiaCapabilitiesMount = "/run/nvidia/host-driver"
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	if !runner.has("k3d", "--volume", "/:/run/nvidia/host-driver:ro@agent:*") {
-		t.Fatalf("missing NVIDIA host driver root mount: %#v", runner.commands)
-	}
-}
-
-func TestEnsureLocalRemovesStaleOwnedDockerResourcesBeforeCreate(t *testing.T) {
-	runner := &recordingRunner{
-		results: map[string]e2eexec.Result{
-			"docker network inspect k3d-dcgm-exporter-gpu":       {},
-			"docker volume inspect k3d-dcgm-exporter-gpu-images": {},
-		},
-	}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !runner.has("docker", "network", "rm", "k3d-dcgm-exporter-gpu") {
-		t.Fatalf("stale k3d network was not removed: %#v", runner.commands)
-	}
-	if !runner.has("docker", "volume", "rm", "k3d-dcgm-exporter-gpu-images") {
-		t.Fatalf("stale k3d image volume was not removed: %#v", runner.commands)
-	}
-	if !runner.has("k3d", "cluster", "create", "dcgm-exporter-gpu") {
-		t.Fatalf("cluster was not created after stale cleanup: %#v", runner.commands)
-	}
-}
-
-func TestEnsureLocalRecreatesStaleNodeImage(t *testing.T) {
-	runner := &recordingRunner{
-		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
-		outputs: map[string]string{
-			"docker inspect k3d-dcgm-exporter-gpu-server-0 --format={{.Config.Image}}": "stale-image\n",
-			"kubectl get svc kubernetes -n default -o jsonpath={.spec.ipFamilies[*]}":  "IPv4 IPv6\n",
-		},
-	}
-	var out bytes.Buffer
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
-		t.Fatalf("stale cluster was not deleted: %#v", runner.commands)
-	}
-	if !runner.has("k3d", "cluster", "create", "dcgm-exporter-gpu") {
-		t.Fatalf("stale cluster was not recreated: %#v", runner.commands)
-	}
-}
-
-func TestEnsureLocalReusesMatchingCluster(t *testing.T) {
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	runner := &recordingRunner{
-		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
-		outputs: map[string]string{
-			"docker inspect k3d-dcgm-exporter-gpu-server-0 --format={{.Config.Image}}": cfg.NodeImage + "\n",
-			"docker ps -a --format {{.Names}}":                                         "k3d-dcgm-exporter-gpu-server-0\nk3d-dcgm-exporter-gpu-agent-0\n",
-			"kubectl get svc kubernetes -n default -o jsonpath={.spec.ipFamilies[*]}":  "IPv4 IPv6\n",
-		},
-	}
-	var out bytes.Buffer
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
-		t.Fatalf("matching cluster was deleted: %#v", runner.commands)
-	}
-	if runner.has("k3d", "cluster", "create", "dcgm-exporter-gpu") {
-		t.Fatalf("matching cluster was recreated: %#v", runner.commands)
-	}
-}
-
-func TestEnsureLocalRecreatesWrongAgentCount(t *testing.T) {
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	runner := &recordingRunner{
-		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
-		outputs: map[string]string{
-			"docker inspect k3d-dcgm-exporter-gpu-server-0 --format={{.Config.Image}}": cfg.NodeImage + "\n",
-			"docker ps -a --format {{.Names}}":                                         "k3d-dcgm-exporter-gpu-server-0\n",
-		},
-	}
-	var out bytes.Buffer
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
-		t.Fatalf("wrong-agent-count cluster was not deleted: %#v", runner.commands)
-	}
-	if !strings.Contains(out.String(), "has 0 agents, want 1") {
-		t.Fatalf("missing agent-count recreate log:\n%s", out.String())
-	}
-}
-
-func TestEnsureLocalRecreatesWithoutGPUDevice(t *testing.T) {
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	runner := &recordingRunner{
-		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
-		outputs: map[string]string{
-			"docker inspect k3d-dcgm-exporter-gpu-server-0 --format={{.Config.Image}}": cfg.NodeImage + "\n",
-			"docker ps -a --format {{.Names}}":                                         "k3d-dcgm-exporter-gpu-server-0\nk3d-dcgm-exporter-gpu-agent-0\n",
-		},
-		results: map[string]e2eexec.Result{
-			"docker exec k3d-dcgm-exporter-gpu-server-0 test -e /dev/nvidiactl": {ExitCode: 1},
-			"docker exec k3d-dcgm-exporter-gpu-agent-0 test -e /dev/nvidiactl":  {ExitCode: 1},
-		},
-	}
-	var out bytes.Buffer
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
-		t.Fatalf("no-GPU cluster was not deleted: %#v", runner.commands)
-	}
-	if !strings.Contains(out.String(), "does not expose /dev/nvidiactl") {
-		t.Fatalf("missing GPU-device recreate log:\n%s", out.String())
-	}
-}
-
-func TestEnsureLocalRecreatesWrongIPFamily(t *testing.T) {
-	cfg := defaultLocalConfigForTest(t)
-	cfg.BuildNodeImage = false
-	cfg.IPFamily = "dualstack"
-	runner := &recordingRunner{
-		clusterList: "dcgm-exporter-gpu 1/1 1/1\n",
-		outputs: map[string]string{
-			"docker inspect k3d-dcgm-exporter-gpu-server-0 --format={{.Config.Image}}": cfg.NodeImage + "\n",
-			"docker ps -a --format {{.Names}}":                                         "k3d-dcgm-exporter-gpu-server-0\nk3d-dcgm-exporter-gpu-agent-0\n",
-			"kubectl get svc kubernetes -n default -o jsonpath={.spec.ipFamilies[*]}":  "IPv4\n",
-		},
-	}
-	var out bytes.Buffer
-
-	if _, err := EnsureLocal(context.Background(), runner, &out, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if !runner.has("k3d", "cluster", "delete", "dcgm-exporter-gpu") {
-		t.Fatalf("wrong-IP-family cluster was not deleted: %#v", runner.commands)
-	}
-}
-
-func TestPrepareGPUOperatorSharedGPUInstallsAndWaitsForResources(t *testing.T) {
-	runner := &gpuOperatorRunner{}
-	var out bytes.Buffer
-	cfg := DefaultConfig()
-	cfg.LocalKubeconfig = "/tmp/kubeconfig"
-	featureCfg := FeatureConfig{
-		GPUOperator:       "install",
-		Root:              versionRootForTest(t),
-		SharedGPUReplicas: "4",
-		WaitTimeout:       "1ms",
-		ExporterImage:     "registry.example/dcgm-exporter:dev",
-		Dependencies:      testDependencies(),
-	}
-
-	cleanup, err := PrepareGPUOperator(context.Background(), runner, &out, cfg, featureCfg, "gpuOperatorSharedGpu")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup(context.Background())
-
-	if !runner.has("kubectl", "apply", "-f", "-") {
-		t.Fatalf("missing shared GPU ConfigMap apply: %#v", runner.commands)
-	}
-	if !runner.has("helm", "upgrade", "--install", "gpu-operator") {
-		t.Fatalf("missing GPU Operator install: %#v", runner.commands)
-	}
-	if !runner.has("helm", "dcgmExporter.imagePullPolicy=IfNotPresent") {
-		t.Fatalf("local GPU Operator install should prefer imported images: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "-n", "gpu-operator", "get", "pods") {
-		t.Fatalf("missing GPU Operator exporter wait: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "get", "nodes", "-o", "yaml") {
-		t.Fatalf("missing shared GPU resource wait: %#v", runner.commands)
-	}
-	if !runner.stdinContains("replicas: 4") {
-		t.Fatalf("shared GPU ConfigMap did not use requested replicas; commands = %#v", runner.commands)
-	}
-}
-
-func TestPrepareGPUOperatorIPv6InstallsDualStackServiceAndWaitsForIPv6(t *testing.T) {
-	runner := &gpuOperatorRunner{}
-	var out bytes.Buffer
-	cfg := DefaultConfig()
-	cfg.Kubeconfig = "/tmp/kubeconfig"
-	featureCfg := FeatureConfig{
-		GPUOperator:   "install",
-		Root:          versionRootForTest(t),
-		WaitTimeout:   "1ms",
-		ExporterImage: "registry.example/dcgm-exporter:dev",
-		BusyboxImage:  "busybox:1.36.1",
-		Dependencies:  testDependencies(),
-	}
-
-	cleanup, err := PrepareGPUOperator(context.Background(), runner, &out, cfg, featureCfg, "gpuOperatorIPv6")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup(context.Background())
-
-	if runner.has("helm", "dcgmExporter.service.ipFamilyPolicy") {
-		t.Fatalf("GPU Operator install used unsupported service fields: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "-n", "gpu-operator", "get", "service", "nvidia-dcgm-exporter") {
-		t.Fatalf("missing GPU Operator source service read: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "apply", "-f", "-") || !runner.stdinContains(`"ipFamilyPolicy":"RequireDualStack"`) || !runner.stdinContains(`"ipFamilies":["IPv4","IPv6"]`) {
-		t.Fatalf("missing e2e-owned dual-stack service apply: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "-n", "gpu-operator", "get", "service", gpuOperatorIPv6ServiceName) {
-		t.Fatalf("missing GPU Operator IPv6 service verification: %#v", runner.commands)
-	}
-	if !runner.has("kubectl", "-n", "dcgm-exporter", "run", "gpu-operator-ipv6-preflight") {
-		t.Fatalf("missing GPU Operator IPv6 connectivity preflight: %#v", runner.commands)
-	}
-}
-
-func TestProbeCapabilitiesSupportsConfigurableSharedGPU(t *testing.T) {
-	runner := &capabilityRunner{}
-	cfg := DefaultConfig()
-	caps, err := ProbeCapabilities(context.Background(), runner, cfg, FeatureConfig{
-		Root:               versionRootForTest(t),
-		SharedGPUConfigure: "auto",
-		SharedGPUReplicas:  "4",
-		Dependencies:       testDependencies(),
+	err := DeployExporter(context.Background(), runner, io.Discard, DefaultConfig(), ExporterConfig{
+		Chart:           "./deployment",
+		Image:           "registry.example/dcgm-exporter:dev",
+		ImagePullSecret: "pull-secret",
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "kubernetes.io/dockerconfigjson") {
+		t.Fatalf("DeployExporter() error = %v, want invalid pull Secret error", err)
 	}
-
-	sharedGPU := capabilityByName(caps, "cluster:shared_gpu")
-	if sharedGPU.Status != "supported" {
-		t.Fatalf("shared_gpu status = %s, want supported; capability = %#v", sharedGPU.Status, sharedGPU)
+	if runner.has("helm", "upgrade") {
+		t.Fatalf("DeployExporter() invoked Helm after pull Secret preflight failed: %#v", runner.commands)
 	}
-	if sharedGPU.Source != "validation shared GPU setup" {
-		t.Fatalf("shared_gpu source = %q, want validation shared GPU setup", sharedGPU.Source)
+	if runner.has("kubectl", "get", "namespace") || runner.has("kubectl", "create", "namespace") {
+		t.Fatalf("DeployExporter() changed namespace state after pull Secret preflight failed: %#v", runner.commands)
 	}
-	if !strings.Contains(sharedGPU.Evidence, "replicas=4") {
-		t.Fatalf("shared_gpu evidence = %q, want replicas=4", sharedGPU.Evidence)
-	}
-}
-
-func TestGPUOperatorExporterImageArgsIncludesDigest(t *testing.T) {
-	imageArgs, err := gpuOperatorExporterImageArgs(FeatureConfig{
-		ExporterImage: "registry.example/nvidia/dcgm-exporter:dev@" + clusterTestDigest,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := strings.Join(imageArgs, " ")
-	for _, want := range []string{
-		"dcgmExporter.repository=registry.example/nvidia",
-		"dcgmExporter.image=dcgm-exporter",
-		"dcgmExporter.digest=" + clusterTestDigest,
-	} {
-		if !strings.Contains(args, want) {
-			t.Fatalf("gpuOperatorExporterImageArgs() = %q, missing %q", args, want)
-		}
-	}
-}
-
-func TestGPUOperatorExporterImageArgsRejectsInvalidReference(t *testing.T) {
-	if _, err := gpuOperatorExporterImageArgs(FeatureConfig{ExporterImage: "invalid"}); err == nil {
-		t.Fatal("gpuOperatorExporterImageArgs() error = nil")
-	}
-}
-
-type recordingRunner struct {
-	commands                []e2eexec.Command
-	namespaceLabels         map[string]string
-	namespaceLookupFailures map[string]e2eexec.Result
-	clusterList             string
-	outputs                 map[string]string
-	results                 map[string]e2eexec.Result
-}
-
-type gpuWaitFailureRunner struct {
-	recordingRunner
-}
-
-func (r *gpuWaitFailureRunner) Run(ctx context.Context, command e2eexec.Command) e2eexec.Result {
-	if command.Name == "sh" && strings.Contains(strings.Join(command.Args, " "), "allocatable.nvidia") {
-		r.commands = append(r.commands, command)
-		return streamResult(command, e2eexec.Result{ExitCode: 1, Stderr: []byte("cluster did not report allocatable nvidia.com/gpu resources before timeout\n")})
-	}
-	return r.recordingRunner.Run(ctx, command)
-}
-
-func (r *recordingRunner) Run(_ context.Context, command e2eexec.Command) e2eexec.Result {
-	r.commands = append(r.commands, command)
-	key := strings.TrimSpace(command.Name + " " + strings.Join(command.Args, " "))
-	if r.results != nil {
-		if result, ok := r.results[key]; ok {
-			return streamResult(command, result)
-		}
-	}
-	if command.Name == "kubectl" && len(command.Args) >= 4 && command.Args[0] == "get" && command.Args[1] == "namespace" {
-		namespace := command.Args[2]
-		if r.namespaceLookupFailures != nil {
-			if result, ok := r.namespaceLookupFailures[namespace]; ok {
-				return streamResult(command, result)
-			}
-		}
-		label := managedByValue
-		if r.namespaceLabels != nil {
-			var ok bool
-			label, ok = r.namespaceLabels[namespace]
-			if !ok {
-				if hasArg(command.Args, "--ignore-not-found=true") {
-					return e2eexec.Result{}
-				}
-				return e2eexec.Result{ExitCode: 1}
-			}
-		}
-		if strings.Contains(strings.Join(command.Args, " "), "{.metadata.name}") {
-			return streamResult(command, e2eexec.Result{Stdout: []byte(namespace + "\t" + label + "\n")})
-		}
-		return streamResult(command, e2eexec.Result{Stdout: []byte(label + "\n")})
-	}
-	if r.outputs != nil {
-		if output, ok := r.outputs[key]; ok {
-			return streamResult(command, e2eexec.Result{Stdout: []byte(output)})
-		}
-	}
-	if command.Name == "k3d" && strings.Join(command.Args, " ") == "cluster list" && r.clusterList != "" {
-		return streamResult(command, e2eexec.Result{Stdout: []byte(r.clusterList)})
-	}
-	if command.Name == "docker" && len(command.Args) >= 3 {
-		switch strings.Join(command.Args[:2], " ") {
-		case "network inspect", "volume inspect":
-			return streamResult(command, e2eexec.Result{ExitCode: 1})
-		}
-	}
-	return streamResult(command, e2eexec.Result{Stdout: []byte("ok\n")})
-}
-
-func streamResult(command e2eexec.Command, result e2eexec.Result) e2eexec.Result {
-	if command.Stdout != nil && len(result.Stdout) != 0 {
-		_, _ = command.Stdout.Write(result.Stdout)
-	}
-	if command.Stderr != nil && len(result.Stderr) != 0 {
-		_, _ = command.Stderr.Write(result.Stderr)
-	}
-	return result
-}
-
-func hasArg(args []string, want string) bool {
-	for _, arg := range args {
-		if arg == want {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *recordingRunner) has(name string, args ...string) bool {
-	for _, command := range r.commands {
-		if command.Name != name {
-			continue
-		}
-		joined := strings.Join(command.Args, " ")
-		if strings.Contains(joined, strings.Join(args, " ")) {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *recordingRunner) hasEnv(value string) bool {
-	for _, command := range r.commands {
-		for _, env := range command.Env {
-			if env == value {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (r *recordingRunner) deletedNamespace(namespace string) bool {
-	for _, command := range r.commands {
-		if command.Name == "kubectl" && len(command.Args) >= 3 && command.Args[0] == "delete" && command.Args[1] == "namespace" && command.Args[2] == namespace {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *recordingRunner) stdinContains(value string) bool {
-	for _, command := range r.commands {
-		if strings.Contains(string(command.Stdin), value) {
-			return true
-		}
-	}
-	return false
-}
-
-type gpuOperatorRunner struct {
-	recordingRunner
-	clusterPolicyCalls int
-}
-
-func (r *gpuOperatorRunner) Run(_ context.Context, command e2eexec.Command) e2eexec.Result {
-	r.commands = append(r.commands, command)
-	if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "get clusterpolicy -o name") {
-		r.clusterPolicyCalls++
-		if r.clusterPolicyCalls == 1 {
-			return e2eexec.Result{ExitCode: 1, Stderr: []byte("not found\n")}
-		}
-		return e2eexec.Result{Stdout: []byte("clusterpolicy/gpu-cluster-policy\n")}
-	}
-	if command.Name == "kubectl" && len(command.Args) >= 3 && command.Args[0] == "get" && command.Args[1] == "namespace" {
-		return e2eexec.Result{ExitCode: 1}
-	}
-	if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "get nodes -o yaml") {
-		return e2eexec.Result{Stdout: []byte("nvidia.com/gpu.replicas: \"4\"\n")}
-	}
-	if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "-n gpu-operator get pods") {
-		return e2eexec.Result{Stdout: []byte("nvidia-dcgm-exporter Running registry.example/nvidia/dcgm-exporter:dev\n")}
-	}
-	if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "-n gpu-operator get svc -o") {
-		return e2eexec.Result{Stdout: []byte("nvidia-dcgm-exporter 9400\n")}
-	}
-	if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "-n gpu-operator get service nvidia-dcgm-exporter -o json") {
-		return e2eexec.Result{Stdout: []byte(`{"spec":{"selector":{"app":"nvidia-dcgm-exporter"}}}` + "\n")}
-	}
-	if command.Name == "kubectl" && strings.Contains(strings.Join(command.Args, " "), "-n gpu-operator get service "+gpuOperatorIPv6ServiceName+" -o") {
-		return e2eexec.Result{Stdout: []byte("RequireDualStack IPv4 IPv6 10.43.0.10 fd43::10\n")}
-	}
-	return e2eexec.Result{Stdout: []byte("ok\n")}
-}
-
-type capabilityRunner struct {
-	recordingRunner
-}
-
-func (r *capabilityRunner) Run(_ context.Context, command e2eexec.Command) e2eexec.Result {
-	r.commands = append(r.commands, command)
-	joined := strings.Join(command.Args, " ")
-	switch {
-	case strings.Contains(joined, "jsonpath={range .items[*]}{.status.allocatable.nvidia\\.com/gpu}"):
-		return e2eexec.Result{Stdout: []byte("1\n")}
-	case strings.Contains(joined, "get nodes -o json"):
-		return e2eexec.Result{Stdout: []byte("{}\n")}
-	case strings.Contains(joined, "get clusterpolicy"):
-		return e2eexec.Result{ExitCode: 1, Stderr: []byte("not found\n")}
-	default:
-		return e2eexec.Result{Stdout: []byte("ok\n")}
-	}
-}
-
-func capabilityByName(caps []capability.Capability, name string) capability.Capability {
-	for _, cap := range caps {
-		if cap.Name == name {
-			return cap
-		}
-	}
-	return capability.Capability{Name: name}
 }

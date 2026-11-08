@@ -17,8 +17,10 @@
 package static_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -35,13 +37,52 @@ func TestRepoPathResolvesSourceAndPackageFiles(t *testing.T) {
 	}
 }
 
+// TestE2ELocalNodeConfiguresLegacyRuntimeDriverRoot keeps the local e2e image on the legacy runtime and host-driver root.
+func TestE2ELocalNodeConfiguresLegacyRuntimeDriverRoot(t *testing.T) {
+	contents, err := os.ReadFile(repoPath(t, "hack", "e2e-local-node.Dockerfile"))
+	if err != nil {
+		t.Fatalf("read e2e local node Dockerfile: %v", err)
+	}
+	var effectiveLines []string
+	for _, line := range strings.Split(string(contents), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			effectiveLines = append(effectiveLines, line)
+		}
+	}
+	effective := strings.Join(effectiveLines, "\n")
+	if !strings.Contains(effective, `sed -i 's/^mode = .*/mode = "legacy"/' /etc/nvidia-container-runtime/config.toml`) {
+		t.Fatal("e2e local node Dockerfile must configure the legacy NVIDIA runtime")
+	}
+	if !strings.Contains(effective, `sed -i 's|^#root = "/run/nvidia/driver"|root = "/run/nvidia/host-driver"|' /etc/nvidia-container-runtime/config.toml`) {
+		t.Fatal("e2e local node Dockerfile must configure the legacy runtime driver root")
+	}
+}
+
 // repoPath resolves a repository-relative file for source and package-mode tests.
 func repoPath(t *testing.T, elems ...string) string {
 	t.Helper()
 
-	candidates := [][]string{
-		elems,
-		append([]string{"..", ".."}, elems...),
+	workingDir := mustGetwd(t)
+	packageRoot, err := isValidationPackageRoot(workingDir)
+	if err != nil {
+		t.Fatalf("inspect validation package root %s: %v", workingDir, err)
+	}
+
+	var candidates [][]string
+	if packageRoot {
+		// Packaged tests run from the package root. Do not fall back to a source
+		// checkout above it, which could hide a missing packaged asset.
+		candidates = append(candidates, append([]string{workingDir}, elems...))
+	} else {
+		if testSrcDir, workspace := os.Getenv("TEST_SRCDIR"), os.Getenv("TEST_WORKSPACE"); testSrcDir != "" && workspace != "" {
+			candidates = append(candidates, append([]string{testSrcDir, workspace}, elems...))
+		}
+		candidates = append(
+			candidates,
+			append([]string{"..", ".."}, elems...),
+			elems,
+		)
 	}
 	for _, candidate := range candidates {
 		path := filepath.Join(candidate...)
@@ -56,6 +97,29 @@ func repoPath(t *testing.T, elems ...string) string {
 
 	t.Fatalf("repository path %q was not found from %s", filepath.Join(elems...), mustGetwd(t))
 	return ""
+}
+
+// isValidationPackageRoot reports whether root is the extracted validation package.
+func isValidationPackageRoot(root string) (bool, error) {
+	info, err := os.Stat(filepath.Join(root, "bin", "dcgm-exporter-static.test"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		return false, nil
+	}
+
+	_, err = os.Stat(filepath.Join(root, "go.mod"))
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // mustGetwd returns the current working directory for failure messages.

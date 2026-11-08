@@ -1,0 +1,55 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "counters",
+    srcs = [
+        "const.go",
+        "counter_config.go",
+        "dcp_capabilities.go",
+        "exporter_counters.go",
+        "types.go",
+        "variables.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/counters",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/fieldexport",
+        "//internal/pkg/kubeclient",
+        "//internal/pkg/os",
+        "//internal/pkg/signalcatalog",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@io_k8s_api//core/v1:core",
+        "@io_k8s_apimachinery//pkg/apis/meta/v1:meta",
+        "@io_k8s_client_go//kubernetes",
+    ],
+)
+
+go_test(
+    name = "counters_test",
+    srcs = [
+        "const_test.go",
+        "counter_config_test.go",
+        "csv_contract_test.go",
+        "default_counter_sources_test.go",
+        "exporter_counters_test.go",
+        "shipped_metric_names_test.go",
+        "types_test.go",
+    ],
+    data = [
+        "//:counter_contract_data",
+        "//tests/host:source_files",
+    ],
+    embed = [":counters"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/signalcatalog",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_k8s_api//core/v1:core",
+        "@io_k8s_apimachinery//pkg/apis/meta/v1:meta",
+        "@io_k8s_client_go//kubernetes",
+        "@io_k8s_client_go//kubernetes/fake",
+    ],
+)

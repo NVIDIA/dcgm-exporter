@@ -24,6 +24,9 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
+// Provider supplies discovered GPU, CPU, and switch topology to collectors and
+// renderers. Info is the production implementation; callers can provide a
+// small fake in tests when they only need the read-only topology contract.
 type Provider interface {
 	GPUCount() uint
 	GPUs() []GPUInfo
@@ -42,13 +45,20 @@ type Provider interface {
 	IsLinkWatched(linkIndex uint, switchID uint) bool
 }
 
+// GPUInfo describes one GPU and the MIG instances and NVLink ports discovered
+// beneath it. Info returns these values to code that builds GPU metric labels.
 type GPUInfo struct {
-	DeviceInfo   dcgm.Device
-	GPUInstances []GPUInstanceInfo
-	MigEnabled   bool
-	NvLinks      []dcgm.NvLinkStatus
+	// Status distinguishes a known detached GPU from a missing GPU.
+	Status           dcgm.EntityStatus
+	SyntheticGPUUUID bool `json:"-"`
+	DeviceInfo       dcgm.Device
+	GPUInstances     []GPUInstanceInfo
+	MigEnabled       bool
+	NvLinks          []dcgm.NvLinkStatus
 }
 
+// GPUInstanceInfo describes one MIG GPU instance and its compute instances.
+// It is nested in GPUInfo after device discovery has built the MIG hierarchy.
 type GPUInstanceInfo struct {
 	Info             dcgm.MigEntityInfo
 	ProfileName      string
@@ -56,18 +66,24 @@ type GPUInstanceInfo struct {
 	ComputeInstances []ComputeInstanceInfo
 }
 
+// ComputeInstanceInfo describes one MIG compute instance. It is nested in its
+// parent GPUInstanceInfo for collectors that need a compute-instance entity.
 type ComputeInstanceInfo struct {
 	InstanceInfo dcgm.MigEntityInfo
 	ProfileName  string
 	EntityId     uint
 }
 
+// CPUInfo describes a CPU entity and the cores selected beneath it. Info
+// returns these values when CPU or CPU-core metrics are configured.
 type CPUInfo struct {
 	EntityId uint
 	Cores    []uint
 	Serial   string
 }
 
+// SwitchInfo describes an NVSwitch entity and its selected NVLink ports. Info
+// returns these values when switch or link metrics are configured.
 type SwitchInfo struct {
 	EntityId uint
 	NvLinks  []dcgm.NvLinkStatus

@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestChunkFields splits a field list into chunks of at most the limit, keeps the order,
+// and returns nil for an empty list.
 func TestChunkFields(t *testing.T) {
 	fields := make([]dcgm.Short, 255)
 	for i := range fields {
@@ -66,6 +68,8 @@ func TestChunkFields(t *testing.T) {
 	}
 }
 
+// TestDedupeFieldsThenChunkFields checks that duplicate field IDs are dropped before chunking, so the
+// first-seen order is kept in a single chunk.
 func TestDedupeFieldsThenChunkFields(t *testing.T) {
 	fields := dedupeFields([]dcgm.Short{1, 2, 2, 3})
 	got := chunkFields(fields, maxFieldIDsPerFieldGroup)

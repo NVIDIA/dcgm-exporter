@@ -38,16 +38,17 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
-// MockReader is a mock implementation of rand.Reader that always returns an error
+// MockReader supplies no bytes and a configured error for random-input failures.
 type MockReader struct {
 	Err error
 }
 
+// Read returns the configured result without filling the destination.
 func (r *MockReader) Read(_ []byte) (n int, err error) {
 	return 0, r.Err
 }
 
-// RequireLinux checks if tests are being executed on a Linux platform or not
+// RequireLinux skips a test whose platform-specific behavior requires Linux.
 func RequireLinux(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -55,6 +56,7 @@ func RequireLinux(t *testing.T) {
 	}
 }
 
+// MockGPUDeviceInfo builds a GPU inventory with the supplied instance hierarchy.
 func MockGPUDeviceInfo(
 	ctrl *gomock.Controller, gpuCount int, gpuToGpuInstanceInfos map[int][]deviceinfo.GPUInstanceInfo,
 ) *mockdeviceinfo.MockProvider {
@@ -81,6 +83,7 @@ func MockGPUDeviceInfo(
 	return mockSystemInfo
 }
 
+// MockCPUDeviceInfo supplies CPU topology and exact parent/core watch membership.
 func MockCPUDeviceInfo(
 	ctrl *gomock.Controller, cpuCount int, cpuToCores map[int][]uint, watchedCPUs map[uint]bool,
 	watchedCores map[WatchedEntityKey]bool, infoType dcgm.Field_Entity_Group,
@@ -116,6 +119,7 @@ func MockCPUDeviceInfo(
 	return mockSystemInfo
 }
 
+// MockSwitchDeviceInfo supplies switch/link topology and watch membership without GPUs.
 func MockSwitchDeviceInfo(
 	ctrl *gomock.Controller, switchCount int, switchToNvLinks map[int][]dcgm.NvLinkStatus,
 	watchedSwitches map[uint]bool, watchedLinks map[WatchedEntityKey]bool, infoType dcgm.Field_Entity_Group,
@@ -149,15 +153,15 @@ func MockSwitchDeviceInfo(
 
 	mockSystemInfo.EXPECT().Switches().Return(mockSwitches).AnyTimes()
 	mockSystemInfo.EXPECT().InfoType().Return(infoType).AnyTimes()
-	// Add expectation for GPUs() call that createNVLinkGroups makes
+	// Link discovery may also query GPU inventory; this fixture has only switches.
 	mockSystemInfo.EXPECT().GPUs().Return([]deviceinfo.GPUInfo{}).AnyTimes()
-	// Add expectations for GPU-related methods that monitorAllLinks calls
 	mockSystemInfo.EXPECT().GPUCount().Return(uint(0)).AnyTimes()
 
 	return mockSystemInfo
 }
 
-// GetStructPrivateFieldValue returns private field value
+// GetStructPrivateFieldValue reads an unexported field from an addressable struct.
+// The caller supplies a pointer and a type T matching that field's storage.
 func GetStructPrivateFieldValue[T any](t *testing.T, v any, fieldName string) T {
 	t.Helper()
 	var result T
@@ -186,6 +190,7 @@ func GetStructPrivateFieldValue[T any](t *testing.T, v any, fieldName string) T 
 	return *realPtr
 }
 
+// CreateTmpDir creates a fixture directory and returns a callback that removes it.
 func CreateTmpDir(t *testing.T) (string, func()) {
 	path, err := os.MkdirTemp("", "dcgm-exporter")
 	require.NoError(t, err)
@@ -195,12 +200,14 @@ func CreateTmpDir(t *testing.T) (string, func()) {
 	}
 }
 
+// MockPodResourcesServer exposes synthetic kubelet allocations for configured GPU IDs.
 type MockPodResourcesServer struct {
 	v1.UnimplementedPodResourcesListerServer
 	resourceName string
 	gpus         []string
 }
 
+// NewMockPodResourcesServer binds a synthetic allocation service to its resource and IDs.
 func NewMockPodResourcesServer(resourceName string, gpus []string) *MockPodResourcesServer {
 	return &MockPodResourcesServer{
 		resourceName: resourceName,
@@ -208,6 +215,7 @@ func NewMockPodResourcesServer(resourceName string, gpus []string) *MockPodResou
 	}
 }
 
+// List reports one synthetic pod and container for each configured GPU ID.
 func (s *MockPodResourcesServer) List(
 	ctx context.Context, req *v1.ListPodResourcesRequest,
 ) (*v1.ListPodResourcesResponse, error) {
@@ -236,6 +244,7 @@ func (s *MockPodResourcesServer) List(
 	}, nil
 }
 
+// Get reports all configured GPU IDs on the first synthetic pod.
 func (s *MockPodResourcesServer) Get(
 	ctx context.Context, req *v1.GetPodResourcesRequest,
 ) (*v1.GetPodResourcesResponse, error) {
@@ -258,6 +267,7 @@ func (s *MockPodResourcesServer) Get(
 	}, nil
 }
 
+// GetAllocatableResources reports the configured IDs as node-allocatable devices.
 func (s *MockPodResourcesServer) GetAllocatableResources(
 	ctx context.Context, req *v1.AllocatableResourcesRequest,
 ) (*v1.AllocatableResourcesResponse, error) {
@@ -271,6 +281,8 @@ func (s *MockPodResourcesServer) GetAllocatableResources(
 	}, nil
 }
 
+// StartMockServer serves a Unix socket until its returned stop callback runs.
+// The serving goroutine reports unexpected failures; the callback waits for its exit.
 func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	l, err := net.Listen("unix", socket)
 	require.NoError(t, err)
@@ -296,6 +308,7 @@ func StartMockServer(t *testing.T, server *grpc.Server, socket string) func() {
 	}
 }
 
+// FieldType selects data fields, function fields, or both during fixture inspection.
 type FieldType int
 
 const (
@@ -304,7 +317,8 @@ const (
 	All
 )
 
-// GetFields returns a map of fields of a struct, including unexported fields, based on the specified field type.
+// GetFields reads selected data or function fields from a struct.
+// Pass an addressable struct pointer when reading unexported fields.
 func GetFields(input interface{}, fieldType FieldType) map[string]interface{} {
 	result := make(map[string]interface{})
 	val := reflect.ValueOf(input)
@@ -349,6 +363,7 @@ func GetFields(input interface{}, fieldType FieldType) map[string]interface{} {
 	return result
 }
 
+// StrToByteArray copies a string into a zero-padded DCGM text-value fixture.
 func StrToByteArray(str string) [4096]byte {
 	var byteArray [4096]byte
 	copy(byteArray[:], str)

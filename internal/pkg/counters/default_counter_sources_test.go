@@ -26,24 +26,20 @@ import (
 )
 
 const (
-	totalEnergyConsumptionField = "DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION"
-	powerManagementLimitField   = "DCGM_FI_DEV_POWER_MGMT_LIMIT"
-	enforcedPowerLimitField     = "DCGM_FI_DEV_ENFORCED_POWER_LIMIT"
-	retiredPendingField         = "DCGM_FI_DEV_RETIRED_PENDING"
-	nvlinkBandwidthTotalField   = "DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL"
-	nvlinkBandwidthL0Field      = "DCGM_FI_DEV_NVLINK_BANDWIDTH_L0"
+	powerLimitRequestedField = "DCGM_FI_DEV_BOARD_POWER_LIMIT_REQUESTED_WATTS"
+	powerLimitEnforcedField  = "DCGM_FI_DEV_BOARD_POWER_LIMIT_ENFORCED_WATTS"
+	pageRetiredPendingField  = "DCGM_FI_DEV_PAGE_RETIRED_PENDING"
+	nvlinkThroughputField    = "DCGM_FI_DEV_NVLINK_THROUGHPUT_BYTES_PER_SECOND"
+	framebufferCapacityField = "DCGM_FI_DEV_FB_CAPACITY_BYTES"
 
-	totalEnergyConsumptionHelp = "Total energy consumption since the driver was last reloaded (in mJ)."
-	powerManagementLimitHelp   = "Configured power management limit (in W)."
-	enforcedPowerLimitHelp     = "Effective power limit enforced by the driver after all limiters (in W)."
-	retiredPendingHelp         = "Whether pages are pending retirement (1 means pending and 0 means not pending)."
-	nvlinkBandwidthTotalHelp   = "Aggregate NVLink throughput across all lanes (in MB/s)."
-	nvlinkBandwidthL0Help      = "NVLink lane 0 throughput (in MB/s)."
-
-	nvlinkBandwidthTotalRow       = nvlinkBandwidthTotalField + ", gauge, " + nvlinkBandwidthTotalHelp
-	commentedNVLinkBandwidthL0Row = "# " + nvlinkBandwidthL0Field + ", gauge, " + nvlinkBandwidthL0Help
+	powerLimitRequestedHelp = "Configured board power limit (in W)."
+	powerLimitEnforcedHelp  = "Effective board power limit enforced by the driver after all limiters (in W)."
+	pageRetiredPendingHelp  = "Whether pages are pending retirement (1 means pending and 0 means not pending)."
+	nvlinkThroughputHelp    = "Total NVLink throughput across all lanes in bytes per second."
+	framebufferCapacityHelp = "Total framebuffer capacity in bytes."
 )
 
+// metricMetadata holds the type, help text, and comment state for one metric field.
 type metricMetadata struct {
 	promType  string
 	help      string
@@ -66,148 +62,199 @@ var profilingTotalFields = []string{
 	"DCGM_FI_PROF_FP16_CYCLES_ACTIVE_TOTAL",
 }
 
+// TestShippedMetricMetadata expects selected fields in the default and DCP CSVs to have
+// the listed type, help text and commented-out state.
 func TestShippedMetricMetadata(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected map[string]metricMetadata
-	}{
-		{
-			name: "default counters",
-			path: "../../../etc/default-counters.csv",
-			expected: map[string]metricMetadata{
-				totalEnergyConsumptionField: {promType: "counter", help: totalEnergyConsumptionHelp},
-				powerManagementLimitField:   {promType: "gauge", help: powerManagementLimitHelp, commented: true},
-				enforcedPowerLimitField:     {promType: "gauge", help: enforcedPowerLimitHelp, commented: true},
-				retiredPendingField:         {promType: "gauge", help: retiredPendingHelp, commented: true},
-				nvlinkBandwidthTotalField:   {promType: "gauge", help: nvlinkBandwidthTotalHelp},
-				nvlinkBandwidthL0Field:      {promType: "gauge", help: nvlinkBandwidthL0Help, commented: true},
-			},
-		},
-		{
-			name: "DCP metrics included",
-			path: "../../../etc/dcp-metrics-included.csv",
-			expected: map[string]metricMetadata{
-				totalEnergyConsumptionField: {promType: "counter", help: totalEnergyConsumptionHelp},
-				powerManagementLimitField:   {promType: "gauge", help: powerManagementLimitHelp, commented: true},
-				enforcedPowerLimitField:     {promType: "gauge", help: enforcedPowerLimitHelp, commented: true},
-				retiredPendingField:         {promType: "gauge", help: retiredPendingHelp, commented: true},
-				nvlinkBandwidthTotalField:   {promType: "gauge", help: nvlinkBandwidthTotalHelp},
-				nvlinkBandwidthL0Field:      {promType: "gauge", help: nvlinkBandwidthL0Help, commented: true},
-			},
-		},
-		{
-			name: "Helm metrics configmap",
-			path: "../../../deployment/templates/metrics-configmap.yaml",
-			expected: map[string]metricMetadata{
-				totalEnergyConsumptionField: {promType: "counter", help: totalEnergyConsumptionHelp},
-				powerManagementLimitField:   {promType: "gauge", help: powerManagementLimitHelp, commented: true},
-				enforcedPowerLimitField:     {promType: "gauge", help: enforcedPowerLimitHelp, commented: true},
-				retiredPendingField:         {promType: "gauge", help: retiredPendingHelp, commented: true},
-				nvlinkBandwidthTotalField:   {promType: "gauge", help: nvlinkBandwidthTotalHelp},
-				nvlinkBandwidthL0Field:      {promType: "gauge", help: nvlinkBandwidthL0Help, commented: true},
-			},
-		},
-		{
-			name: "Helm values sample",
-			path: "../../../deployment/values.yaml",
-			expected: map[string]metricMetadata{
-				totalEnergyConsumptionField: {promType: "counter", help: totalEnergyConsumptionHelp, commented: true},
-				powerManagementLimitField:   {promType: "gauge", help: powerManagementLimitHelp, commented: true},
-				enforcedPowerLimitField:     {promType: "gauge", help: enforcedPowerLimitHelp, commented: true},
-				retiredPendingField:         {promType: "gauge", help: retiredPendingHelp, commented: true},
-				nvlinkBandwidthTotalField:   {promType: "gauge", help: nvlinkBandwidthTotalHelp, commented: true},
-				nvlinkBandwidthL0Field:      {promType: "gauge", help: nvlinkBandwidthL0Help, commented: true},
-			},
-		},
-		{
-			name: "host integration fixture",
-			path: "../../../tests/host/testdata/default-counters.csv",
-			expected: map[string]metricMetadata{
-				totalEnergyConsumptionField: {promType: "counter", help: totalEnergyConsumptionHelp},
-				powerManagementLimitField:   {promType: "gauge", help: powerManagementLimitHelp, commented: true},
-				enforcedPowerLimitField:     {promType: "gauge", help: enforcedPowerLimitHelp, commented: true},
-				retiredPendingField:         {promType: "gauge", help: retiredPendingHelp, commented: true},
-				nvlinkBandwidthTotalField:   {promType: "gauge", help: nvlinkBandwidthTotalHelp},
-			},
-		},
+	expected := map[string]metricMetadata{
+		powerLimitRequestedField: {promType: "gauge", help: powerLimitRequestedHelp, commented: true},
+		powerLimitEnforcedField:  {promType: "gauge", help: powerLimitEnforcedHelp, commented: true},
+		pageRetiredPendingField:  {promType: "gauge", help: pageRetiredPendingHelp, commented: true},
+		nvlinkThroughputField:    {promType: "gauge", help: nvlinkThroughputHelp},
+		framebufferCapacityField: {promType: "gauge", help: framebufferCapacityHelp},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			for fieldName, expected := range tt.expected {
+	for _, path := range []string{
+		"../../../etc/default-counters.csv",
+		"../../../etc/dcp-metrics-included.csv",
+	} {
+		t.Run(path, func(t *testing.T) {
+			for fieldName, want := range expected {
 				t.Run(fieldName, func(t *testing.T) {
-					require.Equal(t, expected, findMetricMetadata(t, tt.path, fieldName))
+					require.Equal(t, want, findMetricMetadata(t, path, fieldName))
 				})
 			}
 		})
 	}
 }
 
-func TestShippedNVLinkBandwidthRowsUseCanonicalSpacing(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected []string
-	}{
-		{
-			name: "default counters",
-			path: "../../../etc/default-counters.csv",
-			expected: []string{
-				nvlinkBandwidthTotalRow,
-				commentedNVLinkBandwidthL0Row,
-			},
-		},
-		{
-			name: "DCP metrics included",
-			path: "../../../etc/dcp-metrics-included.csv",
-			expected: []string{
-				nvlinkBandwidthTotalRow,
-				commentedNVLinkBandwidthL0Row,
-			},
-		},
-		{
-			name: "Helm metrics configmap",
-			path: "../../../deployment/templates/metrics-configmap.yaml",
-			expected: []string{
-				nvlinkBandwidthTotalRow,
-				commentedNVLinkBandwidthL0Row,
-			},
-		},
-		{
-			name: "Helm values sample",
-			path: "../../../deployment/values.yaml",
-			expected: []string{
-				"# " + nvlinkBandwidthTotalRow,
-				commentedNVLinkBandwidthL0Row,
-			},
-		},
-		{
-			name: "host integration fixture",
-			path: "../../../tests/host/testdata/default-counters.csv",
-			expected: []string{
-				nvlinkBandwidthTotalRow,
-			},
-		},
-	}
+// renamedDefaultMetrics lists the deprecated DCGM fields whose current names
+// the shipped profiles enable. The deprecated rows are no longer shipped.
+var renamedDefaultMetrics = []struct {
+	oldName, oldType, oldHelp string
+	newName, newType, newHelp string
+}{
+	{
+		"DCGM_FI_DEV_SM_CLOCK", "gauge", "SM clock frequency (in MHz).",
+		"DCGM_FI_DEV_SM_CLOCK_HERTZ", "gauge", "SM clock frequency in hertz.",
+	},
+	{
+		"DCGM_FI_DEV_MEM_CLOCK", "gauge", "Memory clock frequency (in MHz).",
+		"DCGM_FI_DEV_MEMORY_CLOCK_HERTZ", "gauge", "Memory clock frequency in hertz.",
+	},
+	{
+		"DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION", "counter", "Total energy consumption since the driver was last reloaded (in mJ).",
+		"DCGM_FI_DEV_GPU_ENERGY_JOULES_TOTAL", "counter", "GPU energy consumed since the driver was reloaded in joules.",
+	},
+	{
+		"DCGM_FI_DEV_GPU_UTIL", "gauge", "GPU utilization (in %).",
+		"DCGM_FI_DEV_GPU_UTIL_RATIO", "gauge", "GPU utilization as a ratio.",
+	},
+	{
+		"DCGM_FI_DEV_MEM_COPY_UTIL", "gauge", "Memory utilization (in %).",
+		"DCGM_FI_DEV_MEMORY_UTIL_RATIO", "gauge", "Memory utilization as a ratio.",
+	},
+	{
+		"DCGM_FI_DEV_ENC_UTIL", "gauge", "Encoder utilization (in %).",
+		"DCGM_FI_DEV_ENC_UTIL_RATIO", "gauge", "Encoder utilization as a ratio.",
+	},
+	{
+		"DCGM_FI_DEV_DEC_UTIL", "gauge", "Decoder utilization (in %).",
+		"DCGM_FI_DEV_DEC_UTIL_RATIO", "gauge", "Decoder utilization as a ratio.",
+	},
+	{
+		"DCGM_FI_DEV_FB_FREE", "gauge", "Framebuffer memory free (in MiB).",
+		"DCGM_FI_DEV_FB_FREE_BYTES", "gauge", "Free framebuffer memory in bytes.",
+	},
+	{
+		"DCGM_FI_DEV_FB_USED", "gauge", "Framebuffer memory used (in MiB).",
+		"DCGM_FI_DEV_FB_USED_BYTES", "gauge", "Used framebuffer memory in bytes.",
+	},
+	{
+		"DCGM_FI_DEV_FB_RESERVED", "gauge", "Framebuffer memory reserved (in MiB).",
+		"DCGM_FI_DEV_FB_RESERVED_BYTES", "gauge", "Reserved framebuffer memory in bytes.",
+	},
+	{
+		"DCGM_FI_DEV_MEMORY_TEMP", "gauge", "Memory temperature (in C).",
+		"DCGM_FI_DEV_MEMORY_TEMP_CELSIUS", "gauge", "Memory temperature (in C).",
+	},
+	{
+		"DCGM_FI_DEV_GPU_TEMP", "gauge", "GPU temperature (in C).",
+		"DCGM_FI_DEV_GPU_TEMP_CELSIUS", "gauge", "GPU temperature (in C).",
+	},
+	{
+		"DCGM_FI_DEV_POWER_USAGE", "gauge", "Power draw (in W).",
+		"DCGM_FI_DEV_BOARD_POWER_WATTS", "gauge", "Power draw (in W).",
+	},
+	{
+		"DCGM_FI_DEV_PCIE_REPLAY_COUNTER", "counter", "Total number of PCIe retries.",
+		"DCGM_FI_DEV_PCIE_REPLAY_TOTAL", "counter", "Total number of PCIe retries.",
+	},
+	{
+		"DCGM_FI_DEV_XID_ERRORS", "gauge", "Value of the last XID error encountered.",
+		"DCGM_FI_DEV_XID_ERROR", "gauge", "Value of the last XID error encountered.",
+	},
+	{
+		"DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS", "counter", "Number of remapped rows for uncorrectable errors",
+		"DCGM_FI_DEV_ROW_REMAP_UNCORRECTABLE_TOTAL", "counter", "Number of remapped rows for uncorrectable errors",
+	},
+	{
+		"DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS", "counter", "Number of remapped rows for correctable errors",
+		"DCGM_FI_DEV_ROW_REMAP_CORRECTABLE_TOTAL", "counter", "Number of remapped rows for correctable errors",
+	},
+	{
+		"DCGM_FI_DEV_ROW_REMAP_FAILURE", "gauge", "Whether remapping of rows has failed",
+		"DCGM_FI_DEV_ROW_REMAP_FAILED", "gauge", "Whether remapping of rows has failed",
+	},
+	{
+		"DCGM_FI_DRIVER_VERSION", "label", "Driver Version",
+		"DCGM_FI_SYSTEM_DRIVER_VERSION", "label", "Driver Version",
+	},
+	{
+		"DCGM_FI_PROF_GR_ENGINE_ACTIVE", "gauge", "Ratio of time the graphics engine is active.",
+		"DCGM_FI_PROF_GR_ENGINE_UTIL_RATIO", "gauge", "Ratio of time the graphics engine is active.",
+	},
+	{
+		"DCGM_FI_PROF_PIPE_TENSOR_ACTIVE", "gauge", "Ratio of cycles the tensor (HMMA) pipe is active.",
+		"DCGM_FI_PROF_TENSOR_UTIL_RATIO", "gauge", "Ratio of cycles the tensor (HMMA) pipe is active.",
+	},
+	{
+		"DCGM_FI_PROF_DRAM_ACTIVE", "gauge", "Ratio of cycles the device memory interface is active sending or receiving data.",
+		"DCGM_FI_PROF_DRAM_UTIL_RATIO", "gauge", "Ratio of cycles the device memory interface is active sending or receiving data.",
+	},
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := stdos.ReadFile(tt.path)
+func TestShippedProfilesUseCurrentFieldNames(t *testing.T) {
+	for _, path := range []string{
+		"../../../etc/default-counters.csv",
+		"../../../etc/dcp-metrics-included.csv",
+	} {
+		t.Run(path, func(t *testing.T) {
+			data, err := stdos.ReadFile(path)
 			require.NoError(t, err)
 
-			lines := strings.Split(string(data), "\n")
-			for i := range lines {
-				lines[i] = strings.TrimSpace(lines[i])
-			}
-
-			for _, expected := range tt.expected {
-				require.Contains(t, lines, expected)
+			for _, row := range renamedDefaultMetrics {
+				require.Equal(t,
+					metricMetadata{promType: row.newType, help: row.newHelp},
+					findMetricMetadata(t, path, row.newName))
+				require.NotRegexp(t, `(?m)^#?\s*`+row.oldName+`,`, string(data),
+					"the deprecated %s row must not ship, even commented out", row.oldName)
 			}
 		})
 	}
 }
 
+// unitChangedFields are the deprecated names whose replacement reports a
+// different unit and therefore has a different DCGM field ID.
+var unitChangedFields = map[string]bool{
+	"DCGM_FI_DEV_SM_CLOCK": true, "DCGM_FI_DEV_MEM_CLOCK": true,
+	"DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION": true, "DCGM_FI_DEV_GPU_UTIL": true,
+	"DCGM_FI_DEV_MEM_COPY_UTIL": true, "DCGM_FI_DEV_ENC_UTIL": true,
+	"DCGM_FI_DEV_DEC_UTIL": true, "DCGM_FI_DEV_FB_FREE": true,
+	"DCGM_FI_DEV_FB_USED": true, "DCGM_FI_DEV_FB_RESERVED": true,
+}
+
+// TestDeprecatedFieldNamesStillResolve checks that a custom collectors file can
+// keep a deprecated name. A name-only rename keeps its field ID; a unit change
+// moves to a new field ID.
+func TestDeprecatedFieldNamesStillResolve(t *testing.T) {
+	for _, row := range renamedDefaultMetrics {
+		if strings.HasPrefix(row.oldName, "DCGM_FI_PROF_") {
+			continue // Profiling fields also need a DCP capability snapshot.
+		}
+		t.Run(row.oldName, func(t *testing.T) {
+			oldSet, err := ExtractCounters([][]string{{row.oldName, row.oldType, row.oldHelp}}, DCPCapabilities{})
+			require.NoError(t, err)
+			newSet, err := ExtractCounters([][]string{{row.newName, row.newType, row.newHelp}}, DCPCapabilities{})
+			require.NoError(t, err)
+			require.Len(t, oldSet.DCGMCounters, 1)
+			require.Len(t, newSet.DCGMCounters, 1)
+			require.Equal(t, row.oldName, oldSet.DCGMCounters[0].FieldName)
+			if unitChangedFields[row.oldName] {
+				require.NotEqual(t, oldSet.DCGMCounters[0].FieldID, newSet.DCGMCounters[0].FieldID)
+			} else {
+				require.Equal(t, oldSet.DCGMCounters[0].FieldID, newSet.DCGMCounters[0].FieldID)
+			}
+		})
+	}
+}
+
+func TestShippedNVLinkThroughputIsOn(t *testing.T) {
+	for _, path := range []string{
+		"../../../etc/default-counters.csv",
+		"../../../etc/dcp-metrics-included.csv",
+	} {
+		t.Run(path, func(t *testing.T) {
+			metadata := findMetricMetadata(t, path, nvlinkThroughputField)
+			require.False(t, metadata.commented,
+				"%s must keep %s enabled by default", path, nvlinkThroughputField)
+			require.Equal(t, "gauge", metadata.promType,
+				"%s must expose %s as a gauge", path, nvlinkThroughputField)
+		})
+	}
+}
+
+// TestLegacyCompatibilityMetricMetadata expects selected fields in the 1.x compatibility
+// CSV to have the listed type, help text and commented-out state.
 func TestLegacyCompatibilityMetricMetadata(t *testing.T) {
 	const path = "../../../etc/1.x-compatibility-metrics.csv"
 
@@ -234,6 +281,8 @@ func TestLegacyCompatibilityMetricMetadata(t *testing.T) {
 	}
 }
 
+// TestProfilingTotalFieldsAreCommentedOnly expects the default and DCP CSVs to list each
+// profiling total field as a commented-out row and never as an active one.
 func TestProfilingTotalFieldsAreCommentedOnly(t *testing.T) {
 	tests := []struct {
 		name string
@@ -241,8 +290,6 @@ func TestProfilingTotalFieldsAreCommentedOnly(t *testing.T) {
 	}{
 		{name: "default counters", path: "../../../etc/default-counters.csv"},
 		{name: "DCP metrics included", path: "../../../etc/dcp-metrics-included.csv"},
-		{name: "Helm metrics configmap", path: "../../../deployment/templates/metrics-configmap.yaml"},
-		{name: "Helm values sample", path: "../../../deployment/values.yaml"},
 	}
 
 	for _, tt := range tests {
@@ -252,34 +299,31 @@ func TestProfilingTotalFieldsAreCommentedOnly(t *testing.T) {
 	}
 }
 
-func TestFabricHealthOptionalMetricTypes(t *testing.T) {
-	fields := []string{
-		"DCGM_FI_DEV_FABRIC_HEALTH_SUMMARY",
-		"DCGM_FI_DEV_FABRIC_HEALTH_MASK",
-	}
-
+// TestFabricHealthMetricUsesSummary expects the default and DCP CSVs to list the fabric
+// health summary as a commented-out gauge and not to mention the fabric health mask.
+func TestFabricHealthMetricUsesSummary(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
 	}{
 		{name: "default counters", path: "../../../etc/default-counters.csv"},
 		{name: "DCP metrics included", path: "../../../etc/dcp-metrics-included.csv"},
-		{name: "Helm metrics configmap", path: "../../../deployment/templates/metrics-configmap.yaml"},
-		{name: "Helm values sample", path: "../../../deployment/values.yaml"},
-		{name: "integration default counters", path: "../../../tests/host/testdata/default-counters.csv"},
 	}
 
 	for _, tt := range tests {
-		for _, field := range fields {
-			t.Run(tt.name+"/"+field, func(t *testing.T) {
-				metadata := findMetricMetadata(t, tt.path, field)
-				require.Equal(t, "gauge", metadata.promType)
-				require.True(t, metadata.commented)
-			})
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := findMetricMetadata(t, tt.path, "DCGM_FI_DEV_FABRIC_HEALTH_SUMMARY")
+			require.Equal(t, "gauge", metadata.promType)
+			require.True(t, metadata.commented)
+
+			data, err := stdos.ReadFile(tt.path)
+			require.NoError(t, err)
+			require.NotContains(t, string(data), "DCGM_FI_DEV_FABRIC_HEALTH_MASK")
+		})
 	}
 }
 
+// assertFieldsCommentedOnly checks that the requested fields appear only as commented rows.
 func assertFieldsCommentedOnly(t *testing.T, path string, fieldNames []string) {
 	t.Helper()
 
@@ -307,6 +351,7 @@ func assertFieldsCommentedOnly(t *testing.T, path string, fieldNames []string) {
 	}
 }
 
+// findMetricMetadata reads the type, help text, and comment state for one field.
 func findMetricMetadata(t *testing.T, path string, fieldName string) metricMetadata {
 	t.Helper()
 
@@ -337,4 +382,37 @@ func findMetricMetadata(t *testing.T, path string, fieldName string) metricMetad
 
 	require.Lenf(t, matches, 1, "field %s should appear exactly once in %s", fieldName, path)
 	return matches[0]
+}
+
+// TestSystemHealthStatusDefaultSourcesMatch checks that the DCP metrics
+// file documents DCGM_EXP_SYSTEM_HEALTH_STATUS as a commented row with the
+// same type and help text as etc/default-counters.csv.
+func TestSystemHealthStatusDefaultSourcesMatch(t *testing.T) {
+	const defaultCountersPath = "../../../etc/default-counters.csv"
+
+	expected := findMetricMetadata(t, defaultCountersPath, DCGMExpSystemHealthStatus)
+	require.True(t, expected.commented)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "DCP metrics included", path: "../../../etc/dcp-metrics-included.csv"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := findMetricMetadata(t, tt.path, DCGMExpSystemHealthStatus)
+			require.True(t, actual.commented)
+			require.Equalf(
+				t,
+				expected,
+				actual,
+				"%s must match %s for %s",
+				tt.path,
+				defaultCountersPath,
+				DCGMExpSystemHealthStatus,
+			)
+		})
+	}
 }

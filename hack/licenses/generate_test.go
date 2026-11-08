@@ -22,6 +22,7 @@ import (
 	"testing"
 )
 
+// TestParseTargets checks that whitespace and repeated targets produce a sorted shipping list.
 func TestParseTargets(t *testing.T) {
 	t.Parallel()
 
@@ -42,6 +43,7 @@ func TestParseTargets(t *testing.T) {
 	}
 }
 
+// TestParseTargetsRejectsInvalidValue rejects an incomplete GOOS/GOARCH pair.
 func TestParseTargetsRejectsInvalidValue(t *testing.T) {
 	t.Parallel()
 
@@ -50,9 +52,11 @@ func TestParseTargetsRejectsInvalidValue(t *testing.T) {
 	}
 }
 
+// TestIsLegalFileName separates supported legal-file spellings from ordinary documentation.
 func TestIsLegalFileName(t *testing.T) {
 	t.Parallel()
 
+	// These cases distinguish accepted legal-file names from unrelated Markdown files.
 	for _, test := range []struct {
 		name string
 		want bool
@@ -66,6 +70,7 @@ func TestIsLegalFileName(t *testing.T) {
 		{name: "licenses.md", want: false},
 	} {
 		test := test
+		// Each parallel subtest owns one filename and its independently specified expectation.
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			if got := isLegalFileName(test.name); got != test.want {
@@ -75,6 +80,8 @@ func TestIsLegalFileName(t *testing.T) {
 	}
 }
 
+// TestReadNoticeFilesUsesSortedTopLevelLegalFiles checks the input selection and
+// stable order used when assembling a module notice.
 func TestReadNoticeFilesUsesSortedTopLevelLegalFiles(t *testing.T) {
 	t.Parallel()
 
@@ -104,6 +111,7 @@ func TestReadNoticeFilesUsesSortedTopLevelLegalFiles(t *testing.T) {
 	}
 }
 
+// TestReadNoticeFilesRejectsBlankLegalFile prevents an empty license from satisfying collection.
 func TestReadNoticeFilesRejectsBlankLegalFile(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +126,8 @@ func TestReadNoticeFilesRejectsBlankLegalFile(t *testing.T) {
 	}
 }
 
+// TestRenderNoticesContract pins the complete notice header, module attribution,
+// legal-file headings, and separators independently of the renderer.
 func TestRenderNoticesContract(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +175,8 @@ notice text
 	}
 }
 
+// TestReadNoticeFilesPreservesExactLegalBytes protects trailing spaces and line endings
+// in authoritative legal material from normalization.
 func TestReadNoticeFilesPreservesExactLegalBytes(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +194,8 @@ func TestReadNoticeFilesPreservesExactLegalBytes(t *testing.T) {
 	}
 }
 
+// TestListModulesDisablesWorkspaceOverrides checks that a developer workspace
+// cannot replace dependencies in the shipping binary notice closure.
 func TestListModulesDisablesWorkspaceOverrides(t *testing.T) {
 	moduleDirectory := t.TempDir()
 	commandLog := configureFakeGo(t, moduleDirectory)
@@ -201,6 +215,32 @@ func TestListModulesDisablesWorkspaceOverrides(t *testing.T) {
 	assertCommandLog(t, commandLog, "list -buildvcs=false -deps -json ./cmd/dcgm-exporter\n")
 }
 
+// TestGoCommandsUseBazelWorkspaceDirectory checks source-relative Go commands
+// when Bazel starts the generator from its runfiles directory.
+func TestGoCommandsUseBazelWorkspaceDirectory(t *testing.T) {
+	moduleDirectory := t.TempDir()
+	commandLog := configureFakeGo(t, moduleDirectory)
+	workingDirectoryLog := filepath.Join(t.TempDir(), "working-directory")
+	workspaceDirectory := t.TempDir()
+	t.Setenv("BUILD_WORKSPACE_DIRECTORY", workspaceDirectory)
+	t.Setenv("FAKE_GO_WORKING_DIRECTORY", workingDirectoryLog)
+
+	if _, err := newGoCommand("version").Output(); err != nil {
+		t.Fatalf("run Go command: %v", err)
+	}
+
+	assertCommandLog(t, commandLog, "version\n")
+	contents, err := os.ReadFile(workingDirectoryLog)
+	if err != nil {
+		t.Fatalf("read Go working directory: %v", err)
+	}
+	if got := strings.TrimSpace(string(contents)); got != workspaceDirectory {
+		t.Errorf("Go working directory = %q, want %q", got, workspaceDirectory)
+	}
+}
+
+// TestCollectComponentsVerifiesModuleCacheBeforeReadingNotices uses a license
+// created during verification to prove that unverified module contents are not read.
 func TestCollectComponentsVerifiesModuleCacheBeforeReadingNotices(t *testing.T) {
 	moduleDirectory := t.TempDir()
 	commandLog := configureFakeGo(t, moduleDirectory)
@@ -220,6 +260,8 @@ func TestCollectComponentsVerifiesModuleCacheBeforeReadingNotices(t *testing.T) 
 	assertCommandLog(t, commandLog, "list -buildvcs=false -deps -json ./cmd/dcgm-exporter\nmod verify\n")
 }
 
+// TestCollectComponentsExcludesNVIDIAFirstPartyModules checks that only third-party
+// module identities and legal files enter the generated notice.
 func TestCollectComponentsExcludesNVIDIAFirstPartyModules(t *testing.T) {
 	moduleDirectory := t.TempDir()
 	configureFakeGo(t, moduleDirectory)
@@ -247,6 +289,8 @@ func TestCollectComponentsExcludesNVIDIAFirstPartyModules(t *testing.T) {
 	}
 }
 
+// TestCollectComponentsStopsOnModuleVerificationFailure requires checksum failures
+// to stop collection with the command context and verification output intact.
 func TestCollectComponentsStopsOnModuleVerificationFailure(t *testing.T) {
 	moduleDirectory := t.TempDir()
 	commandLog := configureFakeGo(t, moduleDirectory)
@@ -263,6 +307,8 @@ func TestCollectComponentsStopsOnModuleVerificationFailure(t *testing.T) {
 	assertCommandLog(t, commandLog, "list -buildvcs=false -deps -json ./cmd/dcgm-exporter\nmod verify\n")
 }
 
+// configureFakeGo installs a test-local executable that records command order and
+// validates workspace isolation before returning controlled module metadata.
 func configureFakeGo(t *testing.T, moduleDirectory string) string {
 	t.Helper()
 
@@ -274,6 +320,9 @@ printf '%s\n' "$*" >> "${FAKE_GO_LOG}"
 if [ "${GOWORK:-}" != "off" ]; then
 	printf 'unexpected GOWORK=%s\n' "${GOWORK:-}" >&2
 	exit 40
+fi
+if [ -n "${FAKE_GO_WORKING_DIRECTORY:-}" ]; then
+	pwd > "${FAKE_GO_WORKING_DIRECTORY}"
 fi
 if [ "$1" = "list" ]; then
 	cat "${FAKE_GO_LIST_OUTPUT}"
@@ -288,6 +337,10 @@ if [ "$1" = "mod" ] && [ "$2" = "verify" ]; then
 		printf 'test license\n' > "${FAKE_GO_LICENSE_PATH}"
 	fi
 	printf 'all modules verified\n'
+	exit 0
+fi
+if [ "$1" = "version" ]; then
+	printf 'go version go1.27.1 linux/amd64\n'
 	exit 0
 fi
 printf 'unexpected go command: %s\n' "$*" >&2
@@ -311,6 +364,7 @@ exit 42
 	return commandLog
 }
 
+// assertCommandLog checks the exact Go command sequence, including verification order.
 func assertCommandLog(t *testing.T, path, want string) {
 	t.Helper()
 

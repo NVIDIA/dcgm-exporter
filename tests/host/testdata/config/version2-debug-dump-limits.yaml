@@ -1,0 +1,24 @@
+version: 2
+metrics:
+  - name: gpu
+    every: 1s
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+    enrichment:
+      kubernetes: false
+      container: false
+      hpc_jobs: false
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1
+debug_dump:
+  enabled: true
+  directory: ${DUMP_DIRECTORY}
+  compression: false
+  min_interval: 1s
+  max_file_bytes: ${MAX_FILE_BYTES}
+  max_total_bytes: ${MAX_TOTAL_BYTES}
+  max_files: ${MAX_FILES}

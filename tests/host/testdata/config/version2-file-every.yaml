@@ -1,0 +1,20 @@
+version: 2
+metrics:
+  - name: gpu
+    enrichment: {kubernetes: false, container: false, hpc_jobs: false}
+    every: 2s
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+      - name: DCGM_FI_DEV_BOARD_POWER_WATTS
+        prometheus_type: gauge
+        help: Power draw.
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1
+sources:
+  dcgm:
+    watch:
+      max_keep_age: 12s

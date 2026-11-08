@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "image",
+    srcs = ["reference.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/image",
+    visibility = ["//:__subpackages__"],
+    deps = ["@com_github_distribution_reference//:reference"],
+)
+
+go_test(
+    name = "image_test",
+    srcs = ["reference_test.go"],
+    embed = [":image"],
+)

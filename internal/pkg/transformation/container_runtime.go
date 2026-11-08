@@ -25,6 +25,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,9 +34,13 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
+
+// containerListPath is the runtime API request that lists running containers.
+const containerListPath = "/containers/json"
 
 const (
 	defaultContainerRuntimeTimeout   = 2 * time.Second
@@ -50,7 +56,8 @@ type containerRuntime interface {
 
 // containerInfo carries the final sanitized value for the Prometheus container label.
 type containerInfo struct {
-	Name string
+	Name       string
+	Identities []collector.ContainerIdentity
 }
 
 // httpDoer is the subset of http.Client used by the runtime client.
@@ -71,16 +78,19 @@ func (e containerRuntimeStatusError) Error() string {
 
 // dockerCompatibleRuntime queries a Docker-compatible runtime API over HTTP.
 type dockerCompatibleRuntime struct {
-	baseURL  string
-	client   httpDoer
-	timeout  time.Duration
-	cacheTTL time.Duration
-	now      func() time.Time
+	preserveIdentity bool
+	baseURL          string
+	client           httpDoer
+	timeout          time.Duration
+	cacheTTL         time.Duration
+	now              func() time.Time
 
 	mu            sync.Mutex
 	cached        map[string][]containerInfo
 	cachedAt      time.Time
 	staleWarnOnce sync.Once
+
+	inspectWarnings warningLimiter
 }
 
 // newDockerCompatibleRuntime creates a runtime client backed by a Unix socket.
@@ -138,6 +148,79 @@ func (r *dockerCompatibleRuntime) ContainersByGPU(ctx context.Context, deviceInf
 	return cloneContainersByGPU(fresh), nil
 }
 
+// checkLabelRequests makes the requests that container labels depend on and
+// reports a runtime that refuses or cannot answer them: the container list for
+// one container, then the inspect request for that container. A proxy may allow
+// the list but refuse inspect. When the list is empty there is nothing to
+// inspect, so the list alone is the proof. It closes its connection afterwards.
+func (r *dockerCompatibleRuntime) checkLabelRequests(ctx context.Context) error {
+	if r.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+	}
+
+	if client, ok := r.client.(interface{ CloseIdleConnections() }); ok {
+		defer client.CloseIdleConnections()
+	}
+
+	var containers []dockerContainerListItem
+	if err := r.getJSON(ctx, containerListPath+"?limit=1", &containers); err != nil {
+		return err
+	}
+
+	if len(containers) == 0 || containers[0].ID == "" {
+		return nil
+	}
+
+	id := containers[0].ID
+	var inspect dockerContainerInspect
+	err := r.getJSON(ctx, containerInspectPath(id), &inspect)
+
+	var statusErr containerRuntimeStatusError
+	if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusNotFound {
+		// A 404 means the container stopped between the two requests, unless the
+		// list still shows it: then a proxy refused the inspect request with 404.
+		return r.confirmContainerGone(ctx, id, err)
+	}
+
+	if err != nil {
+		return fmt.Errorf("container inspect request failed: %w", err)
+	}
+
+	return nil
+}
+
+// confirmContainerGone asks the container list, including stopped containers,
+// for the container whose inspect request returned 404. It returns nil when the
+// container is gone and an error when the list still shows it, because then the
+// runtime refused the inspect request instead of the container going away.
+func (r *dockerCompatibleRuntime) confirmContainerGone(ctx context.Context, id string, notFound error) error {
+	filter, err := json.Marshal(map[string][]string{"id": {id}})
+	if err != nil {
+		return fmt.Errorf("container inspect request failed: %w", notFound)
+	}
+
+	query := url.Values{"all": {"1"}, "filters": {string(filter)}}
+
+	var containers []dockerContainerListItem
+	if err := r.getJSON(ctx, containerListPath+"?"+query.Encode(), &containers); err != nil {
+		return fmt.Errorf("container inspect request returned HTTP 404 and the follow-up container list failed: %w",
+			errors.Join(notFound, err))
+	}
+
+	if len(containers) > 0 {
+		return fmt.Errorf("container inspect request was refused for a listed container: %w", notFound)
+	}
+
+	return nil
+}
+
+// containerInspectPath is the runtime API request that describes one container.
+func containerInspectPath(id string) string {
+	return fmt.Sprintf("/containers/%s/json", url.PathEscape(id))
+}
+
 // nowFunc returns the injectable clock used by cache TTL tests.
 func (r *dockerCompatibleRuntime) nowFunc() func() time.Time {
 	if r.now != nil {
@@ -147,38 +230,36 @@ func (r *dockerCompatibleRuntime) nowFunc() func() time.Time {
 }
 
 // fetchContainersByGPU builds a fresh GPU-to-container map from runtime state.
+// An inspect 404 for one container is treated as a container that went away.
+// Startup cannot rule out a runtime that refuses inspect with 404 when no
+// container was running at startup, so a refresh where every listed container
+// returns 404 logs a rate-limited warning that labels are missing.
 func (r *dockerCompatibleRuntime) fetchContainersByGPU(ctx context.Context, deviceInfo deviceinfo.Provider) (map[string][]containerInfo, error) {
 	var containers []dockerContainerListItem
-	if err := r.getJSON(ctx, "/containers/json", &containers); err != nil {
+	if err := r.getJSON(ctx, containerListPath, &containers); err != nil {
 		return nil, err
 	}
 
 	result := make(map[string][]containerInfo)
+	listed := 0
+	var notFoundIDs []string
 	for _, item := range containers {
 		if item.ID == "" {
 			continue
 		}
 
-		var inspect dockerContainerInspect
-		inspectPath := fmt.Sprintf("/containers/%s/json", item.ID)
-		if err := r.getJSON(ctx, inspectPath, &inspect); err != nil {
-			var statusErr containerRuntimeStatusError
-			if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusNotFound {
-				slog.Debug("container disappeared before runtime inspect", slog.String("container_id", item.ID))
-				continue
-			}
+		listed++
+
+		inspect, found, err := r.inspectContainer(ctx, item.ID)
+		if err != nil {
 			return nil, err
 		}
-		if inspect.ID == "" {
-			inspect.ID = item.ID
-		}
-		if inspect.Name == "" && len(item.Names) > 0 {
-			inspect.Name = item.Names[0]
+		if !found {
+			notFoundIDs = append(notFoundIDs, item.ID)
+			continue
 		}
 
-		info := containerInfo{
-			Name: sanitizeContainerLabel(containerLabelName(inspect.Name, inspect.ID)),
-		}
+		info := r.containerInfo(item, inspect)
 		if info.Name == "" {
 			continue
 		}
@@ -188,7 +269,63 @@ func (r *dockerCompatibleRuntime) fetchContainersByGPU(ctx context.Context, devi
 		}
 	}
 
+	if listed > 0 && len(notFoundIDs) == listed {
+		r.warnIfEveryInspectNotFound(ctx, notFoundIDs)
+	}
+
 	return result, nil
+}
+
+// inspectContainer describes one listed container. found is false when the
+// inspect request returns 404, which usually means the container went away.
+func (r *dockerCompatibleRuntime) inspectContainer(ctx context.Context, id string) (dockerContainerInspect, bool, error) {
+	var inspect dockerContainerInspect
+	err := r.getJSON(ctx, containerInspectPath(id), &inspect)
+
+	var statusErr containerRuntimeStatusError
+	if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusNotFound {
+		slog.Debug("container disappeared before runtime inspect", slog.String("container_id", id))
+		return inspect, false, nil
+	}
+
+	return inspect, err == nil, err
+}
+
+// errInspectNotFound stands for the 404 answer when confirming a refused container.
+var errInspectNotFound = errors.New("container inspect request returned HTTP 404")
+
+// warnIfEveryInspectNotFound logs, at most once per interval, that the runtime
+// listed containers but answered every inspect request with HTTP 404. It first
+// asks the list about the refused containers: when all of them are gone, they
+// exited during the refresh and nothing is reported.
+func (r *dockerCompatibleRuntime) warnIfEveryInspectNotFound(ctx context.Context, ids []string) {
+	refused := slices.ContainsFunc(ids, func(id string) bool {
+		return r.confirmContainerGone(ctx, id, errInspectNotFound) != nil
+	})
+	if !refused || !r.inspectWarnings.allow() {
+		return
+	}
+
+	slog.Warn("container runtime listed containers but returned HTTP 404 for every container inspect request; "+
+		"container labels are missing until inspect requests work. The exporter keeps checking.",
+		slog.Int("containers", len(ids)))
+}
+
+// containerInfo resolves runtime name and ID fallbacks, retaining raw identity only for OTLP.
+func (r *dockerCompatibleRuntime) containerInfo(item dockerContainerListItem, inspect dockerContainerInspect) containerInfo {
+	if inspect.ID == "" {
+		inspect.ID = item.ID
+	}
+	if inspect.Name == "" && len(item.Names) > 0 {
+		inspect.Name = item.Names[0]
+	}
+	info := containerInfo{
+		Name: sanitizeContainerLabel(containerLabelName(inspect.Name, inspect.ID)),
+	}
+	if r.preserveIdentity {
+		info.Identities = []collector.ContainerIdentity{{ID: inspect.ID, Name: strings.TrimPrefix(inspect.Name, "/")}}
+	}
+	return info
 }
 
 // getJSON performs a bounded runtime API GET and decodes a JSON response.
@@ -452,12 +589,26 @@ func allGPUKeys(deviceInfo deviceinfo.Provider) []string {
 
 // appendUniqueContainer appends a container label once per GPU key.
 func appendUniqueContainer(containers []containerInfo, info containerInfo) []containerInfo {
-	for _, existing := range containers {
-		if existing.Name == info.Name {
-			return containers
+	for i, existing := range containers {
+		if existing.Name != info.Name {
+			continue
+		}
+		containers[i].Identities = mergeContainerIdentities(existing.Identities, info.Identities)
+		return containers
+	}
+	info.Identities = slices.Clone(info.Identities)
+	return append(containers, info)
+}
+
+// mergeContainerIdentities combines raw identities without mutating either input slice.
+func mergeContainerIdentities(existing, incoming []collector.ContainerIdentity) []collector.ContainerIdentity {
+	identities := slices.Clone(existing)
+	for _, identity := range incoming {
+		if !slices.Contains(identities, identity) {
+			identities = append(identities, identity)
 		}
 	}
-	return append(containers, info)
+	return identities
 }
 
 // containerLabelName chooses the runtime name or short ID fallback.
@@ -515,6 +666,9 @@ func cloneContainersByGPU(in map[string][]containerInfo) map[string][]containerI
 	out := make(map[string][]containerInfo, len(in))
 	for key, containers := range in {
 		out[key] = append([]containerInfo(nil), containers...)
+		for i := range out[key] {
+			out[key][i].Identities = slices.Clone(out[key][i].Identities)
+		}
 	}
 	return out
 }

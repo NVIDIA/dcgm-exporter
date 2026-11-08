@@ -18,7 +18,6 @@ package os
 
 import (
 	stdos "os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,21 +39,11 @@ func TestRealOSFilesystemWrappers(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	info, err := realOS.Stat(file.Name())
-	require.NoError(t, err)
-	assert.False(t, info.IsDir())
-
 	opened, err := realOS.Open(file.Name())
 	require.NoError(t, err)
 	require.NoError(t, opened.Close())
 
-	entries, err := realOS.ReadDir(dir)
-	require.NoError(t, err)
-	assert.Len(t, entries, 1)
-
 	require.NoError(t, realOS.Remove(file.Name()))
-	_, err = realOS.Stat(file.Name())
-	assert.True(t, realOS.IsNotExist(err))
 }
 
 func TestRealOSEnvironmentWrappers(t *testing.T) {
@@ -67,8 +56,4 @@ func TestRealOSEnvironmentWrappers(t *testing.T) {
 	stdHostname, stdErr := stdos.Hostname()
 	assert.Equal(t, stdHostname, hostname)
 	assert.Equal(t, stdErr, err)
-
-	missing := filepath.Join(t.TempDir(), "missing")
-	_, err = realOS.Stat(missing)
-	assert.True(t, realOS.IsNotExist(err))
 }

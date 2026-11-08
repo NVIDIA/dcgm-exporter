@@ -1,0 +1,6 @@
+version: 1
+metrics:
+  fields:
+    - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+      prometheusType: gauge
+      help: GPU temperature.

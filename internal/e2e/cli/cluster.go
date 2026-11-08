@@ -19,199 +19,153 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
-	"os"
 
 	urfavecli "github.com/urfave/cli/v2"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/e2e/bootstrap"
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/cluster"
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/config"
-	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
-	"github.com/NVIDIA/dcgm-exporter/internal/e2e/installdeps"
 )
 
-// runCluster dispatches cluster lifecycle commands after installing the packaged tool path.
-func runCluster(ctx context.Context, args []string, stdout, stderr io.Writer, root string, runner e2eexec.Runner) error {
-	if len(args) == 0 || helpRequested(args) {
-		writeClusterHelp(stdout)
-		return nil
+// clusterCommand builds the complete cluster subcommand tree.
+func clusterCommand(opts Options) *urfavecli.Command {
+	command := &urfavecli.Command{
+		Name:      "cluster",
+		Usage:     "Manage a local or external e2e Kubernetes target",
+		UsageText: "e2e cluster <command> [options]",
+		Action: func(c *urfavecli.Context) error {
+			if c.NArg() == 0 {
+				return urfavecli.ShowSubcommandHelp(c)
+			}
+			return fmt.Errorf("unknown e2e cluster command %q", c.Args().First())
+		},
 	}
-	if len(args) > 1 && helpRequested(args[1:]) {
-		writeClusterCommandHelp(stdout, args[0])
-		return nil
+	command.Subcommands = []*urfavecli.Command{
+		newClusterCheckCommand(opts),
+		newClusterLifecycleCommand("up", opts),
+		newClusterLifecycleCommand("deploy", opts),
+		newClusterLifecycleCommand("deploy-dcgm", opts),
+		newClusterConfigCommand("status", opts),
+		newClusterConfigCommand("logs", opts),
+		newClusterConfigCommand("cleanup", opts),
 	}
-	restorePath, err := installdeps.ConfigureToolPath(root, config.Tests{})
-	if err != nil {
-		return err
-	}
-	defer restorePath()
-	switch args[0] {
-	case "check":
-		return cluster.CheckLocal(ctx, runner, stdout)
-	case "up":
-		opts, err := parseTests(args[1:], stderr)
-		if err != nil {
-			return err
-		}
-		runner = newOutputRunner(stdout, runner, opts.Verbose)
-		return runClusterUp(ctx, stdout, root, runner, opts)
-	case "deploy":
-		opts, err := parseTests(args[1:], stderr)
-		if err != nil {
-			return err
-		}
-		runner = newOutputRunner(stdout, runner, opts.Verbose)
-		return runClusterDeploy(ctx, stdout, root, runner, opts)
-	case "deploy-dcgm":
-		opts, err := parseTests(args[1:], stderr)
-		if err != nil {
-			return err
-		}
-		runner = newOutputRunner(stdout, runner, opts.Verbose)
-		return runClusterDeployDCGM(ctx, stdout, root, runner, opts)
-	case "status":
-		cfg, err := parseCluster(args[1:], stderr, false, root)
-		if err != nil {
-			return err
-		}
-		ctx, cancel := context.WithTimeout(ctx, clusterInfoTimeout)
-		defer cancel()
-		return setupFailure(cluster.Status(ctx, runner, stdout, cfg))
-	case "logs":
-		cfg, err := parseCluster(args[1:], stderr, true, root)
-		if err != nil {
-			return err
-		}
-		logCtx := ctx
-		cancel := func() {}
-		if !cfg.Follow {
-			logCtx, cancel = context.WithTimeout(ctx, clusterInfoTimeout)
-		}
-		defer cancel()
-		return setupFailure(cluster.Logs(logCtx, runner, stdout, cfg))
-	case "cleanup":
-		cfg, err := parseCluster(args[1:], stderr, false, root)
-		if err != nil {
-			return err
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), clusterInfoTimeout)
-		defer cancel()
-		return setupFailure(cluster.Cleanup(cleanupCtx, runner, stdout, cfg))
-	default:
-		return fmt.Errorf("unknown e2e cluster command %q", args[0])
+	return command
+}
+
+// newClusterCheckCommand verifies the tools required by local cluster workflows.
+func newClusterCheckCommand(opts Options) *urfavecli.Command {
+	return &urfavecli.Command{
+		Name:      "check",
+		Usage:     "Verify local cluster tools are available",
+		UsageText: "e2e cluster check",
+		Action: func(c *urfavecli.Context) error {
+			if c.NArg() != 0 {
+				return fmt.Errorf("unexpected e2e cluster check arguments: %v", c.Args().Slice())
+			}
+			restorePath, err := bootstrap.ConfigureToolPath(opts.Root, config.TestOptions{})
+			if err != nil {
+				return err
+			}
+			defer restorePath()
+			return cluster.CheckLocal(c.Context, opts.Runner, opts.Stdout)
+		},
 	}
 }
 
-// writeClusterHelp prints the cluster command index; each command renders its own flag help.
-func writeClusterHelp(w io.Writer) {
-	fmt.Fprint(w, `Usage: e2e cluster <command> [options]
-
-Commands:
-  check              Verify local cluster tools are available
-  up                 Create or repair the local GPU k3d cluster
-  deploy             Deploy dcgm-exporter to the target cluster
-  deploy-dcgm        Deploy standalone DCGM to the target cluster
-  status             Print cluster, exporter, and DCGM status
-  logs               Print exporter and DCGM logs
-  cleanup            Remove e2e-managed local cluster or external namespaces
-
-Run "e2e cluster <command> --help" for command options.
-`)
+// newClusterLifecycleCommand reuses the tests flag contract for cluster creation and deployment.
+func newClusterLifecycleCommand(name string, opts Options) *urfavecli.Command {
+	testOpts, envErr := clusterLifecycleOptionsFromEnv()
+	command := newTestsCLICommand(&testOpts, false)
+	command.Name = name
+	command.Usage = clusterCommandUsage(name)
+	command.UsageText = "e2e cluster " + name + " [options]"
+	command.Description = ""
+	command.Flags = clusterLifecycleFlags(command.Flags)
+	parseAction := command.Action
+	command.Before = func(_ *urfavecli.Context) error {
+		return envErr
+	}
+	command.Action = func(c *urfavecli.Context) error {
+		if c.NArg() != 0 {
+			return fmt.Errorf("unexpected e2e cluster %s arguments: %v", name, c.Args().Slice())
+		}
+		if err := parseAction(c); err != nil {
+			return err
+		}
+		ctx, cancel, err := timeoutContext(c.Context, testOpts.Timeout)
+		if err != nil {
+			return setupFailure(err)
+		}
+		defer cancel()
+		restorePath, err := bootstrap.ConfigureToolPath(opts.Root, testOpts)
+		if err != nil {
+			return err
+		}
+		defer restorePath()
+		runner := newCommandOutputRunner(opts.Stdout, opts.Runner, testOpts.Verbose)
+		switch name {
+		case "up":
+			return runClusterUp(ctx, opts.Stdout, opts.Root, runner, testOpts)
+		case "deploy":
+			return runClusterDeploy(ctx, opts.Stdout, opts.Root, runner, testOpts)
+		case "deploy-dcgm":
+			return runClusterDeployDCGM(ctx, opts.Stdout, opts.Root, runner, testOpts)
+		default:
+			return fmt.Errorf("unsupported cluster lifecycle command %q", name)
+		}
+	}
+	return command
 }
 
-// writeClusterCommandHelp renders a cluster subcommand from its parser-owned flag definition.
-func writeClusterCommandHelp(w io.Writer, name string) {
-	var command *urfavecli.Command
+// clusterLifecycleFlags removes bootstrap options and describes the lifecycle timeout.
+func clusterLifecycleFlags(flags []urfavecli.Flag) []urfavecli.Flag {
+	lifecycleFlags := flags[:0]
+	for _, flag := range flags {
+		if clusterBootstrapFlag(flag.Names()[0]) {
+			continue
+		}
+		if timeoutFlag, ok := flag.(*urfavecli.StringFlag); ok && timeoutFlag.Name == "timeout" {
+			timeoutFlag.Usage = "bound cluster preparation or deployment to a Go `duration` (zero means unlimited)"
+		}
+		lifecycleFlags = append(lifecycleFlags, flag)
+	}
+	return lifecycleFlags
+}
+
+// clusterBootstrapFlag reports whether a flag controls the tests bootstrap workflow.
+func clusterBootstrapFlag(name string) bool {
 	switch name {
-	case "up", "deploy", "deploy-dcgm":
-		opts := defaultTestsConfig()
-		command = newTestsCLICommand(&opts)
-		command.Name = name
-		command.HelpName = "e2e cluster " + name
-		command.UsageText = command.HelpName + " [options]"
-		command.Description = ""
-	case "status", "logs", "cleanup":
-		cfg := cluster.DefaultConfig()
-		command = newClusterCLICommand(name, &cfg, name == "logs", false)
-	case "check":
-		command = &urfavecli.Command{
-			Name:      name,
-			HelpName:  "e2e cluster check",
-			Usage:     "Verify local cluster tools are available",
-			UsageText: "e2e cluster check",
-		}
+	case "bootstrap", "bootstrap-component", "bootstrap-only":
+		return true
 	default:
-		writeClusterHelp(w)
-		return
+		return false
 	}
-	helpCategory := ""
-	if name == "up" || name == "deploy" || name == "deploy-dcgm" {
-		helpCategory = testsCategoryExecution
-	}
-	command.Flags = append(command.Flags, &urfavecli.BoolFlag{Name: "help", Aliases: []string{"h"}, Usage: "show help", Category: helpCategory})
-	urfavecli.HelpPrinter(w, urfavecli.CommandHelpTemplate, command)
-}
-
-// parseCluster merges cluster command flags with environment defaults.
-func parseCluster(args []string, stderr io.Writer, includeFollow bool, root string) (cluster.Config, error) {
-	cfg := cluster.DefaultConfig()
-	if value := os.Getenv("E2E_K3D_CLUSTER_NAME"); value != "" {
-		cfg.ClusterName = value
-	}
-	if value := os.Getenv("E2E_HELM_NAMESPACE"); value != "" {
-		cfg.Namespace = value
-		cfg.DCGMNamespace = value + "-dcgm"
-	}
-	if value := os.Getenv("E2E_HELM_RELEASE_NAME"); value != "" {
-		cfg.ReleaseName = value
-	}
-	dcgmNamespaceSet := false
-	if value := os.Getenv("E2E_DCGM_NAMESPACE"); value != "" {
-		cfg.DCGMNamespace = value
-		dcgmNamespaceSet = true
-	}
-	if value := os.Getenv("E2E_KUBECONFIG"); value != "" {
-		cfg.Kubeconfig = value
-	}
-	command := newClusterCLICommand("cluster", &cfg, includeFollow, dcgmNamespaceSet)
-	app := urfavecli.NewApp()
-	app.Name = "e2e"
-	app.Writer = io.Discard
-	app.ErrWriter = stderr
-	app.HideHelp = true
-	app.Commands = []*urfavecli.Command{command}
-	if err := app.Run(append([]string{"e2e", "cluster"}, args...)); err != nil {
-		return cfg, err
-	}
-	if cfg.Kubeconfig == "" {
-		cfg.LocalKubeconfig = root + "/.local-e2e/kubeconfig-" + cfg.ClusterName + ".yaml"
-	}
-	return cfg, nil
 }
 
 // newClusterCLICommand defines flags shared by cluster inspection and cleanup commands.
-func newClusterCLICommand(name string, cfg *cluster.Config, includeFollow, dcgmNamespaceSet bool) *urfavecli.Command {
+func newClusterCLICommand(name string, cfg *cluster.Config, includeFollow bool) *urfavecli.Command {
 	command := &urfavecli.Command{
 		Name:      name,
-		HelpName:  "e2e cluster " + name,
 		Usage:     clusterCommandUsage(name),
 		UsageText: "e2e cluster " + name + " [options]",
-		HideHelp:  true,
 		Flags: []urfavecli.Flag{
+			&urfavecli.StringFlag{Name: "run-name", EnvVars: []string{"E2E_RUN_NAME"}, Value: cfg.RunName, Destination: &cfg.RunName, Usage: "name used to derive and own resources for this test run"},
 			&urfavecli.StringFlag{Name: "k3d-cluster-name", EnvVars: []string{"E2E_K3D_CLUSTER_NAME"}, Value: cfg.ClusterName, Destination: &cfg.ClusterName, Usage: "owned k3d cluster `name`"},
-			&urfavecli.StringFlag{Name: "helm-namespace", EnvVars: []string{"E2E_HELM_NAMESPACE"}, Value: cfg.Namespace, Destination: &cfg.Namespace, Usage: "dcgm-exporter Kubernetes `namespace`"},
+			&urfavecli.StringFlag{Name: testsFlagHelmNamespace, EnvVars: []string{"E2E_HELM_NAMESPACE"}, Value: cfg.Namespace, Destination: &cfg.Namespace, Usage: "dcgm-exporter Kubernetes `namespace`"},
 			&urfavecli.StringFlag{Name: "helm-release-name", Aliases: []string{"helm-release"}, EnvVars: []string{"E2E_HELM_RELEASE_NAME"}, Value: cfg.ReleaseName, Destination: &cfg.ReleaseName, Usage: "dcgm-exporter Helm release `name`"},
-			&urfavecli.StringFlag{Name: "dcgm-namespace", EnvVars: []string{"E2E_DCGM_NAMESPACE"}, Value: cfg.DCGMNamespace, Destination: &cfg.DCGMNamespace, Usage: "standalone DCGM Kubernetes `namespace`"},
+			&urfavecli.StringFlag{Name: testsFlagDCGMNamespace, EnvVars: []string{"E2E_DCGM_NAMESPACE"}, Value: cfg.DCGMNamespace, Destination: &cfg.DCGMNamespace, Usage: "standalone DCGM Kubernetes `namespace`"},
 			&urfavecli.StringFlag{Name: "kubeconfig", EnvVars: []string{"E2E_KUBECONFIG"}, Value: cfg.Kubeconfig, Destination: &cfg.Kubeconfig, Usage: "use an existing Kubernetes cluster through `path`"},
 		},
 		Action: func(c *urfavecli.Context) error {
 			if c.NArg() != 0 {
-				return fmt.Errorf("unexpected e2e cluster arguments: %v", c.Args().Slice())
+				return fmt.Errorf("unexpected e2e cluster %s arguments: %v", name, c.Args().Slice())
 			}
-			if c.IsSet("helm-namespace") && !dcgmNamespaceSet && !c.IsSet("dcgm-namespace") {
-				cfg.DCGMNamespace = cfg.Namespace + "-dcgm"
-			}
-			return nil
+			return applyRunNameDefaults(c, cfg.RunName, runResourceNames{
+				cluster:       &cfg.ClusterName,
+				namespace:     &cfg.Namespace,
+				release:       &cfg.ReleaseName,
+				dcgmNamespace: &cfg.DCGMNamespace,
+			})
 		},
 	}
 	if includeFollow {
@@ -220,9 +174,57 @@ func newClusterCLICommand(name string, cfg *cluster.Config, includeFollow, dcgmN
 	return command
 }
 
+// newClusterConfigCommand runs inspection and cleanup operations with shared cluster flags.
+func newClusterConfigCommand(name string, opts Options) *urfavecli.Command {
+	cfg := cluster.DefaultConfig()
+	command := newClusterCLICommand(name, &cfg, name == "logs")
+	parseAction := command.Action
+	command.Action = func(c *urfavecli.Context) error {
+		if err := parseAction(c); err != nil {
+			return err
+		}
+		cfg.Root = opts.Root
+		if cfg.Kubeconfig == "" {
+			cfg.LocalKubeconfig = opts.Root + "/.local-e2e/kubeconfig-" + cfg.ClusterName + ".yaml"
+		}
+		restorePath, err := bootstrap.ConfigureToolPath(opts.Root, config.TestOptions{})
+		if err != nil {
+			return err
+		}
+		defer restorePath()
+		switch name {
+		case "status":
+			ctx, cancel := context.WithTimeout(c.Context, clusterInfoTimeout)
+			defer cancel()
+			return setupFailure(cluster.Status(ctx, opts.Runner, opts.Stdout, cfg))
+		case "logs":
+			ctx := c.Context
+			cancel := func() {}
+			if !cfg.Follow {
+				ctx, cancel = context.WithTimeout(c.Context, clusterInfoTimeout)
+			}
+			defer cancel()
+			return setupFailure(cluster.Logs(ctx, opts.Runner, opts.Stdout, cfg))
+		case "cleanup":
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Context), clusterInfoTimeout)
+			defer cancel()
+			return setupFailure(cluster.Cleanup(ctx, opts.Runner, opts.Stdout, cfg))
+		default:
+			return fmt.Errorf("unsupported cluster configuration command %q", name)
+		}
+	}
+	return command
+}
+
 // clusterCommandUsage returns the one-line description for a cluster lifecycle command.
 func clusterCommandUsage(name string) string {
 	switch name {
+	case "up":
+		return "Create or repair the local GPU k3d cluster"
+	case "deploy":
+		return "Deploy dcgm-exporter to the target cluster"
+	case "deploy-dcgm":
+		return "Deploy standalone DCGM to the target cluster"
 	case "status":
 		return "Print cluster, exporter, and DCGM status"
 	case "logs":
@@ -232,4 +234,42 @@ func clusterCommandUsage(name string) string {
 	default:
 		return "Manage e2e cluster resources"
 	}
+}
+
+// runResourceNames points at the resource names a run name can derive.
+type runResourceNames struct {
+	cluster       *string
+	namespace     *string
+	release       *string
+	dcgmNamespace *string
+}
+
+// applyRunNameDefaults derives resource names from --run-name unless their own
+// flag is set, then derives the standalone DCGM namespace from an explicit
+// --helm-namespace when --dcgm-namespace is not set.
+func applyRunNameDefaults(c *urfavecli.Context, runName string, names runResourceNames) error {
+	if c.IsSet("run-name") {
+		runConfig, err := cluster.ConfigForRunName(runName)
+		if err != nil {
+			return err
+		}
+		setUnlessFlagSet(c, names.cluster, runConfig.ClusterName, "k3d-cluster-name")
+		setUnlessFlagSet(c, names.namespace, runConfig.Namespace, testsFlagHelmNamespace)
+		setUnlessFlagSet(c, names.release, runConfig.ReleaseName, "helm-release-name", "helm-release")
+		setUnlessFlagSet(c, names.dcgmNamespace, runConfig.DCGMNamespace, testsFlagDCGMNamespace)
+	}
+	if c.IsSet(testsFlagHelmNamespace) && !c.IsSet(testsFlagDCGMNamespace) {
+		*names.dcgmNamespace = *names.namespace + "-dcgm"
+	}
+	return nil
+}
+
+// setUnlessFlagSet assigns value when none of the named flags was set explicitly.
+func setUnlessFlagSet(c *urfavecli.Context, target *string, value string, flags ...string) {
+	for _, flag := range flags {
+		if c.IsSet(flag) {
+			return
+		}
+	}
+	*target = value
 }

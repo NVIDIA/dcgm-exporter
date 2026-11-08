@@ -1,0 +1,9 @@
+exit 1
+--- stdout ---
+--- stderr ---
+testdata/inspection.yaml: invalid (1 error, 0 warnings)
+error    DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE: must be greater than 0, got 0
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories
+Not checked until the errors above are fixed: inline metric definitions

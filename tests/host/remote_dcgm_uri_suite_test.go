@@ -22,12 +22,18 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 )
 
-var _ = Describe("host remote DCGM URI integration", Label("dcgmUri"), func() {
-	It("serves exporter metrics through remote DCGM URI schemes", func() {
-		runExporterServesMetricsOverRemoteDCGMURISchemes(GinkgoTB())
+// Keep the existing dcgmUri selector for TCP. Each transport has its own
+// scenario label so the harness can select it independently.
+var _ = Describe("host remote DCGM URI integration", func() {
+	It("serves exporter metrics through a TCP remote DCGM URI", Label("dcgmUri"), func() {
+		runExporterServesMetricsOverRemoteDCGMTCP(GinkgoTB())
 	})
 
-	It("serves exporter metrics through a VSOCK remote DCGM URI", func() {
-		runExporterServesMetricsOverVSOCKRemoteDCGM(GinkgoTB())
+	It("serves exporter metrics through a Unix remote DCGM URI", Label("dcgmUriUnix"), func() {
+		runExporterServesMetricsOverRemoteDCGMUnix(GinkgoTB())
+	})
+
+	It("serves exporter metrics through a VSOCK remote DCGM URI", Label("dcgmUriVSOCK"), func() {
+		runExporterServesMetricsOverRemoteDCGMVSOCK(GinkgoTB())
 	})
 })

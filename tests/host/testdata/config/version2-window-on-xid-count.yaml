@@ -1,0 +1,16 @@
+version: 2
+metrics:
+  - name: gpu
+    enrichment: {kubernetes: false, container: false, hpc_jobs: false}
+    fields:
+      - name: DCGM_EXP_XID_ERRORS_COUNT
+        prometheus_type: gauge
+        help: XID errors in the window.
+    overrides:
+      - name: xid-window
+        match: [DCGM_EXP_XID_ERRORS_COUNT]
+        window: 90s
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1

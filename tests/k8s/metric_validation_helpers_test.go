@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -34,21 +35,58 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
 )
 
-// shouldVerifyBaselineMetricContract checks that default metrics satisfy the GPU contract.
-func shouldVerifyBaselineMetricContract(metricsResponse []byte, requireKubernetesLabels bool) {
-	Expect(baselineMetricContractError(metricsResponse, requireKubernetesLabels)).Should(Succeed())
+// shouldEventuallyMeetBaselineMetricContract scrapes with read until the
+// baseline contract holds. A row DCGM supports can lack a value in its first
+// samples (profiling fields are N/A in the first one, and the chart collects
+// every 30 seconds), so one scrape can miss it. read must report a failed
+// scrape through the Gomega handle it is given, so the poll retries instead of
+// failing the spec.
+func shouldEventuallyMeetBaselineMetricContract(read func(g Gomega) []byte, requireKubernetesLabels bool) {
+	Eventually(func(g Gomega) {
+		g.Expect(baselineMetricContractError(read(g), requireKubernetesLabels)).To(Succeed())
+	}).WithPolling(5 * time.Second).Within(2 * time.Minute).Should(Succeed())
 }
 
 // baselineMetricContractError returns all baseline contract failures found in a metrics response.
 func baselineMetricContractError(metricsResponse []byte, requireKubernetesLabels bool) error {
-	return exportercontract.BaselineMetrics(metricsResponse, exportercontract.BaselineOptions{
+	return exportercontract.BaselineMetrics(metricsResponse, baselineMetricContractOptions(requireKubernetesLabels))
+}
+
+// defaultCSVMetricContractError is baselineMetricContractError for an exporter
+// that runs with the chart's default CSV: it also fails DCGM_FI_* families
+// outside that CSV and HELP text that differs from it.
+func defaultCSVMetricContractError(metricsResponse []byte) error {
+	opts := baselineMetricContractOptions(true)
+	opts.ExactCSV = true
+	return exportercontract.BaselineMetrics(metricsResponse, opts)
+}
+
+// baselineMetricContractOptions returns the baseline contract options shared
+// by the Kubernetes scenarios.
+func baselineMetricContractOptions(requireKubernetesLabels bool) exportercontract.BaselineOptions {
+	return exportercontract.BaselineOptions{
 		RequireHostname:         true,
 		RequireKubernetesLabels: requireKubernetesLabels,
 		KubernetesLabels:        workloadLabelValues(),
-		DefaultCounters:         bytes.NewReader(defaultCountersData()),
-		SupportedFields:         supportedDefaultCounterFields(),
+		DefaultCounterRows:      testContext.defaultCounterRows,
+		FieldSupport:            testContext.fieldSupport,
 		CapabilityWriter:        GinkgoWriter,
-	})
+	}
+}
+
+// shouldLoadDefaultCounterContract parses the default counters CSV and the
+// E2E_DCGM_FIELD_SUPPORT evidence once for the suite. A CSV that does not
+// parse or evidence that names a row the CSV does not enable fails the suite
+// before any scenario starts.
+func shouldLoadDefaultCounterContract() {
+	rows, err := metriccontract.ReadDefaultCounterRows(bytes.NewReader(defaultCountersData()))
+	Expect(err).NotTo(HaveOccurred(), "default counters CSV should parse")
+
+	support, err := metriccontract.ParseFieldSupport(os.Getenv(metriccontract.FieldSupportEnv), rows)
+	Expect(err).NotTo(HaveOccurred(), "DCGM field support evidence should name enabled default counters")
+
+	testContext.defaultCounterRows = rows
+	testContext.fieldSupport = support
 }
 
 // legacyNamespaceMetricContractError checks default metrics emitted with legacy label names.
@@ -58,19 +96,14 @@ func legacyNamespaceMetricContractError(metricsResponse []byte) error {
 		return fmt.Errorf("metrics should parse as Prometheus text: %w", err)
 	}
 
-	rows, err := metriccontract.ReadDefaultCounterRows(bytes.NewReader(defaultCountersData()))
-	if err != nil {
-		return fmt.Errorf("default counters should parse: %w", err)
-	}
-
 	return errors.Join(
 		metriccontract.ValidateDefaultCounterRows(
 			families,
-			rows,
+			testContext.defaultCounterRows,
 			metriccontract.DefaultCounterOptions{
-				SupportedFields: supportedDefaultCounterFields(),
-				MetricLabels:    []string{"gpu", "uuid", "device", "modelName"},
-				SkipWriter:      GinkgoWriter,
+				FieldSupport: testContext.fieldSupport,
+				MetricLabels: []string{"gpu", "uuid", "device", "modelName"},
+				SkipWriter:   GinkgoWriter,
 			},
 		),
 		metriccontract.ValidateLabels(
@@ -90,19 +123,9 @@ func legacyNamespaceMetricContractError(metricsResponse []byte) error {
 	)
 }
 
-// defaultMetricsContractError checks the default chart metrics using the baseline GPU contract.
-func defaultMetricsContractError(metricsResponse []byte, requireKubernetesLabels bool) error {
-	return baselineMetricContractError(metricsResponse, requireKubernetesLabels)
-}
-
 // customMetricsJSONValue formats custom metric CSV rows as a Helm JSON value.
 func customMetricsJSONValue(lines ...string) string {
 	return fmt.Sprintf("customMetrics=%s", strconv.Quote(strings.Join(lines, "\n")))
-}
-
-// shouldVerifyCustomMetricsContract checks that customMetrics fully replaces the default metric set.
-func shouldVerifyCustomMetricsContract(metricsResponse []byte) {
-	Expect(customMetricsContractError(metricsResponse)).Should(Succeed())
 }
 
 // customMetricsContractError returns all custom metrics contract failures found in a response.
@@ -143,22 +166,4 @@ func defaultCountersData() []byte {
 	}
 	Fail(fmt.Sprintf("could not find etc/default-counters.csv; checked %s", strings.Join(candidates, ", ")))
 	return nil
-}
-
-// supportedDefaultCounterFields parses optional field-support evidence from e2e.
-func supportedDefaultCounterFields() map[string]bool {
-	raw := os.Getenv("E2E_SUPPORTED_DCGM_FIELDS")
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	supported := map[string]bool{}
-	for _, field := range strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
-	}) {
-		if strings.TrimSpace(field) == "" {
-			continue
-		}
-		supported[strings.TrimSpace(field)] = true
-	}
-	return supported
 }

@@ -1,0 +1,12 @@
+version: 2
+metrics:
+  - name: gpu
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP
+        prometheus_type: gauge
+        help: GPU temperature in Celsius.
+    enrichment: {kubernetes: auto, container: true, dra: false, hpc_jobs: false}
+outputs:
+  scrape:
+    type: prometheus
+    schema: dcgm/v1

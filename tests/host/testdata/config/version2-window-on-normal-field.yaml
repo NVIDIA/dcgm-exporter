@@ -1,0 +1,16 @@
+version: 2
+metrics:
+  - name: gpu
+    enrichment: {kubernetes: false, container: false, hpc_jobs: false}
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+    overrides:
+      - name: temperature-window
+        match: [DCGM_FI_DEV_GPU_TEMP_CELSIUS]
+        window: 90s
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1

@@ -32,6 +32,7 @@ import (
 // support requires DCGM detached-GPU support and an NVIDIA driver from the 590 series or later.
 type GPUBindUnbindWatcher struct {
 	pollInterval time.Duration
+	client       dcgmprovider.DCGM
 }
 
 // GPUBindUnbindEventHandler receives an observed DCGM lifecycle state.
@@ -53,16 +54,36 @@ func WithPollInterval(interval time.Duration) GPUBindUnbindWatcherOption {
 }
 
 // NewGPUBindUnbindWatcher creates a lifecycle watcher that polls once each
-// second by default. The application starts it only when bind/unbind detection
-// is enabled.
+// second by default. It reads the current DCGM client when Start runs, so the
+// application can restart it after replacing DCGM during lifecycle recovery.
 func NewGPUBindUnbindWatcher(opts ...GPUBindUnbindWatcherOption) *GPUBindUnbindWatcher {
+	return NewGPUBindUnbindWatcherWithClient(nil, opts...)
+}
+
+// NewGPUBindUnbindWatcherWithClient creates a lifecycle watcher bound to
+// client. Tests and owners with a fixed session use it to keep the watcher on
+// that client; the default constructor instead reads the client at Start.
+func NewGPUBindUnbindWatcherWithClient(
+	client dcgmprovider.DCGM,
+	opts ...GPUBindUnbindWatcherOption,
+) *GPUBindUnbindWatcher {
 	w := &GPUBindUnbindWatcher{
 		pollInterval: time.Second,
+		client:       client,
 	}
 	for _, opt := range opts {
 		opt(w)
 	}
 	return w
+}
+
+// dcgmClient returns the fixed client when one was supplied, or the current
+// provider client for the default restartable watcher.
+func (w *GPUBindUnbindWatcher) dcgmClient() dcgmprovider.DCGM {
+	if w.client != nil {
+		return w.client
+	}
+	return dcgmprovider.Client()
 }
 
 // Start installs the DCGM watch synchronously and returns the blocking event
@@ -82,7 +103,8 @@ func (w *GPUBindUnbindWatcher) Start(
 	// Watching DCGM_GROUP_ALL_GPUS creates no watch while the exporter starts
 	// without GPUs, which is precisely the recovery case this watcher handles.
 	cursor := time.Now()
-	if err := dcgmprovider.Client().WatchFieldValue(
+	client := w.dcgmClient()
+	if err := client.WatchFieldValue(
 		0,
 		dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
 		w.pollInterval,
@@ -99,11 +121,12 @@ func (w *GPUBindUnbindWatcher) Start(
 	// lifecycle reset or process shutdown. That DCGM cleanup releases this
 	// direct field watch; a field group is neither created nor needed here.
 	return func() error {
-		return w.watchFieldEvents(ctx, cursor, onEvent)
+		return w.watchFieldEventsWithClient(client, ctx, cursor, onEvent)
 	}, nil
 }
 
-// Watch installs the watch and monitors events until the context is cancelled.
+// Watch installs the watch and returns when its loop observes cancellation.
+// Cancellation does not interrupt a DCGM history read already in progress.
 func (w *GPUBindUnbindWatcher) Watch(ctx context.Context, onEvent GPUBindUnbindEventHandler) error {
 	run, err := w.Start(ctx, onEvent)
 	if err != nil {
@@ -112,9 +135,22 @@ func (w *GPUBindUnbindWatcher) Watch(ctx context.Context, onEvent GPUBindUnbindE
 	return run()
 }
 
-// watchFieldEvents reads retained system-field history newer than cursor. DCGM
-// records bind/unbind events directly, so UpdateAllFields is not required.
+// watchFieldEvents reads retained system-field history with the watcher's
+// captured client. It remains a compatibility wrapper for direct tests.
 func (w *GPUBindUnbindWatcher) watchFieldEvents(
+	ctx context.Context,
+	cursor time.Time,
+	onEvent GPUBindUnbindEventHandler,
+) error {
+	return w.watchFieldEventsWithClient(w.dcgmClient(), ctx, cursor, onEvent)
+}
+
+// watchFieldEventsWithClient reads retained system-field history newer than
+// cursor. DCGM records bind/unbind events directly, so UpdateAllFields is not
+// required. Cancellation is checked after each native read returns; it cannot
+// interrupt a read already in progress.
+func (w *GPUBindUnbindWatcher) watchFieldEventsWithClient(
+	client dcgmprovider.DCGM,
 	ctx context.Context,
 	cursor time.Time,
 	onEvent GPUBindUnbindEventHandler,
@@ -130,11 +166,12 @@ func (w *GPUBindUnbindWatcher) watchFieldEvents(
 			slog.Debug("GPU bind/unbind watcher stopping")
 			return ctx.Err()
 		case <-ticker.C:
-			values, err := dcgmprovider.Client().GetMultipleValuesForField(
+			readCursor := cursor
+			values, err := client.GetMultipleValuesForField(
 				0,
 				dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT,
 				bindUnbindHistorySamples,
-				cursor,
+				readCursor,
 				time.Time{},
 			)
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -147,36 +184,46 @@ func (w *GPUBindUnbindWatcher) watchFieldEvents(
 				continue
 			}
 
-			for _, value := range values {
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return ctxErr
-				}
-				if value.TS >= cursor.UnixMicro() {
-					cursor = time.UnixMicro(value.TS + 1)
-				}
-
-				if value.FieldID != dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT || value.Status != 0 {
-					continue
-				}
-
-				switch state := dcgm.BindUnbindEventState(value.Int64()); state {
-				case dcgm.DcgmBUEventStateSystemReinitializing:
-					// Keep watching. Resetting while DCGM is reinitializing can race
-					// the topology transition and prevent us from seeing completion.
-					slog.Info("GPU system reinitializing event detected",
-						slog.Int64("event_state", int64(state)),
-						slog.Int64("timestamp", value.TS))
-				case dcgm.DcgmBUEventStateSystemReinitializationCompleted:
-					slog.Info("GPU system reinitialization-completed event detected",
-						slog.Int64("event_state", int64(state)),
-						slog.Int64("timestamp", value.TS))
-					onEvent(state)
-				}
-			}
-
-			if err := ctx.Err(); err != nil {
+			cursor, err = deliverGPUEvents(ctx, values, cursor, onEvent)
+			if err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// deliverGPUEvents advances one successful batch, retaining its input cursor for
+// stale filtering even when later samples arrive out of timestamp order.
+func deliverGPUEvents(ctx context.Context, values []dcgm.FieldValue_v1, cursor time.Time, onEvent GPUBindUnbindEventHandler) (time.Time, error) {
+	readCursor := cursor
+	for _, value := range values {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return cursor, ctxErr
+		}
+		if value.TS < readCursor.UnixMicro() {
+			continue
+		}
+		if value.TS >= cursor.UnixMicro() {
+			cursor = time.UnixMicro(value.TS + 1)
+		}
+
+		if value.FieldID != dcgm.DCGM_FI_SYSTEM_GPU_BIND_EVENT || value.Status != 0 {
+			continue
+		}
+
+		switch state := dcgm.BindUnbindEventState(value.Int64()); state {
+		case dcgm.DcgmBUEventStateSystemReinitializing:
+			// Keep watching. Resetting while DCGM is reinitializing can race
+			// the topology transition and prevent us from seeing completion.
+			slog.Info("GPU system reinitializing event detected",
+				slog.Int64("event_state", int64(state)),
+				slog.Int64("timestamp", value.TS))
+		case dcgm.DcgmBUEventStateSystemReinitializationCompleted:
+			slog.Info("GPU system reinitialization-completed event detected",
+				slog.Int64("event_state", int64(state)),
+				slog.Int64("timestamp", value.TS))
+			onEvent(state)
+		}
+	}
+	return cursor, ctx.Err()
 }

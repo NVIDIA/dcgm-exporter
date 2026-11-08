@@ -5,42 +5,46 @@ USAGE:
    e2e tests [options]
 
 DESCRIPTION:
-   Select suites or scenarios, inspect the plan with --dry-run, and use --verbose to include successful command output and capability evidence.
+   Select suites or scenarios, use --dry-run to see the plan, and use --verbose to show command output and check details; sensitive output is withheld.
 
-   Use --list-scenarios to discover selectors and --dry-run to inspect a plan.
+   Use --list-scenarios to list selectors and --dry-run to see the planned scenarios.
    Result markers are stable machine-readable output and are enabled only when requested. Exit 10 means setup failure; exit 20 means test failure.
 
 OPTIONS:
    Dependencies
 
-   --install-deps                                      install or configure missing host prerequisites; set false to verify only (default: true) [$E2E_INSTALL_DEPS]
-   --install-deps-dcgm true|false                      host DCGM installation mode: true|false [$E2E_INSTALL_DEPS_DCGM]
-   --install-deps-docker true|false                    Docker installation mode: true|false [$E2E_INSTALL_DEPS_DOCKER]
-   --install-deps-nvidia-container-toolkit true|false  NVIDIA Container Toolkit installation mode: true|false [$E2E_INSTALL_DEPS_NVIDIA_CONTAINER_TOOLKIT]
-   --install-deps-vsock true|false                     VSOCK module configuration mode: true|false [$E2E_INSTALL_DEPS_VSOCK]
-   --tools-dir value                                   directory for downloaded helper tools and source-tree suite binaries [$E2E_TOOLS_DIR]
+   --bootstrap check|install|skip                                                                   mode for host dependencies: check|install|skip; environment: E2E_BOOTSTRAP
+   --bootstrap-component name=check|install|skip [ --bootstrap-component name=check|install|skip ]  set one dependency mode as name=check|install|skip; repeat; environment: E2E_BOOTSTRAP_COMPONENTS
+   --exporter-binary path                                                                           prebuilt dcgm-exporter binary path used by host validation [$E2E_EXPORTER_BINARY]
+   --prebuilt-binaries                                                                              require prebuilt suite binaries instead of compiling from the source tree; environment: E2E_PREBUILT_BINARIES (default: false)
+   --tools-dir value                                                                                directory for downloaded helper tools and source-tree suite binaries [$E2E_TOOLS_DIR]
 
    Execution
 
-   --build-only                                               build or locate selected suite binaries without running them (default: false) [$E2E_BUILD_ONLY]
-   --dry-run                                                  print capability and scenario decisions without running tests (default: false) [$E2E_DRY_RUN]
-   --help, -h                                                 show help (default: false)
-   --list-scenarios                                           list available suite/scenario selectors and exit (default: false) [$E2E_LIST_SCENARIOS]
+   --bootstrap-only                                           stop after bootstrap checks and any authorized installation; environment: E2E_BOOTSTRAP_ONLY (default: false)
+   --build-only                                               build or locate selected suite binaries without running them; environment: E2E_BUILD_ONLY (default: false)
+   --cleanup                                                  clean retainable E2E-managed resources after the run; environment: E2E_CLEANUP (default: true)
+   --dry-run                                                  list selected scenarios and their required artifacts without probing, building, or running tests; environment: E2E_DRY_RUN (default: false)
+   --list-scenarios                                           list available suite/scenario selectors and exit; environment: E2E_LIST_SCENARIOS (default: false)
    --no-result-markers                                        disable result markers; equivalent to E2E_RESULT_MARKERS=false (default: false)
    --result-markers                                           emit reserved &&&& result marker lines; environment: E2E_RESULT_MARKERS (default: false)
    --scenario suite/name [ --scenario suite/name ]            run only suite/name; repeat or set E2E_SCENARIO for multiple scenarios
    --skip-scenario suite/name [ --skip-scenario suite/name ]  skip suite/name; repeat or set E2E_SKIP_SCENARIO for multiple scenarios
    --skip-suite suite [ --skip-suite suite ]                  skip suite; repeat or set E2E_SKIP_SUITE for multiple suites
    --suite suite [ --suite suite ]                            run only suite; repeat or set E2E_SUITE for multiple suites
-   --verbose, -v                                              print all command output and capability evidence (default: false) [$E2E_VERBOSE]
+   --timeout duration                                         bound test execution to a Go duration (zero means unlimited); cleanup and diagnostics have a two-minute grace period [$E2E_TIMEOUT]
+   --verbose, -v                                              print command output and host check details, with sensitive output withheld; environment: E2E_VERBOSE (default: false)
 
    Feature setup
 
-   --dcgm-failure-injection auto|true|false    DCGM failure injection mode: auto|true|false (default: "true") [$E2E_DCGM_FAILURE_INJECTION]
-   --dcgm-nvml-injection-yaml path             run compatible host scenarios with a DCGM NVML injection YAML path [$E2E_DCGM_NVML_INJECTION_YAML]
+   --dcgm-nvml-injection-yaml path             DCGM NVML injection YAML path; required by host/nvmlInjectionMetrics, host/migXidCounters and host/configServesMetrics, and used by the other host-config-injection scenarios when given [$E2E_DCGM_NVML_INJECTION_YAML]
+   --dcgm-nvsdm-mock-yaml path                 configure explicit host/nvsdmMockMetrics with a DCGM NVSDM mock YAML path [$E2E_DCGM_NVSDM_MOCK_YAML]
    --dra-configure auto|true|false             NVIDIA DRA driver setup mode: auto|true|false (default: "true") [$E2E_DRA_CONFIGURE]
    --gpu-operator auto|existing|install|false  GPU Operator mode: auto|existing|install|false (default: "install") [$E2E_GPU_OPERATOR]
-   --mig-configure auto|true|false|profile     MIG setup mode: auto|true|false|profile (default: "true") [$E2E_MIG_CONFIGURE]
+   --gpu-operator-chart path                   local GPU Operator main chart path for latest-main scenarios [$E2E_GPU_OPERATOR_CHART]
+   --gpu-operator-dcgm-image reference         optional DCGM image reference for remote-hostengine GPU Operator scenarios [$E2E_GPU_OPERATOR_DCGM_IMAGE]
+   --gpu-operator-image reference              optional controller image reference for the local GPU Operator chart [$E2E_GPU_OPERATOR_IMAGE]
+   --mig-configure auto|true|false|profile ID  MIG setup mode: auto|true|false|profile ID; auto and false use MIG as it is, true or a profile ID changes MIG for the run and restores it afterward (default: "auto") [$E2E_MIG_CONFIGURE]
    --shared-gpu-configure auto|true|false      time-sliced GPU setup mode: auto|true|false (default: "true") [$E2E_SHARED_GPU_CONFIGURE]
    --shared-gpu-replicas count                 time-sliced GPU replica count [$E2E_SHARED_GPU_REPLICAS]
 
@@ -50,12 +54,11 @@ OPTIONS:
    --container-toolkit-test-image reference                 CUDA image reference used to test Container Toolkit GPU access [$E2E_CONTAINER_TOOLKIT_TEST_IMAGE]
    --cuda-workload-image reference                          CUDA workload pod image reference [$E2E_CUDA_WORKLOAD_IMAGE]
    --dcgm-image reference                                   complete standalone DCGM image reference [$E2E_DCGM_IMAGE]
-   --dcgm-version version                                   semantic DCGM version required from nv-hostengine [$E2E_DCGM_VERSION, $DCGM_VERSION]
+   --dcgm-version version                                   DCGM package version required from nv-hostengine [$E2E_DCGM_VERSION, $DCGM_VERSION]
    --docker-config-dir directory                            Docker configuration directory used for authenticated pulls [$E2E_DOCKER_CONFIG_DIR]
    --docker-registry-login REGISTRY,USERNAME,PASSWORD_FILE  Docker login as REGISTRY,USERNAME,PASSWORD_FILE; repeat for multiple registries [$E2E_DOCKER_REGISTRY_LOGIN]
    --docker-registry-login-file path                        read newline-separated Docker login specs from path [$E2E_DOCKER_REGISTRY_LOGIN_FILE]
    --exporter-image reference                               complete dcgm-exporter image reference [$E2E_EXPORTER_IMAGE]
-   --exporter-ubuntu-image reference                        optional complete Ubuntu dcgm-exporter image reference [$E2E_EXPORTER_UBUNTU_IMAGE]
    --k3d-node-base-image reference                          CUDA base image reference used to build the K3D node [$E2E_K3D_NODE_BASE_IMAGE]
    --k3d-node-output-image reference                        image reference assigned to the built K3D node [$E2E_K3D_NODE_OUTPUT_IMAGE]
    --k3s-image reference                                    complete K3S base image reference [$E2E_K3S_IMAGE]
@@ -63,12 +66,16 @@ OPTIONS:
 
    Kubernetes
 
+   --dcgm-namespace namespace                     standalone DCGM Kubernetes namespace [$E2E_DCGM_NAMESPACE]
    --helm-namespace namespace                     dcgm-exporter Kubernetes namespace (default: "dcgm-exporter") [$E2E_HELM_NAMESPACE]
    --helm-release-name name, --helm-release name  dcgm-exporter Helm release name (default: "dcgm-exporter") [$E2E_HELM_RELEASE_NAME]
+   --k3d-cgroup-v1 auto|true|false                owned k3d cgroup v1 mode: auto|true|false (default: "auto") [$E2E_K3D_CGROUP_V1]
    --k3d-cluster-name name                        owned k3d cluster name (default: "dcgm-exporter-gpu") [$E2E_K3D_CLUSTER_NAME]
-   --k3d-ip-family ipv4|ipv6|dualstack            owned k3d network mode: ipv4|ipv6|dualstack (default: "dualstack") [$E2E_K3D_IP_FAMILY]
-   --k3d-keep-cluster                             keep e2e-managed k3d resources after the run (default: false) [$E2E_K3D_KEEP_CLUSTER]
+   --k3d-ip-family auto|ipv4|ipv6|dualstack       owned k3d network mode: auto|ipv4|ipv6|dualstack (default: "auto") [$E2E_K3D_IP_FAMILY]
+   --k3d-keep-cluster                             keep e2e-managed k3d resources after the run; environment: E2E_K3D_KEEP_CLUSTER (default: false)
    --k8s-node-selector-key key                    node selector key for GPU pods [$E2E_K8S_NODE_SELECTOR_KEY]
    --k8s-node-selector-value value                node selector value for GPU pods [$E2E_K8S_NODE_SELECTOR_VALUE]
    --k8s-runtime-class name                       Kubernetes RuntimeClass name for GPU pods [$E2E_K8S_RUNTIME_CLASS]
    --kubeconfig path                              use an existing Kubernetes cluster through path [$E2E_KUBECONFIG]
+   --run-name value                               name used to derive and own resources for this test run (default: "dcgm-exporter") [$E2E_RUN_NAME]
+   --wait-timeout duration                        timeout for Kubernetes readiness waits as a Go duration (default: "10m") [$E2E_WAIT_TIMEOUT]

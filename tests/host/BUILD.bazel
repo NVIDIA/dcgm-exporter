@@ -1,0 +1,104 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+filegroup(
+    name = "source_files",
+    srcs = glob([
+        "*.go",
+        "testdata/**",
+    ]),
+    visibility = [
+        "//internal/e2e/scenario:__pkg__",
+        "//internal/pkg/counters:__pkg__",
+        "//tests/static:__pkg__",
+    ],
+)
+
+# The package's tests and what they read at run time, shared by both targets.
+HOST_SRCS = [
+    "config_count_window_test.go",
+    "config_deprecated_flags_test.go",
+    "config_enrichment_test.go",
+    "config_flag_equivalence_test.go",
+    "config_helpers_test.go",
+    "config_inline_field_text_test.go",
+    "config_inspection_test.go",
+    "config_precedence_test.go",
+    "config_serves_metrics_test.go",
+    "config_startup_errors_test.go",
+    "config_watch_cadence_test.go",
+    "dcgm_library_loading_test.go",
+    "debug_dump_test.go",
+    "gpu_bind_unbind_events_test.go",
+    "gpu_load_test.go",
+    "gpu_samples_test.go",
+    "helpers_test.go",
+    "hpc_job_mapping_safety_test.go",
+    "http_timeouts_test.go",
+    "injected_event_window_test.go",
+    "injected_events_test.go",
+    "ipv6_listen_test.go",
+    "latest_value_batching_test.go",
+    "log_levels_test.go",
+    "mig_gpu_level_fields_test.go",
+    "mig_xid_counters_test.go",
+    "model_name_labels_test.go",
+    "nvsdm_mock_metrics_test.go",
+    "gpu_inventory_test.go",
+    "gpu_link_fields_test.go",
+    "gpu_selection_test.go",
+    "oversized_field_group_test.go",
+    "private_hostengine_test.go",
+    "reload_config_file_test.go",
+    "reload_test.go",
+    "remote_dcgm_uri_suite_test.go",
+    "remote_dcgm_uri_test.go",
+    "runtime_container_labels_test.go",
+    "scrape_limit_test.go",
+    "startup_metrics_test.go",
+    "startup_tls_test.go",
+    "suite_test.go",
+    "systemd_socket_test.go",
+]
+
+HOST_DATA = glob(["testdata/**"]) + ["//:etc/default-counters.csv"]
+
+HOST_DEPS = [
+    "//tests/internal/dcgmprobe",
+    "//tests/internal/metriccontract",
+    "//tests/internal/nvidiasmi",
+    "//tests/internal/nvmlinjection",
+    "//tests/internal/nvsdmmock",
+    "//tests/internal/resultmarker",
+    "@com_github_avast_retry_go_v4//:retry-go",
+    "@com_github_onsi_ginkgo_v2//:ginkgo",
+    "@com_github_onsi_gomega//:gomega",
+    "@com_github_prometheus_client_model//go",
+    "@com_github_prometheus_common//expfmt",
+    "@com_github_prometheus_common//model",
+    "@com_github_stretchr_testify//assert",
+    "@com_github_stretchr_testify//require",
+    "@org_uber_go_goleak//:goleak",
+]
+
+# The GPU suite: needs a GPU and DCGM, so Bazel runs it only when asked.
+go_test(
+    name = "host_test",
+    srcs = HOST_SRCS,
+    data = HOST_DATA,
+    tags = [
+        "manual",
+        "requires-dcgm",
+        "requires-gpu",
+    ],
+    deps = HOST_DEPS,
+)
+
+# The same package without the tests that need a GPU or a live hostengine.
+go_test(
+    name = "host_unit_test",
+    srcs = HOST_SRCS,
+    # "$$" is a literal "$" in a Bazel argument.
+    args = ["-test.skip=^(TestHostIntegration|TestGoroutineLeakOnReload)$$"],
+    data = HOST_DATA,
+    deps = HOST_DEPS,
+)

@@ -1,0 +1,21 @@
+version: 2
+metrics:
+  - name: gpu
+    fields:
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+      - name: DCGM_FI_DEV_BOARD_POWER_WATTS
+        prometheus_type: gauge
+        help: Power draw.
+    overrides:
+      - name: first
+        match: [DCGM_FI_DEV_GPU_TEMP_CELSIUS]
+        every: 1s
+      - name: second
+        match: [DCGM_FI_DEV_GPU_TEMP_CELSIUS, DCGM_FI_DEV_BOARD_POWER_WATTS]
+        every: 2s
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1

@@ -33,23 +33,10 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
 )
 
-const mountedCustomCountersFile = "/tmp/dcgm-exporter-custom-counters.csv"
-
-// availableExporterImage returns the first configured exporter image available to Docker.
-func availableExporterImage(ctx context.Context) ImageInfo {
-	for _, img := range testConfig.Images {
-		exists, err := imageExists(ctx, img.FullName)
-		Expect(err).NotTo(HaveOccurred())
-		if exists {
-			return img
-		}
-	}
-	if os.Getenv("E2E_REQUIRE_CONTAINER_IMAGES") == "1" {
-		Fail("no configured exporter image is available")
-	}
-	Skip("No configured exporter image found. Run 'make local' to build.")
-	return ImageInfo{}
-}
+const (
+	mountedCustomCountersFile = "/tmp/dcgm-exporter-custom-counters.csv"
+	mountedWebConfigFile      = "/tmp/dcgm-exporter-web-config.yml"
+)
 
 // fetchMetricsText scrapes the container metrics endpoint until it returns HTTP 200.
 func fetchMetricsText(ctx context.Context, port int) string {
@@ -75,20 +62,25 @@ func fetchMetricsText(ctx context.Context, port int) string {
 
 // writeCustomCountersFile creates a temporary collector CSV mounted by configuration tests.
 func writeCustomCountersFile() string {
-	dir, err := os.MkdirTemp("", "dcgm-exporter-counters-")
+	return writeHostFile("custom-counters.csv", "DCGM_FI_DEV_GPU_TEMP_CELSIUS,gauge,GPU temperature (in C).\n")
+}
+
+// writeHostFile writes data to a new temporary file named name for mounting
+// into a container, and removes it when the spec ends.
+func writeHostFile(name, data string) string {
+	dir, err := os.MkdirTemp("", "dcgm-exporter-container-")
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func() { _ = os.RemoveAll(dir) })
 
-	path := filepath.Join(dir, "custom-counters.csv")
-	data := "DCGM_FI_DEV_GPU_TEMP,gauge,GPU temperature (in C).\n"
+	path := filepath.Join(dir, name)
 	Expect(os.WriteFile(path, []byte(data), 0o600)).To(Succeed())
 	return path
 }
 
 // expectSelectorDiagnostic verifies invalid selectors produce a useful startup diagnostic.
-func expectSelectorDiagnostic(ctx context.Context, image ImageInfo, selector string, expected string) {
+func expectSelectorDiagnostic(ctx context.Context, image string, selector string, expected string) {
 	port := mustFreePort()
-	id := runExporterContainer(ctx, image.FullName, []string{"--net", "host"},
+	id := runExporterContainer(ctx, image, []string{"--net", "host"},
 		"-a", fmt.Sprintf(":%d", port), "-f", countersFile, "-d", selector)
 
 	Eventually(ctx, func(ctx context.Context) string {
@@ -107,10 +99,10 @@ func expectSelectorDiagnostic(ctx context.Context, image ImageInfo, selector str
 
 var _ = Describe("dcgm-exporter container runtime configuration", Serial, Label("configuration"), func() {
 	It("honors DCGM_EXPORTER_LISTEN on a non-default port", func(ctx context.Context) {
-		img := availableExporterImage(ctx)
+		image := requireExporterImage(ctx)
 		port := mustFreePort()
 
-		runExporterContainer(ctx, img.FullName,
+		runExporterContainer(ctx, image,
 			[]string{"--net", "host", "-e", fmt.Sprintf("DCGM_EXPORTER_LISTEN=:%d", port)})
 
 		body := fetchValidMetrics(ctx, port)
@@ -118,24 +110,24 @@ var _ = Describe("dcgm-exporter container runtime configuration", Serial, Label(
 	})
 
 	It("uses a mounted custom collectors file", func(ctx context.Context) {
-		img := availableExporterImage(ctx)
+		image := requireExporterImage(ctx)
 		port := mustFreePort()
 		hostCountersFile := writeCustomCountersFile()
 
-		runExporterContainer(ctx, img.FullName,
+		runExporterContainer(ctx, image,
 			[]string{"--net", "host", "-v", fmt.Sprintf("%s:%s:ro", hostCountersFile, mountedCustomCountersFile)},
 			"-a", fmt.Sprintf(":%d", port), "-f", mountedCustomCountersFile)
 
 		body := fetchValidMetrics(ctx, port)
-		Expect(body).To(ContainSubstring("DCGM_FI_DEV_GPU_TEMP"))
-		Expect(body).NotTo(ContainSubstring("DCGM_FI_DEV_POWER_USAGE"))
+		Expect(body).To(ContainSubstring("DCGM_FI_DEV_GPU_TEMP_CELSIUS"))
+		Expect(body).NotTo(ContainSubstring("DCGM_FI_DEV_BOARD_POWER_WATTS"))
 	})
 
 	It("accepts runtime interval, validation, logging, and web timeout flags", func(ctx context.Context) {
-		img := availableExporterImage(ctx)
+		image := requireExporterImage(ctx)
 		port := mustFreePort()
 
-		runExporterContainer(ctx, img.FullName,
+		runExporterContainer(ctx, image,
 			[]string{"--net", "host"},
 			"-a", fmt.Sprintf(":%d", port),
 			"-f", countersFile,
@@ -151,10 +143,10 @@ var _ = Describe("dcgm-exporter container runtime configuration", Serial, Label(
 	})
 
 	It("exposes exporter metrics when enabled", func(ctx context.Context) {
-		img := availableExporterImage(ctx)
+		image := requireExporterImage(ctx)
 		port := mustFreePort()
 
-		runExporterContainer(ctx, img.FullName,
+		runExporterContainer(ctx, image,
 			[]string{"--net", "host"},
 			"-a", fmt.Sprintf(":%d", port),
 			"-f", countersFile,
@@ -172,37 +164,57 @@ var _ = Describe("dcgm-exporter container runtime configuration", Serial, Label(
 
 var _ = Describe("dcgm-exporter pprof startup validation", Serial, Label("pprofRequiresWebConfig"), func() {
 	It("rejects --enable-pprof without --web-config-file", func(ctx context.Context) {
-		img := availableExporterImage(ctx)
+		image := requireExporterImage(ctx)
 		port := mustFreePort()
 
-		id := runExporterContainer(ctx, img.FullName, []string{"--net", "host"},
+		id := runExporterContainer(ctx, image, []string{"--net", "host"},
 			"-a", fmt.Sprintf(":%d", port),
 			"-f", countersFile,
 			"--enable-pprof")
 
-		Eventually(ctx, func(ctx context.Context) bool {
-			return containerIsRunning(ctx, id)
-		}).WithTimeout(startupTimeout).WithPolling(time.Second).Should(BeFalse(),
-			"exporter must not stay up when pprof is enabled without a web config")
+		expectPprofStartupRefused(ctx, id, port, "web-config-file")
+	})
 
-		logs, err := containerLogsCombined(ctx, id)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(logs).To(ContainSubstring("enable-pprof"))
-		Expect(logs).To(ContainSubstring("web-config-file"))
+	It("rejects --enable-pprof with a web config without TLS or basic auth", func(ctx context.Context) {
+		image := requireExporterImage(ctx)
+		port := mustFreePort()
+		hostWebConfig := writeHostFile("web-config.yml", "http_server_config:\n  http2: true\n")
 
-		resp, err := (&http.Client{Timeout: time.Second}).Get(localHTTPURL(port, "metrics"))
-		if err == nil {
-			defer resp.Body.Close()
-			Expect(resp.StatusCode).NotTo(Equal(http.StatusOK))
-		}
+		id := runExporterContainer(ctx, image,
+			[]string{"--net", "host", "-v", fmt.Sprintf("%s:%s:ro", hostWebConfig, mountedWebConfigFile)},
+			"-a", fmt.Sprintf(":%d", port),
+			"-f", countersFile,
+			"--enable-pprof", "--web-config-file", mountedWebConfigFile)
+
+		expectPprofStartupRefused(ctx, id, port, "basic_auth_users")
 	})
 })
+
+// expectPprofStartupRefused checks that the container exits with a log that
+// names the pprof flag and want, and never serves metrics.
+func expectPprofStartupRefused(ctx context.Context, id string, port int, want string) {
+	Eventually(ctx, func(ctx context.Context) bool {
+		return containerIsRunning(ctx, id)
+	}).WithTimeout(startupTimeout).WithPolling(time.Second).Should(BeFalse(),
+		"exporter must not stay up when pprof is enabled without a protected web config")
+
+	logs, err := containerLogsCombined(ctx, id)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(logs).To(ContainSubstring("enable-pprof"))
+	Expect(logs).To(ContainSubstring(want))
+
+	resp, err := (&http.Client{Timeout: time.Second}).Get(localHTTPURL(port, "metrics"))
+	if err == nil {
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).NotTo(Equal(http.StatusOK))
+	}
+}
 
 var _ = Describe("dcgm-exporter invalid device selectors", Serial, Label("invalidDeviceSelectors"), func() {
 	DescribeTable("logs the rejected device selector",
 		func(ctx context.Context, selector string, expected string) {
-			img := availableExporterImage(ctx)
-			expectSelectorDiagnostic(ctx, img, selector, expected)
+			image := requireExporterImage(ctx)
+			expectSelectorDiagnostic(ctx, image, selector, expected)
 		},
 		Entry("invalid GPU ID", "g:999999", "couldn't find requested GPU ID '999999'"),
 		Entry("invalid GPU instance ID", "i:999999", "couldn't find requested GPU instance ID '999999'"),

@@ -33,12 +33,12 @@ const (
 
 	syntheticMetricHelp = "Synthetic metric used by CPU-only benchmarks."
 
-	// defaultEmittedFieldCount is the 26 active entries in etc/default-counters.csv
-	// minus DCGM_FI_DRIVER_VERSION, the one label-only entry that is not emitted as
-	// its own numeric metric family.
-	defaultEmittedFieldCount = 25
+	// defaultEmittedFieldCount is the 27 active entries in etc/default-counters.csv
+	// minus DCGM_FI_SYSTEM_DRIVER_VERSION, the one label-only entry that is
+	// not emitted as its own numeric metric family.
+	defaultEmittedFieldCount = 26
 
-	// syntheticStressFieldCount is a round, synthetic scaling tier four times the
+	// syntheticStressFieldCount is a synthetic scaling tier four times the
 	// current default emitted field count. It does not represent a production preset.
 	syntheticStressFieldCount = 4 * defaultEmittedFieldCount
 )

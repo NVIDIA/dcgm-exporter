@@ -23,14 +23,11 @@ import (
 
 var (
 	ansiRE            = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
-	versionRE         = regexp.MustCompile(`[0-9]+[.][0-9]+[.][0-9]+([.][0-9]+)?`)
-	nvlinkBandwidthRE = regexp.MustCompile(`Link [0-9]+:[[:space:]]*[0-9]+(\.[0-9]+)?[[:space:]]*GB/s`)
+	nvlinkBandwidthRE = regexp.MustCompile(`Link [0-9]+:[[:space:]]*(?:0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\.[0-9]+)?)[[:space:]]*GB/s`)
 	topologyNVLinkRE  = regexp.MustCompile(`\bNV[0-9]+\b`)
 	migInstanceRE     = regexp.MustCompile(`I[[:space:]]+[0-9]+/([0-9]+).*GPU Instance \(EntityID:[[:space:]]*([0-9]+)\)`)
-	migDeviceLineRE   = regexp.MustCompile(`(?i)^[[:space:]]*MIG[[:space:]].*[[:space:]]Device[[:space:]]+[0-9]+:[[:space:]]*\(UUID:[[:space:]]*MIG-`)
 	fieldIDRE         = regexp.MustCompile(`\b[0-9]+\b`)
 	profilingRE       = regexp.MustCompile(`(?i)DCGM_FI_PROF_[A-Z0-9_]+|Profiling metrics|metric group|gr_engine_active|sm_active|sm_occupancy|tensor_active|dram_active|nvlink(_l[0-9]+)?_(tx|rx)_bytes|c2c_(tx|rx)_[[:alnum:]_]+`)
-	nvswitchRE        = regexp.MustCompile(`(?i)NVSwitch|NvSwitch`)
 	graceRE           = regexp.MustCompile(`(?i)Grace|FE_CPU|CPU Core|CPU hierarchy`)
 	c2cFieldRE        = regexp.MustCompile(`(?i)DCGM_FI_(DEV|PROF)_C2C|C2C.*field|field.*C2C|(^|[[:space:]|])c2c_[[:alnum:]_]+`)
 )
@@ -64,14 +61,6 @@ func firstLine(text string) string {
 		}
 	}
 	return ""
-}
-
-// firstLineOr returns fallback when output has no non-empty lines.
-func firstLineOr(text, fallback string) string {
-	if line := firstLine(text); line != "" {
-		return line
-	}
-	return fallback
 }
 
 // positiveEvidence finds a matching evidence line while ignoring known negative phrasing.

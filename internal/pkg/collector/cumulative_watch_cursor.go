@@ -31,6 +31,7 @@ type cumulativeWatchCursorKey struct {
 	fieldGroupHandle uintptr
 }
 
+// cumulativeWatchPoll holds one watch group's samples and returned cursor until the full poll succeeds.
 type cumulativeWatchPoll struct {
 	group      dcgm.GroupHandle
 	fieldGroup dcgm.FieldHandle
@@ -38,6 +39,7 @@ type cumulativeWatchPoll struct {
 	nextSince  time.Time
 }
 
+// newCumulativeWatchCursorKey converts a DCGM watch pair into its comparable map key.
 func newCumulativeWatchCursorKey(group dcgm.GroupHandle, fieldGroup dcgm.FieldHandle) cumulativeWatchCursorKey {
 	return cumulativeWatchCursorKey{
 		groupHandle:      group.GetHandle(),

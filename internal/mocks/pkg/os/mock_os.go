@@ -69,18 +69,6 @@ func (mr *MockOSMockRecorder) CreateTemp(dir, pattern any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTemp", reflect.TypeOf((*MockOS)(nil).CreateTemp), dir, pattern)
 }
 
-// Exit mocks base method.
-func (m *MockOS) Exit(code int) {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Exit", code)
-}
-
-// Exit indicates an expected call of Exit.
-func (mr *MockOSMockRecorder) Exit(code any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Exit", reflect.TypeOf((*MockOS)(nil).Exit), code)
-}
-
 // Getenv mocks base method.
 func (m *MockOS) Getenv(key string) string {
 	m.ctrl.T.Helper()
@@ -108,20 +96,6 @@ func (m *MockOS) Hostname() (string, error) {
 func (mr *MockOSMockRecorder) Hostname() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Hostname", reflect.TypeOf((*MockOS)(nil).Hostname))
-}
-
-// IsNotExist mocks base method.
-func (m *MockOS) IsNotExist(err error) bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsNotExist", err)
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// IsNotExist indicates an expected call of IsNotExist.
-func (mr *MockOSMockRecorder) IsNotExist(err any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsNotExist", reflect.TypeOf((*MockOS)(nil).IsNotExist), err)
 }
 
 // MkdirTemp mocks base method.
@@ -154,21 +128,6 @@ func (mr *MockOSMockRecorder) Open(name any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockOS)(nil).Open), name)
 }
 
-// ReadDir mocks base method.
-func (m *MockOS) ReadDir(name string) ([]os.DirEntry, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReadDir", name)
-	ret0, _ := ret[0].([]os.DirEntry)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ReadDir indicates an expected call of ReadDir.
-func (mr *MockOSMockRecorder) ReadDir(name any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReadDir", reflect.TypeOf((*MockOS)(nil).ReadDir), name)
-}
-
 // Remove mocks base method.
 func (m *MockOS) Remove(name string) error {
 	m.ctrl.T.Helper()
@@ -195,21 +154,6 @@ func (m *MockOS) RemoveAll(path string) error {
 func (mr *MockOSMockRecorder) RemoveAll(path any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveAll", reflect.TypeOf((*MockOS)(nil).RemoveAll), path)
-}
-
-// Stat mocks base method.
-func (m *MockOS) Stat(name string) (os.FileInfo, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Stat", name)
-	ret0, _ := ret[0].(os.FileInfo)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Stat indicates an expected call of Stat.
-func (mr *MockOSMockRecorder) Stat(name any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Stat", reflect.TypeOf((*MockOS)(nil).Stat), name)
 }
 
 // TempDir mocks base method.

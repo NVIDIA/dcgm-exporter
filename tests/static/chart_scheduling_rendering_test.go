@@ -34,6 +34,7 @@ const (
 	gpuTaintKey          = "nvidia.com/gpu"
 )
 
+// TestChartTolerationsRenderContract keeps default control-plane placement and permits opting into the GPU taint.
 func TestChartTolerationsRenderContract(t *testing.T) {
 	t.Run("default tolerations remain unchanged", func(t *testing.T) {
 		resources := renderChart(t, nil)
@@ -66,6 +67,7 @@ func TestChartTolerationsRenderContract(t *testing.T) {
 	})
 }
 
+// TestGPUTaintedNodesPatch verifies the example strategic patch adds the GPU NoSchedule toleration.
 func TestGPUTaintedNodesPatch(t *testing.T) {
 	base, err := os.ReadFile(repoPath(t, "deployment/examples/dcgm-exporter.yaml"))
 	require.NoError(t, err)
@@ -91,6 +93,48 @@ func TestGPUTaintedNodesPatch(t *testing.T) {
 	assertToleratesNoSchedule(t, daemonSet.Spec.Template.Spec.Tolerations, gpuTaintKey)
 }
 
+// TestRawManifestSelectorsRemainStableAcrossReleaseVersions keeps selectors version-independent while retaining version labels.
+func TestRawManifestSelectorsRemainStableAcrossReleaseVersions(t *testing.T) {
+	manifest, err := os.ReadFile(repoPath(t, "deployment", "examples", "dcgm-exporter.yaml"))
+	require.NoError(t, err)
+
+	resources := parseManifest(t, string(manifest))
+	daemonSet := requireResourceKind(t, resources, "DaemonSet")
+	require.Equal(t, map[string]string{
+		"app.kubernetes.io/name": "dcgm-exporter",
+	}, daemonSet.Spec.Selector.MatchLabels)
+	require.NotEmpty(t, daemonSet.Metadata.Labels["app.kubernetes.io/version"])
+
+	var service struct {
+		Spec struct {
+			Selector map[string]string `yaml:"selector"`
+		} `yaml:"spec"`
+	}
+	require.NoError(t, yaml.Unmarshal(requireManifestKind(t, string(manifest), "Service"), &service))
+	require.Equal(t, map[string]string{
+		"app.kubernetes.io/name": "dcgm-exporter",
+	}, service.Spec.Selector)
+
+	serviceMonitor, err := os.ReadFile(repoPath(t, "deployment", "examples", "service-monitor.yaml"))
+	require.NoError(t, err)
+
+	resource := requireResourceKind(t, parseManifest(t, string(serviceMonitor)), "ServiceMonitor")
+	require.Equal(t, map[string]string{
+		"app.kubernetes.io/name": "dcgm-exporter",
+	}, resource.Spec.Selector.MatchLabels)
+	require.NotEmpty(t, resource.Metadata.Labels["app.kubernetes.io/version"])
+}
+
+// TestRawManifestVersionedSelectorMigration documents deletion as the upgrade path for immutable selectors.
+func TestRawManifestVersionedSelectorMigration(t *testing.T) {
+	readme, err := os.ReadFile(repoPath(t, "deployment", "examples", "README.md"))
+	require.NoError(t, err)
+
+	require.Contains(t, strings.ReplaceAll(string(readme), "\n", " "), "Kubernetes selectors are immutable")
+	require.Contains(t, string(readme), "kubectl delete daemonset dcgm-exporter")
+}
+
+// requireManifestKind returns the raw YAML document for a resource kind or fails the test.
 func requireManifestKind(t *testing.T, manifest string, kind string) []byte {
 	t.Helper()
 
@@ -118,6 +162,7 @@ func requireManifestKind(t *testing.T, manifest string, kind string) []byte {
 	return nil
 }
 
+// assertToleratesNoSchedule requires an Exists toleration for the named NoSchedule taint.
 func assertToleratesNoSchedule(t *testing.T, tolerations []toleration, key string) {
 	t.Helper()
 

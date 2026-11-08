@@ -58,6 +58,7 @@ func BenchmarkRender(b *testing.B) {
 	}
 }
 
+// TestBenchmarkMetricGroups checks rendered family and sample counts for every benchmark fixture.
 func TestBenchmarkMetricGroups(t *testing.T) {
 	for _, benchmarkCase := range benchmarktest.Cases() {
 		t.Run(benchmarkCase.Name(), func(t *testing.T) {
@@ -86,6 +87,7 @@ func TestBenchmarkMetricGroups(t *testing.T) {
 	}
 }
 
+// benchmarkMetricGroups wraps the shared synthetic fixture as one GPU entity group.
 func benchmarkMetricGroups(benchmarkCase benchmarktest.Case) map[dcgm.Field_Entity_Group]collector.MetricsByCounter {
 	return map[dcgm.Field_Entity_Group]collector.MetricsByCounter{
 		dcgm.FE_GPU: benchmarktest.SyntheticGPUMetrics(benchmarkCase),

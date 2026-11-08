@@ -24,3 +24,31 @@ const (
 	NvidiaMigResourcePrefix = "nvidia.com/mig-"
 	MIG_UUID_PREFIX         = "MIG-"
 )
+
+// Exporter-owned counters whose sampling window a metric override can set.
+const (
+	ExporterXIDErrorsCountField   = "DCGM_EXP_XID_ERRORS_COUNT"
+	ExporterClockEventsCountField = "DCGM_EXP_CLOCK_EVENTS_COUNT"
+)
+
+// DCGMDbgLvl is a DCGM library debug level.
+const (
+	DCGMDbgLvlNone  = "NONE"
+	DCGMDbgLvlFatal = "FATAL"
+	DCGMDbgLvlError = "ERROR"
+	DCGMDbgLvlWarn  = "WARN"
+	DCGMDbgLvlInfo  = "INFO"
+	DCGMDbgLvlDebug = "DEBUG"
+	DCGMDbgLvlVerb  = "VERB"
+)
+
+// DCGMDbgLvlValues lists every DCGM library debug level.
+var DCGMDbgLvlValues = []string{
+	DCGMDbgLvlNone,
+	DCGMDbgLvlFatal,
+	DCGMDbgLvlError,
+	DCGMDbgLvlWarn,
+	DCGMDbgLvlInfo,
+	DCGMDbgLvlDebug,
+	DCGMDbgLvlVerb,
+}

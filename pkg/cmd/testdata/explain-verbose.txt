@@ -1,0 +1,103 @@
+Config file   testdata/inspection.yaml
+
+All settings
+metrics[0]
+  fields                                            1 inline definition       file:4
+  every                                             30s                       default
+  overrides[DCGM_EXP_XID_ERRORS_COUNT].window       5m                        default
+  overrides[DCGM_EXP_CLOCK_EVENTS_COUNT].window     5m                        default
+  overrides[0].name                                 temperatures              file:9
+  overrides[0].every                                1s                        file:11
+  overrides[0].match                                ["DCGM_FI_DEV_GPU_TEMP"]  file:10
+  overrides[0].sources.dcgm.watch.max_keep_samples  2                         file:15
+  entities.gpu.policy                               flex                      default
+  entities.switch.indices                           all                       default
+  entities.switch.links                             all                       default
+  entities.cpu.cores                                all                       default
+  entities.cpu.indices                              all                       default
+  enrichment.kubernetes                             false                     file:16
+    inactive: Kubernetes mode is disabled
+  enrichment.container                              false                     file:16
+    inactive: container labels are disabled
+  enrichment.dra                                    false                     file:16
+    inactive: Kubernetes mode is disabled
+  enrichment.hpc_jobs                               false                     file:16
+    inactive: HPC job labels are disabled
+outputs
+  scrape.listen  :9400  default
+sources
+  dcgm.hostengine                       ""                                        default
+    inactive: embedded hostengine is selected
+  dcgm.watch.max_keep_age               5s                                        file:24
+  dcgm.watch.max_keep_samples           0                                         default
+  dcgm.detect_bind_unbind.enabled       false                                     default
+  dcgm.detect_bind_unbind.every         1s                                        default
+    inactive: GPU bind/unbind watching is disabled
+  dcgm.cleanup_timeout                  5m                                        default
+  kubernetes.pod_resources_socket       /var/lib/kubelet/pod-resources/kubelet.sock  default
+    inactive: Kubernetes mode is disabled
+  kubernetes.gpu_id_type                uid                                       default
+    inactive: Kubernetes mode is disabled
+  kubernetes.additional_resource_names  []                                        default
+    inactive: Kubernetes mode is disabled
+  kubernetes.virtual_gpus               false                                     default
+    inactive: Kubernetes mode is disabled
+  kubernetes.pod_uid                    false                                     default
+    inactive: Kubernetes mode is disabled
+  kubernetes.pod_labels.enabled         false                                     default
+    inactive: Kubernetes mode is disabled
+  kubernetes.pod_labels.allow           []                                        default
+    inactive: Kubernetes mode is disabled
+  container.runtime_socket              /var/run/docker.sock                      default
+    inactive: container labels are disabled
+  hpc_jobs.mapping_dir                  /var/lib/dcgm-exporter/job-mapping        default
+    inactive: HPC job labels are disabled
+  hpc_jobs.max_file_bytes               65536                                     default
+    inactive: HPC job labels are disabled
+  hpc_jobs.max_job_id_bytes             256                                       default
+    inactive: HPC job labels are disabled
+  hpc_jobs.max_jobs_per_file            64                                        default
+    inactive: HPC job labels are disabled
+server
+  read_timeout            10s    default
+  write_timeout           30s    default
+  max_concurrent_scrapes  16     default
+  systemd_socket          false  default
+  web_config_file         ""     default
+  profiling               false  default
+observability
+  metrics.enabled  false  default
+  logs.format      text   default
+  logs.level       info   default
+debug_dump
+  enabled          false                     default
+  directory        /tmp/dcgm-exporter-debug  default
+    inactive: debug dumps are disabled
+  retention        24h                       default
+    inactive: debug dumps are disabled
+  compression      true                      default
+    inactive: debug dumps are disabled
+  min_interval     1m                        default
+    inactive: debug dumps are disabled
+  max_file_bytes   16777216                  default
+    inactive: debug dumps are disabled
+  max_total_bytes  268435456                 default
+    inactive: debug dumps are disabled
+  max_files        128                       default
+    inactive: debug dumps are disabled
+
+Flag-only settings (no config file key)
+  --use-old-namespace             false  default
+  --no-hostname                   false  default
+  --replace-blanks-in-model-name  false  default
+  --fake-gpus                     false  default
+  --disable-startup-validate      false  default
+
+Fields   1 from inline definitions, every 30s, retention 5s, no sample limit
+  override temperatures  (1 field)  every 1s, retention 5s, 2 samples
+    match DCGM_FI_DEV_GPU_TEMP -> DCGM_FI_DEV_GPU_TEMP
+    DCGM_FI_DEV_GPU_TEMP  gauge  id 150  every 1s, retention 5s, 2 samples  override temperatures
+
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories

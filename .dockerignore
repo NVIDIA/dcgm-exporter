@@ -1,14 +1,24 @@
 # Version control
 .git
 .gitignore
-.gitlab-ci.yml
 
 # Build artifacts
-dist/
+dist/*
+!dist/staged/
+!dist/staged/**
 *.tar.gz
+!dist/staged/**/*.tar.gz
 *.zip
 bin/
 cmd/dcgm-exporter/dcgm-exporter
+
+# Bazel's private override is host-only.
+.workspace/
+
+# Local Bazel/Codex state is never a container input.
+.cache/
+.codex/
+.cursor/
 
 # Test files
 tests/
@@ -24,16 +34,14 @@ SECURITY.md
 
 # CI/CD and deployment
 .github/
-.gitlab/
 deployment/
 examples/
 grafana/
 
-# Docker files - allow Dockerfile, build script, and entrypoint
+# Docker files - allow Dockerfiles and the runtime entrypoint
 .dockerignore
 !docker/Dockerfile
-!docker/package.Dockerfile
-!docker/build-cross.sh
+!docker/package-validation.Dockerfile
 !docker/dcgm-exporter-entrypoint.sh
 
 # IDE and editor files
@@ -61,21 +69,34 @@ Thumbs.db
 staticcheck.conf
 lint/
 
-# Packaging - include only the package service file needed for payload staging
+# Package sources are already inside the Bazel-owned staged tar.
 packaging/*
-!packaging/config-files/
-!packaging/config-files/systemd/
-!packaging/config-files/systemd/nvidia-dcgm-exporter.service
+
+# Product compilation is a Bazel action. The runtime Dockerfile consumes only
+# its staged outputs, so source changes do not expand the Docker build context.
+build/
+cmd/
+internal/
+pkg/
+go.mod
+go.sum
+hack/*
+!hack/mise-bootstrap.env
+!hack/task/
+!hack/task/**
+!hack/versions.env
+!hack/licenses/
+hack/licenses/*
+!hack/licenses/stage-container-runtime.sh
 
 # Scripts that aren't needed in build
 scripts/
-# Note: hack/ contains VERSION file needed by Makefile
+# The devcontainer build reads Bazel and version pins from hack/.
 
 # Service definitions
 *.yaml
 *.yml
-
-# Note: Makefile is needed for the build process
+!Taskfile.yml
 
 # Coverage reports
 coverage.out

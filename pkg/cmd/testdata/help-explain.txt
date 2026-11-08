@@ -1,0 +1,33 @@
+NAME
+  dcgm-exporter config explain
+  Explain where each setting came from and what will be collected
+
+USAGE
+  dcgm-exporter config explain [OPTIONS] [PATH] [-o text|json] [--verbose] [--
+  GLOBAL OPTIONS]
+
+GENERAL OPTIONS
+  --help, -h
+    Show command help
+    Default: false
+
+RESULT OPTIONS
+  --output, -o FORMAT
+    Result FORMAT: text or json
+    Default: "text"
+
+  --verbose
+    Show every setting and every collected field
+    Default: false
+
+  Exporter options after -- are applied as at startup; --config-file, --help and
+  --version are not allowed there. Without PATH the file is chosen as at
+  startup: --config-file, then DCGM_EXPORTER_CONFIG_FILE, then no file. --output
+  and --verbose go before --, on either side of PATH; give --output only once.
+  Use ./-name.yaml for a dash-leading filename.
+  Inspection does not prove GPU, DCGM, API or socket availability; validate and
+  explain list what was not checked. Exit status: 0 success, 1 any other
+  failure, including an invalid configuration, 2 wrong command usage.
+
+EXAMPLE
+  dcgm-exporter config explain ./exporter.yaml -- --collect-interval 1000

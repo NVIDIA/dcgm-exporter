@@ -17,6 +17,7 @@
 package dcgmerrors
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestClassify classifies supported typed DCGM errors, including wrapped errors, and rejects unknown statuses and non-DCGM errors.
 func TestClassify(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -151,6 +153,7 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// TestClassifyCode returns the status name and permission hint for a recognized no-permission code.
 func TestClassifyCode(t *testing.T) {
 	got, ok := ClassifyCode(dcgm.DCGM_ST_NO_PERMISSION)
 
@@ -158,4 +161,85 @@ func TestClassifyCode(t *testing.T) {
 	assert.Equal(t, dcgm.DCGM_ST_NO_PERMISSION, got.Code)
 	assert.Equal(t, "DCGM_ST_NO_PERMISSION", got.Status)
 	assert.Contains(t, got.Hint, "CAP_SYS_ADMIN")
+}
+
+// TestIsVersionMismatch checks typed and text-only DCGM version-mismatch
+// errors, including the text go-dcgm returns from entity listing.
+func TestIsVersionMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "wrapped typed mismatch",
+			err:  fmt.Errorf("list: %w", &dcgm.Error{Code: dcgm.DCGM_ST_VER_MISMATCH}),
+			want: true,
+		},
+		{
+			name: "go-dcgm entity listing text",
+			err:  errors.New("error getting entity count: API version mismatch"),
+			want: true,
+		},
+		{
+			name: "other typed error",
+			err:  &dcgm.Error{Code: dcgm.DCGM_ST_NOT_SUPPORTED},
+			want: false,
+		},
+		{
+			name: "other text error",
+			err:  assert.AnError,
+			want: false,
+		},
+		{
+			name: "nil",
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsVersionMismatch(tc.err))
+		})
+	}
+}
+
+// TestIsFatalScrapeError verifies that only terminal DCGM states cause the
+// server to end the exporter rather than keep responding with failed scrapes.
+func TestIsFatalScrapeError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "wrapped connection failure",
+			err:  fmt.Errorf("scrape: %w", &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID}),
+			want: true,
+		},
+		{
+			name: "permission failure stays per scrape",
+			err:  &dcgm.Error{Code: dcgm.DCGM_ST_NO_PERMISSION},
+			want: false,
+		},
+		{
+			name: "joined fatal error follows nonfatal error",
+			err: errors.Join(
+				&dcgm.Error{Code: dcgm.DCGM_ST_NO_PERMISSION},
+				&dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID},
+			),
+			want: true,
+		},
+		{
+			name: "non DCGM error",
+			err:  assert.AnError,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsFatalScrapeError(tc.err))
+		})
+	}
 }

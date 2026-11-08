@@ -69,8 +69,10 @@ func NewFileWatcher(filePath string, opts ...FileWatcherOption) *FileWatcher {
 	return fw
 }
 
-// Watch starts monitoring the file and calls onChange when the file is modified.
-// It blocks until the context is cancelled and returns nil on clean shutdown.
+// Watch monitors the file and calls onChange after a debounced modification.
+// It returns the context error on cancellation. Setup failures and a closed
+// fsnotify channel also return an error; fsnotify errors are logged and
+// watching continues.
 func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 	slog.Info("Watching for changes in file",
 		slog.String("file", fw.filePath),
@@ -93,12 +95,12 @@ func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 	// Initialize lastModTime with current file timestamp to avoid spurious reload on startup
 	// We want to detect file CHANGES, not the initial state
 	filePath := filepath.Join(dir, file)
-	var lastModTime time.Time
+	var lastInfo os.FileInfo
 	if info, err := os.Stat(filePath); err == nil {
-		lastModTime = info.ModTime()
+		lastInfo = info
 		slog.Debug("Initialized file watcher with current timestamp",
 			slog.String("file", fw.filePath),
-			slog.Time("initial_modtime", lastModTime))
+			slog.Time("initial_modtime", info.ModTime()))
 	}
 
 	var (
@@ -117,11 +119,10 @@ func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 
 		case <-timerCh:
 			// Debounce timer expired, check if file was actually modified
-			info, err := os.Stat(filepath.Join(dir, file))
+			info, err := os.Stat(filePath)
 			if err == nil {
-				modTime := info.ModTime()
-				if modTime != lastModTime {
-					lastModTime = modTime
+				if lastInfo == nil || !os.SameFile(lastInfo, info) || info.ModTime() != lastInfo.ModTime() {
+					lastInfo = info
 					onChange()
 				}
 			}
@@ -132,7 +133,8 @@ func (fw *FileWatcher) Watch(ctx context.Context, onChange func()) error {
 				return fmt.Errorf("watcher events channel closed")
 			}
 
-			if event.Op&fw.eventMask != 0 && filepath.Base(event.Name) == file {
+			eventFile := filepath.Base(event.Name)
+			if event.Op&fw.eventMask != 0 && (eventFile == file || eventFile == "..data") {
 				// Reset or create debounce timer
 				if debounceTimer == nil {
 					debounceTimer = time.NewTimer(fw.debounceDelay)
