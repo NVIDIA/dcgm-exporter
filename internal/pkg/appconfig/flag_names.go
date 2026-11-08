@@ -76,4 +76,6 @@ const (
 	FlagEnableGPUBindUnbindWatch         = "enable-gpu-bind-unbind-watch"
 	FlagGPUBindUnbindPollInterval        = "gpu-bind-unbind-poll-interval"
 	FlagEnablePprof                      = "enable-pprof"
+	FlagDaemon                           = "daemon"
+	FlagDaemonLogFile                    = "daemon-log-file"
 )

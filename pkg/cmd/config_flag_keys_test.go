@@ -285,6 +285,8 @@ var flagKeyMappings = []flagKeyMapping{
 		flag: CLIEnablePprof, key: "server.profiling", value: true, field: "EnablePprof",
 		read: func(c *appconfig.Config) any { return c.EnablePprof },
 	},
+	{flag: CLIDaemon, flagOnlyReason: "flag only; detaches the process, not a config value"},
+	{flag: CLIDaemonLogFile, flagOnlyReason: "flag only; detached process log path, not a config value"},
 }
 
 // rootFlagNames lists the root flags NewApp registers, without the help and
@@ -990,7 +992,10 @@ func TestEveryRootFlagIsInspected(t *testing.T) {
 	inspected[CLIConfigMapData] = true
 	for _, name := range rootFlagNames() {
 		switch name {
-		case CLIConfigFile, "help", "version":
+		// These flags select the config file, print help or version, or detach the
+		// process and exit; none is part of the resolved configuration, so config
+		// show does not report them.
+		case CLIConfigFile, CLIDaemon, CLIDaemonLogFile, "help", "version":
 			continue
 		}
 

@@ -186,6 +186,10 @@ Important contracts:
   session. The
   orchestrator's stop grace period (Kubernetes default 30s, the systemd stop
   timeout) can end a shutdown wait first.
+- `--daemon` starts a detached copy of the exporter in a new session and exits;
+  `--daemon-log-file` receives that copy's output, which is discarded when the
+  flag is empty. Do not use it in containers, Helm `arguments`, or service
+  manager units, which expect the process to stay in the foreground.
 - Startup validation should fail clearly when required DCGM or runtime
   prerequisites are missing, unless startup validation is explicitly disabled.
 

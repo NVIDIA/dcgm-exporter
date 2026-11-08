@@ -93,6 +93,8 @@ const (
 	CLIGPUBindUnbindPollInterval        = appconfig.FlagGPUBindUnbindPollInterval
 	CLIDCGMCleanupTimeout               = appconfig.FlagDCGMCleanupTimeout
 	CLIEnablePprof                      = appconfig.FlagEnablePprof
+	CLIDaemon                           = appconfig.FlagDaemon
+	CLIDaemonLogFile                    = appconfig.FlagDaemonLogFile
 )
 
 // CLI categories are shared display labels, separate from option names.
@@ -609,6 +611,18 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars:            []string{"DCGM_EXPORTER_ENABLE_PPROF"},
 			DisableDefaultText: true,
 		},
+		&cli.BoolFlag{
+			Name:    CLIDaemon,
+			Value:   false,
+			Usage:   "Start dcgm-exporter in the background in a new session and exit. Not for containers or service managers, which expect the process to stay in the foreground.",
+			EnvVars: []string{"DCGM_EXPORTER_DAEMON"},
+		},
+		&cli.StringFlag{
+			Name:    CLIDaemonLogFile,
+			Value:   "",
+			Usage:   "File that receives the output of the background process started by --daemon. The output is discarded when empty.",
+			EnvVars: []string{"DCGM_EXPORTER_DAEMON_LOG_FILE"},
+		},
 	}
 
 	if runtime.GOOS == "linux" {
@@ -649,6 +663,10 @@ func newOSWatcher(sigs ...os.Signal) (chan os.Signal, func()) {
 // action runs exporter startup behind stdout capture and turns a startup panic
 // into a returned error. NewApp installs it as the Linux command action.
 func action(c *cli.Context) error {
+	if c.Bool(CLIDaemon) && os.Getenv(daemonChildEnv) == "" {
+		return startDaemon(os.Args, c.String(CLIDaemonLogFile))
+	}
+
 	return stdout.Capture(context.Background(), func() (err error) {
 		// The purpose of this function is to capture any panic that may occur
 		// during initialization and return an error.

@@ -137,6 +137,18 @@ DIAGNOSTICS OPTIONS
     Environment: DISABLE_STARTUP_VALIDATE
 
 GENERAL OPTIONS
+  --daemon
+    Start dcgm-exporter in the background in a new session and exit. Not for
+    containers or service managers, which expect the process to stay in the
+    foreground.
+    Default: false
+    Environment: DCGM_EXPORTER_DAEMON
+
+  --daemon-log-file VALUE
+    File that receives the output of the background process started by --daemon.
+    The output is discarded when empty.
+    Environment: DCGM_EXPORTER_DAEMON_LOG_FILE
+
   --help, -h
     Show help
     Default: false
