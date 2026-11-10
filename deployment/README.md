@@ -370,6 +370,26 @@ tlsServerConfig:
   enabled: true
 ```
 
+### ServiceMonitor Node Metadata
+
+A Prometheus Operator version that supports `attachMetadata` can attach
+Kubernetes node metadata to discovered dcgm-exporter targets. Enable the chart
+pass-through and copy the desired discovery labels onto scraped series with
+relabeling rules:
+
+```yaml
+serviceMonitor:
+  attachMetadata:
+    node: true
+  relabelings:
+    - sourceLabels: [__meta_kubernetes_node_label_node_kubernetes_io_instance_type]
+      targetLabel: instance_type
+```
+
+This requires Prometheus 2.37 or later. The Prometheus service account (not the
+dcgm-exporter service account) must also have `list` and `watch` permissions for
+Node objects.
+
 ### Network policy
 
 The policy admits only `allowedPeers` to the metrics port.
@@ -521,6 +541,7 @@ list with comments.
 | `service.port` | Service, container and probe port. `config.outputs.<name>.listen` must use it | `9400` |
 | `service.annotations` | Service annotations | `{}` |
 | `serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor` | `true` |
+| `serviceMonitor.attachMetadata` | Discovery metadata attached to targets; set `node: true` to enable node metadata | `{}` |
 | `serviceMonitor.apiVersion` | `ServiceMonitor` API version | `monitoring.coreos.com/v1` |
 | `serviceMonitor.interval` | Scrape interval | `30s` |
 | `serviceMonitor.scrapeTimeout` | Scrape timeout. Keep it below `config.server.write_timeout` and at most the interval | `25s` |
