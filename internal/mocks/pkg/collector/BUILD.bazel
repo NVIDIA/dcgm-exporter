@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "collector",
+    srcs = ["mock_collector.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/collector",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/collector",
+        "@org_uber_go_mock//gomock",
+    ],
+)

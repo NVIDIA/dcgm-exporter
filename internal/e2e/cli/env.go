@@ -27,52 +27,40 @@ import (
 )
 
 // testsFromEnv builds the default tests configuration from E2E_* environment variables.
-func testsFromEnv() (config.Tests, error) {
+func testsFromEnv() (config.TestOptions, error) {
+	return testOptionsFromEnv()
+}
+
+// clusterLifecycleOptionsFromEnv excludes bootstrap-only controls that cluster commands do not expose.
+func clusterLifecycleOptionsFromEnv() (config.TestOptions, error) {
+	return testOptionsFromEnv()
+}
+
+// testOptionsFromEnv builds test options from E2E environment variables and configured defaults.
+func testOptionsFromEnv() (config.TestOptions, error) {
 	defaults := defaultTestsConfig()
-	resultMarkers, err := envBoolDefault("E2E_RESULT_MARKERS", defaults.ResultMarkers)
-	if err != nil {
-		return config.Tests{}, err
-	}
-	installDeps, err := envBoolDefault("E2E_INSTALL_DEPS", defaults.InstallDeps)
-	if err != nil {
-		return config.Tests{}, err
-	}
-	dryRun, err := envBoolDefault("E2E_DRY_RUN", false)
-	if err != nil {
-		return config.Tests{}, err
-	}
-	verbose, err := envBoolDefault("E2E_VERBOSE", false)
-	if err != nil {
-		return config.Tests{}, err
-	}
-	suiteResultMarkers, err := envBoolDefault("E2E_SUITE_RESULT_MARKERS", resultMarkers)
-	if err != nil {
-		return config.Tests{}, err
-	}
-	keepCluster, err := envBoolDefault("E2E_K3D_KEEP_CLUSTER", false)
-	if err != nil {
-		return config.Tests{}, err
-	}
-	return config.Tests{
+	runName := envStringDefault("E2E_RUN_NAME", defaults.RunName)
+	runConfig := cluster.DefaultConfig()
+	opts := config.TestOptions{
+		PrebuiltBinaries:          defaults.PrebuiltBinaries,
 		ToolsDir:                  os.Getenv("E2E_TOOLS_DIR"),
-		InstallDeps:               installDeps,
-		InstallDepsDocker:         os.Getenv("E2E_INSTALL_DEPS_DOCKER"),
-		InstallDepsNvidiaToolkit:  os.Getenv("E2E_INSTALL_DEPS_NVIDIA_CONTAINER_TOOLKIT"),
-		InstallDepsDCGM:           os.Getenv("E2E_INSTALL_DEPS_DCGM"),
-		InstallDepsVSOCK:          os.Getenv("E2E_INSTALL_DEPS_VSOCK"),
-		DryRun:                    dryRun,
-		Verbose:                   verbose,
-		ResultMarkers:             resultMarkers,
-		E2EResultMarkers:          suiteResultMarkers,
+		ExporterBinary:            os.Getenv("E2E_EXPORTER_BINARY"),
+		BootstrapOnly:             defaults.BootstrapOnly,
+		DryRun:                    defaults.DryRun,
+		Verbose:                   defaults.Verbose,
+		ResultMarkers:             defaults.ResultMarkers,
+		E2EResultMarkers:          defaults.E2EResultMarkers,
 		Suites:                    envList("E2E_SUITE"),
 		SkipSuites:                envList("E2E_SKIP_SUITE"),
 		Scenarios:                 envList("E2E_SCENARIO"),
 		SkipScenarios:             envList("E2E_SKIP_SCENARIO"),
 		Kubeconfig:                os.Getenv("E2E_KUBECONFIG"),
-		KeepCluster:               keepCluster,
-		ClusterName:               envStringDefault("E2E_K3D_CLUSTER_NAME", defaults.ClusterName),
-		Namespace:                 envStringDefault("E2E_HELM_NAMESPACE", defaults.Namespace),
-		ReleaseName:               envStringDefault("E2E_HELM_RELEASE_NAME", defaults.ReleaseName),
+		Cleanup:                   defaults.Cleanup,
+		KeepCluster:               defaults.KeepCluster,
+		RunName:                   runName,
+		ClusterName:               envStringDefault("E2E_K3D_CLUSTER_NAME", runConfig.ClusterName),
+		Namespace:                 envStringDefault("E2E_HELM_NAMESPACE", runConfig.Namespace),
+		ReleaseName:               envStringDefault("E2E_HELM_RELEASE_NAME", runConfig.ReleaseName),
 		DockerRegistryLoginFile:   os.Getenv("E2E_DOCKER_REGISTRY_LOGIN_FILE"),
 		DockerConfigDir:           os.Getenv("E2E_DOCKER_CONFIG_DIR"),
 		K8sImagePullSecret:        os.Getenv("E2E_K8S_IMAGE_PULL_SECRET"),
@@ -84,36 +72,86 @@ func testsFromEnv() (config.Tests, error) {
 		DCGMNamespace:             os.Getenv("E2E_DCGM_NAMESPACE"),
 		DCGMName:                  os.Getenv("E2E_DCGM_NAME"),
 		DCGMPort:                  os.Getenv("E2E_DCGM_PORT"),
-		WaitTimeout:               os.Getenv("E2E_WAIT_TIMEOUT"),
+		WaitTimeout:               envStringDefault("E2E_WAIT_TIMEOUT", defaults.WaitTimeout),
+		Timeout:                   envStringDefault("E2E_TIMEOUT", defaults.Timeout),
 		K8sRuntimeClass:           os.Getenv("E2E_K8S_RUNTIME_CLASS"),
 		K8sNodeSelectorKey:        os.Getenv("E2E_K8S_NODE_SELECTOR_KEY"),
 		K8sNodeSelectorValue:      os.Getenv("E2E_K8S_NODE_SELECTOR_VALUE"),
 		K3dIPFamily:               envStringDefault("E2E_K3D_IP_FAMILY", defaults.K3dIPFamily),
-		SharedGPUConfigure:        envStringDefault("E2E_SHARED_GPU_CONFIGURE", defaults.SharedGPUConfigure),
 		SharedGPUReplicas:         os.Getenv("E2E_SHARED_GPU_REPLICAS"),
-		DRAConfigure:              envStringDefault("E2E_DRA_CONFIGURE", defaults.DRAConfigure),
 		MIGConfigure:              envStringDefault("E2E_MIG_CONFIGURE", defaults.MIGConfigure),
-		DCGMFailureInjection:      envStringDefault("E2E_DCGM_FAILURE_INJECTION", defaults.DCGMFailureInjection),
-		GPUOperator:               envStringDefault("E2E_GPU_OPERATOR", defaults.GPUOperator),
-	}, nil
+	}
+
+	// An invalid mode is kept as written, so an explicit flag can still replace it;
+	// the winning value is validated when the flags are applied.
+	opts.K3dCgroupV1 = envFeatureMode("E2E_K3D_CGROUP_V1", defaults.K3dCgroupV1)
+	opts.SharedGPUConfigure = envFeatureMode("E2E_SHARED_GPU_CONFIGURE", defaults.SharedGPUConfigure)
+	opts.DRAConfigure = envFeatureMode("E2E_DRA_CONFIGURE", defaults.DRAConfigure)
+	opts.GPUOperator = envGPUOperatorMode("E2E_GPU_OPERATOR", defaults.GPUOperator)
+
+	return opts, nil
+}
+
+// envFeatureMode reads an auto, true or false mode variable, normalized when it is
+// valid and kept as written otherwise so flag validation can report it. A blank
+// value keeps the fallback.
+func envFeatureMode(name string, fallback config.FeatureMode) config.FeatureMode {
+	value := envModeDefault(name, string(fallback))
+	if mode, err := config.ParseFeatureMode(value); err == nil {
+		return mode
+	}
+
+	return config.FeatureMode(value)
+}
+
+// envGPUOperatorMode reads E2E_GPU_OPERATOR, normalized when it is valid and kept as
+// written otherwise so flag validation can report it. A blank value keeps the
+// fallback.
+func envGPUOperatorMode(name string, fallback config.GPUOperatorMode) config.GPUOperatorMode {
+	value := envModeDefault(name, string(fallback))
+	if mode, err := config.ParseGPUOperatorMode(value); err == nil {
+		return mode
+	}
+
+	return config.GPUOperatorMode(value)
+}
+
+// bootstrapFromEnvironment reads the bootstrap mode from the environment.
+func bootstrapFromEnvironment() (config.BootstrapMode, config.ValueSource, error) {
+	value := strings.TrimSpace(os.Getenv("E2E_BOOTSTRAP"))
+	if value == "" {
+		return "", config.ValueDefault, nil
+	}
+	mode, err := parseBootstrapMode(value)
+	if err != nil {
+		return "", "", fmt.Errorf("E2E_BOOTSTRAP: %w", err)
+	}
+	return mode, config.ValueEnvironment, nil
+}
+
+// parseBootstrapMode validates a bootstrap mode after CLI and environment parsing.
+func parseBootstrapMode(value string) (config.BootstrapMode, error) {
+	return config.ParseBootstrapMode(value)
 }
 
 // defaultTestsConfig returns defaults that are independent of the environment and package metadata.
-func defaultTestsConfig() config.Tests {
+func defaultTestsConfig() config.TestOptions {
 	clusterDefaults := cluster.DefaultConfig()
-	return config.Tests{
-		InstallDeps:          true,
-		ResultMarkers:        false,
-		E2EResultMarkers:     false,
-		ClusterName:          clusterDefaults.ClusterName,
-		Namespace:            clusterDefaults.Namespace,
-		ReleaseName:          clusterDefaults.ReleaseName,
-		K3dIPFamily:          "dualstack",
-		SharedGPUConfigure:   "true",
-		DRAConfigure:         "true",
-		MIGConfigure:         "true",
-		DCGMFailureInjection: "true",
-		GPUOperator:          "install",
+	return config.TestOptions{
+		RunName:            clusterDefaults.RunName,
+		ResultMarkers:      false,
+		E2EResultMarkers:   false,
+		Cleanup:            true,
+		ClusterName:        clusterDefaults.ClusterName,
+		Namespace:          clusterDefaults.Namespace,
+		ReleaseName:        clusterDefaults.ReleaseName,
+		WaitTimeout:        cluster.DefaultWaitTimeout(),
+		K3dIPFamily:        "auto",
+		K3dCgroupV1:        config.FeatureAuto,
+		SharedGPUConfigure: config.FeatureOn,
+		DRAConfigure:       config.FeatureOn,
+		MIGConfigure:       "auto",
+		GPUOperator:        config.GPUOperatorInstall,
 	}
 }
 
@@ -143,6 +181,15 @@ func envStringDefault(name, fallback string) string {
 	return fallback
 }
 
+// envModeDefault reads a mode variable, treating a value of only spaces as unset
+// so it cannot reach the options as an invalid mode.
+func envModeDefault(name, fallback string) string {
+	if value := os.Getenv(name); strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
 // envBoolDefault parses an optional bool environment variable.
 func envBoolDefault(name string, fallback bool) (bool, error) {
 	value := strings.TrimSpace(os.Getenv(name))
@@ -156,10 +203,20 @@ func envBoolDefault(name string, fallback bool) (bool, error) {
 	return parsed, nil
 }
 
-// validBoolLiteral reports whether value is accepted by parseBool.
-func validBoolLiteral(value string) bool {
-	_, err := parseBool(value)
-	return err == nil
+// envBoolFlagDefault preserves urfave's strconv.ParseBool input contract for boolean flags.
+func envBoolFlagDefault(name string, fallback bool) (bool, error) {
+	value, found := os.LookupEnv(name)
+	if !found {
+		return fallback, nil
+	}
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("could not parse %q as bool value from environment variable %q: %w", value, name, err)
+	}
+	return parsed, nil
 }
 
 // parseBool accepts common shell-style boolean spellings.

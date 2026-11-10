@@ -1,0 +1,38 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+filegroup(
+    name = "source_files",
+    srcs = glob(["*.go"]),
+    visibility = ["//tests/static:__pkg__"],
+)
+
+go_library(
+    name = "nvidiasmi",
+    srcs = [
+        "gpu_activity.go",
+        "gpu_identity.go",
+        "gpu_readings.go",
+        "inventory.go",
+        "mig_devices.go",
+        "nvidiasmi.go",
+        "nvlink.go",
+        "runner.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/internal/nvidiasmi",
+    visibility = ["//tests:__subpackages__"],
+)
+
+go_test(
+    name = "nvidiasmi_test",
+    srcs = [
+        "gpu_activity_test.go",
+        "gpu_identity_test.go",
+        "gpu_readings_test.go",
+        "inventory_test.go",
+        "mig_devices_test.go",
+        "nvidiasmi_test.go",
+        "nvlink_test.go",
+        "runner_test.go",
+    ],
+    deps = [":nvidiasmi"],
+)

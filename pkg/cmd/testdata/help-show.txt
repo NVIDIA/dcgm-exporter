@@ -1,0 +1,29 @@
+NAME
+  dcgm-exporter config show
+  Print the effective settings as a config file; does not read the files they
+  name
+
+USAGE
+  dcgm-exporter config show [OPTIONS] [PATH] [-o yaml|json] [-- GLOBAL OPTIONS]
+
+GENERAL OPTIONS
+  --help, -h
+    Show command help
+    Default: false
+
+RESULT OPTIONS
+  --output, -o FORMAT
+    Result FORMAT: yaml or json
+    Default: "yaml"
+
+  Exporter options after -- are applied as at startup; --config-file, --help and
+  --version are not allowed there. Without PATH the file is chosen as at
+  startup: --config-file, then DCGM_EXPORTER_CONFIG_FILE, then no file. --output
+  goes before --, on either side of PATH; give --output only once. Use
+  ./-name.yaml for a dash-leading filename.
+  Inspection does not prove GPU, DCGM, API or socket availability; validate and
+  explain list what was not checked. Exit status: 0 success, 1 any other
+  failure, including an invalid configuration, 2 wrong command usage.
+
+EXAMPLE
+  dcgm-exporter config show ./exporter.yaml > effective.yaml

@@ -1,6 +1,6 @@
 # DCGM Exporter Helm Chart
 
-This Helm chart deploys NVIDIA DCGM Exporter to monitor GPU metrics in Kubernetes clusters.
+This chart runs NVIDIA DCGM Exporter on every GPU node of a Kubernetes cluster and serves GPU metrics for Prometheus.
 
 For installation, configuration, verification, administration, and
 troubleshooting, see [Install DCGM Exporter](https://docs.nvidia.com/datacenter/dcgm/latest/installation/install-dcgm-exporter.html).
@@ -11,23 +11,41 @@ Related documentation includes:
 - [DCGM Exporter Metrics](https://docs.nvidia.com/datacenter/dcgm/latest/reference/dcgm-exporter-metrics.html)
 - [DCGM Exporter Release Notes](https://docs.nvidia.com/datacenter/dcgm/latest/release-notes/dcgm-exporter.html)
 
-## Quick Start
+## Quick start
 
 ```bash
-# Install with default configuration
-helm install dcgm-exporter ./deployment
+# Build the self-contained chart from source.
+task helm:package
 
-# Install with custom values (create your own values file)
-helm install dcgm-exporter ./deployment -f my-debug-values.yaml
+helm install dcgm-exporter dist/dcgm-exporter.tgz
+touch my-values.yaml   # put your settings in this file
+helm upgrade dcgm-exporter dist/dcgm-exporter.tgz -f my-values.yaml
+helm uninstall dcgm-exporter
+```
+
+The nodes need the NVIDIA driver. The chart creates a `ServiceMonitor`, so install the
+Prometheus Operator CRDs first or add `--set serviceMonitor.enabled=false`.
+
+`helm install dcgm-exporter ./deployment` also works when Git checks out
+`deployment/files/default-counters.csv` as a symlink. Checkouts without symlink support,
+such as Git for Windows with the default `core.symlinks=false`, need the packaged chart.
+
+## Common settings
+
+### NVIDIA runtime class
+
+If the default container runtime does not inject the NVIDIA driver libraries, set the
+RuntimeClass your cluster uses. `kubectl get runtimeclass` lists them.
+
+```yaml
+runtimeClassName: nvidia
 ```
 
 ### GPU node taints
 
-If GPU nodes are tainted with `nvidia.com/gpu:NoSchedule`, create a values
-file with a matching toleration:
+`tolerations` replaces the default list, so keep the entries you still need.
 
 ```yaml
-# gpu-tainted-nodes-values.yaml
 tolerations:
   - key: node-role.kubernetes.io/control-plane
     operator: Exists
@@ -37,207 +55,321 @@ tolerations:
     effect: NoSchedule
 ```
 
-Install or upgrade with that file:
+### ServiceMonitor
+
+The `ServiceMonitor` sets no HTTPS or credentials. With TLS or basic auth on, disable it
+and give Prometheus a scrape configuration with the matching scheme and credentials.
+
+```yaml
+serviceMonitor:
+  enabled: false
+```
+
+## Exporter configuration
+
+`config` is the exporter's own YAML file, written as a Helm value. The chart renders it
+into a ConfigMap, mounts it and points the exporter at it. Change one key with `--set`;
+the other defaults stay.
 
 ```bash
-helm upgrade --install dcgm-exporter ./deployment \
-  -f gpu-tainted-nodes-values.yaml
+helm install dcgm-exporter dist/dcgm-exporter.tgz \
+  --set config.sources.dcgm.watch.max_keep_age=5m
 ```
 
-The `tolerations` value replaces the chart default list. Include every
-toleration needed by your cluster.
-
-The chart enables its `ServiceMonitor` by default. If Prometheus Operator and
-the `ServiceMonitor` custom resource definition are not installed, use
-`--set serviceMonitor.enabled=false`.
-
-Chart-managed TLS and basic authentication protect the exporter endpoint, but
-the default `ServiceMonitor` does not configure HTTPS or authentication. When
-you enable `tlsServerConfig` or `basicAuth`, set
-`serviceMonitor.enabled=false` and supply a Prometheus scrape configuration
-with the matching scheme, TLS settings, and credentials.
-
-## Configuration
-
-### YAML Exporter Configuration
-
-The chart can mount an optional dcgm-exporter YAML config and set `DCGM_EXPORTER_CONFIG_FILE`.
-The YAML file is read at exporter startup; changing it requires restarting the pod.
-
-```yaml
-arguments:
-  - --watch-max-keep-age=10m
-  - --watch-max-keep-samples=0
-
-config:
-  enabled: true
-  create: true
-  data: |
-    version: 2
-    metrics:
-      file: /etc/dcgm-exporter/default-counters.csv
-      enableExporterMetrics: false
-    collections:
-      - name: scrape
-        every: 30s
-        metrics:
-          include: ["*"]
-```
-
-Exporter metrics (`go_*`, `process_*`, and `promhttp_*`) are disabled by default
-to preserve existing `/metrics` output. The setting enables or disables all of
-these metrics together. It does not change the `DCGM_FI_*` or `DCGM_EXP_*`
-metrics selected by the CSV file. Set `metrics.enableExporterMetrics: true`, pass
-`--enable-exporter-metrics`, or set
-`DCGM_EXPORTER_ENABLE_EXPORTER_METRICS=true` to enable them.
-
-Inline metric definitions can be supplied without a CSV file:
+The default:
 
 ```yaml
 config:
-  enabled: true
-  create: true
-  data: |
-    version: 2
+  version: 2
+  metrics:                  # Helm replaces a list whole: repeat the entire entry
+    - name: default
+      file: /etc/dcgm-exporter/chart/metrics/default-counters.csv
+      every: 30s
+      enrichment:
+        kubernetes: auto    # add pod, namespace and container names when available
+        container: false
+        dra: false
+        hpc_jobs: false
+  outputs:
+    prometheus:
+      type: prometheus
+      schema: dcgm/v1
+      listen: ":9400"       # the port must equal service.port
+  observability:
     metrics:
+      enabled: false        # true adds the exporter's own go_*, process_* and promhttp_* metrics
+```
+
+Every key is in the [command reference](https://docs.nvidia.com/datacenter/dcgm/latest/reference/command-line-reference/dcgm-exporter.html).
+Check a file with `dcgm-exporter config validate`, and see where each setting comes from
+with `dcgm-exporter config explain`.
+
+The exporter reads the file at startup. A changed `config` rolls the pods on `helm upgrade`.
+
+`arguments` and `extraEnv` override `config`. The chart's RBAC, port and volumes follow
+`config` only, so the chart rejects flags and variables for the settings it relies on:
+the listen address, the metrics and web config files, the debug dump switch and
+directory, and the pod label, pod UID and DRA switches. Set those in `config`.
+
+### Use your own config file
+
+| Setting | Result |
+| --- | --- |
+| `config` (default) | The chart creates `<fullname>-config` from `config`. |
+| `configMap.existingName` | The chart mounts your ConfigMap and ignores `config`. |
+| `config: null` | The chart mounts no file, so the exporter uses the one in the image. |
+
+```yaml
+configMap:
+  existingName: my-exporter-config
+  key: config.yaml          # the key that holds the complete exporter file
+```
+
+With an existing ConfigMap the chart cannot read your file. It skips the checks that
+read `config` and creates no ClusterRole. The install notes print the metrics path when
+`customMetrics` is set, and the web config path when TLS or basic auth is on.
+Restart the pods after you edit the ConfigMap, because the exporter reads the file at
+startup.
+
+### Mounted files
+
+Each file is a whole-directory mount without `subPath`, so the kubelet keeps it current.
+
+| Path in the container | Source |
+| --- | --- |
+| `/etc/dcgm-exporter/chart/config/<configMap.key>` | `<fullname>-config`, or `configMap.existingName` |
+| `/etc/dcgm-exporter/chart/metrics/default-counters.csv` | `<fullname>-metrics`: the default list, or `customMetrics` |
+| `/etc/dcgm-exporter/chart/web-config/web-config.yaml` | `<fullname>-web-config`, when TLS or basic auth is on |
+| `/etc/dcgm-exporter/tls` | the TLS Secret, when TLS is on |
+
+A relative `metrics[].file` or `server.web_config_file` starts from the config file's
+directory. With an existing ConfigMap, set both to the paths above.
+
+### Choose the metrics
+
+List the metrics inline.
+
+```yaml
+config:
+  version: 2
+  metrics:
+    - name: default
+      every: 30s
+      enrichment:           # repeat it: a switch left out means auto
+        kubernetes: auto
+        container: false
+        dra: false
+        hpc_jobs: false
       fields:
-        - name: DCGM_FI_DEV_GPU_TEMP
-          prometheusType: gauge
+        - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+          prometheus_type: gauge
           help: GPU temperature (in C).
+        - name: DCGM_FI_DEV_BOARD_POWER_WATTS
+          prometheus_type: gauge
+          help: Power draw (in W).
+  outputs:
+    prometheus:
+      type: prometheus
+      schema: dcgm/v1
 ```
 
-For Kubernetes deployments, mount custom metric ConfigMaps as files and point
-YAML `metrics.file` at the mounted CSV path. The chart defaults mount the
-`exporter-metrics-config-map` `metrics` key at
-`/etc/dcgm-exporter/default-counters.csv`; set `customMetrics` to replace that
-CSV content.
+Or keep your CSV in a ConfigMap, mount it as a directory and point `metrics[0].file` at it.
 
 ```yaml
-customMetrics: |
-  DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
-  DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
+extraConfigMapVolumes:
+  - name: extra-metrics
+    configMap:
+      name: my-metrics
+extraVolumeMounts:
+  - name: extra-metrics
+    mountPath: /etc/dcgm-exporter/extra
+    readOnly: true
 ```
 
-When using an existing ConfigMap for the YAML file, set `config.create=false` and `config.name` to the existing ConfigMap name.
+The running exporter reloads an edited list without a restart. Do not mount over
+`/etc/dcgm-exporter/default-counters.csv`, the image's own list.
 
-Use one or more named `collections` to assign a cadence to DCGM field patterns. The all-fields
-`scrape` collection supplies the default cadence; narrower collections override it. Go keeps its
-existing DCGM field-pattern matching, so `metrics.include` values are not nv-exporter catalog SignalIds.
-Startup fails if an override pattern matches no configured fields or two overrides match the same field.
-
-Version 2 is the canonical collection schema. Version 1 remains supported for existing configuration files,
-but accepts only its original singular `collection` block. New files should use version 2 and `collections`;
-the two schemas cannot be mixed.
+Select which devices are collected with `entities`, and collect some fields at another
+rate with `overrides`. Both belong to the `metrics` entry, so repeat the whole entry.
 
 ```yaml
 config:
-  enabled: true
-  create: true
-  data: |
-    version: 2
-    metrics:
-      file: /etc/dcgm-exporter/default-counters.csv
-    sources:
-      dcgm:
-        watch:
-          maxKeepAge: 10m
-          maxKeepSamples: 0
-    collections:
-      - name: scrape
-        every: 30s
-        metrics:
-          include: ["*"]
-      - name: fast-thermals
-        every: 5s
-        sources:
-          dcgm:
-            watch:
-              maxKeepAge: 0s
-              maxKeepSamples: 2
-        metrics:
-          include:
-            - DCGM_FI_DEV_GPU_TEMP
-            - DCGM_FI_DEV_POWER_USAGE
-      - name: slow-nvlink-prm
-        every: 5m
-        metrics:
-          include:
-            - DCGM_FI_DEV_NVLINK_PPCNT_*
+  version: 2
+  metrics:
+    - name: default
+      file: /etc/dcgm-exporter/chart/metrics/default-counters.csv
+      every: 30s
+      enrichment:           # repeat it: a switch left out means auto
+        kubernetes: auto
+        container: false
+        dra: false
+        hpc_jobs: false
+      entities:
+        gpu: {policy: explicit, gpus: [0, 1], instances: none}
+      overrides:
+        - name: fast-thermals
+          match: [DCGM_FI_DEV_GPU_TEMP_CELSIUS, DCGM_FI_DEV_BOARD_POWER_WATTS]
+          every: 5s
+  outputs:
+    prometheus:
+      type: prometheus
+      schema: dcgm/v1
 ```
 
-The chart uses its existing `arguments` and `config.data` passthroughs for field-watch retention; there are
-no chart-specific retention keys. `sources.dcgm.watch` sets the default policy, and a collection's
-`sources.dcgm.watch` overrides it. `extraEnv` can alternatively set `DCGM_EXPORTER_WATCH_MAX_KEEP_AGE`
-and `DCGM_EXPORTER_WATCH_MAX_KEEP_SAMPLES`. Keep XID and clock-event fields on the compatibility `10m`/`0`
-policy unless a shorter history has been qualified for the intended `_COUNT` window and `_TOTAL` polling
-interval.
+The `match` list takes exact field names, `*` wildcards such as `DCGM_FI_DEV_NVLINK_*`,
+and `/regex/` patterns. Exact DCGM names also match aliases with the same field ID.
+XID patterns match both `DCGM_FI_DEV_XID_ERROR` and `DCGM_FI_DEV_XID_ERRORS`.
+A `window` override is rejected if it selects a configured field that is not a window
+counter, including through a DCGM alias. The command reference lists the rest.
 
-When upgrading from older chart values, the default `arguments: []` may remove
-the rendered container `args:` stanza and roll the DaemonSet. The exporter still
-uses its built-in runtime defaults when no arguments are set.
+#### customMetrics (deprecated)
 
-### Scrape Timeout Configuration
-
-Kubernetes pod metadata enrichment can add scrape latency on dense GPU or MIG nodes. The chart exposes the exporter HTTP server timeouts and the ServiceMonitor scrape budget so they can be kept aligned.
+`customMetrics` replaces the text of the chart's CSV. Move the lines into `fields`.
 
 ```yaml
-service:
-  webReadTimeout: 10s
-  webWriteTimeout: 30s
+# Before
+customMetrics: |
+  DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature (in C).
+```
+
+```yaml
+# After
+config:
+  version: 2
+  metrics:
+    - name: default
+      every: 30s
+      enrichment:           # repeat it: a switch left out means auto
+        kubernetes: auto
+        container: false
+        dra: false
+        hpc_jobs: false
+      fields:
+        - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+          prometheus_type: gauge
+          help: GPU temperature (in C).
+  outputs:
+    prometheus:
+      type: prometheus
+      schema: dcgm/v1
+```
+
+The exporter reads `customMetrics` only when `metrics[].file` is the chart's CSV path, and
+the chart fails the render when it is not. With an existing ConfigMap or `config: null` the
+chart cannot check, so set that path in your file.
+
+### Scrape timeouts
+
+Pod metadata can slow a scrape on dense GPU or MIG nodes. Keep the exporter timeouts and
+the `ServiceMonitor` consistent.
+
+```yaml
+config:
+  version: 2
+  server:
+    read_timeout: 10s
+    write_timeout: 30s      # keep above serviceMonitor.scrapeTimeout
 
 serviceMonitor:
   interval: 30s
-  scrapeTimeout: 25s
+  scrapeTimeout: 25s        # at most the interval
 ```
 
-- `service.webReadTimeout`: Maximum time for the exporter to read an HTTP scrape request.
-- `service.webWriteTimeout`: Maximum time for the exporter to generate and write an HTTP scrape response.
-- `serviceMonitor.scrapeTimeout`: Maximum scrape duration used by Prometheus Operator when the ServiceMonitor is enabled. Keep this lower than `service.webWriteTimeout` and no greater than `serviceMonitor.interval`.
+### Stop grace period
 
-### Concurrent Scrape Configuration
+On a stop, the exporter waits up to `sources.dcgm.cleanup_timeout` (default `5m`) for
+DCGM to release its watches. Kubernetes stops the pod after its grace period, 30s by
+default, so it can end that wait before it times out. To see the timeout message at
+shutdown, lower `config.sources.dcgm.cleanup_timeout` below the grace period. This chart
+does not set `terminationGracePeriodSeconds`, so a longer grace period needs a DaemonSet
+patch outside Helm.
 
-Set the limit in the exporter YAML configuration:
+### Port
+
+`service.port` is the Service, container and probe port. The render fails when a
+`config.outputs.<name>.listen` port differs, so change both together.
+
+### Debug dumps
+
+Dumps write metrics and device data to JSON files for troubleshooting. They hold runtime
+data, so limit access and turn them off when you are done.
 
 ```yaml
 config:
-  enabled: true
-  data: |
-    version: 2
-    server:
-      maxConcurrentScrapes: 16
+  version: 2
+  debug_dump:
+    enabled: true
+    directory: /tmp/dcgm-exporter-debug
+    retention: 24h
+    max_total_bytes: 268435456
+
+debugDump:
+  sizeLimit: 512Mi          # the chart's emptyDir; keep it above max_total_bytes
 ```
 
-Alternatively, pass `--max-concurrent-scrapes=16` through `arguments` or use
-`extraEnv` to set `DCGM_EXPORTER_MAX_CONCURRENT_SCRAPES`.
+The `emptyDir` is lost when the pod is replaced. To keep dumps, add a volume named
+`debug-dumps` and mount it at the dump directory. The chart then adds no `emptyDir`.
 
-### Detached GPU Lifecycle Detection
+```yaml
+extraConfigMapVolumes:
+  - name: debug-dumps
+    persistentVolumeClaim: {claimName: exporter-debug}
+extraVolumeMounts:
+  - name: debug-dumps
+    mountPath: /tmp/dcgm-exporter-debug
+```
 
-On systems that support detached GPUs, enable DCGM bind/unbind detection in the
-exporter YAML configuration. After DCGM reports that GPU reinitialization is
-complete, the exporter rebuilds its DCGM, NVML, and metrics state to match the
-resulting topology.
+Copy the files out with `kubectl cp <namespace>/<pod>:/tmp/dcgm-exporter-debug ./debug-files`.
+
+## Security
+
+### Remote DCGM hostengine
+
+When using `config.sources.dcgm.hostengine`, follow the
+[remote hostengine security guidance](https://github.com/NVIDIA/dcgm-exporter/blob/main/SECURITY.md#remote-dcgm-hostengine-connections).
+The HTTP TLS/basic-auth settings below do not secure the separate DCGM connection.
+
+### TLS and basic auth
+
+TLS or basic auth makes the chart render a web config Secret, mount it and set
+`config.server.web_config_file`. The render fails if `config` names another file or is
+`null`. With an existing ConfigMap, set `server.web_config_file` to the path above.
+
+```yaml
+tlsServerConfig:
+  enabled: true
+  existingSecret: my-exporter-tls  # tls.crt, tls.key and, for client auth, ca.crt
+  clientAuthType: RequireAndVerifyClientCert
+
+basicAuth:
+  users:
+    prometheus: change-me
+```
+
+The default `autoGenerated: true` creates a self-signed certificate, which is not for
+production. Instead of `existingSecret`, the chart can create the Secret from
+`tlsServerConfig.cert`, `key` and `ca`.
+
+Only `RequireAndVerifyClientCert` makes client certificates mandatory.
+`VerifyClientCertIfGiven` verifies a certificate only when the client sends one.
+`RequestClientCert` and `RequireAnyClientCert` do not verify certificates.
+
+The chart stores only password hashes in the Secret, but your values and the Helm release
+data hold the passwords. With basic auth on, the probes check the TCP port.
+
+### pprof
+
+Profiling is off by default. Turn it on together with TLS or basic auth, which it needs.
 
 ```yaml
 config:
+  version: 2
+  server:
+    profiling: true
+tlsServerConfig:
   enabled: true
-  data: |
-    version: 2
-    sources:
-      dcgm:
-        detectBindUnbind:
-          enabled: true
-          pollInterval: 1s
 ```
 
-This requires DCGM 4.5 or later and an NVIDIA driver from the 590 series or
-later. The polling interval defaults to one second when omitted. Do not use
-this setting on older driver stacks, where detached-GPU support is unavailable.
-
-The YAML setting is preferred. Existing deployments can continue using
-`--enable-gpu-bind-unbind-watch` and `--gpu-bind-unbind-poll-interval`, or the
-corresponding `DCGM_EXPORTER_ENABLE_GPU_BIND_UNBIND_WATCH` and
-`DCGM_EXPORTER_GPU_BIND_UNBIND_POLL_INTERVAL` environment variables. Explicit
-CLI or environment values override YAML.
 ### ServiceMonitor Node Metadata
 
 A Prometheus Operator version that supports `attachMetadata` can attach
@@ -258,157 +390,274 @@ This requires Prometheus 2.37 or later. The Prometheus service account (not the
 dcgm-exporter service account) must also have `list` and `watch` permissions for
 Node objects.
 
-### Debug Dump Functionality
+### Network policy
 
-The chart supports runtime object dumping for troubleshooting purposes. This feature allows dcgm-exporter to write debug information to files that can be analyzed later.
-
-#### Enable Debug Dumps
+The policy admits only `allowedPeers` to the metrics port.
 
 ```yaml
-debugDump:
+networkPolicy:
   enabled: true
-  directory: "/tmp/dcgm-exporter-debug"  # Default location
-  retention: 48  # hours (0 = no cleanup) - extended from default 24h for production use
-  compression: true
+  allowedPeers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: monitoring}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: prometheus}
 ```
 
-#### Configuration Options
+An empty list blocks every scrape, and a peer of `{}` admits all sources. The network
+plugin must enforce NetworkPolicy, and the policy does not replace TLS or basic auth.
+Kubelet health probes keep working. GPU Operator ignores these values; see
+[the raw example](examples/README.md#metrics-ingress-policy).
 
-- `enabled`: Enable/disable debug dump functionality (default: `false`)
-- `directory`: Directory to store debug dump files (default: `/tmp/dcgm-exporter-debug`)
-- `retention`: Retention period in hours (default: `24`, `0` = no cleanup)
-- `compression`: Use gzip compression for dump files (default: `true`)
+The policy opens `service.port`, so the exporter must listen there. While the policy is on
+the chart rejects `hostNetwork: true`, which NetworkPolicy does not cover, and every other
+way to set the listener:
 
-**Note on directory choice:**
-- `/tmp/dcgm-exporter-debug` (default): Temporary location, files may be lost on reboot
-- `/var/log/dcgm-exporter-debug`: Persistent location, recommended for production troubleshooting
+```text
+--address, -a, --web-systemd-socket
+DCGM_EXPORTER_LISTEN, DCGM_EXPORTER_SYSTEMD_SOCKET
+config.server.systemd_socket
+```
 
-#### Persistent Storage with hostPath Volume
+### Pod labels, DRA and permissions
 
-For production environments, you can mount the debug directory using a hostPath volume to persist logs under `/var/log/`. This ensures debug files survive pod restarts and node reboots.
-
-The DaemonSet automatically creates a hostPath volume mount when debug dumps are enabled. Here's the relevant configuration from `deployment/templates/daemonset.yaml`:
+Pod labels need an allowlist of RE2 patterns. `[".*"]` exports every label, which can
+expose sensitive values.
 
 ```yaml
-# Volume definition
-volumes:
-- name: "debug-dumps"
-  hostPath:
-    path: {{ .Values.debugDump.directory }}
-    type: DirectoryOrCreate
-
-# Volume mount in container
-volumeMounts:
-- name: "debug-dumps"
-  mountPath: {{ .Values.debugDump.directory }}
+config:
+  version: 2
+  sources:
+    kubernetes:
+      pod_uid: true
+      pod_labels:
+        enabled: true
+        allow: ["^app$", "^tier$"]
 ```
 
-**Example configuration for persistent storage:**
+DRA labels need `enrichment.dra` and a `sources.dra` block. Repeat the whole `metrics`
+entry, because Helm replaces the list.
 
 ```yaml
-debugDump:
-  enabled: true
-  directory: "/var/log/dcgm-exporter-debug"  # Persistent location
-  retention: 48  # hours - extended from default 24h for production use
-  compression: true
+config:
+  version: 2
+  metrics:
+    - name: default
+      file: /etc/dcgm-exporter/chart/metrics/default-counters.csv
+      every: 30s
+      enrichment:
+        kubernetes: auto
+        container: false
+        dra: true
+        hpc_jobs: false
+  sources:
+    dra:
+      mode: kubernetes
 ```
 
-This configuration will:
-- Create a hostPath volume at `/var/log/dcgm-exporter-debug` on each node
-- Mount this directory into the container
-- Persist debug files across pod restarts and node reboots
-- Automatically create the directory if it doesn't exist (`DirectoryOrCreate` type)
-
-#### Accessing Debug Files
-
-When debug dumps are enabled, files are stored on the host filesystem at the specified directory. You can access them by:
-
-1. **From the host node:**
-   ```bash
-   ls -la /tmp/dcgm-exporter-debug/
-   ```
-
-2. **From within the pod:**
-   ```bash
-   kubectl exec -n <namespace> <pod-name> -- ls -la /tmp/dcgm-exporter-debug/
-   ```
-
-3. **Copy files from pod:**
-   ```bash
-   kubectl cp <namespace>/<pod-name>:/tmp/dcgm-exporter-debug/ ./debug-files/
-   ```
-
-#### Example Usage
-
-**Create a custom values file for debug dumps:**
-
-Create a file named `my-debug-values.yaml` with the following content:
+When `config` turns on pod labels, pod UID or DRA, the chart creates a ClusterRole that
+can read Pods (and ResourceSlices for DRA) and mounts the service account token. To manage
+permissions yourself, bind your own role and mount the token.
 
 ```yaml
-debugDump:
-  enabled: true
-  directory: "/var/log/dcgm-exporter-debug"  # Persistent location
-  retention: 48  # hours - extended from default 24h for production use
-  compression: true
+kubernetes:
+  rbac:
+    create: false
+serviceAccount:
+  create: false
+  name: exporter-with-external-rbac
+  automountServiceAccountToken: true
 ```
 
-**Install with debug dumps enabled:**
+## Parameters
 
-```bash
-# Install with custom debug configuration
-helm install dcgm-exporter ./deployment -f my-debug-values.yaml
+Each table lists a chart value, what it does and its default. `values.yaml` has the same
+list with comments.
 
-# Check if debug files are being created (adjust path based on your configuration)
-kubectl exec -n dcgm-exporter <pod-name> -- ls -la /var/log/dcgm-exporter-debug/
-```
+### Image
 
-**Or use default configuration:**
+| Name | Description | Value |
+| --- | --- | --- |
+| `image.repository` | Exporter image repository | `nvcr.io/nvidia/k8s/dcgm-exporter` |
+| `image.tag` | Exporter version. Empty uses the chart's `appVersion` | `4.9.0` |
+| `image.digest` | Pin the image by digest. The reference becomes `repository@digest` and `tag` is ignored | `""` |
+| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `imagePullSecrets` | Secrets for pulling the image | `[]` |
 
-```bash
-# Install with default debug directory (/tmp/dcgm-exporter-debug)
-helm install dcgm-exporter ./deployment --set debugDump.enabled=true
+### Exporter configuration
 
-# Check if debug files are being created (using default directory)
-kubectl exec -n dcgm-exporter <pod-name> -- ls -la /tmp/dcgm-exporter-debug/
-```
+| Name | Description | Value |
+| --- | --- | --- |
+| `config` | The exporter's YAML configuration. `null` mounts no file | see [Exporter configuration](#exporter-configuration) |
+| `configMap.existingName` | Mount this existing ConfigMap instead of rendering `config` | `""` |
+| `configMap.key` | Key that holds the config file in the ConfigMap | `config.yaml` |
+| `customMetrics` | Deprecated. CSV text that replaces the chart's metrics list | unset |
+| `arguments` | Extra command-line flags for settings with no `config` key. They override `config` | `[]` |
+| `extraEnv` | Extra environment variables. They override `config` | `[]` |
+| `kubeletPath` | Directory of the kubelet pod-resources socket | `/var/lib/kubelet/pod-resources` |
 
-### Other Configuration Options
+### Names
 
-See `values.yaml` for all available configuration options including:
-- Image configuration
-- Service settings
-- Resource limits
-- Kubernetes integration
-- TLS configuration
-- Basic authentication
+| Name | Description | Value |
+| --- | --- | --- |
+| `nameOverride` | Replace the chart name | `""` |
+| `fullnameOverride` | Replace the generated resource name | `""` |
+| `namespaceOverride` | Install the objects in this namespace instead of the release namespace | `""` |
 
-### Securing Pprof
+### Pod
 
-If you add `--enable-pprof` to `arguments`, also enable `tlsServerConfig`
-and/or configure `basicAuth.users`. The chart will then mount the
-exporter-toolkit web config and set
-`DCGM_EXPORTER_WEB_CONFIG_FILE=/etc/dcgm-exporter/web-config.yaml`.
+| Name | Description | Value |
+| --- | --- | --- |
+| `hostPID` | Let the exporter see host processes | `false` |
+| `hostNetwork` | Use the host network | `false` |
+| `runtimeClassName` | RuntimeClass that provides the NVIDIA driver | `""` |
+| `priorityClassName` | Pod priority class | `system-node-critical` |
+| `rollingUpdate.maxUnavailable` | DaemonSet pods that can be down during an update; exactly one of this and `maxSurge` is nonzero | `1` |
+| `rollingUpdate.maxSurge` | Nodes that can run an extra updated pod during an update; exactly one of this and `maxUnavailable` is nonzero | `0` |
+| `podLabels` | Extra pod labels | `{}` |
+| `podAnnotations` | Extra pod annotations | `{}` |
+| `daemonSetAnnotations` | Extra DaemonSet annotations | `{}` |
+| `podSecurityContext` | Pod security context | `{}` |
+| `securityContext` | Container security context. The default runs as root and keeps only `SYS_ADMIN`, which profiling metrics (`DCGM_FI_PROF_*`) need | see `values.yaml` |
+| `resources` | CPU, memory and ephemeral-storage requests and limits | 100m CPU, 128Mi memory and 100Mi ephemeral-storage requests; 200m CPU and 512Mi memory limits |
+| `initContainers` | Extra init containers, as full container specs | `[]` |
 
-`dcgm-exporter` rejects startup when pprof is enabled without a web config
-file, because `/debug/pprof/` can expose runtime profiling details and must be
-protected by exporter-toolkit authentication or TLS.
+### Scheduling
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `nodeSelector` | Node selector | `{}` |
+| `tolerations` | Pod tolerations. A new list replaces the default | tolerates the control-plane taint |
+| `affinity` | Pod affinity | `{}` |
+
+### Service and ServiceMonitor
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `service.enable` | Create the Service | `true` |
+| `service.type` | Service type | `ClusterIP` |
+| `service.internalTrafficPolicy` | `Cluster`, or `Local` to keep traffic on the node | `Cluster` |
+| `service.clusterIP` | Fixed cluster IP | `""` |
+| `service.port` | Service, container and probe port. `config.outputs.<name>.listen` must use it | `9400` |
+| `service.annotations` | Service annotations | `{}` |
+| `serviceMonitor.enabled` | Create a Prometheus Operator `ServiceMonitor` | `true` |
+| `serviceMonitor.attachMetadata` | Discovery metadata attached to targets; set `node: true` to enable node metadata | `{}` |
+| `serviceMonitor.apiVersion` | `ServiceMonitor` API version | `monitoring.coreos.com/v1` |
+| `serviceMonitor.interval` | Scrape interval | `30s` |
+| `serviceMonitor.scrapeTimeout` | Scrape timeout. Keep it below `config.server.write_timeout` and at most the interval | `25s` |
+| `serviceMonitor.honorLabels` | Keep the labels of the scraped metrics on a conflict | `false` |
+| `serviceMonitor.additionalLabels` | Extra labels, for example the label your Prometheus selects on | `{}` |
+| `serviceMonitor.relabelings` | Relabelings applied before the scrape | `[]` |
+| `serviceMonitor.metricRelabelings` | Relabelings applied to the scraped metrics | `[]` |
+
+### TLS and basic auth
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `tlsServerConfig.enabled` | Serve HTTPS | `false` |
+| `tlsServerConfig.autoGenerated` | Create a self-signed certificate. Not for production | `true` |
+| `tlsServerConfig.existingSecret` | Secret with your certificate. A template is allowed | `""` |
+| `tlsServerConfig.certFilename` | Certificate file name in the Secret | `tls.crt` |
+| `tlsServerConfig.keyFilename` | Key file name in the Secret | `tls.key` |
+| `tlsServerConfig.caFilename` | CA file name in the Secret | `ca.crt` |
+| `tlsServerConfig.clientAuthType` | Client certificate policy. See [TLS and basic auth](#tls-and-basic-auth) | `""` |
+| `tlsServerConfig.cert` | Certificate text for a Secret the chart creates. Ignored with `existingSecret` | `""` |
+| `tlsServerConfig.key` | Key text for a Secret the chart creates. Ignored with `existingSecret` | `""` |
+| `tlsServerConfig.ca` | CA text for a Secret the chart creates. Ignored with `existingSecret` | `""` |
+| `basicAuth.users` | Map of user to password. The chart stores the hashes | `{}` |
+
+### Kubernetes access
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `kubernetes.rbac.create` | Create the ClusterRole and binding that pod labels, pod UID and DRA need | `true` |
+| `serviceAccount.create` | Create the ServiceAccount | `true` |
+| `serviceAccount.name` | ServiceAccount name. Empty uses the generated name | unset |
+| `serviceAccount.annotations` | ServiceAccount annotations | `{}` |
+| `serviceAccount.automountServiceAccountToken` | Mount the API token. Unset mounts it when `config` needs the Kubernetes API and `kubernetes.rbac.create` is true | unset |
+
+### Volumes and debug dumps
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `extraHostVolumes` | Extra `hostPath` volumes, each with `name` and `hostPath` | `[]` |
+| `extraConfigMapVolumes` | Extra volumes, as full volume specs | `[]` |
+| `extraVolumeMounts` | Mounts for the extra volumes | `[]` |
+| `debugDump.sizeLimit` | Size of the `emptyDir` the chart adds when debug dumps are on | `512Mi` |
+
+### Probes
+
+The startup probe gives a slow start up to `periodSeconds` times `failureThreshold`
+(5 minutes by default) before the other probes begin. Without it, the liveness and
+readiness probes wait 45 seconds unless you set `initialDelaySeconds`.
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `startupProbe.enabled` | Use a startup probe | `true` |
+| `startupProbe.periodSeconds` | Seconds between checks | `5` |
+| `startupProbe.failureThreshold` | Failed checks before the pod restarts | `60` |
+| `startupProbe.timeoutSeconds` | Seconds before a check times out. Unset uses the Kubernetes default | unset |
+| `livenessProbe.periodSeconds` | Seconds between checks | `5` |
+| `livenessProbe.initialDelaySeconds` | Seconds before the first check. Unset uses the default described above | unset |
+| `livenessProbe.timeoutSeconds` | Seconds before a check times out. Unset uses the Kubernetes default | unset |
+| `livenessProbe.failureThreshold` | Failed checks before the pod restarts. Unset uses the Kubernetes default | unset |
+| `readinessProbe` | A map with `periodSeconds`, `initialDelaySeconds`, `timeoutSeconds` and `failureThreshold`. Unset keys use the Kubernetes default | `{}` |
+
+### Network policy
+
+| Name | Description | Value |
+| --- | --- | --- |
+| `networkPolicy.enabled` | Create a NetworkPolicy for the metrics port | `false` |
+| `networkPolicy.allowedPeers` | Peers that may scrape, as NetworkPolicy `from` peers. `[]` blocks every scrape | `[]` |
 
 ## Troubleshooting
 
-### Debug Dump Files
+| Symptom | Cause and fix |
+| --- | --- |
+| `no matches for kind "ServiceMonitor"` | The Prometheus Operator CRDs are missing. Install them, or set `serviceMonitor.enabled=false` |
+| Render fails with `removed chart values` | Your values use a setting that moved into `config`. See [Upgrading](#upgrading) |
+| Render fails with `must use service.port` | A `config.outputs.<name>.listen` port differs from `service.port`. Change both together |
+| The exporter cannot load the NVIDIA libraries | The runtime does not inject the driver. Set `runtimeClassName` |
+| A scrape fails with `networkPolicy.enabled` | Prometheus is not in `allowedPeers`. Add its namespace or pod labels |
+| The pod is evicted with debug dumps on | The dumps outgrew `debugDump.sizeLimit`. Raise it above `config.debug_dump.max_total_bytes` |
+| Edits to `config` have no effect | The exporter reads the file at startup. With `configMap.existingName`, restart the pods |
+| Edits to the metrics list have no effect | Check that `config.metrics[].file` names the file you edited |
 
-When debug dumps are enabled, the following types of files may be created:
-- Device information dumps
-- Metrics dumps
-- Runtime state information
+## Upgrading
 
-These files are compressed with gzip if compression is enabled and are automatically cleaned up based on the retention period.
+The chart fails the render when your values still use a removed setting. The error names
+each one and its replacement. Rewrite the values, then upgrade with `-f`.
 
-### Common Issues
+```yaml
+# 4.8
+kubernetes:
+  enablePodLabels: true
+  podLabelAllowlistRegex: ["^app$"]
+service:
+  webReadTimeout: 10s
+```
 
-1. **Permission denied errors**: Ensure the debug directory has appropriate permissions
-2. **Disk space issues**: Monitor the debug directory size and adjust retention as needed
-3. **Missing files**: Check that debug dumps are enabled and the directory is properly mounted
+```yaml
+# 4.9
+config:
+  version: 2
+  sources:
+    kubernetes:
+      pod_labels:
+        enabled: true
+        allow: ["^app$"]
+  server:
+    read_timeout: 10s
+```
+
+`helm get values <release> -o yaml` prints your current values as a starting file. Do not
+use `--reuse-values` or `--reset-then-reuse-values`, which bring back the removed values.
+
+- The metrics ConfigMap is now `<fullname>-metrics`, and the chart no longer creates the
+  `dcgm-exporter-read-cm` Role. The deprecated `--configmap-data` flag needs your own Role
+  and a mounted token; use `config.metrics[].file` instead.
+- The web config moved from a ConfigMap to a Secret. Delete the old ConfigMap if you apply
+  rendered manifests without pruning.
 
 ## Support
 

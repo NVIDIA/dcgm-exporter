@@ -1,0 +1,53 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "devicewatchlistmanager",
+    srcs = [
+        "check_overrides.go",
+        "count_window.go",
+        "device_watchlist_manager.go",
+        "field_watch.go",
+        "types.go",
+        "watch_plan.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/appconfig",
+        "//internal/pkg/counters",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicemonitoring",
+        "//internal/pkg/devicewatcher",
+        "//internal/pkg/signalcatalog",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "devicewatchlistmanager_test",
+    srcs = [
+        "check_overrides_test.go",
+        "count_window_test.go",
+        "device_watchlist_manager_test.go",
+        "field_watch_test.go",
+        "watch_plan_test.go",
+    ],
+    embed = [":devicewatchlistmanager"],
+    deps = [
+        "//internal/mocks/pkg/dcgmprovider",
+        "//internal/mocks/pkg/deviceinfo",
+        "//internal/mocks/pkg/devicewatcher",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/counters",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicewatcher",
+        "//internal/pkg/signalcatalog",
+        "//internal/pkg/testfixtures",
+        "//internal/pkg/testutils",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)

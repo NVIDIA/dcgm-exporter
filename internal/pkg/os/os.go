@@ -19,21 +19,15 @@ package os
 import "os"
 
 //go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/mock_os.go -package=os -copyright_file=../../../hack/header.txt . OS
-//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/mock_dir_entry.go -package=os -copyright_file=../../../hack/header.txt os DirEntry
-//go:generate go run -v go.uber.org/mock/mockgen  -destination=../../mocks/pkg/os/mock_file_info.go -package=os -copyright_file=../../../hack/header.txt io/fs FileInfo
 type OS interface {
 	CreateTemp(dir, pattern string) (*os.File, error)
 	Getenv(key string) string
 	Hostname() (string, error)
-	IsNotExist(err error) bool
 	MkdirTemp(dir, pattern string) (string, error)
 	Open(name string) (*os.File, error)
 	Remove(name string) error
 	RemoveAll(path string) error
-	Stat(name string) (os.FileInfo, error)
 	TempDir() string
-	ReadDir(name string) ([]os.DirEntry, error)
-	Exit(code int)
 }
 
 type RealOS struct{}
@@ -44,14 +38,6 @@ func (RealOS) Hostname() (string, error) {
 
 func (RealOS) Getenv(key string) string {
 	return os.Getenv(key)
-}
-
-func (RealOS) Stat(name string) (os.FileInfo, error) {
-	return os.Stat(name)
-}
-
-func (RealOS) IsNotExist(err error) bool {
-	return os.IsNotExist(err)
 }
 
 func (RealOS) Open(name string) (*os.File, error) {
@@ -77,9 +63,3 @@ func (RealOS) TempDir() string {
 func (RealOS) Remove(name string) error {
 	return os.Remove(name)
 }
-
-func (RealOS) ReadDir(name string) ([]os.DirEntry, error) {
-	return os.ReadDir(name)
-}
-
-func (RealOS) Exit(code int) { os.Exit(code) }

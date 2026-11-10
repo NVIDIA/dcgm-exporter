@@ -6,10 +6,10 @@ Run commands from the repository root.
 
 ```bash
 go test ./internal/pkg/counters
-make test-main
-make lint
-make check-fmt
-make validate
+task test:unit
+task lint
+task fmt:check
+task validate
 ```
 
 ## Conditional Gates
@@ -17,37 +17,48 @@ make validate
 Generated mocks or go:generate inputs:
 
 ```bash
-make generate
+task generate
 git diff --exit-code
 ```
 
 Version-derived files:
 
 ```bash
-make sync-versions
-make validate-versions
+task deps:sync
+task deps:sync:check
 ```
 
 Docker image behavior:
 
 ```bash
-make local
-make test-images
+task build:image:local
+task build:image:verify
+task test:container
 ```
 
 GPU/DCGM integration behavior:
 
 ```bash
-make test-integration
+task test:host
+task build:e2e
+task test:e2e:host
+```
+
+E2E bundle checks without a GPU (`test:e2e:mocks` needs root, a DCGM
+development build with NVML injection, `nv-hostengine`, `dcgmi`, and fixtures
+matching `DCGM_VERSION`):
+
+```bash
+task build:e2e
+task test:e2e:smoke
+task test:e2e:mocks NVML_INJECTION_DIR=/path NVSDM_MOCK_DIR=/path
 ```
 
 GPU Kubernetes behavior:
 
 ```bash
-make e2e-local-check
-make e2e-local-up
-make e2e-local-deploy
-make test-e2e
+task test:k8s
+task test:e2e
 ```
 
 If GPU, Docker, Kubernetes, DCGM, or network prerequisites are unavailable,

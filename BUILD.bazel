@@ -1,0 +1,87 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@gazelle//:def.bzl", "gazelle")
+
+exports_files([
+    "LICENSE",
+    "THIRD_PARTY_NOTICES",
+    "docker/dcgm-exporter-entrypoint.sh",
+    "etc/1.x-compatibility-metrics.csv",
+    "etc/config.yaml",
+    "etc/dcp-metrics-included.csv",
+    "etc/default-counters.csv",
+])
+
+# gazelle:prefix github.com/NVIDIA/dcgm-exporter
+# gazelle:build_tags container,k8s,dcgm_uri_integration
+gazelle(name = "gazelle")
+
+filegroup(
+    name = "container_testdata",
+    srcs = glob([
+        "etc/**",
+    ]) + ["//hack:versions.env"],
+    visibility = ["//tests/container:__pkg__"],
+)
+
+filegroup(
+    name = "counter_contract_data",
+    srcs = glob([
+        "etc/**",
+    ]),
+    visibility = ["//internal/pkg/counters:__pkg__"],
+)
+
+filegroup(
+    name = "e2e_cli_testdata",
+    srcs = ["Taskfile.yml"],
+    visibility = ["//internal/e2e/cli:__pkg__"],
+)
+
+filegroup(
+    name = "go_module_files",
+    srcs = [
+        "go.mod",
+        "go.sum",
+    ],
+    visibility = ["//tests/static:__pkg__"],
+)
+
+filegroup(
+    name = "k8s_testdata",
+    srcs = [
+        "//deployment:source_files",
+        "etc/default-counters.csv",
+    ],
+    visibility = ["//tests/k8s:__pkg__"],
+)
+
+filegroup(
+    name = "static_testdata",
+    srcs = glob([
+        "docker/**",
+        "etc/**",
+        "grafana/**",
+    ]) + [
+        "CONTRIBUTING.md",
+        "README.md",
+        "//deployment:source_files",
+        "//hack:e2e-local-node.Dockerfile",
+        "//packaging:config-files/systemd/nvidia-dcgm-exporter.service",
+        "//tests/container:README.md",
+        "//tests/k8s:README.md",
+    ],
+    visibility = ["//tests/static:__pkg__"],
+)

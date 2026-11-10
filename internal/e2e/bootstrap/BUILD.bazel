@@ -1,0 +1,41 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bootstrap",
+    srcs = [
+        "dependency_bootstrap.go",
+        "dependency_requirements.go",
+        "host_os.go",
+        "host_packages.go",
+        "install_deps.go",
+        "rhel_packages.go",
+        "ubuntu_packages.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/bootstrap",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/e2e/config",
+        "//internal/e2e/exec",
+        "//internal/e2e/image",
+        "//internal/e2e/scenario",
+    ],
+)
+
+go_test(
+    name = "bootstrap_test",
+    srcs = [
+        "dependency_bootstrap_test.go",
+        "dependency_requirements_test.go",
+        "host_os_test.go",
+        "host_packages_test.go",
+        "install_deps_test.go",
+        "rhel_packages_test.go",
+        "ubuntu_packages_test.go",
+    ],
+    embed = [":bootstrap"],
+    deps = [
+        "//internal/e2e/config",
+        "//internal/e2e/exec",
+        "//internal/e2e/scenario",
+    ],
+)

@@ -1,0 +1,15 @@
+Config file   testdata/inspection.yaml
+
+Settings that differ from defaults
+metrics[0]
+  fields  1 inline definition  file:4
+sources
+  dcgm.watch.max_keep_age  5s  file:24
+
+Fields   1 from inline definitions, every 30s, retention 5s, no sample limit
+  override temperatures  (1 field)  every 1s, retention 5s, 2 samples
+
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories
+Use --verbose for all settings and all fields.

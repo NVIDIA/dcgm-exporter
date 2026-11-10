@@ -1,0 +1,5 @@
+.cache
+.go
+.tools
+dist
+.workspace

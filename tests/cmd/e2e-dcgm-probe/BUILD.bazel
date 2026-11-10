@@ -1,0 +1,69 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "e2e-dcgm-probe_lib",
+    srcs = [
+        "cache_counts.go",
+        "entity_history.go",
+        "entity_injection.go",
+        "exporter_acceptance.go",
+        "exporter_client.go",
+        "exporter_expectations.go",
+        "exporter_failure.go",
+        "gpu_link_fields.go",
+        "main.go",
+        "switch_discovery.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/cmd/e2e-dcgm-probe",
+    visibility = ["//visibility:private"],
+    cgo = True,
+    clinkopts = ["-ldl"],
+    deps = [
+        "//internal/e2e/clioutput",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/dcgmerrors",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/fieldexport",
+        "//pkg/cmd",
+        "//tests/internal/dcgmprobe",
+        "//tests/internal/metriccontract",
+        "//tests/internal/nvmlinjection",
+        "//tests/internal/nvsdmmock",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_urfave_cli_v2//:cli",
+    ],
+)
+
+go_binary(
+    name = "e2e-dcgm-probe",
+    embed = [":e2e-dcgm-probe_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "e2e-dcgm-probe_test",
+    srcs = [
+        "entity_history_test.go",
+        "exporter_acceptance_test.go",
+        "exporter_client_test.go",
+        "exporter_failure_test.go",
+        "exporter_observation_test.go",
+        "gpu_link_fields_test.go",
+        "main_test.go",
+        "switch_discovery_test.go",
+    ],
+    embed = [":e2e-dcgm-probe_lib"],
+    deps = [
+        "//internal/e2e/clioutput",
+        "//internal/mocks/pkg/dcgmprovider",
+        "//internal/pkg/dcgmprovider",
+        "//tests/internal/dcgmprobe",
+        "//tests/internal/nvmlinjection",
+        "//tests/internal/nvsdmmock",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@org_uber_go_mock//gomock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

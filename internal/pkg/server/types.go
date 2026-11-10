@@ -30,6 +30,9 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/transformation"
 )
 
+// MetricsServer serves one published registry and reports terminal serving
+// failures to the command layer. buildRegistry and reload code update its
+// registry/topology pair while Run owns the HTTP server lifetime.
 type MetricsServer struct {
 	sync.RWMutex
 
@@ -43,6 +46,10 @@ type MetricsServer struct {
 	fileDumper             *debug.FileDumper
 	scrapes                *scrapeCoordinator
 	exporterMetrics        *exporterMetrics
+	terminalErrors         chan error
+	terminalErrorOnce      sync.Once
+	terminalErrorMu        sync.Mutex
+	terminalError          error
 
 	reloadInProgress atomic.Bool
 }

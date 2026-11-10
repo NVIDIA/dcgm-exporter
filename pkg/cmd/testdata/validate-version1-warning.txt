@@ -1,0 +1,10 @@
+exit 0
+--- stdout ---
+testdata/version1.yaml: valid (0 errors, 1 warning)
+Checked: configuration settings
+Checked: inline metric definitions
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories
+--- stderr ---
+warning  testdata/version1.yaml:1:10 version: config version 1 is deprecated and will be removed in 4.10; see the version 2 migration table in the 4.9.0 documentation

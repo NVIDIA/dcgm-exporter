@@ -18,6 +18,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,9 +26,14 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/NVIDIA/dcgm-exporter/internal/e2e/capability"
+	"github.com/NVIDIA/dcgm-exporter/internal/e2e/config"
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
+
+const containerToolkitVersionLabel = "com.nvidia.dcgm-exporter.e2e.nvidia-container-toolkit.version"
 
 // writeLocalKubeconfig writes the owned k3d cluster kubeconfig to the configured path.
 func writeLocalKubeconfig(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) error {
@@ -36,18 +42,38 @@ func writeLocalKubeconfig(ctx context.Context, runner e2eexec.Runner, w io.Write
 
 // ensureNodeImage builds the local k3d node image when it is not already present.
 func ensureNodeImage(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) error {
-	inspect := runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"image", "inspect", cfg.NodeImage}})
-	if inspect.ExitCode == 0 {
+	inspect := runner.Run(ctx, e2eexec.Command{
+		Name: "docker",
+		Args: []string{
+			"image", "inspect", cfg.NodeImage,
+			"--format={{index .Config.Labels \"" + containerToolkitVersionLabel + "\"}}",
+		},
+	})
+	if inspect.ExitCode == 0 && strings.TrimSpace(string(inspect.Stdout)) == cfg.ContainerToolkitVersion {
 		fmt.Fprintf(w, "[e2e] local k3d node image ready: %s\n", cfg.NodeImage)
 		return nil
+	}
+	if inspect.ExitCode == 0 {
+		fmt.Fprintf(
+			w,
+			"[e2e] local k3d node image %s has Container Toolkit %q, want %q; rebuilding\n",
+			cfg.NodeImage,
+			strings.TrimSpace(string(inspect.Stdout)),
+			cfg.ContainerToolkitVersion,
+		)
+	}
+	if err := runRequired(ctx, runner, w, "docker_buildx_available", e2eexec.Command{Name: "docker", Args: []string{"buildx", "version"}}); err != nil {
+		return fmt.Errorf("local k3d node image build requires Docker Buildx; rerun tests with --bootstrap=install or install docker-buildx: %w", err)
 	}
 	return runRequired(ctx, runner, w, "docker_build_k3d_node_image", e2eexec.Command{
 		Name: "docker",
 		Args: []string{
-			"build",
+			"buildx", "build",
+			"--load",
 			"--file", filepath.Join(cfg.Root, "hack", "e2e-local-node.Dockerfile"),
 			"--build-arg", "K3S_IMAGE=" + cfg.K3SImage,
 			"--build-arg", "CUDA_IMAGE=" + cfg.CUDAImage,
+			"--build-arg", "NVIDIA_CONTAINER_TOOLKIT_VERSION=" + cfg.ContainerToolkitVersion,
 			"--tag", cfg.NodeImage,
 			cfg.Root,
 		},
@@ -84,27 +110,30 @@ func localClusterMatchesDesiredState(ctx context.Context, runner e2eexec.Runner,
 	if err != nil {
 		return false, err
 	}
-	wantAgents, err := strconv.Atoi(strings.TrimSpace(cfg.Agents))
-	if err != nil {
-		return false, fmt.Errorf("invalid k3d agent count %q: %w", cfg.Agents, err)
-	}
-	if gotAgents := localClusterAgentCount(nodes); gotAgents != wantAgents {
-		fmt.Fprintf(w, "[e2e] existing k3d cluster %s has %d agents, want %d; recreating\n", cfg.ClusterName, gotAgents, wantAgents)
+	if gotServers := localClusterServerCount(nodes); gotServers != 1 {
+		fmt.Fprintf(w, "[e2e] existing k3d cluster %s has %d servers, want 1; recreating\n", cfg.ClusterName, gotServers)
 		return false, nil
 	}
-	if !localClusterGPUDeviceVisible(ctx, runner, nodes) {
-		fmt.Fprintf(w, "[e2e] existing k3d cluster %s does not expose /dev/nvidiactl; recreating\n", cfg.ClusterName)
+	if gotAgents := localClusterAgentCount(nodes); gotAgents != 0 {
+		fmt.Fprintf(w, "[e2e] existing k3d cluster %s has %d agents, want 0; recreating\n", cfg.ClusterName, gotAgents)
 		return false, nil
 	}
-	families := runner.Run(ctx, kubectl(Config{Kubeconfig: cfg.Kubeconfig}, "get", "svc", "kubernetes", "-n", "default", "-o", "jsonpath={.spec.ipFamilies[*]}"))
-	if families.ExitCode != 0 {
+	if !localClusterServerGPUConfigMatches(ctx, runner, cfg, nodes) {
+		fmt.Fprintf(w, "[e2e] existing k3d cluster %s is missing the server GPU configuration; recreating\n", cfg.ClusterName)
+		return false, nil
+	}
+	wantIPFamily := normalizedIPFamily(cfg)
+	if wantIPFamily == "auto" {
+		return true, nil
+	}
+	ipv6 := probeDualStackServices(ctx, runner, Config{Kubeconfig: cfg.Kubeconfig})
+	if ipv6.Status == capability.StatusUnknown {
 		fmt.Fprintf(w, "[e2e] existing k3d cluster %s service IP family check failed; recreating\n", cfg.ClusterName)
 		return false, nil
 	}
-	hasIPv6 := strings.Contains(string(families.Stdout), "IPv6")
-	wantDualStack := normalizedIPFamily(cfg) == "dualstack"
-	if hasIPv6 != wantDualStack {
-		fmt.Fprintf(w, "[e2e] existing k3d cluster %s IP family is %q, want %s; recreating\n", cfg.ClusterName, strings.TrimSpace(string(families.Stdout)), normalizedIPFamily(cfg))
+	hasIPv6 := ipv6.Status == capability.StatusSupported
+	if hasIPv6 != (wantIPFamily == "dualstack") {
+		fmt.Fprintf(w, "[e2e] existing k3d cluster %s service IP families are %q, want %s; recreating\n", cfg.ClusterName, ipv6.Evidence, normalizedIPFamily(cfg))
 		return false, nil
 	}
 	return true, nil
@@ -131,25 +160,131 @@ func localClusterDockerNodes(ctx context.Context, runner e2eexec.Runner, cluster
 func localClusterAgentCount(nodes []string) int {
 	count := 0
 	for _, node := range nodes {
-		if strings.Contains(node, "-agent-") {
+		if localClusterNodeRole(node) == "agent" {
 			count++
 		}
 	}
 	return count
 }
 
-// localClusterGPUDeviceVisible verifies at least one k3d node sees the NVIDIA control device.
-func localClusterGPUDeviceVisible(ctx context.Context, runner e2eexec.Runner, nodes []string) bool {
+// localClusterServerCount counts server nodes among k3d Docker containers.
+func localClusterServerCount(nodes []string) int {
+	count := 0
 	for _, node := range nodes {
-		if runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"exec", node, "test", "-e", "/dev/nvidiactl"}}).ExitCode == 0 {
-			return true
+		if localClusterNodeRole(node) == "server" {
+			count++
 		}
+	}
+	return count
+}
+
+// localClusterNodeRole returns the role suffix k3d placed after the cluster name.
+func localClusterNodeRole(node string) string {
+	if strings.LastIndex(node, "-server-") > strings.LastIndex(node, "-agent-") {
+		return "server"
+	}
+	if strings.LastIndex(node, "-agent-") >= 0 {
+		return "agent"
+	}
+	return ""
+}
+
+// localClusterServerGPUConfigMatches verifies the server has the GPU configuration createLocalCluster applies.
+func localClusterServerGPUConfigMatches(ctx context.Context, runner e2eexec.Runner, cfg LocalConfig, nodes []string) bool {
+	for _, node := range nodes {
+		if localClusterNodeRole(node) != "server" {
+			continue
+		}
+		result := runner.Run(ctx, e2eexec.Command{
+			Name: "docker",
+			Args: []string{
+				"exec",
+				node,
+				"sh",
+				"-ec",
+				`test -e /dev/nvidiactl && test "$NVIDIA_VISIBLE_DEVICES" = all && test "$NVIDIA_DRIVER_CAPABILITIES" = all`,
+			},
+		})
+		if result.ExitCode != 0 {
+			return false
+		}
+		if info, err := os.Stat(cfg.NvidiaCapabilitiesProbePath); err == nil && info.IsDir() {
+			binds := runner.Run(ctx, e2eexec.Command{
+				Name: "docker",
+				Args: []string{
+					"inspect",
+					node,
+					"--format={{range .HostConfig.Binds}}{{println .}}{{end}}",
+				},
+			})
+			if binds.ExitCode != 0 || !strings.Contains(string(binds.Stdout), cfg.HostRootPath+":"+cfg.HostRootMount+":ro") {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
 
-// createLocalCluster creates the GPU-enabled k3d cluster with the requested IP-family settings.
-func createLocalCluster(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) error {
+// validateLocalGPUAgentCount prevents k3d from assigning the host GPU request to agent nodes.
+func validateLocalGPUAgentCount(value string) error {
+	count, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("invalid k3d agent count %q: %w", value, err)
+	}
+	if count != 0 {
+		return fmt.Errorf("local GPU k3d requires zero agents: k3d applies GPU requests to every node role")
+	}
+	return nil
+}
+
+// localCgroupV1Enabled checks the host cgroup version and chooses whether new k3d nodes need the cgroup-v1 kubelet setting.
+func localCgroupV1Enabled(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) (bool, error) {
+	// An unset mode means auto here: it only matches the node setting to the
+	// host's cgroup version and changes nothing else.
+	mode := cfg.CgroupV1
+	if mode == "" {
+		mode = config.FeatureAuto
+	}
+	parsed, err := config.ParseFeatureMode(string(mode))
+	if err != nil {
+		return false, fmt.Errorf("unsupported local k3d cgroup v1 mode %q", cfg.CgroupV1)
+	}
+	mode = parsed
+
+	command := e2eexec.Command{Name: "stat", Args: []string{"-fc", "%T", "/sys/fs/cgroup"}}
+	result := runner.Run(ctx, command)
+	if result.ExitCode != 0 {
+		return false, resultError(commandString(command), result)
+	}
+
+	output := string(result.Stdout)
+	filesystem := strings.TrimSpace(output)
+	switch filesystem {
+	case "cgroup2fs":
+		if mode == config.FeatureOn {
+			fmt.Fprintln(w, "[e2e] local k3d cgroup v1: enabled (true; requested)")
+			return true, nil
+		}
+		fmt.Fprintf(w, "[e2e] local k3d cgroup v1: disabled (%s; host uses cgroup v2)\n", mode)
+		return false, nil
+	case "tmpfs":
+		switch mode {
+		case config.FeatureAuto, config.FeatureOn:
+			fmt.Fprintf(w, "[e2e] local k3d cgroup v1: enabled (%s)\n", mode)
+			return true, nil
+		case config.FeatureOff:
+			return false, fmt.Errorf("local k3d cannot run on cgroup v1 when --k3d-cgroup-v1=false; rerun with --k3d-cgroup-v1=auto or --k3d-cgroup-v1=true")
+		default:
+			return false, fmt.Errorf("unsupported local k3d cgroup v1 mode %q", cfg.CgroupV1)
+		}
+	default:
+		return false, fmt.Errorf("%s returned %q; expected cgroup2fs for cgroup v2 or tmpfs for cgroup v1", commandString(command), output)
+	}
+}
+
+// createLocalCluster creates the GPU-enabled k3d cluster with the requested IP-family and cgroup-v1 settings.
+func createLocalCluster(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig, allowCgroupV1 bool) error {
 	args := []string{
 		"cluster", "create", cfg.ClusterName,
 		"--image", cfg.NodeImage,
@@ -160,38 +295,84 @@ func createLocalCluster(ctx context.Context, runner e2eexec.Runner, w io.Writer,
 		"--k3s-arg", "--disable=traefik@server:*",
 		"--k3s-arg", "--disable=metrics-server@server:*",
 	}
+	if allowCgroupV1 {
+		args = append(
+			args,
+			"--k3s-arg", "--kubelet-arg=fail-cgroupv1=false@server:*",
+		)
+	}
 	appendIPFamilyArgs(&args, cfg)
 	args = append(
 		args,
 		"--env", "NVIDIA_VISIBLE_DEVICES=all@server:*",
-		"--env", "NVIDIA_VISIBLE_DEVICES=all@agent:*",
 		"--env", "NVIDIA_DRIVER_CAPABILITIES=all@server:*",
-		"--env", "NVIDIA_DRIVER_CAPABILITIES=all@agent:*",
 	)
-	if info, err := os.Stat(cfg.NvidiaCapabilitiesPath); err == nil && info.IsDir() {
+	if info, err := os.Stat(cfg.NvidiaCapabilitiesProbePath); err == nil && info.IsDir() {
 		args = append(
 			args,
-			"--volume", "/:"+cfg.NvidiaCapabilitiesMount+":ro@server:*",
-			"--volume", "/:"+cfg.NvidiaCapabilitiesMount+":ro@agent:*",
+			"--volume", cfg.HostRootPath+":"+cfg.HostRootMount+":ro@server:*",
 		)
 	}
-	return runRequired(ctx, runner, w, "k3d_cluster_create", e2eexec.Command{Name: "k3d", Args: args})
+	timeout := parseDuration(cfg.WaitTimeout, 10*time.Minute)
+	createCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := runRequired(createCtx, runner, w, "k3d_cluster_create", e2eexec.Command{Name: "k3d", Args: args}); err != nil {
+		if errors.Is(createCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return fmt.Errorf("k3d cluster creation timed out after %s: %w", timeout, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // cleanupStaleLocalK3DResources removes orphaned Docker resources that block k3d recreation.
 func cleanupStaleLocalK3DResources(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) error {
-	if cfg.NetworkName != "" && runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"network", "inspect", cfg.NetworkName}}).ExitCode == 0 {
-		if err := runRequired(ctx, runner, w, "docker_remove_stale_k3d_network", e2eexec.Command{Name: "docker", Args: []string{"network", "rm", cfg.NetworkName}}); err != nil {
-			return err
+	var errs []error
+	if cfg.NetworkName != "" {
+		exists, err := dockerResourceExists(ctx, runner, "network", cfg.NetworkName)
+		errs = append(errs, err)
+		if err == nil && exists {
+			if err := runRequired(ctx, runner, w, "docker_remove_stale_k3d_network", e2eexec.Command{Name: "docker", Args: []string{"network", "rm", cfg.NetworkName}}); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	volumeName := "k3d-" + cfg.ClusterName + "-images"
-	if runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"volume", "inspect", volumeName}}).ExitCode == 0 {
+	exists, err := dockerResourceExists(ctx, runner, "volume", volumeName)
+	errs = append(errs, err)
+	if err == nil && exists {
 		if err := runRequired(ctx, runner, w, "docker_remove_stale_k3d_volume", e2eexec.Command{Name: "docker", Args: []string{"volume", "rm", volumeName}}); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
+}
+
+// dockerResourceExists reports whether an owned Docker resource exists without hiding inspect failures.
+func dockerResourceExists(ctx context.Context, runner e2eexec.Runner, resource, name string) (bool, error) {
+	command := e2eexec.Command{Name: "docker", Args: []string{resource, "inspect", name}}
+	result := runner.Run(ctx, command)
+	if result.ExitCode == 0 {
+		return true, nil
+	}
+	if dockerResourceNotFound(resource, name, result) {
+		return false, nil
+	}
+	return false, resultError(commandString(command), result)
+}
+
+// dockerResourceNotFound recognizes Docker's explicit missing network and volume diagnostics.
+func dockerResourceNotFound(resource, name string, result e2eexec.Result) bool {
+	output := strings.ToLower(string(result.Stdout) + string(result.Stderr))
+	name = strings.ToLower(name)
+	switch resource {
+	case "network":
+		return strings.Contains(output, "no such network") || strings.Contains(output, "network "+name+" not found")
+	case "volume":
+		return strings.Contains(output, "no such volume") || strings.Contains(output, "volume "+name+" not found")
+	default:
+		return false
+	}
 }
 
 // appendIPFamilyArgs adds k3d network arguments for dual-stack clusters.
@@ -210,10 +391,12 @@ func appendIPFamilyArgs(args *[]string, cfg LocalConfig) {
 	}
 }
 
-// normalizedIPFamily maps ipv6 to the dual-stack k3d setup this harness creates.
+// normalizedIPFamily preserves auto selection and maps ipv6 to the dual-stack setup.
 func normalizedIPFamily(cfg LocalConfig) string {
 	switch strings.ToLower(strings.TrimSpace(cfg.IPFamily)) {
-	case "", "ipv4":
+	case "", "auto":
+		return "auto"
+	case "ipv4":
 		return "ipv4"
 	case "ipv6", "dualstack":
 		return "dualstack"
@@ -222,20 +405,89 @@ func normalizedIPFamily(cfg LocalConfig) string {
 	}
 }
 
+var errDockerIPv6Unavailable = errors.New("docker bridge IPv6 is unavailable")
+
+// resolveLocalIPFamily chooses the network mode for a new local cluster.
+func resolveLocalIPFamily(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) (LocalConfig, error) {
+	switch normalizedIPFamily(cfg) {
+	case "ipv4":
+		cfg.IPFamily = "ipv4"
+		return cfg, nil
+	case "dualstack":
+		if err := ensureDualStackNetwork(ctx, runner, w, cfg); err != nil {
+			return LocalConfig{}, err
+		}
+		cfg.IPFamily = "dualstack"
+		return cfg, nil
+	case "auto":
+		err := ensureDualStackNetwork(ctx, runner, w, cfg)
+		switch {
+		case err == nil:
+			cfg.IPFamily = "dualstack"
+			fmt.Fprintln(w, "[e2e] local k3d network mode: dualstack")
+			return cfg, nil
+		case errors.Is(err, errDockerIPv6Unavailable):
+			cfg.IPFamily = "ipv4"
+			fmt.Fprintln(w, "[e2e] WARN Docker bridge IPv6 is unavailable; using IPv4 for the local k3d cluster")
+			return cfg, nil
+		default:
+			return LocalConfig{}, err
+		}
+	default:
+		return LocalConfig{}, fmt.Errorf("unsupported local k3d IP family %q", cfg.IPFamily)
+	}
+}
+
 // ensureDualStackNetwork creates the Docker network used by dual-stack k3d clusters.
 func ensureDualStackNetwork(ctx context.Context, runner e2eexec.Runner, w io.Writer, cfg LocalConfig) error {
-	if inspect := runner.Run(ctx, e2eexec.Command{Name: "docker", Args: []string{"network", "inspect", cfg.NetworkName}}); inspect.ExitCode == 0 {
+	exists, err := dockerResourceExists(ctx, runner, "network", cfg.NetworkName)
+	if err != nil {
+		return err
+	}
+	if exists {
+		inspect := runner.Run(ctx, e2eexec.Command{
+			Name: "docker",
+			Args: []string{"network", "inspect", cfg.NetworkName, "--format={{.EnableIPv6}}"},
+		})
+		if inspect.ExitCode != 0 {
+			return resultError("inspect Docker network IPv6 capability", inspect)
+		}
+		if !strings.EqualFold(strings.TrimSpace(string(inspect.Stdout)), "true") {
+			return fmt.Errorf("%w: existing Docker network %s does not have IPv6 enabled", errDockerIPv6Unavailable, cfg.NetworkName)
+		}
 		return nil
 	}
-	return runRequired(ctx, runner, w, "docker_create_dualstack_network", e2eexec.Command{
+	err = runRequired(ctx, runner, w, "docker_create_dualstack_network", e2eexec.Command{
 		Name: "docker",
 		Args: []string{
 			"network", "create",
 			"--driver", "bridge",
 			"--ipv6",
 			"--subnet", cfg.DockerIPv4Subnet,
+			"--gateway", cfg.DockerIPv4Gateway,
 			"--subnet", cfg.DockerIPv6Subnet,
+			"--gateway", cfg.DockerIPv6Gateway,
 			cfg.NetworkName,
 		},
 	})
+	if err != nil && dockerIPv6Unavailable(err.Error()) {
+		return fmt.Errorf("%w: %v", errDockerIPv6Unavailable, err)
+	}
+	return err
+}
+
+// dockerIPv6Unavailable recognizes Docker errors caused by missing host IPv6 support.
+func dockerIPv6Unavailable(output string) bool {
+	output = strings.ToLower(output)
+	for _, text := range []string{
+		"cannot read ipv6 setup for bridge",
+		"ipv6 is not enabled on this system",
+		"address family not supported by protocol",
+		"protocol not available",
+	} {
+		if strings.Contains(output, text) {
+			return true
+		}
+	}
+	return false
 }

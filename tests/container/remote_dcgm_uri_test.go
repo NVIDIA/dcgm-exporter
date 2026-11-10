@@ -16,16 +16,15 @@
  * limitations under the License.
  */
 
-// Container runtime tests for DCGM connection-string (dcgmConnect_v3) remote DCGM
-// support: tcp://, unix://, and vsock:// URIs. These run each image and scrape
-// its metrics while exercising the URI connection strings that
+// Container runtime tests for DCGM connection-string (dcgmConnect_v3) remote
+// DCGM support: tcp://, unix://, and vsock:// URIs. These run the exporter image
+// and scrape its metrics while exercising the URI connection strings that
 // select dcgmConnect_v3 inside go-dcgm (a bare host:port uses the legacy
 // dcgmConnect_v2 path and is covered elsewhere).
 //
-// The remote DCGM endpoint runs from DCGM_IMAGE, normally the matching DCGM
-// image or the default ubuntu26.04 exporter image. The exporter side is
-// validated against every configured exporter image, such as the shipped
-// distroless variant. Both connect over the host network so no inter-container
+// The remote DCGM endpoint runs from DCGM_IMAGE, normally the pinned DCGM
+// image. The exporter side runs the configured exporter image, the shipped
+// distroless image. Both connect over the host network so no inter-container
 // DNS is needed. Requires a GPU host and an exporter image built with VSOCK
 // support (libdcgm.so.4 exports dcgmConnect_v3).
 //
@@ -35,8 +34,8 @@
 //
 // Run:
 //
-//	make -C tests/container container-test     # or:
-//	DCGM_IMAGE=nvcr.io/nvidia/cloud-native/dcgm:<dcgm-ver>-1-ubuntu24.04 \
+//	task test:container     # or:
+//	DCGM_IMAGE=nvcr.io/nvidia/cloud-native/dcgm:<dcgm-ver>[-package-revision]-ubuntu24.04 \
 //	EXPORTER_DISTROLESS_IMAGE=nvidia/dcgm-exporter:<ver>-distroless \
 //	  go test -tags container ./tests/container/ -run TestDockerImages \
 //	  -args --ginkgo.focus="dcgmConnect_v3 URI schemes"
@@ -182,7 +181,7 @@ func startVsockHostEngineContainer(ctx context.Context, image string) int {
 
 // startHostEngineContainerAttempt starts one nv-hostengine container and returns its ID.
 func startHostEngineContainerAttempt(ctx context.Context, image string, dockerArgs []string, heArgs ...string) string {
-	name := fmt.Sprintf("dcgm-exporter-test-he-%d", time.Now().UnixNano())
+	name := testContainerName("hostengine")
 
 	runArgs := []string{"run", "-d", "--name", name, "--gpus", "all", "--privileged"}
 	runArgs = append(runArgs, dockerArgs...)
@@ -194,6 +193,7 @@ func startHostEngineContainerAttempt(ctx context.Context, image string, dockerAr
 	out, err := exec.CommandContext(ctx, "docker", runArgs...).CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "start hostengine container: %s", out)
 	id := strings.TrimSpace(string(out))
+	suiteOwnedContainers.add(id)
 	return id
 }
 
@@ -246,7 +246,7 @@ func inspectContainerState(ctx context.Context, id string) string {
 // exporter args. Unlike startContainer it does not fail if the container exits
 // quickly, so it can also be used by the negative scenarios.
 func runExporterContainer(ctx context.Context, image string, dockerArgs []string, exporterArgs ...string) string {
-	name := fmt.Sprintf("dcgm-exporter-test-exp-%d", time.Now().UnixNano())
+	name := testContainerName("exporter")
 
 	// --uts=host shares the host UTS namespace so os.Hostname() inside the exporter
 	// equals the test host's hostname, making the assertHostnameLabel equality an
@@ -260,6 +260,7 @@ func runExporterContainer(ctx context.Context, image string, dockerArgs []string
 	out, err := exec.CommandContext(ctx, "docker", runArgs...).CombinedOutput()
 	Expect(err).NotTo(HaveOccurred(), "start exporter container: %s", out)
 	id := strings.TrimSpace(string(out))
+	suiteOwnedContainers.add(id)
 	DeferCleanup(func(ctx context.Context) { _ = cleanupContainer(ctx, id) })
 	return id
 }
@@ -311,46 +312,20 @@ func assertHostnameLabel(body string) {
 	}
 }
 
-// validateRemoteExporter runs one exporter image against a remote DCGM URI
+// validateRemoteExporter runs the exporter image with the given exporter arguments
 // and asserts it serves GPU metrics with a correct, non-leaked hostname label.
-func validateRemoteExporter(ctx context.Context, img ImageInfo, dockerArgs []string, uri string) {
+func validateRemoteExporter(ctx context.Context, image string, dockerArgs []string, exporterArgs ...string) {
 	port := mustFreePort()
-	runExporterContainer(ctx, img.FullName, dockerArgs,
-		"-r", uri, "-a", fmt.Sprintf(":%d", port), "-f", countersFile)
+	args := append([]string{}, exporterArgs...)
+	args = append(args, "-a", fmt.Sprintf(":%d", port), "-f", countersFile)
+	runExporterContainer(ctx, image, dockerArgs, args...)
 	assertHostnameLabel(fetchValidMetrics(ctx, port))
-}
-
-// validateExporterImagesWithArgs runs every configured exporter image with the
-// provided exporter arguments and asserts it serves valid remote DCGM metrics.
-func validateExporterImagesWithArgs(ctx context.Context, dockerArgs []string, exporterArgs ...string) {
-	ran := 0
-	for _, img := range testConfig.Images {
-		exists, err := imageExists(ctx, img.FullName)
-		Expect(err).NotTo(HaveOccurred())
-		if !exists {
-			continue
-		}
-		By(fmt.Sprintf("Validating exporter image [%s]", img.Variant))
-		port := mustFreePort()
-		args := append([]string{}, exporterArgs...)
-		args = append(args, "-a", fmt.Sprintf(":%d", port), "-f", countersFile)
-		runExporterContainer(ctx, img.FullName, dockerArgs, args...)
-		assertHostnameLabel(fetchValidMetrics(ctx, port))
-		ran++
-	}
-	Expect(ran).To(BeNumerically(">", 0), "no configured exporter images available; run 'make local'")
-}
-
-// validateExporterImages runs validateRemoteExporter for every configured image
-// that exists locally, so each exporter image variant is exercised.
-func validateExporterImages(ctx context.Context, dockerArgs []string, uri string) {
-	validateExporterImagesWithArgs(ctx, dockerArgs, "-r", uri)
 }
 
 // expectExporterFailsToConnect asserts one exporter image exits instead of
 // serving metrics and logs a connection failure for an unreachable DCGM URI.
-func expectExporterFailsToConnect(ctx context.Context, img ImageInfo, dockerArgs []string, uri string) {
-	id := runExporterContainer(ctx, img.FullName, dockerArgs,
+func expectExporterFailsToConnect(ctx context.Context, image string, dockerArgs []string, uri string) {
+	id := runExporterContainer(ctx, image, dockerArgs,
 		"-r", uri, "-a", fmt.Sprintf(":%d", mustFreePort()), "-f", countersFile)
 
 	By("Exporter should exit instead of serving metrics")
@@ -368,48 +343,44 @@ func expectExporterFailsToConnect(ctx context.Context, img ImageInfo, dockerArgs
 		"logs should indicate a hostengine connection failure")
 }
 
-// expectExporterImagesFailToConnect runs every configured exporter image against
-// an unreachable remote DCGM URI and verifies each image exits cleanly.
-func expectExporterImagesFailToConnect(ctx context.Context, dockerArgs []string, uri string) {
-	ran := 0
-	for _, img := range testConfig.Images {
-		exists, err := imageExists(ctx, img.FullName)
-		Expect(err).NotTo(HaveOccurred())
-		if !exists {
-			continue
-		}
-		By(fmt.Sprintf("Validating exporter image [%s] failure path", img.Variant))
-		expectExporterFailsToConnect(ctx, img, dockerArgs, uri)
-		ran++
+// requireDCGMImage returns the DCGM image that runs nv-hostengine for the remote specs. It skips
+// the spec when DCGM_IMAGE is empty or the image is not available to Docker.
+func requireDCGMImage(ctx context.Context) string {
+	dcgmImage := testConfig.DCGMImage
+	if dcgmImage == "" {
+		Skip("DCGM_IMAGE is not configured")
 	}
-	Expect(ran).To(BeNumerically(">", 0), "no configured exporter images available; run 'make local'")
+
+	exists, err := imageExists(ctx, dcgmImage)
+	Expect(err).NotTo(HaveOccurred())
+	if !exists {
+		Skip(fmt.Sprintf("DCGM image not found: %s", dcgmImage))
+	}
+
+	return dcgmImage
 }
 
 var _ = Describe("Remote DCGM dcgmConnect_v3 URI schemes", Serial, Label("remoteDcgmUri"), func() {
-	var dcgmImage string
+	var exporterImage string
 
+	// Only the specs that start nv-hostengine need the DCGM image; the unreachable-endpoint
+	// specs run with the exporter image alone.
 	BeforeEach(func(ctx context.Context) {
-		dcgmImage = testConfig.DCGMImage
-		if dcgmImage == "" {
-			Skip("DCGM_IMAGE is not configured")
-		}
-		exists, err := imageExists(ctx, dcgmImage)
-		Expect(err).NotTo(HaveOccurred())
-		if !exists {
-			Skip(fmt.Sprintf("DCGM image not found: %s", dcgmImage))
-		}
+		exporterImage = requireExporterImage(ctx)
 	})
 
 	It("connects over a tcp:// URI", func(ctx context.Context) {
+		dcgmImage := requireDCGMImage(ctx)
 		hePort := mustFreePort()
 		startHostEngineContainer(ctx, dcgmImage, []string{"--net", "host"},
 			"-b", "127.0.0.1", "-p", fmt.Sprintf("%d", hePort))
 
-		validateExporterImages(ctx, []string{"--net", "host"},
-			fmt.Sprintf("tcp://127.0.0.1:%d", hePort))
+		validateRemoteExporter(ctx, exporterImage, []string{"--net", "host"},
+			"-r", fmt.Sprintf("tcp://127.0.0.1:%d", hePort))
 	})
 
 	It("connects over a unix:// URI", func(ctx context.Context) {
+		dcgmImage := requireDCGMImage(ctx)
 		sockDir, err := os.MkdirTemp("", "dcgm-he-")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.Chmod(sockDir, 0o777)).To(Succeed())
@@ -419,37 +390,37 @@ var _ = Describe("Remote DCGM dcgmConnect_v3 URI schemes", Serial, Label("remote
 		mount := []string{"--net", "host", "-v", fmt.Sprintf("%s:%s", sockDir, sockDir)}
 		startHostEngineContainer(ctx, dcgmImage, mount, "-d", socket)
 
-		validateExporterImages(ctx, mount, "unix://"+socket)
+		validateRemoteExporter(ctx, exporterImage, mount, "-r", "unix://"+socket)
 	})
 
 	It("connects over a vsock:// URI", func(ctx context.Context) {
 		requireVsockOrSkip()
-		hePort := startVsockHostEngineContainer(ctx, dcgmImage)
+		hePort := startVsockHostEngineContainer(ctx, requireDCGMImage(ctx))
 
-		validateExporterImages(ctx, vsockDockerArgs(), fmt.Sprintf("vsock://1:%d", hePort))
+		validateRemoteExporter(ctx, exporterImage, vsockDockerArgs(), "-r", fmt.Sprintf("vsock://1:%d", hePort))
 	})
 
 	It("honors DCGM_REMOTE_HOSTENGINE_INFO with a vsock:// URI", func(ctx context.Context) {
 		requireVsockOrSkip()
-		hePort := startVsockHostEngineContainer(ctx, dcgmImage)
+		hePort := startVsockHostEngineContainer(ctx, requireDCGMImage(ctx))
 
 		dockerArgs := append(vsockDockerArgs(),
 			"-e", fmt.Sprintf("DCGM_REMOTE_HOSTENGINE_INFO=vsock://1:%d", hePort))
-		validateExporterImagesWithArgs(ctx, dockerArgs)
+		validateRemoteExporter(ctx, exporterImage, dockerArgs)
 	})
 
 	DescribeTable("fails gracefully when the DCGM endpoint is unreachable",
 		func(ctx context.Context, scheme string) {
 			switch scheme {
 			case "tcp":
-				expectExporterImagesFailToConnect(ctx, []string{"--net", "host"},
+				expectExporterFailsToConnect(ctx, exporterImage, []string{"--net", "host"},
 					fmt.Sprintf("tcp://127.0.0.1:%d", mustFreePort()))
 			case "unix":
-				expectExporterImagesFailToConnect(ctx, []string{"--net", "host"},
+				expectExporterFailsToConnect(ctx, exporterImage, []string{"--net", "host"},
 					fmt.Sprintf("unix:///tmp/dcgm-missing-%d.sock", mustFreePort()))
 			case "vsock":
 				requireVsockOrSkip()
-				expectExporterImagesFailToConnect(ctx, vsockDockerArgs(),
+				expectExporterFailsToConnect(ctx, exporterImage, vsockDockerArgs(),
 					fmt.Sprintf("vsock://1:%d", mustFreePort()))
 			}
 		},

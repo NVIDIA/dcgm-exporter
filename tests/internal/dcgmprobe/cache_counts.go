@@ -20,13 +20,16 @@ package dcgmprobe
 
 const (
 	// CurrentCacheCountsVersion is the cache-count report schema version.
-	CurrentCacheCountsVersion = 2
+	CurrentCacheCountsVersion = 3
 )
 
 // CacheCounts reports the number of cached samples for each requested field on
 // each monitored DCGM entity. Entity keys are "<entity-group-id>:<entity-id>";
-// field keys are decimal DCGM field IDs.
+// field keys are decimal DCGM field IDs. History preserves integer observations
+// and EntityLabels maps their native identities to independently queried GPU labels.
 type CacheCounts struct {
-	Version  int                       `json:"version"`
-	Entities map[string]map[string]int `json:"entities"`
+	Version      int                          `json:"version"`
+	Entities     map[string]map[string]int    `json:"entities"`
+	EntityLabels map[string]map[string]string `json:"entityLabels,omitempty"`
+	History      []HistorySample              `json:"history,omitempty"`
 }

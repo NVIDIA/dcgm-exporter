@@ -23,7 +23,8 @@ StartLimitIntervalSec=0
 User=root
 PrivateTmp=false
 
-ExecStart=/usr/bin/dcgm-exporter -f /etc/dcgm-exporter/default-counters.csv
+Environment=DCGM_EXPORTER_CONFIG_FILE=/etc/dcgm-exporter/config.yaml
+ExecStart=/usr/bin/dcgm-exporter
 
 Restart=on-failure
 RestartSec=10s

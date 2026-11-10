@@ -1,0 +1,17 @@
+Config file   testdata/container-required.yaml
+
+Settings that differ from defaults
+metrics[0]
+  fields                 1 inline definition  file:4
+  enrichment.kubernetes  auto                 flag --kubernetes
+    replaces file:8 value: auto
+    inactive: Kubernetes mode is off because metrics[0].enrichment.container is true
+  enrichment.container   true                 file:8
+    note: required: the exporter waits up to 1m at startup
+
+Fields   1 from inline definitions, every 30s, retention 10m, no sample limit
+
+Not checked (needs the running exporter): GPUs and MIG instances, DCGM connection, field support,
+  kubelet and container runtime sockets, Kubernetes, container and HPC label sources,
+  listen address, HPC mapping and debug dump directories
+Use --verbose for all settings and all fields.

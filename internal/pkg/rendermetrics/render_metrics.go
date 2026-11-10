@@ -36,12 +36,12 @@ import (
 )
 
 /*
-* The goal here is to get to the following format:
+* GPU samples use the following shape (the UUID label is configurable):
 * ```
 * # HELP FIELD_ID HELP_MSG
 * # TYPE FIELD_ID PROM_TYPE
-* FIELD_ID{gpu="GPU_INDEX_0",uuid="GPU_UUID", attr...} VALUE
-* FIELD_ID{gpu="GPU_INDEX_N",uuid="GPU_UUID", attr...} VALUE
+* FIELD_ID{gpu="GPU_INDEX_0",UUID="GPU_UUID", attr...} VALUE
+* FIELD_ID{gpu="GPU_INDEX_N",UUID="GPU_UUID", attr...} VALUE
 * ...
 * ```
  */
@@ -53,19 +53,23 @@ type metricFamilyBuilder struct {
 	seen       map[string]struct{}
 }
 
+// metricFamilySamples sorts family samples and their label signatures together.
 type metricFamilySamples struct {
 	metrics    []*dto.Metric
 	signatures []string
 }
 
+// Len reports the number of samples in the sortable family.
 func (s metricFamilySamples) Len() int {
 	return len(s.metrics)
 }
 
+// Less orders samples by their canonical label signatures.
 func (s metricFamilySamples) Less(i, j int) bool {
 	return s.signatures[i] < s.signatures[j]
 }
 
+// Swap keeps a sample paired with its signature while sorting.
 func (s metricFamilySamples) Swap(i, j int) {
 	s.metrics[i], s.metrics[j] = s.metrics[j], s.metrics[i]
 	s.signatures[i], s.signatures[j] = s.signatures[j], s.signatures[i]
@@ -138,7 +142,7 @@ func addGroup(
 	metrics collector.MetricsByCounter,
 ) error {
 	switch group {
-	case dcgm.FE_GPU, dcgm.FE_SWITCH, dcgm.FE_LINK, dcgm.FE_CPU, dcgm.FE_CPU_CORE:
+	case dcgm.FE_NONE, dcgm.FE_GPU, dcgm.FE_SWITCH, dcgm.FE_LINK, dcgm.FE_CPU, dcgm.FE_CPU_CORE:
 	default:
 
 		return fmt.Errorf("unexpected group: %s", group.String())
@@ -335,12 +339,18 @@ func metricLabels(
 
 	// Preserve the historical label names for each DCGM entity group.
 	switch group {
+	case dcgm.FE_NONE:
+		if metric.Hostname != "" {
+			if err := builder.add("hostname", metric.Hostname); err != nil {
+				return nil, err
+			}
+		}
 	case dcgm.FE_GPU:
 		if err := builder.add("gpu", metric.GPU); err != nil {
 			return nil, err
 		}
 
-		if err := builder.add(metric.UUID, metric.GPUUUID); err != nil {
+		if err := builder.add(metric.SelectedUUIDLabelName(), metric.GPUUUID); err != nil {
 			return nil, err
 		}
 
@@ -444,7 +454,11 @@ func metricLabels(
 			}
 		}
 	case dcgm.FE_CPU:
-		if err := builder.add("cpu", metric.GPU); err != nil {
+		cpu := metric.CPU
+		if cpu == "" {
+			cpu = metric.GPU
+		}
+		if err := builder.add("cpu", cpu); err != nil {
 			return nil, err
 		}
 
@@ -460,11 +474,19 @@ func metricLabels(
 			}
 		}
 	case dcgm.FE_CPU_CORE:
-		if err := builder.add("cpucore", metric.GPU); err != nil {
+		cpu := metric.CPU
+		if cpu == "" {
+			cpu = metric.GPUDevice
+		}
+		core := metric.CPUCore
+		if core == "" {
+			core = metric.GPU
+		}
+		if err := builder.add("cpucore", core); err != nil {
 			return nil, err
 		}
 
-		if err := builder.add("cpu", metric.GPUDevice); err != nil {
+		if err := builder.add("cpu", cpu); err != nil {
 			return nil, err
 		}
 

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("version: 2\nmetrics:\n  - name: \"000\"\n    file: \"00\r0000000\"\n    overrides:\n      - match: [\"\\n#\"]\n        window: 1m\noutputs:\n 0000:\n    type: prometheus\n    schema: dcgm/v1\n    #0000000000")

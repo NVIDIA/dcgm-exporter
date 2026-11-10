@@ -26,6 +26,7 @@ import (
 	"testing"
 )
 
+// runDCGMLibraryPath checks the loader uses an explicit libdcgm copy and falls back to the system library.
 func runDCGMLibraryPath(t testing.TB) {
 	t.Helper()
 	if testing.Short() {
@@ -37,11 +38,11 @@ func runDCGMLibraryPath(t testing.TB) {
 	copyTestFile(t, source, customLibrary)
 
 	port := getRandomAvailablePort(t)
-	process, _ := startExporterAndWaitWithEnv(
+	process, _ := startFastExporterAndWaitWithEnv(
 		t,
 		fmt.Sprintf("http://localhost:%d/metrics", port),
 		[]string{"LD_LIBRARY_PATH=" + customDir, "LD_DEBUG=libs"},
-		"--collectors", "./testdata/default-counters.csv",
+		"--collectors", defaultCollectorsFile(t),
 		"--address", fmt.Sprintf(":%d", port),
 	)
 
@@ -56,11 +57,11 @@ func runDCGMLibraryPath(t testing.TB) {
 
 	emptyDir := t.TempDir()
 	fallbackPort := getRandomAvailablePort(t)
-	fallbackProcess, _ := startExporterAndWaitWithEnv(
+	fallbackProcess, _ := startFastExporterAndWaitWithEnv(
 		t,
 		fmt.Sprintf("http://localhost:%d/metrics", fallbackPort),
 		[]string{"LD_LIBRARY_PATH=" + emptyDir},
-		"--collectors", "./testdata/default-counters.csv",
+		"--collectors", defaultCollectorsFile(t),
 		"--address", fmt.Sprintf(":%d", fallbackPort),
 	)
 	if strings.Contains(fallbackProcess.output.String(), "panic:") {
@@ -68,6 +69,7 @@ func runDCGMLibraryPath(t testing.TB) {
 	}
 }
 
+// hostDCGMLibrary finds a DCGM library at one of the supported host architecture paths.
 func hostDCGMLibrary(t testing.TB) string {
 	t.Helper()
 	multiarch := map[string]string{"amd64": "x86_64-linux-gnu", "arm64": "aarch64-linux-gnu"}[runtime.GOARCH]
@@ -85,6 +87,7 @@ func hostDCGMLibrary(t testing.TB) string {
 	return ""
 }
 
+// copyTestFile copies a host library into a temporary path that the loader can search.
 func copyTestFile(t testing.TB, source, destination string) {
 	t.Helper()
 	in, err := os.Open(source)

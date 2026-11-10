@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+exports_files(["BUILD.bazel"])
+
+go_library(
+    name = "licenses_lib",
+    srcs = [
+        "container.go",
+        "generate.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/hack/licenses",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "notice_generator",
+    out = "dcgm-exporter-notice-generator",
+    embed = [":licenses_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "licenses_test",
+    srcs = [
+        "container_test.go",
+        "generate_test.go",
+    ],
+    embed = [":licenses_lib"],
+)

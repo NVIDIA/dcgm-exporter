@@ -1,0 +1,5 @@
+exit 2
+--- stdout ---
+--- stderr ---
+--- error ---
+invalid --output "xml"; expected text or json

@@ -32,12 +32,17 @@ type BaselineOptions struct {
 	RequireHostname         bool
 	RequireKubernetesLabels bool
 	KubernetesLabels        map[string]string
-	DefaultCounters         io.Reader
-	SupportedFields         map[string]bool
-	CapabilityWriter        io.Writer
+	DefaultCounterRows      []metriccontract.DefaultCounterRow
+	FieldSupport            metriccontract.FieldSupport
+	// ExactCSV states that DefaultCounterRows is the CSV the exporter runs
+	// with; see metriccontract.DefaultCounterOptions.
+	ExactCSV         bool
+	CapabilityWriter io.Writer
 }
 
-// BaselineMetrics validates the default dcgm-exporter metrics contract.
+// BaselineMetrics validates the default dcgm-exporter metrics contract,
+// including the shared DCGM sample checks: finite values, no DCGM unavailable
+// sentinels, documented upper bounds, and no repeated label sets.
 func BaselineMetrics(metrics []byte, opts BaselineOptions) error {
 	families, err := metriccontract.ParseText(metrics)
 	if err != nil {
@@ -46,20 +51,16 @@ func BaselineMetrics(metrics []byte, opts BaselineOptions) error {
 
 	var errs []error
 	errs = append(errs, metriccontract.ValidateContracts(families, metriccontract.BaselineGPUFamilies()))
-	if opts.DefaultCounters != nil {
-		rows, err := metriccontract.ReadDefaultCounterRows(opts.DefaultCounters)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("default counters should parse: %w", err))
-		} else {
-			errs = append(errs, metriccontract.ValidateDefaultCounterRows(
-				families,
-				rows,
-				metriccontract.DefaultCounterOptions{
-					SupportedFields: opts.SupportedFields,
-					SkipWriter:      opts.CapabilityWriter,
-				},
-			))
-		}
+	if opts.DefaultCounterRows != nil {
+		errs = append(errs, metriccontract.ValidateDefaultCounterRows(
+			families,
+			opts.DefaultCounterRows,
+			metriccontract.DefaultCounterOptions{
+				FieldSupport: opts.FieldSupport,
+				ExactCSV:     opts.ExactCSV,
+				SkipWriter:   opts.CapabilityWriter,
+			},
+		))
 	}
 	if opts.RequireHostname {
 		errs = append(errs, metriccontract.ValidateAnyLabel(
@@ -69,6 +70,7 @@ func BaselineMetrics(metrics []byte, opts BaselineOptions) error {
 		))
 	}
 	errs = append(errs, metriccontract.ValidateAtLeastOneDCGMGPUFamily(families))
+	errs = append(errs, metriccontract.ValidateDCGMSamples(families))
 
 	if opts.RequireKubernetesLabels {
 		errs = append(errs, metriccontract.ValidateLabelValues(
@@ -103,7 +105,7 @@ func CustomMetrics(metrics []byte, kubernetesLabels map[string]string) error {
 		return fmt.Errorf("custom metrics response should parse as Prometheus text: %w", err)
 	}
 
-	names := []string{"DCGM_FI_DEV_GPU_TEMP", "DCGM_FI_DEV_FB_USED"}
+	names := []string{"DCGM_FI_DEV_GPU_TEMP_CELSIUS", "DCGM_FI_DEV_FB_USED_BYTES"}
 	return errors.Join(
 		metriccontract.ValidateContracts(families, customMetricsContracts()),
 		metriccontract.ValidateAnyLabel(families, names, metriccontract.GPUHostnameLabels),
@@ -139,14 +141,14 @@ func MetricsDoNotHaveAnyLabel(metrics []byte, labelNames ...string) error {
 func customMetricsContracts() []metriccontract.FamilyContract {
 	return []metriccontract.FamilyContract{
 		{
-			Name:        "DCGM_FI_DEV_GPU_TEMP",
+			Name:        "DCGM_FI_DEV_GPU_TEMP_CELSIUS",
 			Type:        dto.MetricType_GAUGE,
 			CheckType:   true,
 			Labels:      metriccontract.GPUIdentityLabels,
 			NonNegative: true,
 		},
 		{
-			Name:        "DCGM_FI_DEV_FB_USED",
+			Name:        "DCGM_FI_DEV_FB_USED_BYTES",
 			Type:        dto.MetricType_GAUGE,
 			CheckType:   true,
 			Labels:      metriccontract.GPUIdentityLabels,
@@ -158,8 +160,8 @@ func customMetricsContracts() []metriccontract.FamilyContract {
 // validateCustomMetricAllowlist requires customMetrics to emit exactly the configured DCGM families.
 func validateCustomMetricAllowlist(families map[string]*dto.MetricFamily) error {
 	expected := map[string]struct{}{
-		"DCGM_FI_DEV_GPU_TEMP": {},
-		"DCGM_FI_DEV_FB_USED":  {},
+		"DCGM_FI_DEV_GPU_TEMP_CELSIUS": {},
+		"DCGM_FI_DEV_FB_USED_BYTES":    {},
 	}
 
 	var errs []error

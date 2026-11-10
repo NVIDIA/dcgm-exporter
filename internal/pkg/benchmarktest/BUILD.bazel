@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "benchmarktest",
+    srcs = ["metrics.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/benchmarktest",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/collector",
+        "//internal/pkg/counters",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+    ],
+)
+
+go_test(
+    name = "benchmarktest_test",
+    srcs = ["metrics_test.go"],
+    embed = [":benchmarktest"],
+)

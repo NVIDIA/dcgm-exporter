@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	e2ecli "github.com/NVIDIA/dcgm-exporter/internal/e2e/cli"
+	"github.com/NVIDIA/dcgm-exporter/internal/e2e/clioutput"
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
@@ -51,7 +52,7 @@ func run() int {
 		Runner: e2eexec.OSRunner{},
 	})
 	if err := app.RunContext(ctx, os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		clioutput.WriteError(os.Stderr, err)
 		if code, ok := e2ecli.ExitCode(err); ok {
 			return code
 		}

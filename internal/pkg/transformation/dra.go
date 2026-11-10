@@ -62,6 +62,7 @@ const (
 	resourceSliceAPIV1beta1
 )
 
+// String names the served ResourceSlice API or the unknown-version sentinel.
 func (v resourceSliceAPIVersion) String() string {
 	switch v {
 	case resourceSliceAPIV1:
@@ -100,17 +101,23 @@ func detectResourceSliceAPIVersion(client kubernetes.Interface) resourceSliceAPI
 	return resourceSliceAPIUnknown
 }
 
+// NewDRAResourceSliceManager starts synchronized DRA discovery without reload callbacks.
 func NewDRAResourceSliceManager() (*DRAResourceSliceManager, error) {
-	return newDRAResourceSliceManager(nil)
+	return newDRAResourceSliceManager(context.Background(), nil)
 }
 
 // newDRAResourceSliceManager starts a ResourceSlice informer and optionally
 // notifies the caller when a complete pool generation changes after the
-// initial cache baseline has been established.
-func newDRAResourceSliceManager(onGenerationChange func()) (*DRAResourceSliceManager, error) {
+// initial cache baseline has been established. Cancelling ctx stops the
+// informer and ends a cache sync that is still waiting.
+func newDRAResourceSliceManager(ctx context.Context, onGenerationChange func()) (*DRAResourceSliceManager, error) {
 	client, err := getKubeClientFunc()
 	if err != nil {
 		return nil, fmt.Errorf("error getting kube client: %w", err)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("DRA setup stopped: %w", err)
 	}
 
 	apiVersion := detectResourceSliceAPIVersion(client)
@@ -187,7 +194,8 @@ func newDRAResourceSliceManager(onGenerationChange func()) (*DRAResourceSliceMan
 
 	slog.Info("Using ResourceSlice API", "groupVersion", apiVersion.String())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	parent := ctx
+	ctx, cancel := context.WithCancel(parent)
 	m.cancelContext = cancel
 	factory.Start(ctx.Done())
 
@@ -196,6 +204,9 @@ func newDRAResourceSliceManager(onGenerationChange func()) (*DRAResourceSliceMan
 	if !waitForResourceSliceCacheSyncFunc(syncCtx.Done(), hasSynced) {
 		cancel()
 		shutdownResourceSliceFactoryFunc(factory)
+		if parent.Err() != nil {
+			return nil, fmt.Errorf("ResourceSlice informer cache sync stopped: %w", parent.Err())
+		}
 		if syncCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("ResourceSlice informer cache sync timed out after %s (check RBAC: list/watch on resource.k8s.io/resourceslices)", resourceSliceCacheSyncTimeout)
 		}
@@ -206,6 +217,7 @@ func newDRAResourceSliceManager(onGenerationChange func()) (*DRAResourceSliceMan
 	return m, nil
 }
 
+// Stop cancels the informer and shuts down its factory once.
 func (m *DRAResourceSliceManager) Stop() {
 	m.generationTrackingMu.Lock()
 	if m.stopped {
@@ -402,18 +414,22 @@ func (m *DRAResourceSliceManager) GetDeviceInfo(pool, device string) (string, *D
 // deviceLookupFunc resolves a DRA (pool, device) tuple from the informer cache.
 type deviceLookupFunc func(pool, device string) (string, *DRAMigDeviceInfo)
 
+// draDeviceKey identifies a device within a DRA pool for allocation deduplication.
 func draDeviceKey(pool, device string) string {
 	return pool + "/" + device
 }
 
+// draPoolIndexKey separates pools belonging to different DRA drivers.
 func draPoolIndexKey(driver, pool string) string {
 	return driver + "/" + pool
 }
 
+// draDeviceIndexKey identifies a driver, pool, and device in the informer index.
 func draDeviceIndexKey(driver, pool, device string) string {
 	return draPoolIndexKey(driver, pool) + "/" + device
 }
 
+// indexV1ResourceSliceByDevice indexes NVIDIA v1 slices by each advertised device.
 func indexV1ResourceSliceByDevice(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1.ResourceSlice)
 	if !ok {
@@ -430,6 +446,7 @@ func indexV1ResourceSliceByDevice(obj any) ([]string, error) {
 	return keys, nil
 }
 
+// indexV1beta1ResourceSliceByDevice indexes NVIDIA v1beta1 slices by advertised device.
 func indexV1beta1ResourceSliceByDevice(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1beta1.ResourceSlice)
 	if !ok {
@@ -446,6 +463,7 @@ func indexV1beta1ResourceSliceByDevice(obj any) ([]string, error) {
 	return keys, nil
 }
 
+// indexV1ResourceSliceByPool indexes NVIDIA v1 slices by their driver and pool.
 func indexV1ResourceSliceByPool(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1.ResourceSlice)
 	if !ok {
@@ -457,6 +475,7 @@ func indexV1ResourceSliceByPool(obj any) ([]string, error) {
 	return []string{draPoolIndexKey(slice.Spec.Driver, slice.Spec.Pool.Name)}, nil
 }
 
+// indexV1beta1ResourceSliceByPool indexes NVIDIA v1beta1 slices by driver and pool.
 func indexV1beta1ResourceSliceByPool(obj any) ([]string, error) {
 	slice, ok := obj.(*resourcev1beta1.ResourceSlice)
 	if !ok {
@@ -468,6 +487,7 @@ func indexV1beta1ResourceSliceByPool(obj any) ([]string, error) {
 	return []string{draPoolIndexKey(slice.Spec.Driver, slice.Spec.Pool.Name)}, nil
 }
 
+// latestV1PoolGeneration accepts the newest generation only after its slice count is present.
 func latestV1PoolGeneration(indexer cache.Indexer, pool string) (int64, bool) {
 	objects, err := indexer.ByIndex(resourceSlicePoolIndex, draPoolIndexKey(DRAGPUDriverName, pool))
 	if err != nil {
@@ -499,6 +519,7 @@ func latestV1PoolGeneration(indexer cache.Indexer, pool string) (int64, bool) {
 	return latestGeneration, true
 }
 
+// latestV1beta1PoolGeneration requires the newest generation's declared slice count.
 func latestV1beta1PoolGeneration(indexer cache.Indexer, pool string) (int64, bool) {
 	objects, err := indexer.ByIndex(resourceSlicePoolIndex, draPoolIndexKey(DRAGPUDriverName, pool))
 	if err != nil {
@@ -530,6 +551,7 @@ func latestV1beta1PoolGeneration(indexer cache.Indexer, pool string) (int64, boo
 	return latestGeneration, true
 }
 
+// makeV1Lookup resolves devices in the newest complete pool with a stable slice-key tie break.
 func makeV1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	return func(pool, device string) (string, *DRAMigDeviceInfo) {
 		latestGeneration, ok := latestV1PoolGeneration(indexer, pool)
@@ -580,6 +602,7 @@ func makeV1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	}
 }
 
+// makeV1beta1Lookup resolves v1beta1 devices using complete generation and slice-key order.
 func makeV1beta1Lookup(indexer cache.Indexer) deviceLookupFunc {
 	return func(pool, device string) (string, *DRAMigDeviceInfo) {
 		latestGeneration, ok := latestV1beta1PoolGeneration(indexer, pool)
@@ -690,6 +713,7 @@ func parseDRAMigSpec(deviceName string) (*draMIGSpec, error) {
 	}, nil
 }
 
+// getV1AttrString returns a string-valued v1 attribute, or empty when absent or nonstring.
 func getV1AttrString(attrs map[resourcev1.QualifiedName]resourcev1.DeviceAttribute, key resourcev1.QualifiedName) string {
 	if attr, ok := attrs[key]; ok && attr.StringValue != nil {
 		return *attr.StringValue
@@ -697,6 +721,7 @@ func getV1AttrString(attrs map[resourcev1.QualifiedName]resourcev1.DeviceAttribu
 	return ""
 }
 
+// getV1beta1AttrString returns a v1beta1 string attribute, or empty when unavailable.
 func getV1beta1AttrString(attrs map[resourcev1beta1.QualifiedName]resourcev1beta1.DeviceAttribute, key resourcev1beta1.QualifiedName) string {
 	if attr, ok := attrs[key]; ok && attr.StringValue != nil {
 		return *attr.StringValue

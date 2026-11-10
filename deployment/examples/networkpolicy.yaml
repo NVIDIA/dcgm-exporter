@@ -1,0 +1,24 @@
+# Optional policy for the raw dcgm-exporter.yaml example. Apply separately.
+# Replace the example monitoring labels with your installation's actual labels.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dcgm-exporter-metrics
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              # Kubernetes 1.21 and later set this label on every namespace;
+              # on older clusters use a label you set yourself.
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9400

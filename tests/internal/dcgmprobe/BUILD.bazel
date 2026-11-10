@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+filegroup(
+    name = "source_files",
+    srcs = glob(["*.go"]),
+    visibility = ["//tests/static:__pkg__"],
+)
+
+go_library(
+    name = "dcgmprobe",
+    srcs = [
+        "cache_counts.go",
+        "entity_history.go",
+        "exporter_acceptance.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/internal/dcgmprobe",
+    visibility = ["//tests:__subpackages__"],
+)

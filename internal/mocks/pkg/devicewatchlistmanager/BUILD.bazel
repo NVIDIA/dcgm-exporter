@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "devicewatchlistmanager",
+    srcs = ["mock_device_watchlist_manager.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/mocks/pkg/devicewatchlistmanager",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/devicewatcher",
+        "//internal/pkg/devicewatchlistmanager",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@org_uber_go_mock//gomock",
+    ],
+)

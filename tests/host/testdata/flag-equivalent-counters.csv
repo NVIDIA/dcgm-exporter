@@ -1,0 +1,2 @@
+DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature.
+DCGM_FI_DEV_BOARD_POWER_WATTS, gauge, Power draw.

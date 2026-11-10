@@ -36,6 +36,7 @@ type cumulativePollContextError struct {
 	err              error
 }
 
+// newCumulativePollContextError attaches the failing watch pair and cursor to a poll error.
 func newCumulativePollContextError(
 	operation string,
 	group dcgm.GroupHandle,
@@ -52,6 +53,7 @@ func newCumulativePollContextError(
 	}
 }
 
+// Error returns the operation and watch cursor context followed by the underlying error.
 func (e *cumulativePollContextError) Error() string {
 	return fmt.Sprintf("%s group_handle=%d field_group_handle=%d since_timestamp=%s: %v",
 		e.operation,
@@ -61,10 +63,12 @@ func (e *cumulativePollContextError) Error() string {
 		e.err)
 }
 
+// Unwrap returns the underlying DCGM error for errors.Is and errors.As.
 func (e *cumulativePollContextError) Unwrap() error {
 	return e.err
 }
 
+// logAttrs returns the watch handles and cursor as structured log attributes.
 func (e *cumulativePollContextError) logAttrs() []slog.Attr {
 	return []slog.Attr{
 		slog.Uint64("group_handle", uint64(e.groupHandle)),
@@ -73,6 +77,7 @@ func (e *cumulativePollContextError) logAttrs() []slog.Attr {
 	}
 }
 
+// logCumulativeEventPollFailure logs a collector's poll failure with watch context when available.
 func logCumulativeEventPollFailure(collector string, err error) {
 	attrs := []slog.Attr{
 		slog.String("collector", collector),

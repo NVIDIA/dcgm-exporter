@@ -21,10 +21,10 @@ import "strings"
 // c2cCapability reports whether host and DCGM evidence can support C2C scenarios.
 func c2cCapability(nvidiaQ, discovery, profile, fields string) Capability {
 	if c2cEnabled(nvidiaQ) && c2cFieldEvidence(discovery, profile, fields) {
-		return hostCapability("c2c", StatusSupported, "nvidia-smi -q/DCGM container discovery/profile/fields", "GPU C2C mode is enabled and DCGM reported C2C field evidence", firstLine(discovery+"\n"+profile+"\n"+fields))
+		return hostCapability("c2c", StatusSupported, "nvidia-smi -q/dcgmi discovery/profile/fields", "GPU C2C mode is enabled and DCGM reported C2C field evidence", firstLine(discovery+"\n"+profile+"\n"+fields))
 	}
 	if c2cEnabled(nvidiaQ) {
-		return hostCapability("c2c", StatusUnknown, "nvidia-smi -q/DCGM container probe", "GPU C2C mode is enabled, but "+dcgmProbeUnavailableReason("c2c-field", fields), firstLine(nvidiaQ))
+		return hostCapability("c2c", StatusUnknown, "nvidia-smi -q/dcgmi probe", "GPU C2C mode is enabled, but "+dcgmProbeUnavailableReason("c2c-field", fields), firstLine(nvidiaQ))
 	}
 	return hostCapability("c2c", StatusUnsupported, "nvidia-smi -q", "GPU C2C mode is not enabled", "")
 }

@@ -26,14 +26,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/pprof"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/gorilla/mux"
 	"github.com/prometheus/exporter-toolkit/web"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/collector"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/debug"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
@@ -44,23 +46,49 @@ import (
 )
 
 const (
+	contentSecurityPolicy         = "default-src 'none'; frame-ancestors 'none'"
+	contentSecurityPolicyHeader   = "Content-Security-Policy"
 	contentTypeOptionsHeader      = "X-Content-Type-Options"
 	failedWriteResponseError      = "Failed to write response."
+	frameOptionsHeader            = "X-Frame-Options"
 	internalServerError           = "internal server error"
 	prometheusTextContentType     = "text/plain; version=0.0.4; charset=utf-8"
 	scrapeCapacityExceededMessage = "scrape concurrency limit reached"
 	shutdownWaitTimeout           = 3 * time.Second
 )
 
+// ErrActiveScrapeDrainTimeout marks a shutdown that left a native scrape
+// running past the HTTP shutdown deadline. The command must avoid tearing down
+// DCGM resources while that scrape can still use them.
+var ErrActiveScrapeDrainTimeout = errors.New("active scrape producer did not drain before shutdown deadline")
+
+// NewMetricsServer creates the HTTP server for a published registry and its
+// matching device topology. The command layer starts Run and calls cleanup
+// when application shutdown is complete.
 func NewMetricsServer(
 	c *appconfig.Config,
 	deviceWatchListManager devicewatchlistmanager.Manager,
 	registry *registry.Registry,
 ) (*MetricsServer, func(), error) {
+	return NewMetricsServerWithDRAChangeCallback(c, deviceWatchListManager, registry, nil)
+}
+
+// NewMetricsServerWithDRAChangeCallback creates the HTTP server and wires an
+// optional DRA topology notification into Kubernetes transformations. The
+// command lifecycle provides the callback; other server users can call
+// NewMetricsServer when they do not manage reloads.
+func NewMetricsServerWithDRAChangeCallback(
+	c *appconfig.Config,
+	deviceWatchListManager devicewatchlistmanager.Manager,
+	registry *registry.Registry,
+	onDRAChange func(),
+) (*MetricsServer, func(), error) {
 	router := mux.NewRouter()
 
-	// Initialize file dumper
-	fileDumper := debug.NewFileDumper(c.DumpConfig)
+	var fileDumper *debug.FileDumper
+	if c.DumpConfig.Enabled {
+		fileDumper = debug.NewFileDumper(c.DumpConfig)
+	}
 	readTimeout := timeoutOrDefault(c.WebReadTimeout, appconfig.DefaultWebReadTimeout)
 	writeTimeout := timeoutOrDefault(c.WebWriteTimeout, appconfig.DefaultWebWriteTimeout)
 	maxConcurrentScrapes := c.MaxConcurrentScrapes
@@ -71,6 +99,7 @@ func NewMetricsServer(
 		)
 	}
 
+	managedTransforms := transformation.NewManagedTransforms(c, onDRAChange)
 	serverv1 := &MetricsServer{
 		server: &http.Server{
 			Addr:         c.Address,
@@ -85,10 +114,11 @@ func NewMetricsServer(
 		},
 		metrics:                "",
 		config:                 c,
-		transformations:        transformation.GetTransformations(c),
+		transformations:        managedTransforms.Transformations,
 		deviceWatchListManager: deviceWatchListManager,
 		fileDumper:             fileDumper,
 		scrapes:                newScrapeCoordinator(maxConcurrentScrapes),
+		terminalErrors:         make(chan error, 1),
 	}
 
 	serverv1.registry.Store(registry)
@@ -98,8 +128,13 @@ func NewMetricsServer(
 		serverv1.exporterMetrics = newExporterMetrics(metricsHandler)
 		metricsHandler = serverv1.exporterMetrics
 	}
+	metricsHTML := `<p><a href="./metrics">Metrics</a></p>`
+	if c.DisablePrometheus {
+		metricsHTML = ""
+	}
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(contentTypeOptionsHeader, "nosniff")
+		setPageSecurityHeaders(w.Header())
 		pprofHTML := ""
 		if c.EnablePprof {
 			pprofHTML = `
@@ -115,7 +150,7 @@ func NewMetricsServer(
 			<head><title>GPU Exporter</title></head>
 			<body>
 			<h1>GPU Exporter</h1>
-			<p><a href="./metrics">Metrics</a></p>
+			` + metricsHTML + `
 			<p><a href="./health">Health</a></p>` + pprofHTML + `
 			</body>
 			</html>`))
@@ -127,7 +162,11 @@ func NewMetricsServer(
 	})
 
 	router.HandleFunc("/health", serverv1.Health)
-	router.Handle("/metrics", metricsHandler)
+	if c.DisablePrometheus {
+		router.Handle("/metrics", http.NotFoundHandler())
+	} else {
+		router.Handle("/metrics", metricsHandler)
+	}
 
 	if c.EnablePprof {
 		router.HandleFunc("/debug/pprof/", pprof.Index)
@@ -145,32 +184,30 @@ func NewMetricsServer(
 		slog.Info("Profiling endpoints enabled at /debug/pprof/")
 	}
 
-	var podMapper *transformation.PodMapper
-	for _, t := range serverv1.transformations {
-		if pm, ok := t.(*transformation.PodMapper); ok {
-			podMapper = pm
-			break
-		}
-	}
-
-	if podMapper != nil {
-		go podMapper.Run()
-	}
+	managedTransforms.Start()
 
 	cleanup := func() {
-		if podMapper != nil {
-			slog.Info("Stopping PodMapper")
-			podMapper.Stop()
-		}
-		if podMapper != nil && c.KubernetesEnableDRA && podMapper.ResourceSliceManager != nil {
-			slog.Info("Stopping ResourceSliceManager")
-			podMapper.ResourceSliceManager.Stop()
-		}
+		managedTransforms.Cleanup()
 	}
 
 	return serverv1, cleanup, nil
 }
 
+// setPageSecurityHeaders stops browsers from framing the landing and health
+// pages or loading anything into them. A header already set from the web
+// config's http_server_config.headers is kept.
+func setPageSecurityHeaders(header http.Header) {
+	if header.Get(contentSecurityPolicyHeader) == "" {
+		header.Set(contentSecurityPolicyHeader, contentSecurityPolicy)
+	}
+
+	if header.Get(frameOptionsHeader) == "" {
+		header.Set(frameOptionsHeader, "DENY")
+	}
+}
+
+// timeoutOrDefault selects configured timeout unless it is unset or invalid.
+// NewMetricsServer and Run use it to keep HTTP timeouts predictable.
 func timeoutOrDefault(timeout, defaultTimeout time.Duration) time.Duration {
 	if timeout <= 0 {
 		return defaultTimeout
@@ -178,6 +215,8 @@ func timeoutOrDefault(timeout, defaultTimeout time.Duration) time.Duration {
 	return timeout
 }
 
+// shutdownTimeout uses the effective write timeout as the graceful-shutdown
+// deadline so an admitted scrape has the time it was promised.
 func shutdownTimeout(writeTimeout time.Duration) time.Duration {
 	return timeoutOrDefault(writeTimeout, appconfig.DefaultWebWriteTimeout)
 }
@@ -201,8 +240,9 @@ func (s *MetricsServer) SetRegistry(newRegistry *registry.Registry) {
 }
 
 // SwapMetricsRuntime atomically replaces the registry and device topology used
-// to gather and render metrics. It waits for in-flight scrapes to finish and
-// returns the previous registry for cleanup.
+// to gather and render metrics. Gather admission belongs to Registry, so this
+// short swap never waits for a native scrape; its caller retires the returned
+// registry and waits for its completion before releasing native providers.
 func (s *MetricsServer) SwapMetricsRuntime(
 	newRegistry *registry.Registry,
 	newDeviceWatchListManager devicewatchlistmanager.Manager,
@@ -240,18 +280,22 @@ func (s *MetricsServer) IsReloadInProgress() bool {
 	return s.reloadInProgress.Load()
 }
 
-func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
-	var httpwg sync.WaitGroup
-	httpwg.Add(1)
+// Run serves HTTP requests until stop, ctx, or a terminal server error ends
+// the lifetime. It returns the first terminal error after attempting bounded
+// shutdown so the command layer, rather than this package, chooses the exit.
+func (s *MetricsServer) Run(ctx context.Context, stop <-chan struct{}) error {
+	var serverWG sync.WaitGroup
+	serverErrors := make(chan error, 1)
+	serverWG.Add(1)
 	go func() {
-		defer httpwg.Done()
+		defer serverWG.Done()
 		slog.Info("Starting webserver")
 
 		// Log dump configuration information
 		if s.config.DumpConfig.Enabled {
 			slog.Info("Debug dumps enabled - runtime objects may be written to files for troubleshooting",
 				slog.String("dump_directory", s.config.DumpConfig.Directory),
-				slog.Int("retention_hours", s.config.DumpConfig.Retention),
+				slog.String("retention", appconfig.FormatDuration(s.config.DumpConfig.Retention)),
 				slog.Bool("compression_enabled", s.config.DumpConfig.Compression),
 				slog.String("note", "Debug files may be created during operation and cleaned up automatically"))
 		} else {
@@ -259,55 +303,114 @@ func (s *MetricsServer) Run(ctx context.Context, stop chan interface{}) {
 		}
 
 		if err := web.ListenAndServe(s.server, s.webConfig, slog.Default()); err != nil && err != http.ErrServerClosed {
-			slog.Error("Failed to Listen and Server HTTP server.", slog.String(logging.ErrorKey, err.Error()))
-			os.Exit(1)
+			slog.Error("Failed to listen and serve HTTP server.", slog.String(logging.ErrorKey, err.Error()))
+			serverErrors <- fmt.Errorf("listen and serve HTTP server: %w", err)
 		}
 	}()
 
-	httpwg.Add(1)
-	go func() {
-		defer httpwg.Done()
-		// Cleanup old debug files periodically
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
+	done := make(chan struct{})
+	var maintenanceWG sync.WaitGroup
+	if s.fileDumper != nil {
+		maintenanceWG.Add(1)
+		go func() {
+			defer maintenanceWG.Done()
+			ticker := time.NewTicker(time.Hour)
+			defer ticker.Stop()
 
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if s.fileDumper != nil {
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
 					if err := s.fileDumper.CleanupOldFiles(); err != nil {
 						slog.Warn("Failed to cleanup old debug files", slog.String(logging.ErrorKey, err.Error()))
 					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
-	<-stop
+	var runErr error
+	select {
+	case <-stop:
+	case <-ctx.Done():
+	case runErr = <-serverErrors:
+	case runErr = <-s.terminalErrors:
+	}
+	close(done)
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout(s.server.WriteTimeout))
 	defer shutdownCancel()
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("Failed to shutdown HTTP server.", slog.String(logging.ErrorKey, err.Error()))
-		s.fatal()
+		runErr = errors.Join(runErr, fmt.Errorf("shutdown HTTP server: %w", err))
 	}
 
 	if err := s.scrapes.wait(shutdownCtx); err != nil {
 		slog.Error("Failed waiting for active scrape producer.", slog.String(logging.ErrorKey, err.Error()))
-		s.fatal()
+		runErr = errors.Join(runErr, fmt.Errorf("%w: %w", ErrActiveScrapeDrainTimeout, err))
 	}
 
-	if err := utils.WaitWithTimeout(&httpwg, shutdownWaitTimeout); err != nil {
+	if err := utils.WaitWithTimeout(&maintenanceWG, shutdownWaitTimeout); err != nil {
 		slog.Error("Failed waiting for HTTP server to shutdown.", slog.String(logging.ErrorKey, err.Error()))
-		s.fatal()
+		runErr = errors.Join(runErr, fmt.Errorf("wait for HTTP maintenance: %w", err))
+	}
+	if err := utils.WaitWithTimeout(&serverWG, shutdownWaitTimeout); err != nil {
+		slog.Error("Failed waiting for HTTP listener to shutdown.", slog.String(logging.ErrorKey, err.Error()))
+		runErr = errors.Join(runErr, fmt.Errorf("wait for HTTP listener: %w", err))
+	}
+	runErr = joinAvailableServerError(runErr, serverErrors)
+	if terminalErr := s.TerminalError(); terminalErr != nil && !errors.Is(runErr, terminalErr) {
+		runErr = errors.Join(runErr, terminalErr)
+	}
+	return runErr
+}
+
+// joinAvailableServerError preserves a listener failure that arrived while
+// Run selected a simultaneous stop or context signal. The listener wait has
+// already completed before this helper runs, so the non-blocking read cannot
+// wait for a future error or delay orderly shutdown.
+func joinAvailableServerError(runErr error, serverErrors <-chan error) error {
+	select {
+	case serverErr := <-serverErrors:
+		return errors.Join(runErr, serverErr)
+	default:
+		return runErr
 	}
 }
 
-func (s *MetricsServer) fatal() {
-	os.Exit(1)
+// reportTerminalError records only the first fatal scrape error. Metrics can
+// be called concurrently, so a buffered non-blocking send prevents duplicate
+// reports from blocking or replacing the application result.
+func (s *MetricsServer) reportTerminalError(err error) {
+	s.terminalErrorOnce.Do(func() {
+		s.terminalErrorMu.Lock()
+		s.terminalError = err
+		s.terminalErrorMu.Unlock()
+		select {
+		case s.terminalErrors <- err:
+		default:
+		}
+	})
+}
+
+// ReportTerminalError asks Run to stop with err after its bounded HTTP
+// shutdown. Runtime owners use it when a registry cannot retire safely, so the
+// command layer returns a nonzero result without closing native clients below
+// still-running work.
+func (s *MetricsServer) ReportTerminalError(err error) {
+	if err == nil {
+		return
+	}
+	s.reportTerminalError(err)
+}
+
+// TerminalError returns the first fatal error reported to this server. The
+// command layer checks it after watcher shutdown so a concurrent stop signal
+// cannot turn an unsafe native retirement into a successful process exit.
+func (s *MetricsServer) TerminalError() error {
+	s.terminalErrorMu.Lock()
+	defer s.terminalErrorMu.Unlock()
+	return s.terminalError
 }
 
 // Metrics gathers the current registry and serves Prometheus text exposition.
@@ -330,6 +433,9 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 	response, err := s.scrapes.do(r.Context(), func() ([]byte, error) {
 		var buf bytes.Buffer
 		if err := s.gatherAndRenderMetrics(producerContext, &buf); err != nil {
+			if dcgmerrors.IsFatalScrapeError(err) {
+				s.reportTerminalError(fmt.Errorf("fatal metrics scrape: %w", err))
+			}
 			return nil, err
 		}
 
@@ -356,18 +462,22 @@ func (s *MetricsServer) Metrics(w http.ResponseWriter, r *http.Request) {
 
 // gatherAndRenderMetrics renders DCGM metrics and appends enabled exporter metrics to one response.
 func (s *MetricsServer) gatherAndRenderMetrics(ctx context.Context, w *bytes.Buffer) error {
-	// Keep the registry and device topology paired for the whole scrape. This
-	// lets reload cleanup wait until rendering no longer references the old
-	// runtime.
+	// Snapshot and admit one matching runtime while the swap lock is held. After
+	// that the server lock can be released for native gather and rendering; a
+	// swap cannot retire this registry until the matching EndUse below.
 	s.RLock()
-	defer s.RUnlock()
-
 	currentRegistry := s.registry.Load()
+	deviceWatchListManager := s.deviceWatchListManager
 	if currentRegistry == nil {
 		currentRegistry = registry.NewRegistry()
 	}
-	deviceWatchListManager := s.deviceWatchListManager
-	metricGroups, err := currentRegistry.Gather()
+	if err := currentRegistry.BeginUse(); err != nil {
+		s.RUnlock()
+		return err
+	}
+	s.RUnlock()
+	defer currentRegistry.EndUse()
+	metricGroups, err := currentRegistry.GatherAdmitted()
 	if err != nil {
 		slog.Error("Failed to gather metrics from collectors", slog.String(logging.ErrorKey, err.Error()))
 		return err
@@ -385,6 +495,50 @@ func (s *MetricsServer) gatherAndRenderMetrics(ctx context.Context, w *bytes.Buf
 	return nil
 }
 
+// dumpMetrics writes untransformed metrics for one group to the optional debug
+// dumper and returns the path used when reporting downstream failures. Metrics
+// with no DCGM entity (FE_NONE) are written under the "Host" name.
+func (s *MetricsServer) dumpMetrics(metrics collector.MetricsByCounter, group dcgm.Field_Entity_Group) string {
+	if s.fileDumper == nil {
+		return ""
+	}
+
+	suffix := group.String()
+	if group == dcgm.FE_NONE {
+		suffix = "Host"
+	}
+
+	metricsFile, err := s.fileDumper.DumpToFile(metrics, "metrics", suffix)
+	if err != nil {
+		slog.Warn("Failed to write metrics debug file",
+			slog.String(logging.ErrorKey, err.Error()),
+			slog.String(logging.FieldEntityGroupKey, suffix))
+
+		return ""
+	}
+
+	return metricsFile
+}
+
+// dumpDeviceInfo writes one group's device information to the optional debug
+// dumper and returns the path used when reporting downstream failures.
+func (s *MetricsServer) dumpDeviceInfo(deviceWatchList devicewatchlistmanager.WatchList, group dcgm.Field_Entity_Group) string {
+	if s.fileDumper == nil {
+		return ""
+	}
+
+	deviceInfoFile, err := s.fileDumper.DumpToFile(deviceWatchList.DeviceInfo(), "deviceinfo", group.String())
+	if err != nil {
+		slog.Warn("Failed to write device info debug file",
+			slog.String(logging.ErrorKey, err.Error()),
+			slog.String(logging.FieldEntityGroupKey, group.String()))
+
+		return ""
+	}
+
+	return deviceInfoFile
+}
+
 // render transforms all gathered groups before rendering one combined metrics document.
 func (s *MetricsServer) render(
 	ctx context.Context,
@@ -395,30 +549,22 @@ func (s *MetricsServer) render(
 	renderableGroups := registry.MetricsByCounterGroup{}
 
 	for group, metrics := range metricGroups {
+		// Host-level exporter metrics (field policy, system health) have no DCGM
+		// entity, so they skip watch lists and transformations.
+		if group == dcgm.FE_NONE {
+			s.dumpMetrics(metrics, group)
+			renderableGroups[group] = metrics
+			continue
+		}
+
 		deviceWatchList, exists := deviceWatchListManager.EntityWatchList(group)
 		if !exists {
 			continue
 		}
 
 		// Write debug files before transformations so failures can reference inputs.
-		var metricsFile, deviceInfoFile string
-		var err error
-
-		if s.fileDumper != nil {
-			metricsFile, err = s.fileDumper.DumpToFile(metrics, "metrics", group.String())
-			if err != nil {
-				slog.Warn("Failed to write metrics debug file",
-					slog.String(logging.ErrorKey, err.Error()),
-					slog.String(logging.FieldEntityGroupKey, group.String()))
-			}
-
-			deviceInfoFile, err = s.fileDumper.DumpToFile(deviceWatchList.DeviceInfo(), "deviceinfo", group.String())
-			if err != nil {
-				slog.Warn("Failed to write device info debug file",
-					slog.String(logging.ErrorKey, err.Error()),
-					slog.String(logging.FieldEntityGroupKey, group.String()))
-			}
-		}
+		metricsFile := s.dumpMetrics(metrics, group)
+		deviceInfoFile := s.dumpDeviceInfo(deviceWatchList, group)
 
 		slog.Debug(
 			"Applying transformations",
@@ -469,6 +615,7 @@ func (s *MetricsServer) render(
 
 func (s *MetricsServer) Health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set(contentTypeOptionsHeader, "nosniff")
+	setPageSecurityHeaders(w.Header())
 
 	// If reload in progress or registry is nil (during hot reload/bind/unbind),
 	// still return 200 OK to prevent Kubernetes pod termination

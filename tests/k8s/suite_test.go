@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build k8s
 
 /*
  * Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
@@ -19,23 +19,21 @@ package k8s
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-	corev1 "k8s.io/api/core/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
+	"github.com/NVIDIA/dcgm-exporter/tests/internal/metriccontract"
 	"github.com/NVIDIA/dcgm-exporter/tests/k8s/internal/framework"
 )
 
 const (
-	podLabel       = "pod"
-	namespaceLabel = "namespace"
-	containerLabel = "container"
-	e2eRunIDLabel  = "e2eRunID"
+	podLabel        = "pod"
+	namespaceLabel  = "namespace"
+	containerLabel  = "container"
+	e2eRunIDLabel   = "e2eRunID"
+	e2eRunNameLabel = "e2eRunName"
 
 	dcgmExporterPort = 9400
 
@@ -51,7 +49,6 @@ const (
 	podCreationTimeout         = 2 * time.Minute
 	podReadinessTimeout        = 3 * time.Minute
 	namespaceDeletionTimeout   = 90 * time.Second
-	namespaceStuckCheckTimeout = 2 * time.Minute
 	workloadPodDeletionTimeout = 45 * time.Second
 	metricsReadTimeout         = 1 * time.Minute
 	metricsWaitTimeout         = 90 * time.Second
@@ -59,10 +56,9 @@ const (
 	httpClientTimeout          = 5 * time.Second
 
 	// Polling interval constants
-	pollingIntervalFast     = 500 * time.Millisecond
-	pollingIntervalNormal   = 1 * time.Second
-	pollingIntervalSlow     = 2 * time.Second
-	pollingIntervalVerySlow = 3 * time.Second
+	pollingIntervalFast   = 500 * time.Millisecond
+	pollingIntervalNormal = 1 * time.Second
+	pollingIntervalSlow   = 2 * time.Second
 )
 
 var (
@@ -70,7 +66,6 @@ var (
 	dcgmExporterPodLabels = map[string]string{dcgmExporterPodNameLabel: dcgmExporterPodNameLabelValue}
 	testRunLabels         = map[string]string{
 		validationManagedByLabel: validationManagedByValue,
-		e2eRunIDLabel:            runID.String(),
 	}
 	kubeClient        *framework.KubeClient
 	helmClient        *framework.HelmClient
@@ -78,36 +73,46 @@ var (
 	helmReleasesMutex sync.Mutex // Protect concurrent access to helmReleases
 )
 
+// testContextType holds command-line settings shared by the Ginkgo suite.
+// Scenarios use its namespace names as stable environment identifiers.
 type testContextType struct {
-	kubeconfig         string
-	chart              string
-	exporterImage      string
-	gpuOperatorImage   string
-	k8sImagePullSecret string
-	arguments          string
-	namespace          string
-	runtimeClass       string
-	nodeSelectorKey    string
-	nodeSelectorVal    string
-	remoteDcgm         string
-	dcgmImage          string
-	busyboxImage       string
-	cudaWorkloadImage  string
-	dcgmNS             string
-	dcgmName           string
-	dcgmPort           string
-	migEntityID        string
-	migNVMLID          string
-	unsupportedField   string
-	resultMarkers      bool
-	noCleanup          bool
+	kubeconfig             string
+	runName                string
+	chart                  string
+	exporterImage          string
+	gpuOperatorImage       string
+	k8sImagePullSecret     string
+	arguments              string
+	namespace              string
+	runtimeClass           string
+	nvidiaVisibleDevices   string
+	nodeSelectorKey        string
+	nodeSelectorVal        string
+	dcgmProbeBinary        string
+	remoteDcgm             string
+	dcgmImage              string
+	busyboxImage           string
+	cudaWorkloadImage      string
+	dcgmNS                 string
+	dcgmName               string
+	dcgmPort               string
+	migEntityID            string
+	migNVMLID              string
+	unsupportedField       string
+	nvlinkFailureFieldName string
+	resultMarkers          bool
+	noCleanup              bool
+	ownedLocalCluster      bool
+
+	// defaultCounterRows and fieldSupport are parsed once in BeforeSuite.
+	defaultCounterRows []metriccontract.DefaultCounterRow
+	fieldSupport       metriccontract.FieldSupport
 }
 
-// Global cleanup of stuck namespaces before any tests run
+// BeforeSuite creates the client and converges the configured test namespace.
 var _ = BeforeSuite(func(ctx context.Context) {
-	By("Global cleanup: Checking for stuck namespaces")
+	shouldLoadDefaultCounterContract()
 
-	// Only run cleanup if we have a valid kubeconfig
 	if testContext.kubeconfig != "" {
 		shouldResolvePath()
 		kubeConfigShouldExists()
@@ -115,32 +120,15 @@ var _ = BeforeSuite(func(ctx context.Context) {
 		kubeClient = shouldCreateKubeClient(k8sConfig)
 		helmClient = shouldCreateHelmClient(k8sConfig)
 		shouldCreateNamespace(ctx, kubeClient, testRunLabels)
-
-		// Check if our test namespace is stuck and wait for cleanup
-		existingNamespace, err := kubeClient.GetNamespace(ctx, testContext.namespace)
-		if err == nil && existingNamespace.Status.Phase == corev1.NamespaceTerminating {
-			By(fmt.Sprintf("Global cleanup: Found stuck namespace %q, waiting for cleanup", testContext.namespace))
-			// Wait for the namespace to be fully deleted
-			Eventually(func() bool {
-				_, err := kubeClient.GetNamespace(ctx, testContext.namespace)
-				if err == nil {
-					// Namespace still exists
-					return false
-				}
-				// Check if the error is specifically a "NotFound" error
-				if k8serrors.IsNotFound(err) {
-					// Namespace was successfully deleted
-					return true
-				}
-				// Other errors (network, auth, etc.) should not be treated as success
-				return false
-			}).WithTimeout(namespaceStuckCheckTimeout).WithPolling(pollingIntervalVerySlow).Should(BeTrue(),
-				fmt.Sprintf("Global cleanup: Namespace %q was not deleted within the timeout period.", testContext.namespace))
-		}
 	}
 })
 
 var _ = AfterSuite(func(ctx context.Context) {
+	if testContext.noCleanup {
+		By("After suite cleanup: retaining configured environments (--no-cleanup)")
+		return
+	}
 	// Use safe cleanup that can be called multiple times without errors
 	safeCleanup(ctx, kubeClient, helmClient, true)
+	shouldDeleteNamespace(ctx, kubeClient, testContext.dcgmNS)
 })

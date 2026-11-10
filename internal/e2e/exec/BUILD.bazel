@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "exec",
+    srcs = [
+        "process_group_other.go",
+        "process_group_unix.go",
+        "runner.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "exec_test",
+    srcs = [
+        "process_group_unix_test.go",
+        "runner_test.go",
+    ],
+    embed = [":exec"],
+)

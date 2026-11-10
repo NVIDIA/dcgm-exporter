@@ -1,0 +1,381 @@
+[
+ {
+  "SuitePath": "/work/tests/host",
+  "SuiteDescription": "Throwaway",
+  "SuiteLabels": [],
+  "SuiteSemVerConstraints": [],
+  "SuiteComponentSemVerConstraints": {},
+  "SuiteSucceeded": false,
+  "SuiteHasProgrammaticFocus": false,
+  "SpecialSuiteFailureReasons": null,
+  "PreRunStats": {
+   "TotalSpecs": 6,
+   "SpecsThatWillRun": 2
+  },
+  "StartTime": "2026-10-29T12:00:00Z",
+  "EndTime": "2026-10-29T12:00:00Z",
+  "RunTime": 594119,
+  "SpecReports": [
+   {
+    "ContainerHierarchyTexts": null,
+    "ContainerHierarchyLocations": null,
+    "ContainerHierarchyLabels": null,
+    "ContainerHierarchySemVerConstraints": null,
+    "ContainerHierarchyComponentSemVerConstraints": null,
+    "LeafNodeType": "BeforeSuite",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 14
+    },
+    "LeafNodeLabels": null,
+    "LeafNodeSemVerConstraints": null,
+    "LeafNodeComponentSemVerConstraints": null,
+    "LeafNodeText": "",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": false,
+    "State": "passed",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 83968,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "NumAttempts": 0,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   },
+   {
+    "ContainerHierarchyTexts": [
+     "host/vsock",
+     "when VSOCK is present"
+    ],
+    "ContainerHierarchyLocations": [
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 20
+     },
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 21
+     }
+    ],
+    "ContainerHierarchyLabels": [
+     [],
+     []
+    ],
+    "ContainerHierarchySemVerConstraints": [
+     [],
+     []
+    ],
+    "ContainerHierarchyComponentSemVerConstraints": [
+     {},
+     {}
+    ],
+    "LeafNodeType": "It",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 22
+    },
+    "LeafNodeLabels": [
+     "fs"
+    ],
+    "LeafNodeSemVerConstraints": [],
+    "LeafNodeComponentSemVerConstraints": {},
+    "LeafNodeText": "reaches the hostengine",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": false,
+    "State": "failed",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 173457,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "Failure": {
+     "Message": "vsock is not available",
+     "Location": {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 22
+     },
+     "FailureNodeContext": "leaf-node",
+     "FailureNodeType": "It",
+     "FailureNodeLocation": {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 22
+     }
+    },
+    "NumAttempts": 1,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   },
+   {
+    "ContainerHierarchyTexts": [
+     "host/vsock",
+     "when VSOCK is present"
+    ],
+    "ContainerHierarchyLocations": [
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 20
+     },
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 21
+     }
+    ],
+    "ContainerHierarchyLabels": [
+     [],
+     []
+    ],
+    "ContainerHierarchySemVerConstraints": [
+     [],
+     []
+    ],
+    "ContainerHierarchyComponentSemVerConstraints": [
+     {},
+     {}
+    ],
+    "LeafNodeType": "It",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 23
+    },
+    "LeafNodeLabels": [
+     "fs"
+    ],
+    "LeafNodeSemVerConstraints": [],
+    "LeafNodeComponentSemVerConstraints": {},
+    "LeafNodeText": "skips without image",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": false,
+    "State": "skipped",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 99458,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "Failure": {
+     "Message": "distroless image not configured",
+     "Location": {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 23
+     },
+     "FailureNodeContext": "leaf-node",
+     "FailureNodeType": "It",
+     "FailureNodeLocation": {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 23
+     }
+    },
+    "NumAttempts": 1,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   },
+   {
+    "ContainerHierarchyTexts": [
+     "host/vsock",
+     "when VSOCK is present"
+    ],
+    "ContainerHierarchyLocations": [
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 20
+     },
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 21
+     }
+    ],
+    "ContainerHierarchyLabels": [
+     [],
+     []
+    ],
+    "ContainerHierarchySemVerConstraints": [
+     [],
+     []
+    ],
+    "ContainerHierarchyComponentSemVerConstraints": [
+     {},
+     {}
+    ],
+    "LeafNodeType": "It",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 24
+    },
+    "LeafNodeLabels": [
+     "panic"
+    ],
+    "LeafNodeSemVerConstraints": [],
+    "LeafNodeComponentSemVerConstraints": {},
+    "LeafNodeText": "panics",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": false,
+    "State": "skipped",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 0,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "NumAttempts": 0,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   },
+   {
+    "ContainerHierarchyTexts": [
+     "host/vsock",
+     "when VSOCK is present"
+    ],
+    "ContainerHierarchyLocations": [
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 20
+     },
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 21
+     }
+    ],
+    "ContainerHierarchyLabels": [
+     [],
+     []
+    ],
+    "ContainerHierarchySemVerConstraints": [
+     [],
+     []
+    ],
+    "ContainerHierarchyComponentSemVerConstraints": [
+     {},
+     {}
+    ],
+    "LeafNodeType": "It",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 28
+    },
+    "LeafNodeLabels": [
+     "slow"
+    ],
+    "LeafNodeSemVerConstraints": [],
+    "LeafNodeComponentSemVerConstraints": {},
+    "LeafNodeText": "waits",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": false,
+    "State": "skipped",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 0,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "NumAttempts": 0,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   },
+   {
+    "ContainerHierarchyTexts": [
+     "host/vsock",
+     "ordered"
+    ],
+    "ContainerHierarchyLocations": [
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 20
+     },
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 30
+     }
+    ],
+    "ContainerHierarchyLabels": [
+     [],
+     [
+      "ord"
+     ]
+    ],
+    "ContainerHierarchySemVerConstraints": [
+     [],
+     []
+    ],
+    "ContainerHierarchyComponentSemVerConstraints": [
+     {},
+     {}
+    ],
+    "LeafNodeType": "It",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 31
+    },
+    "LeafNodeLabels": [],
+    "LeafNodeSemVerConstraints": [],
+    "LeafNodeComponentSemVerConstraints": {},
+    "LeafNodeText": "first breaks",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": true,
+    "State": "skipped",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 0,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "NumAttempts": 0,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   },
+   {
+    "ContainerHierarchyTexts": [
+     "host/vsock",
+     "ordered"
+    ],
+    "ContainerHierarchyLocations": [
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 20
+     },
+     {
+      "FileName": "/work/tests/host/vsock_test.go",
+      "LineNumber": 30
+     }
+    ],
+    "ContainerHierarchyLabels": [
+     [],
+     [
+      "ord"
+     ]
+    ],
+    "ContainerHierarchySemVerConstraints": [
+     [],
+     []
+    ],
+    "ContainerHierarchyComponentSemVerConstraints": [
+     {},
+     {}
+    ],
+    "LeafNodeType": "It",
+    "LeafNodeLocation": {
+     "FileName": "/work/tests/host/vsock_test.go",
+     "LineNumber": 32
+    },
+    "LeafNodeLabels": [],
+    "LeafNodeSemVerConstraints": [],
+    "LeafNodeComponentSemVerConstraints": {},
+    "LeafNodeText": "second never runs",
+    "SpecPriority": 0,
+    "IsSerial": false,
+    "IsInOrderedContainer": true,
+    "State": "skipped",
+    "StartTime": "2026-10-29T12:00:00Z",
+    "EndTime": "2026-10-29T12:00:00Z",
+    "RunTime": 0,
+    "ParallelProcess": 1,
+    "RunningInParallel": false,
+    "NumAttempts": 0,
+    "MaxFlakeAttempts": 0,
+    "MaxMustPassRepeatedly": 0
+   }
+  ]
+ }
+]

@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rendermetrics",
+    srcs = ["render_metrics.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/rendermetrics",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/collector",
+        "//internal/pkg/counters",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//expfmt",
+        "@com_github_prometheus_common//model",
+    ],
+)
+
+go_test(
+    name = "rendermetrics_test",
+    srcs = [
+        "render_metrics_benchmark_test.go",
+        "render_metrics_test.go",
+    ],
+    embed = [":rendermetrics"],
+    deps = [
+        "//internal/pkg/benchmarktest",
+        "//internal/pkg/collector",
+        "//internal/pkg/counters",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//expfmt",
+        "@com_github_prometheus_common//model",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

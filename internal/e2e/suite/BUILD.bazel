@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "suite",
+    srcs = ["manager.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/e2e/suite",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/e2e/exec",
+        "//internal/e2e/scenario",
+    ],
+)
+
+go_test(
+    name = "suite_test",
+    srcs = ["manager_test.go"],
+    embed = [":suite"],
+    deps = [
+        "//internal/e2e/exec",
+        "//internal/e2e/scenario",
+        "@com_github_stretchr_testify//require",
+    ],
+)

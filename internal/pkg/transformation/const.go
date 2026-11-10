@@ -41,6 +41,11 @@ const (
 
 	DRAGPUDriverName = "gpu.nvidia.com"
 
-	metricGPUUtil = "DCGM_FI_DEV_GPU_UTIL"
-	metricFBUsed  = "DCGM_FI_DEV_FB_USED"
+	// Deprecated names stay supported for custom collector files.
+	// GPU utilization: the deprecated field reports a percent, the current field a ratio.
+	// Framebuffer used: the deprecated field reports MiB, the current field bytes.
+	metricGPUUtil      = "DCGM_FI_DEV_GPU_UTIL"
+	metricGPUUtilRatio = "DCGM_FI_DEV_GPU_UTIL_RATIO"
+	metricFBUsed       = "DCGM_FI_DEV_FB_USED"
+	metricFBUsedBytes  = "DCGM_FI_DEV_FB_USED_BYTES"
 )

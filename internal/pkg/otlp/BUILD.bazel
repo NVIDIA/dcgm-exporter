@@ -1,0 +1,46 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "otlp",
+    srcs = ["attributes.go", "converter.go", "metric_family_mapping.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/otlp",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/pkg/collector",
+        "//internal/pkg/registry",
+        "//internal/pkg/signalcatalog",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_proto_otlp//common/v1:common",
+        "@io_opentelemetry_go_proto_otlp//metrics/v1:metrics",
+        "@io_opentelemetry_go_proto_otlp//resource/v1:resource",
+    ],
+)
+
+go_test(
+    name = "otlp_test",
+    srcs = ["attributes_test.go", "converter_test.go", "metric_family_mapping_test.go"],
+    embed = [":otlp"],
+    deps = [
+        "//internal/mocks/pkg/dcgmprovider",
+        "//internal/mocks/pkg/deviceinfo",
+        "//internal/mocks/pkg/devicewatcher",
+        "//internal/pkg/appconfig",
+        "//internal/pkg/dcgmprovider",
+        "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicewatchlistmanager",
+        "@org_uber_go_mock//gomock",
+        "//internal/pkg/collector",
+        "//internal/pkg/counters",
+        "//internal/pkg/rendermetrics",
+        "//internal/pkg/registry",
+        "//internal/pkg/signalcatalog",
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//assert",
+        "@io_opentelemetry_go_otel//attribute",
+        "@io_opentelemetry_go_proto_otlp//common/v1:common",
+        "@io_opentelemetry_go_proto_otlp//metrics/v1:metrics",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

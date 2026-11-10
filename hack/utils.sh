@@ -15,31 +15,38 @@
 
 # This script provides shared logging and failure helpers for repository shell scripts.
 
+# log_prefix returns the caller-selected logging prefix.
 log_prefix() {
     printf '%s' "${LOG_PREFIX:-$(basename "$0")}"
 }
 
+# log_info writes an informational message to standard output.
 log_info() {
     printf '[%s] %s\n' "$(log_prefix)" "$*"
 }
 
+# log_warn writes a warning message to standard error.
 log_warn() {
     printf '[%s] WARNING: %s\n' "$(log_prefix)" "$*" >&2
 }
 
+# log_error writes an error message to standard error.
 log_error() {
     printf '[%s] ERROR: %s\n' "$(log_prefix)" "$*" >&2
 }
 
+# die logs an error and exits the calling script.
 die() {
     log_error "$@"
     exit 1
 }
 
+# has_command reports whether a command is available on PATH.
 has_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# require_command exits when a required command is not available on PATH.
 require_command() {
     has_command "$1" || die "required command not found: $1"
 }
@@ -63,6 +70,7 @@ verify_nvidia_driver_prerequisite() {
     fi
 }
 
+# duration_to_seconds converts a compact h/m/s duration to seconds.
 duration_to_seconds() {
     local value="${1:-300s}"
     local rest total number unit

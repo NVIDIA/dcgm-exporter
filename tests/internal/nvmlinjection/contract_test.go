@@ -27,8 +27,10 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// pointer builds pointer-valued Prometheus fixture fields.
 func pointer[T any](value T) *T { return &value }
 
+// TestBatchesUseDCGMLimitsWithoutMIG checks regular and profiling field limits on whole-GPU topology.
 func TestBatchesUseDCGMLimitsWithoutMIG(t *testing.T) {
 	contract := Contract{Version: CurrentVersion}
 	for id := 1; id <= 130; id++ {
@@ -49,6 +51,7 @@ func TestBatchesUseDCGMLimitsWithoutMIG(t *testing.T) {
 	}
 }
 
+// TestBatchesIsolateAllProfilingFieldsForMIGTopology checks that either MIG entity type isolates every profiling field.
 func TestBatchesIsolateAllProfilingFieldsForMIGTopology(t *testing.T) {
 	for _, entityGroup := range []string{gpuInstanceEntity, computeInstanceEntity} {
 		t.Run(entityGroup, func(t *testing.T) {
@@ -71,6 +74,7 @@ func TestBatchesIsolateAllProfilingFieldsForMIGTopology(t *testing.T) {
 	}
 }
 
+// TestValidateFamilies checks family type, sample count, entity labels, values, and unexpected families.
 func TestValidateFamilies(t *testing.T) {
 	metric := Metric{
 		Name: "DCGM_FI_DEV_GPU_TEMP",
@@ -80,6 +84,7 @@ func TestValidateFamilies(t *testing.T) {
 			Value:       42,
 		}},
 	}
+	// Each case gets a fresh valid scrape before applying its isolated mutation.
 	validFamilies := func() map[string]*dto.MetricFamily {
 		return map[string]*dto.MetricFamily{
 			metric.Name: {
@@ -92,6 +97,7 @@ func TestValidateFamilies(t *testing.T) {
 			},
 		}
 	}
+	// Each mutation breaks one scrape contract and names its expected diagnostic.
 	tests := []struct {
 		name   string
 		mutate func(map[string]*dto.MetricFamily)
@@ -177,6 +183,7 @@ func TestValidateFamilies(t *testing.T) {
 	}
 }
 
+// TestSaneValueRejectsDCGMSentinels checks nonfinite and sentinel rejection while allowing ordinary values.
 func TestSaneValueRejectsDCGMSentinels(t *testing.T) {
 	for _, value := range []float64{math.NaN(), math.Inf(1), float64(int32Blank), int64BlankFloat, fp64Blank + 2} {
 		if saneValue(value) {
@@ -190,6 +197,7 @@ func TestSaneValueRejectsDCGMSentinels(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsInvalidObservedValue rejects a nonfinite value in a direct-DCGM contract.
 func TestValidateRejectsInvalidObservedValue(t *testing.T) {
 	contract := Contract{
 		Version:     CurrentVersion,
@@ -211,6 +219,7 @@ func TestValidateRejectsInvalidObservedValue(t *testing.T) {
 	}
 }
 
+// TestValidateZeroDeviceContractHasNoMetrics accepts empty topology and rejects GPU metrics without devices.
 func TestValidateZeroDeviceContractHasNoMetrics(t *testing.T) {
 	if err := (Contract{Version: CurrentVersion}).Validate(); err != nil {
 		t.Fatalf("Validate() zero-device contract error = %v", err)
@@ -233,6 +242,7 @@ func TestValidateZeroDeviceContractHasNoMetrics(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsPreviousContractVersion rejects an obsolete probe schema.
 func TestValidateRejectsPreviousContractVersion(t *testing.T) {
 	err := (Contract{Version: CurrentVersion - 1}).Validate()
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("version must be %d", CurrentVersion)) {
@@ -240,7 +250,9 @@ func TestValidateRejectsPreviousContractVersion(t *testing.T) {
 	}
 }
 
+// TestValidateComputeInstanceSamples checks instance labels, topology counts, and repeated identities across fields.
 func TestValidateComputeInstanceSamples(t *testing.T) {
+	// Start each count/label check with one fully identified compute instance.
 	newContract := func(entityGroup string) Contract {
 		return Contract{ComputeInstanceCount: 1, Metrics: []Metric{{
 			Name: "DCGM_FI_DEV_FB_USED",
@@ -277,6 +289,7 @@ func TestValidateComputeInstanceSamples(t *testing.T) {
 		t.Fatalf("ValidateComputeInstanceSamples() error = %v, want missing compute-instance sample", err)
 	}
 
+	// add callbacks vary sampled topology without changing the common starting fixture.
 	for _, test := range []struct {
 		name  string
 		count int

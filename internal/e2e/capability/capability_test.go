@@ -18,484 +18,832 @@ package capability
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
-func TestGPUCount(t *testing.T) {
-	got := GPUCount("0, NVIDIA A100, GPU-1\n1, NVIDIA A100, GPU-2\n")
-	if got != 2 {
-		t.Fatalf("GPUCount() = %d, want 2", got)
+const probeGPUQueryCommand = "nvidia-smi --query-gpu=" +
+	"index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending " +
+	"--format=csv,noheader"
+
+func TestProbeHostClassifiesB200Tiers(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{
+		query: "0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n" +
+			"1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Disabled, Disabled\n",
+		topo:        "GPU0 GPU1\nGPU0 X NV18\nGPU1 NV18 X\n",
+		nvidiaQ:     "Peer Type : Switch Connected\n",
+		lscpu:       "Architecture: x86_64\n",
+		migProfiles: "MIG 1g.23gb 19\n",
+	})
+
+	caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	assertStatuses(
+		t, caps, StatusSupported,
+		"host:gpu",
+		"host:mig",
+		"host:nvlink_fabric",
+		"host:nvswitch",
+		"host:multi_gpu",
+		"host:nvlink5",
+		"host:nvswitch_local_telemetry",
+		"host:nvswitch_nvsdm",
+	)
+	assertStatuses(t, caps, StatusUnsupported, "host:nvswitch_nscq")
+}
+
+func TestProbeHostSkipsNVLinkOnL4WithNAFabric(t *testing.T) {
+	nvidiaQ := "Fabric\n    State : N/A\n    Status : N/A\n"
+	runner := newHostProbeRunner(hostFixture{
+		query:       "0, NVIDIA L4, GPU-0, 550.54.15, 8.9, Disabled, Disabled\n",
+		topo:        "GPU0\nGPU0 X\n",
+		nvidiaQ:     nvidiaQ,
+		lscpu:       "Architecture: x86_64\n",
+		migProfiles: "No MIG-supported devices found.\n",
+	})
+	runner.results["nvidia-smi nvlink -s"] = e2eexec.Result{
+		ExitCode: 1,
+		Stderr:   []byte("NVLink is not supported on this device\n"),
+	}
+
+	caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	assertStatuses(t, caps, StatusUnsupported, "host:nvlink_fabric", "host:nvswitch", "host:nvlink5")
+	reported, healthy, evidence := FabricHealth(nvidiaQ)
+	if reported || healthy || evidence != "" {
+		t.Fatalf("FabricHealth() = (%t, %t, %q), want no meaningful fabric sections", reported, healthy, evidence)
 	}
 }
 
-func TestGPUCountRejectsErrorOutput(t *testing.T) {
-	got := GPUCount("NVIDIA-SMI error report\nRetry later\n0, NVIDIA A100, GPU-1\n")
-	if got != 1 {
-		t.Fatalf("GPUCount() = %d, want 1", got)
+func TestProbeHostDetectsActiveGB300NVLink(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{
+		query:       "0, NVIDIA GB300, GPU-0, 580.105.08, 10.3, Disabled, Disabled\n",
+		topo:        "GPU0\nGPU0 X\n",
+		nvlink:      "GPU 0: NVIDIA GB300\n    Link 0: 53.125 GB/s\n",
+		nvidiaQ:     "Fabric\n    State : N/A\n    Status : N/A\n",
+		lscpu:       "Architecture: aarch64\n",
+		migProfiles: "No MIG-supported devices found.\n",
+	})
+
+	caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	got := caps.Lookup("host:nvlink_fabric")
+	if got.Status != StatusSupported || !strings.Contains(got.Evidence, "Link 0: 53.125 GB/s") {
+		t.Fatalf("host:nvlink_fabric = %#v, want active-link support", got)
 	}
 }
 
-func TestDCGMProbeUnavailableDoesNotMatchGenericErrorText(t *testing.T) {
-	if dcgmProbeUnavailable("collector error budget is healthy") {
-		t.Fatal("generic error text should not mark DCGM probe unavailable")
+func TestProbeHostKeepsBrokenGB200FabricSelected(t *testing.T) {
+	fixture := hostFixture{
+		query:       "0, NVIDIA GB200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n",
+		topo:        "GPU0 GPU1\nGPU0 X NV18\nGPU1 NV18 X\n",
+		nvidiaQ:     "Fabric\n    State : In Progress\n    Status : N/A\n",
+		lscpu:       "Architecture: aarch64\n",
+		migProfiles: "No MIG-supported devices found.\n",
 	}
-	if dcgmProbeUnavailable("Error: Unable to Get supported metric groups: Profiling is not supported for this group of GPUs or GPU.") {
-		t.Fatal("DCGM not-supported output should be unsupported capability, not unavailable probe")
-	}
-	if !dcgmProbeUnavailable("Error: connection refused") {
-		t.Fatal("explicit error marker should mark DCGM probe unavailable")
-	}
-	if !dcgmProbeUnavailable("docker runtime failed: operation not supported") {
-		t.Fatal("runtime operation-not-supported output should mark DCGM probe unavailable")
+	runner := newHostProbeRunner(fixture)
+
+	caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	assertStatuses(
+		t, caps, StatusSupported,
+		"host:nvlink_fabric",
+		"host:nvswitch",
+		"host:nvlink5",
+	)
+	assertStatuses(
+		t, caps, StatusUnsupported,
+		"host:nvswitch_local_telemetry",
+		"host:nvswitch_nscq",
+		"host:nvswitch_nvsdm",
+	)
+	reported, healthy, evidence := FabricHealth(fixture.nvidiaQ)
+	if !reported || healthy {
+		t.Fatalf(
+			"broken GB200 FabricHealth() = (%t, %t, %q), want reported and unhealthy",
+			reported,
+			healthy,
+			evidence,
+		)
 	}
 }
 
-func TestDCGMProbeUnavailableReasonRequiresAuthEvidence(t *testing.T) {
-	if got := dcgmProbeUnavailableReason("profiling", "a newer runtime is required"); strings.Contains(got, "authenticate Docker") {
-		t.Fatalf("generic required text was classified as authentication failure: %q", got)
+func TestProbeHostClassifiesH100WithoutSwitchTelemetry(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{
+		query: "0, NVIDIA H100, GPU-0, 550.54.15, 9.0, Disabled, Disabled\n" +
+			"1, NVIDIA H100, GPU-1, 550.54.15, 9.0, Disabled, Disabled\n",
+		topo:        "GPU0 GPU1\nGPU0 X NV4\nGPU1 NV4 X\n",
+		nvidiaQ:     "Peer Type : Direct Connected\n",
+		lscpu:       "Architecture: x86_64\n",
+		migProfiles: "MIG 1g.10gb 19\n",
+	})
+
+	caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	assertStatuses(
+		t, caps, StatusSupported,
+		"host:gpu",
+		"host:mig",
+		"host:nvlink_fabric",
+		"host:multi_gpu",
+	)
+	assertStatuses(
+		t, caps, StatusUnsupported,
+		"host:nvswitch",
+		"host:nvlink5",
+		"host:nvswitch_local_telemetry",
+	)
+}
+
+func TestMIGCapabilityUsesProfilesInsteadOfCurrentConfiguration(t *testing.T) {
+	query := "0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n"
+	runner := newHostProbeRunner(hostFixture{
+		query:       query,
+		lscpu:       "Architecture: x86_64\n",
+		migProfiles: "MIG 1g.23gb 19\n",
+	})
+
+	caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	if got := caps.Lookup("host:mig"); got.Status != StatusSupported {
+		t.Fatalf("host:mig = %#v, want supported from profile inventory", got)
 	}
-	if got := dcgmProbeUnavailableReason("profiling", "authentication required"); !strings.Contains(got, "authenticate Docker") {
-		t.Fatalf("authentication failure reason = %q", got)
+	if got := caps.Lookup("host:mixed_mig"); got.Status != StatusUnsupported {
+		t.Fatalf("host:mixed_mig = %#v, want one-GPU scenario inapplicable", got)
 	}
 }
 
-func TestHasActiveNVLink(t *testing.T) {
-	if !HasActiveNVLink("Link 0: 25.781 GB/s\n", "") {
-		t.Fatal("expected active NVLink")
-	}
-	if HasActiveNVLink("", "GPU0 CPU Affinity NUMA Affinity GPU NUMA ID\n") {
-		t.Fatal("expected inactive NVLink")
+func TestMIGCapabilityTreatsProbeFailureAsUnknown(t *testing.T) {
+	got := migCapability("NVIDIA-SMI failed because it couldn't communicate with the driver")
+	if got.Status != StatusUnknown {
+		t.Fatalf("migCapability() = %#v, want unknown", got)
 	}
 }
 
-func TestDCGMSentinelEvidence(t *testing.T) {
-	got := dcgmSentinelEvidence("GPU 0 9223372036854775794")
-	if got != "DCGM_FT_INT64_NOT_SUPPORTED" {
-		t.Fatalf("sentinel = %q, want DCGM_FT_INT64_NOT_SUPPORTED", got)
+func TestNVLinkCapabilityDoesNotRequireHealthyFabric(t *testing.T) {
+	fabric := probeFabricSignals(
+		"0, NVIDIA GB200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n",
+		"Fabric\n    State : In Progress\n    Status : N/A\n",
+		"GPU0 GPU1\nGPU0 X NV18\nGPU1 NV18 X\n",
+		"",
+		"Architecture: aarch64\n",
+	)
+	got := nvlinkFabricCapability(fabric, "Fabric\n State : In Progress\n", "GPU0 X NV18\n", "")
+	if got.Status != StatusSupported {
+		t.Fatalf("nvlinkFabricCapability() = %#v, want supported hardware", got)
 	}
 }
 
-func TestDCGMFieldIDFromListMatchesDCGMLongNames(t *testing.T) {
-	fields := "retired_pages_sbe RPSBE 390\nretired_pages_pending RPPEN 392\necc_sbe_volatile_total ESVTL 310\n"
-	tests := map[string]string{
-		"DCGM_FI_DEV_RETIRED_SBE":       "390",
-		"DCGM_FI_DEV_RETIRED_PENDING":   "392",
-		"DCGM_FI_DEV_ECC_SBE_VOL_TOTAL": "310",
-	}
-	for field, want := range tests {
-		if got := dcgmFieldIDFromList(fields, field); got != want {
-			t.Fatalf("dcgmFieldIDFromList(%s) = %q, want %q", field, got, want)
-		}
+func TestNVLinkCapabilityRejectsPartialProbeFailure(t *testing.T) {
+	nvidiaQ := "command failed: exit code 1\nFabric\n    State : Completed\n    Status : Success\n"
+	topo := "GPU0 GPU1\nGPU0 X NV18\nGPU1 NV18 X\n"
+	fabric := probeFabricSignals(
+		"0, NVIDIA GB200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n",
+		nvidiaQ,
+		topo,
+		"",
+		"Architecture: aarch64\n",
+	)
+
+	got := nvlinkFabricCapability(fabric, nvidiaQ, topo, "")
+	if got.Status != StatusUnknown {
+		t.Fatalf("nvlinkFabricCapability() = %#v, want unknown after partial probe failure", got)
 	}
 }
 
-func TestC2CEnabledChecksSameLine(t *testing.T) {
-	if !c2cEnabled("GPU C2C Mode : Enabled\n") {
-		t.Fatal("expected enabled C2C")
-	}
-	if c2cEnabled("GPU C2C Mode : N/A\nPersistence Mode : Enabled\n") {
-		t.Fatal("expected C2C to ignore enabled text from other fields")
+func TestNVLinkCapabilityUsesTopologyWhenStatusProbeFails(t *testing.T) {
+	nvidiaQ := "Fabric\n    State : N/A\n    Status : N/A\n"
+	topo := "GPU0 GPU1\nGPU0 X NV4\nGPU1 NV4 X\n"
+	nvlinkStatus := "command failed: exit code 1\nNVLink status command unavailable\n"
+	fabric := probeFabricSignals(
+		"0, NVIDIA H100, GPU-0, 550.54.15, 9.0, Disabled, Disabled\n",
+		nvidiaQ,
+		topo,
+		nvlinkStatus,
+		"Architecture: x86_64\n",
+	)
+
+	got := nvlinkFabricCapability(fabric, nvidiaQ, topo, nvlinkStatus)
+	if got.Status != StatusSupported {
+		t.Fatalf("nvlinkFabricCapability() = %#v, want topology evidence to survive optional status failure", got)
 	}
 }
 
-func TestHasMIGProfilesRejectsErrorOutput(t *testing.T) {
-	output := "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver."
-	if hasMIGProfiles(output) {
-		t.Fatal("expected nvidia-smi failure output not to count as MIG profile evidence")
-	}
-}
-
-func TestMIGInstanceLineRecognizesNvidiaSMIFormats(t *testing.T) {
-	tests := map[string]struct {
-		output string
-		want   string
+func TestFabricHealth(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		reported bool
+		healthy  bool
 	}{
-		"b200 uuid": {
-			output: "GPU 0: NVIDIA B200 (UUID: GPU-0)\n  MIG 1g.23gb     Device  0: (UUID: MIG-7f37c7aa-357a-5286-8db6-584f7500ad74)\n",
-			want:   "MIG 1g.23gb     Device  0: (UUID: MIG-7f37c7aa-357a-5286-8db6-584f7500ad74)",
+		{
+			name: "healthy",
+			output: `Fabric
+        State  : Completed
+        Status : Success`,
+			reported: true,
+			healthy:  true,
 		},
-		"legacy uuid": {
-			output: "GPU 0: NVIDIA H100 (UUID: GPU-0)\n  MIG 1g.10gb Device 0: (UUID: MIG-GPU-0/1/0)\n",
-			want:   "MIG 1g.10gb Device 0: (UUID: MIG-GPU-0/1/0)",
+		{
+			name: "unhealthy",
+			output: `Fabric
+        State  : In Progress
+        Status : N/A`,
+			reported: true,
+			healthy:  false,
 		},
-		"mode only": {
-			output: "GPU 0: NVIDIA B200 (UUID: GPU-0)\n  MIG Mode: Enabled\n",
-			want:   "",
-		},
+		{name: "not reported"},
 	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			if got := migInstanceLine(test.output); got != test.want {
-				t.Fatalf("migInstanceLine() = %q, want %q", got, test.want)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reported, healthy, _ := FabricHealth(test.output)
+			if reported != test.reported || healthy != test.healthy {
+				t.Fatalf(
+					"FabricHealth() = (%t, %t), want (%t, %t)",
+					reported,
+					healthy,
+					test.reported,
+					test.healthy,
+				)
 			}
 		})
 	}
 }
 
-func TestProbeHostMIGAutoRequiresExistingInstances(t *testing.T) {
-	runner := migProbeRunner(
-		"GPU 0: NVIDIA B200 (UUID: GPU-0)\nGPU 1: NVIDIA B200 (UUID: GPU-1)\n",
-		"0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Disabled, Disabled\n",
-		"MIG 1g.23gb 19\n",
-	)
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{MIGConfigure: "auto"})
-
-	if got := result.Snapshot.Lookup("host:mig"); got.Status != StatusUnsupported {
-		t.Fatalf("host:mig status = %s, want unsupported (%s)", got.Status, got.Reason)
-	}
-	if got := result.Snapshot.Lookup("host:mixed_mig"); got.Status != StatusUnsupported {
-		t.Fatalf("host:mixed_mig status = %s, want unsupported (%s)", got.Status, got.Reason)
-	}
-}
-
-func TestProbeHostMIGExplicitConfigureAllowsProfileOnlyHosts(t *testing.T) {
-	runner := migProbeRunner(
-		"GPU 0: NVIDIA B200 (UUID: GPU-0)\nGPU 1: NVIDIA B200 (UUID: GPU-1)\n",
-		"0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Disabled, Disabled\n",
-		"MIG 1g.23gb 19\n",
-	)
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{MIGConfigure: "true"})
-
-	if got := result.Snapshot.Lookup("host:mig"); got.Status != StatusSupported {
-		t.Fatalf("host:mig status = %s, want supported (%s)", got.Status, got.Reason)
-	}
-	if got := result.Snapshot.Lookup("host:mixed_mig"); got.Status != StatusSupported {
-		t.Fatalf("host:mixed_mig status = %s, want supported (%s)", got.Status, got.Reason)
-	}
-}
-
-func TestProbeHostMIGAutoAllowsExistingInstances(t *testing.T) {
-	runner := migProbeRunner(
-		"GPU 0: NVIDIA B200 (UUID: GPU-0)\n  MIG 1g.23gb     Device  0: (UUID: MIG-7f37c7aa-357a-5286-8db6-584f7500ad74)\nGPU 1: NVIDIA B200 (UUID: GPU-1)\nGPU 2: NVIDIA B200 (UUID: GPU-2)\nGPU 3: NVIDIA B200 (UUID: GPU-3)\nGPU 4: NVIDIA B200 (UUID: GPU-4)\nGPU 5: NVIDIA B200 (UUID: GPU-5)\nGPU 6: NVIDIA B200 (UUID: GPU-6)\nGPU 7: NVIDIA B200 (UUID: GPU-7)\n",
-		"0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Enabled, Enabled\n1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Disabled, Disabled\n2, NVIDIA B200, GPU-2, 595.58.03, 10.0, Disabled, Disabled\n3, NVIDIA B200, GPU-3, 595.58.03, 10.0, Disabled, Disabled\n4, NVIDIA B200, GPU-4, 595.58.03, 10.0, Disabled, Disabled\n5, NVIDIA B200, GPU-5, 595.58.03, 10.0, Disabled, Disabled\n6, NVIDIA B200, GPU-6, 595.58.03, 10.0, Disabled, Disabled\n7, NVIDIA B200, GPU-7, 595.58.03, 10.0, Disabled, Disabled\n",
-		"MIG 1g.23gb 19\n",
-	)
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{MIGConfigure: "auto", DCGMImage: "dcgm:test"})
-
-	if got := result.Snapshot.Lookup("host:mig"); got.Status != StatusSupported {
-		t.Fatalf("host:mig status = %s, want supported (%s)", got.Status, got.Reason)
-	}
-	if got := result.Snapshot.Lookup("host:mixed_mig"); got.Status != StatusSupported {
-		t.Fatalf("host:mixed_mig status = %s, want supported (%s)", got.Status, got.Reason)
-	}
-	if got := result.Snapshot.Lookup("host:mig_instance_entity"); got.Status != StatusUnsupported || !strings.Contains(got.Reason, "DCGM did not report") {
-		t.Fatalf("host:mig_instance_entity = %#v, want DCGM hierarchy unsupported", got)
-	}
-}
-
-func TestProbeHostMixedMIGRequiresCurrentFullGPU(t *testing.T) {
-	runner := migProbeRunner(
-		"GPU 0: NVIDIA B200 (UUID: GPU-0)\n  MIG 1g.23gb Device 0: (UUID: MIG-GPU-0/1/0)\nGPU 1: NVIDIA B200 (UUID: GPU-1)\n  MIG 1g.23gb Device 0: (UUID: MIG-GPU-1/1/0)\n",
-		"0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Enabled, Enabled\n1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Enabled, Enabled\n",
-		"MIG 1g.23gb 19\n",
-	)
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{MIGConfigure: "auto"})
-
-	if got := result.Snapshot.Lookup("host:mixed_mig"); got.Status != StatusUnsupported || !strings.Contains(got.Reason, "no full GPU") {
-		t.Fatalf("host:mixed_mig = %#v, want unsupported without a current full GPU", got)
-	}
-}
-
-func TestProbeHostMIGExplicitConfigureUsesPerGPUProfiles(t *testing.T) {
-	runner := migProbeRunner(
-		"GPU 0: NVIDIA B200 (UUID: GPU-0)\nGPU 1: NVIDIA B200 (UUID: GPU-1)\n",
-		"0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Disabled, Disabled\n",
-		"No MIG-supported devices found.\n",
-	)
-	runner.outputs["nvidia-smi mig -i 0 -lgip"] = "MIG 1g.23gb 19\n"
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{MIGConfigure: "true"})
-
-	if got := result.Snapshot.Lookup("host:mig"); got.Status != StatusSupported {
-		t.Fatalf("host:mig status = %s, want supported (%s)", got.Status, got.Reason)
-	}
-	if got := result.Snapshot.Lookup("host:mig"); got.Evidence != "MIG 1g.23gb 19" {
-		t.Fatalf("host:mig evidence = %q, want per-GPU profile", got.Evidence)
-	}
-}
-
-func TestSnapshotLookupUnknown(t *testing.T) {
-	got := NewSnapshot(nil).Lookup("host:nvlink")
-	if got.Status != StatusUnknown {
-		t.Fatalf("Status = %s, want unknown", got.Status)
-	}
-}
-
-func TestProbeHostWithDCGMContainerFixtures(t *testing.T) {
-	runner := &probeRunner{
-		outputs: map[string]string{
-			"nvidia-smi -L": "GPU 0: NVIDIA H100 (UUID: GPU-0)\n  MIG 1g.10gb Device 0: (UUID: MIG-GPU-0/1/0)\nGPU 1: NVIDIA H100 (UUID: GPU-1)\n",
-			"nvidia-smi --query-gpu=index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending --format=csv,noheader": "0, NVIDIA H100, GPU-0, 595.71.05, 9.0, Enabled, Enabled\n1, NVIDIA H100, GPU-1, 595.71.05, 9.0, Disabled, Disabled\n",
-			"nvidia-smi topo -m":   "GPU0 GPU1 CPU Affinity\nGPU0 X NV4\nGPU1 NV4 X\n",
-			"nvidia-smi nvlink -s": "Link 0: 25.781 GB/s\n",
-			"nvidia-smi -q":        "GPU C2C Mode : Enabled\n",
-			"lscpu":                "Model name: NVIDIA Grace CPU\n",
-			"nvidia-smi mig -lgip": "MIG 1g.10gb 19\n",
-		},
-		dcgm: map[string]string{
-			"version":                       "Version : 4.5.3\n",
-			"discovery -l":                  "1 GPU found.\n1 NVSwitch found.\nGrace CPU hierarchy present.\n",
-			"discovery --compute-hierarchy": "I 0/7 GPU Instance (EntityID: 101)\n",
-			"profile --list":                "DCGM_FI_PROF_GR_ENGINE_ACTIVE\nc2c_tx_bytes\n",
-			"dmon -l":                       "201 DCGM_FI_DEV_ECC_SBE_VOL_TOTAL\n900 DCGM_FI_DEV_C2C_TX_BYTES\n",
-			"dmon -e 201 -c 1":              "Field is not supported on this GPU\n",
-			"dmon -e 409 -c 1":              "GPU 0 0\n",
-		},
-	}
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{
-		DCGMImage:           "dcgm:test",
-		ExpectedDCGMVersion: "4.5.3",
-		FailureInjection:    true,
-	})
-
-	for _, name := range []string{
-		"host:gpu",
-		"host:profiling",
-		"host:mig",
-		"host:mixed_mig",
-		"host:mig_instance_entity",
-		"host:unsupported_field",
-		"host:nvlink",
-		"host:p2p",
-		"host:nvswitch",
-		"host:grace_cpu",
-		"host:c2c",
-		"dcgm:remote_dcgm",
-		"dcgm:failure_injection",
-		"dcgm:failure_injection_nvlink_crc",
-	} {
-		if got := result.Snapshot.Lookup(name); got.Status != StatusSupported {
-			t.Fatalf("%s status = %s, want supported (%s)", name, got.Status, got.Reason)
+func TestHasActiveNVLink(t *testing.T) {
+	for _, output := range []string{"Link 0: 53.125 GB/s", "Link 0: 0.5 GB/s"} {
+		if !HasActiveNVLink(output) {
+			t.Fatalf("HasActiveNVLink() rejected active link output %q", output)
 		}
 	}
-	if result.MIGInstanceEntityID != "101" || result.MIGInstanceNVMLID != "7" {
-		t.Fatalf("MIG selection = entity %q nvml %q, want 101/7", result.MIGInstanceEntityID, result.MIGInstanceNVMLID)
-	}
-	if result.UnsupportedFieldCandidate != "DCGM_FI_DEV_ECC_SBE_VOL_TOTAL" {
-		t.Fatalf("unsupported field candidate = %q", result.UnsupportedFieldCandidate)
-	}
-	if !runner.sawDockerProbe("discovery -l") || !runner.sawDockerProbe("dmon -e 201 -c 1") || !runner.sawDockerProbe("dmon -e 409 -c 1") {
-		t.Fatalf("DCGM docker probes missing: %#v", runner.dockerProbes)
+	for _, output := range []string{"Link 0: inactive", "Link 0: 0 GB/s", "Link 0: 0.000 GB/s"} {
+		if HasActiveNVLink(output) {
+			t.Fatalf("HasActiveNVLink() accepted inactive link output %q", output)
+		}
 	}
 }
 
-func TestProbeHostPassesDockerEnvToDCGMProbes(t *testing.T) {
-	runner := nvlinkFailureInjectionRunner("GPU 0 0\n")
+func TestProbeOutputFailedIgnoresNormalErrorCounters(t *testing.T) {
+	if probeOutputFailed("ECC Errors\n    Volatile Uncorrectable Errors : 0") {
+		t.Fatal("probeOutputFailed() treated normal nvidia-smi error counters as command failure")
+	}
+	if !probeOutputFailed("NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver") {
+		t.Fatal("probeOutputFailed() missed an explicit nvidia-smi failure")
+	}
+}
 
+func TestRunTextPreservesFailureWithPartialOutput(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.results["nvidia-smi -q"] = e2eexec.Result{
+		Stdout: []byte("partial inventory\n"),
+		Err:    errors.New("probe interrupted"),
+	}
+
+	output := runText(context.Background(), runner, "nvidia-smi", "-q")
+	if !probeOutputFailed(output) || !strings.Contains(output, "partial inventory") {
+		t.Fatalf("runText() = %q, want command failure with partial output", output)
+	}
+}
+
+func TestGPUCapabilityDistinguishesFailureFromAbsentHardware(t *testing.T) {
+	failure := gpuCapability("NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver", 0)
+	if failure.Status != StatusUnknown {
+		t.Fatalf("failed GPU probe = %#v, want unknown", failure)
+	}
+	absent := gpuCapability("", 0)
+	if absent.Status != StatusUnsupported {
+		t.Fatalf("empty GPU inventory = %#v, want unsupported", absent)
+	}
+}
+
+func TestHealthyFabricEvidenceRequiresEverySection(t *testing.T) {
+	healthy, evidence := healthyFabricEvidence(
+		"Fabric\n    State : Completed\n    Status : Success\n" +
+			"GPU 1\nFabric\n    State : In Progress\n    Status : N/A\n",
+	)
+	if healthy || !strings.Contains(evidence, "1/2") {
+		t.Fatalf("healthyFabricEvidence() = %v, %q, want unhealthy 1/2", healthy, evidence)
+	}
+}
+
+func TestResolveScenarioInputsOnlyRunsSelectedReadinessChecks(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgm["discovery --compute-hierarchy"] = "I 0/7 GPU Instance (EntityID: 101)\n"
+	runner.dcgm["dmon -l"] = "201 DCGM_FI_DEV_ECC_SBE_VOL_TOTAL\n"
+	runner.dcgm["dmon -e 201 -c 1"] = "Field is not supported on this GPU\n"
+
+	inputs, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		true,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("ResolveScenarioInputs() error = %v", err)
+	}
+	if inputs.MIGInstanceEntityID != "101" || inputs.MIGInstanceNVMLID != "7" {
+		t.Fatalf("MIG inputs = %#v, want entity 101 and NVML ID 7", inputs)
+	}
+	if inputs.UnsupportedFieldCandidate != "DCGM_FI_DEV_ECC_SBE_VOL_TOTAL" {
+		t.Fatalf("unsupported field = %q", inputs.UnsupportedFieldCandidate)
+	}
+}
+
+func TestResolveScenarioInputsAllowsMissingUnsupportedFieldCandidate(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgm["dmon -l"] = "201 DCGM_FI_DEV_GPU_TEMP\n"
+
+	inputs, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		false,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("ResolveScenarioInputs() error = %v", err)
+	}
+	if inputs.UnsupportedFieldCandidate != "" {
+		t.Fatalf("UnsupportedFieldCandidate = %q, want empty", inputs.UnsupportedFieldCandidate)
+	}
+	if !strings.Contains(inputs.UnsupportedFieldNotApplicableReason, "none of the unsupported-field candidates") {
+		t.Fatalf("not-applicable reason = %q, want absent candidates", inputs.UnsupportedFieldNotApplicableReason)
+	}
+}
+
+func TestResolveScenarioInputsAllowsValidUnsupportedFieldCandidates(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgm["dmon -l"] = "201 DCGM_FI_DEV_ECC_SBE_VOL_TOTAL\n"
+	runner.dcgm["dmon -e 201 -c 1"] = "42\n"
+
+	inputs, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		false,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("ResolveScenarioInputs() error = %v", err)
+	}
+	if inputs.UnsupportedFieldCandidate != "" {
+		t.Fatalf("UnsupportedFieldCandidate = %q, want empty", inputs.UnsupportedFieldCandidate)
+	}
+	if !strings.Contains(inputs.UnsupportedFieldNotApplicableReason, "all probed DCGM field candidates") {
+		t.Fatalf("not-applicable reason = %q, want valid samples", inputs.UnsupportedFieldNotApplicableReason)
+	}
+}
+
+func TestResolveScenarioInputsFailsFieldInventoryProbe(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgmResults["dmon -l"] = e2eexec.Result{
+		Stdout:   []byte("201 DCGM_FI_DEV_ECC_SBE_VOL_TOTAL\n"),
+		Stderr:   []byte("dcgmi probe timed out\n"),
+		ExitCode: 1,
+	}
+
+	_, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		false,
+		true,
+	)
+	if err == nil || !strings.Contains(err.Error(), "field-list probe timed out") {
+		t.Fatalf("ResolveScenarioInputs() error = %v, want field-list probe failure", err)
+	}
+}
+
+func TestResolveScenarioInputsFailsCandidateProbeWithPartialSentinel(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgm["dmon -l"] = "201 DCGM_FI_DEV_ECC_SBE_VOL_TOTAL\n"
+	runner.dcgmResults["dmon -e 201 -c 1"] = e2eexec.Result{
+		Stdout:   []byte("GPU 0 DCGM_FT_INT64_NOT_SUPPORTED\n"),
+		Stderr:   []byte("dcgmi probe timed out\n"),
+		ExitCode: 1,
+	}
+
+	_, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		false,
+		true,
+	)
+	if err == nil || !strings.Contains(err.Error(), "field-sample probe timed out") {
+		t.Fatalf("ResolveScenarioInputs() error = %v, want candidate probe failure", err)
+	}
+}
+
+func TestResolveScenarioInputsFailsMissingReadiness(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	_, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		true,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "returned no instance rows") {
+		t.Fatalf("ResolveScenarioInputs() error = %v, want missing MIG readiness", err)
+	}
+}
+
+// migProbeCase is one fake host for TestProbeHostReportsCurrentMIGState.
+type migProbeCase struct {
+	name               string
+	query              string
+	profiles           string
+	hierarchy          string
+	hierarchyResult    *e2eexec.Result
+	wantProfiles       Status
+	wantActive         Status
+	wantMixed          Status
+	wantMixedReason    string
+	wantHierarchyProbe bool
+}
+
+// TestProbeHostReportsCurrentMIGState checks the MIG gates against fake MIG-on, mixed, MIG-off, no-profile and failed-probe hosts.
+func TestProbeHostReportsCurrentMIGState(t *testing.T) {
+	const (
+		instance = "I 0/7 GPU Instance (EntityID: 101)\n"
+		gpu0On   = "0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Enabled, Enabled\n"
+		gpu1On   = "1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Enabled, Enabled\n"
+		gpu0Off  = "0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n"
+		gpu1Off  = "1, NVIDIA B200, GPU-1, 595.58.03, 10.0, Disabled, Disabled\n"
+		gpuNA    = "0, NVIDIA L4, GPU-0, 595.58.03, 8.9, [N/A], [N/A]\n"
+		profiles = "MIG 1g.23gb 19\n"
+		noMIG    = "No MIG-supported devices found.\n"
+	)
+	tests := []migProbeCase{
+		{
+			name: "MIG on with an instance beside a full GPU", query: gpu0On + gpu1Off, profiles: profiles, hierarchy: instance,
+			wantProfiles: StatusSupported, wantActive: StatusSupported, wantMixed: StatusSupported, wantHierarchyProbe: true,
+		},
+		{
+			name: "every GPU in MIG mode", query: gpu0On + gpu1On, profiles: profiles, hierarchy: instance,
+			wantProfiles: StatusSupported, wantActive: StatusSupported, wantMixed: StatusUnsupported,
+			wantMixedReason: "mixed MIG needs a GPU with MIG off", wantHierarchyProbe: true,
+		},
+		{
+			name: "MIG on without an instance", query: gpu0On + gpu1Off, profiles: profiles,
+			wantProfiles: StatusSupported, wantActive: StatusUnsupported, wantMixed: StatusUnsupported,
+			wantMixedReason: "DCGM lists no GPU instance", wantHierarchyProbe: true,
+		},
+		{
+			name: "MIG off on every GPU with profiles listed", query: gpu0Off + gpu1Off, profiles: profiles,
+			wantProfiles: StatusSupported, wantActive: StatusUnsupported, wantMixed: StatusUnsupported,
+			wantMixedReason: "MIG is off on every GPU",
+		},
+		{
+			name: "GPU without MIG profiles", query: gpuNA, profiles: noMIG,
+			wantProfiles: StatusUnsupported, wantActive: StatusUnsupported, wantMixed: StatusUnsupported,
+			wantMixedReason: "MIG is off on every GPU",
+		},
+		{
+			name: "nvidia-smi query fails", query: "NVIDIA-SMI has failed because it couldn't communicate with the driver\n", profiles: noMIG,
+			wantProfiles: StatusUnsupported, wantActive: StatusUnknown, wantMixed: StatusUnknown,
+			wantMixedReason: "could not be determined",
+		},
+		{
+			name: "compute-hierarchy probe unavailable with MIG on", query: gpu0On + gpu1Off, profiles: profiles,
+			hierarchyResult: &e2eexec.Result{ExitCode: 1, Stderr: []byte("dcgmi probe timed out")},
+			wantProfiles:    StatusSupported, wantActive: StatusUnknown, wantMixed: StatusUnknown,
+			wantMixedReason: "compute-hierarchy", wantHierarchyProbe: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := newHostProbeRunner(hostFixture{query: test.query, migProfiles: test.profiles})
+			runner.dcgm["discovery --compute-hierarchy"] = test.hierarchy
+			if test.hierarchyResult != nil {
+				runner.dcgmResults["discovery --compute-hierarchy"] = *test.hierarchyResult
+			}
+			caps := ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test"})
+			profiles, active, mixed := caps.Lookup("host:mig"), caps.Lookup("host:mig_active"), caps.Lookup("host:mixed_mig")
+			if profiles.Status != test.wantProfiles || active.Status != test.wantActive || mixed.Status != test.wantMixed {
+				t.Fatalf("mig = %#v, mig_active = %#v, mixed_mig = %#v, want %s, %s and %s",
+					profiles, active, mixed, test.wantProfiles, test.wantActive, test.wantMixed)
+			}
+			if !strings.Contains(mixed.Reason, test.wantMixedReason) {
+				t.Fatalf("mixed_mig reason = %q, want %q", mixed.Reason, test.wantMixedReason)
+			}
+			if got := contains(runner.dockerProbes, "discovery --compute-hierarchy"); got != test.wantHierarchyProbe {
+				t.Fatalf("compute-hierarchy probed = %t, want %t", got, test.wantHierarchyProbe)
+			}
+		})
+	}
+}
+
+// TestResolveScenarioInputsPreservesHierarchyProbeFailure keeps the useful DCGM error text.
+func TestResolveScenarioInputsPreservesHierarchyProbeFailure(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgmResults["discovery --compute-hierarchy"] = e2eexec.Result{
+		ExitCode: 1,
+		Stderr:   []byte("dcgmi probe timed out"),
+	}
+
+	_, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		true,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "compute-hierarchy probe timed out") {
+		t.Fatalf("ResolveScenarioInputs() error = %v, want hierarchy probe failure", err)
+	}
+	if strings.Contains(err.Error(), "returned no instance rows") {
+		t.Fatalf("ResolveScenarioInputs() error masked the probe failure: %v", err)
+	}
+}
+
+// TestResolveScenarioInputsIncludesGenericHierarchyProbeDetail reports nonstandard probe failures.
+func TestResolveScenarioInputsIncludesGenericHierarchyProbeDetail(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgmResults["discovery --compute-hierarchy"] = e2eexec.Result{
+		ExitCode: 1,
+		Stderr:   []byte("DCGM protocol mismatch"),
+	}
+
+	_, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		true,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "DCGM protocol mismatch") {
+		t.Fatalf("ResolveScenarioInputs() error = %v, want generic hierarchy detail", err)
+	}
+}
+
+func TestResolveScenarioInputsDoesNothingWithoutSelectedScenarios(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	inputs, err := ResolveScenarioInputs(
+		context.Background(),
+		runner,
+		ProbeOptions{DCGMImage: "dcgm:test"},
+		false,
+		false,
+	)
+	if err != nil || inputs != (ScenarioInputs{}) {
+		t.Fatalf("ResolveScenarioInputs() = %#v, %v, want empty", inputs, err)
+	}
+	if len(runner.dockerProbes) != 0 {
+		t.Fatalf("unexpected readiness probes: %v", runner.dockerProbes)
+	}
+}
+
+func TestProbeHostPassesDockerEnvironment(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
 	_ = ProbeHost(context.Background(), runner, ProbeOptions{
 		DCGMImage: "dcgm:test",
 		DockerEnv: []string{"DOCKER_CONFIG=/tmp/e2e-docker"},
 	})
 
 	if len(runner.dockerEnvs) == 0 {
-		t.Fatal("expected docker probe commands")
+		t.Fatal("expected DCGM container probes")
 	}
 	for _, env := range runner.dockerEnvs {
-		if !hasArg(env, "DOCKER_CONFIG=/tmp/e2e-docker") {
-			t.Fatalf("docker env = %#v, want DOCKER_CONFIG", env)
+		if !contains(env, "DOCKER_CONFIG=/tmp/e2e-docker") {
+			t.Fatalf("docker environment = %v, want DOCKER_CONFIG", env)
 		}
 	}
 }
 
-func TestProbeHostNVLinkFailureInjectionSkipsDCGMNotSupported(t *testing.T) {
-	runner := &probeRunner{
-		outputs: map[string]string{
-			"nvidia-smi -L": "GPU 0: NVIDIA B200 (UUID: GPU-0)\n",
-			"nvidia-smi --query-gpu=index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending --format=csv,noheader": "0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n",
-			"nvidia-smi topo -m":   "GPU0 X\n",
-			"nvidia-smi nvlink -s": "Link 0: 53.125 GB/s\n",
-			"nvidia-smi -q":        "",
-			"lscpu":                "Architecture: x86_64\n",
-			"nvidia-smi mig -lgip": "No MIG-supported devices found.\n",
-		},
-		dcgm: map[string]string{
-			"version":                       "Version : 4.5.3\n",
-			"discovery -l":                  "1 GPU found.\n",
-			"discovery --compute-hierarchy": "",
-			"profile --list":                "",
-			"dmon -l":                       "409 DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL\n",
-			"dmon -e 409 -c 1":              "GPU 0 9223372036854775794\n",
-		},
-	}
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{
-		DCGMImage:           "dcgm:test",
-		ExpectedDCGMVersion: "4.5.3",
-		FailureInjection:    true,
-	})
-
-	got := result.Snapshot.Lookup("dcgm:failure_injection_nvlink_crc")
-	if got.Status != StatusUnsupported {
-		t.Fatalf("status = %s, want unsupported", got.Status)
-	}
-	if !got.DCGMNotSupported {
-		t.Fatal("expected DCGMNotSupported evidence")
-	}
-	if !strings.Contains(got.Reason, "DCGM_FT_INT64_NOT_SUPPORTED") {
-		t.Fatalf("reason = %q, want decoded sentinel", got.Reason)
+func TestGPUCountRejectsErrorOutput(t *testing.T) {
+	got := GPUCount("NVIDIA-SMI error report\n0, NVIDIA A100, GPU-1\n")
+	if got != 1 {
+		t.Fatalf("GPUCount() = %d, want 1", got)
 	}
 }
 
-func TestProbeHostNVLinkFailureInjectionSkipsUnreadableSamples(t *testing.T) {
-	runner := nvlinkFailureInjectionRunner("GPU 0 N/A\n")
-
-	result := ProbeHost(context.Background(), runner, ProbeOptions{
-		DCGMImage:           "dcgm:test",
-		ExpectedDCGMVersion: "4.5.3",
-		FailureInjection:    true,
-	})
-
-	got := result.Snapshot.Lookup("dcgm:failure_injection_nvlink_crc")
-	if got.Status != StatusUnsupported || !got.DCGMNotSupported {
-		t.Fatalf("capability = %#v, want DCGM unsupported", got)
+func TestDCGMProbeUnavailableDistinguishesUnsupportedFields(t *testing.T) {
+	if dcgmProbeUnavailable("Field is not supported on this GPU") {
+		t.Fatal("DCGM field sentinel should not be a transport failure")
+	}
+	unsupportedAfterRetries := "command failed: exit code 1\n" +
+		"dcgmi probe timed out or failed within 45s\n" +
+		"Profiling is not supported for this GPU"
+	if dcgmProbeUnavailable(unsupportedAfterRetries) {
+		t.Fatal("a completed unsupported response should take precedence over the retry timeout")
+	}
+	if got := profilingCapability(unsupportedAfterRetries); got.Status != StatusUnsupported {
+		t.Fatalf("profilingCapability() status = %q, want unsupported", got.Status)
+	}
+	if !dcgmProbeUnavailable("socket: operation not supported") {
+		t.Fatal("an unsupported transport operation should make the probe unknown")
+	}
+	if !dcgmProbeUnavailable("Error: connection refused") {
+		t.Fatal("connection failure should make the probe unknown")
+	}
+	failedRuntime := "command failed: exit code 1\nDocker API version not supported"
+	if !dcgmProbeUnavailable(failedRuntime) {
+		t.Fatal("a failed runtime command must not become an unsupported DCGM capability")
+	}
+	if got := profilingCapability(failedRuntime); got.Status != StatusUnknown {
+		t.Fatalf("profilingCapability() status = %q, want unknown for runtime failure", got.Status)
+	}
+	missingHostTool := `command failed: exec: "dcgmi": executable file not found in $PATH`
+	if reason := dcgmProbeUnavailableReason("profiling", missingHostTool); !strings.Contains(reason, "--bootstrap=check") {
+		t.Fatalf("missing dcgmi reason = %q, want bootstrap guidance", reason)
+	}
+	if dcgmProbeUnavailable("nvlink_link_recovery_failed NLLRF 1212") {
+		t.Fatal("DCGM field names containing failed should not be transport failures")
+	}
+	if dcgmProbeUnavailable("command failed: exit code 1\nfield 999 not found") {
+		t.Fatal("an unsupported field response should not be a transport failure")
 	}
 }
 
-func TestProbeHostNVLinkFailureInjectionUsesListedFieldID(t *testing.T) {
-	runner := nvlinkFailureInjectionRunner("")
-	runner.dcgm["dmon -l"] = "510 DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL\n"
-	runner.dcgm["dmon -e 510 -c 1"] = "GPU 0 0\n"
-	delete(runner.dcgm, "dmon -e 409 -c 1")
+// TestDCGMProbeDoesNotUseUnqualifiedHostFallback keeps backend choice with the CLI preflight.
+func TestDCGMProbeDoesNotUseUnqualifiedHostFallback(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.dcgmResults["profile --list"] = e2eexec.Result{
+		ExitCode: 1,
+		Stderr:   []byte("no matching manifest for linux/arm64/v8 in the manifest list entries"),
+	}
+	runner.nativeDCGM["profile --list"] = "DCGM_FI_PROF_GR_ENGINE_ACTIVE\n"
 
-	result := ProbeHost(context.Background(), runner, ProbeOptions{
-		DCGMImage:           "dcgm:test",
-		ExpectedDCGMVersion: "4.5.3",
-		FailureInjection:    true,
-	})
-
-	got := result.Snapshot.Lookup("dcgm:failure_injection_nvlink_crc")
-	if got.Status != StatusSupported {
-		t.Fatalf("status = %s, want supported (%s)", got.Status, got.Reason)
+	dcgm := newDCGMProbeSession(runner, ProbeOptions{DCGMImage: "dcgm:test"})
+	output := dcgm.run(context.Background(), "profile", "--list")
+	if profilingEvidence(output) {
+		t.Fatalf("DCGM probe = %q, want image platform failure", output)
 	}
-	if got.Source != "DCGM container dmon -e 510" {
-		t.Fatalf("source = %q, want listed field id", got.Source)
-	}
-	if !runner.sawDockerProbe("dmon -e 510 -c 1") {
-		t.Fatalf("listed DCGM field probe missing: %#v", runner.dockerProbes)
-	}
-	if runner.sawDockerProbe("dmon -e 409 -c 1") {
-		t.Fatalf("fallback field probe ran despite listed field id: %#v", runner.dockerProbes)
+	if len(runner.nativeProbes) != 0 {
+		t.Fatalf("native DCGM probes = %v, want none", runner.nativeProbes)
 	}
 }
 
-func nvlinkFailureInjectionRunner(readback string) *probeRunner {
-	return &probeRunner{
-		outputs: map[string]string{
-			"nvidia-smi -L": "GPU 0: NVIDIA B200 (UUID: GPU-0)\n",
-			"nvidia-smi --query-gpu=index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending --format=csv,noheader": "0, NVIDIA B200, GPU-0, 595.58.03, 10.0, Disabled, Disabled\n",
-			"nvidia-smi topo -m":   "GPU0 X\n",
-			"nvidia-smi nvlink -s": "Link 0: 53.125 GB/s\n",
-			"nvidia-smi -q":        "",
-			"lscpu":                "Architecture: x86_64\n",
-			"nvidia-smi mig -lgip": "No MIG-supported devices found.\n",
-		},
-		dcgm: map[string]string{
-			"version":                       "Version : 4.5.3\n",
-			"discovery -l":                  "1 GPU found.\n",
-			"discovery --compute-hierarchy": "",
-			"profile --list":                "",
-			"dmon -l":                       "409 DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL\n",
-			"dmon -e 409 -c 1":              readback,
-		},
+// TestDCGMProbeUsesQualifiedHostBackend avoids trying the image after the CLI selects host DCGM.
+func TestDCGMProbeUsesQualifiedHostBackend(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.nativeDCGM["profile --host 127.0.0.1:5556 --list"] = "DCGM_FI_PROF_GR_ENGINE_ACTIVE\n"
+
+	dcgm := newDCGMProbeSession(runner, ProbeOptions{DCGMImage: "dcgm:test", HostDCGMAddress: "127.0.0.1:5556"})
+	output := dcgm.run(context.Background(), "profile", "--list")
+	if !profilingEvidence(output) {
+		t.Fatalf("DCGM probe = %q, want native profiling evidence", output)
+	}
+	if len(runner.dockerProbes) != 0 {
+		t.Fatalf("Docker DCGM probes = %v, want none", runner.dockerProbes)
 	}
 }
 
-func TestProbeHostRejectsMismatchedRemoteDCGMVersion(t *testing.T) {
-	runner := &probeRunner{
-		outputs: map[string]string{
-			"nvidia-smi -L": "GPU 0: NVIDIA Test GPU (UUID: GPU-0)\n",
-			"nvidia-smi --query-gpu=index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending --format=csv,noheader": "0, NVIDIA Test GPU, GPU-0, 595.71.05, 9.0, [N/A], [N/A]\n",
-			"nvidia-smi topo -m":   "GPU0 CPU Affinity\n",
-			"nvidia-smi nvlink -s": "",
-			"nvidia-smi -q":        "",
-			"lscpu":                "Architecture: x86_64\n",
-			"nvidia-smi mig -lgip": "No MIG-supported devices found.\n",
-		},
-		dcgm: map[string]string{
-			"version":                       "Version : 4.5.2\n",
-			"discovery -l":                  "1 GPU found.\n",
-			"discovery --compute-hierarchy": "",
-			"profile --list":                "",
-			"dmon -l":                       "",
-		},
-	}
+// TestDCGMProbeUsesLocalHostBackend keeps explicit host-only validation from
+// requiring the container image used by general hardware capability probing.
+func TestDCGMProbeUsesLocalHostBackend(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.nativeDCGM["profile --list"] = "DCGM_FI_PROF_GR_ENGINE_ACTIVE\n"
 
-	result := ProbeHost(context.Background(), runner, ProbeOptions{
-		DCGMImage:           "dcgm:test",
-		ExpectedDCGMVersion: "4.5.3",
-		FailureInjection:    true,
-	})
-
-	remote := result.Snapshot.Lookup("dcgm:remote_dcgm")
-	if remote.Status != StatusUnsupported {
-		t.Fatalf("remote DCGM status = %s, want unsupported", remote.Status)
+	dcgm := newDCGMProbeSession(runner, ProbeOptions{UseHostDCGM: true})
+	output := dcgm.run(context.Background(), "profile", "--list")
+	if !profilingEvidence(output) {
+		t.Fatalf("DCGM probe = %q, want native profiling evidence", output)
 	}
-	if !strings.Contains(remote.Reason, "does not match required 4.5.3") {
-		t.Fatalf("remote DCGM reason = %q", remote.Reason)
-	}
-	injection := result.Snapshot.Lookup("dcgm:failure_injection")
-	if injection.Status != StatusUnsupported || !strings.Contains(injection.Reason, "verified remote DCGM") {
-		t.Fatalf("failure injection capability = %#v", injection)
+	if len(runner.dockerProbes) != 0 {
+		t.Fatalf("Docker DCGM probes = %v, want none", runner.dockerProbes)
 	}
 }
 
-func TestRemoteDCGMRejectsUnparseableRequiredVersion(t *testing.T) {
-	got := remoteDcgmCapability(
-		ProbeOptions{DCGMImage: "dcgm:test", ExpectedDCGMVersion: "4.5.3"},
-		"nv-hostengine build information\n",
-		"1 GPU found.\n",
-	)
+// TestDCGMProbeDryRunDoesNotUseHostBackend keeps dry-run capability checks read-only.
+func TestDCGMProbeDryRunDoesNotUseHostBackend(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	dcgm := newDCGMProbeSession(runner, ProbeOptions{DryRun: true, HostDCGMAddress: "127.0.0.1:5556"})
 
-	if got.Status != StatusUnsupported || !strings.Contains(got.Reason, "could not be parsed") {
-		t.Fatalf("remote DCGM capability = %#v", got)
+	if output := dcgm.run(context.Background(), "profile", "--list"); !strings.Contains(output, "dry-run") {
+		t.Fatalf("DCGM probe = %q, want dry-run sentinel", output)
+	}
+	if len(runner.nativeProbes) != 0 || len(runner.dockerProbes) != 0 {
+		t.Fatalf("dry-run executed DCGM probes: native=%v docker=%v", runner.nativeProbes, runner.dockerProbes)
 	}
 }
 
-func TestProbeRunnerRejectsUnexpectedCommand(t *testing.T) {
-	runner := &probeRunner{outputs: map[string]string{}}
-	result := runner.Run(context.Background(), e2eexec.Command{Name: "nvidia-smi", Args: []string{"unexpected"}})
-	if result.ExitCode == 0 || !strings.Contains(string(result.Stderr), "unexpected probe command") {
-		t.Fatalf("unexpected command result = %#v", result)
+// TestProbeHostUsesQualifiedHostDCGMForEveryCheck keeps related probes on the selected backend.
+func TestProbeHostUsesQualifiedHostDCGMForEveryCheck(t *testing.T) {
+	runner := newHostProbeRunner(hostFixture{})
+	runner.nativeDCGM["discovery --host 127.0.0.1:5556 -l"] = "1 GPU found.\n"
+	runner.nativeDCGM["profile --host 127.0.0.1:5556 --list"] = "DCGM_FI_PROF_GR_ENGINE_ACTIVE\n"
+	runner.nativeDCGM["dmon --host 127.0.0.1:5556 -l"] = "900 DCGM_FI_DEV_C2C_TX_BYTES\n"
+
+	_ = ProbeHost(context.Background(), runner, ProbeOptions{DCGMImage: "dcgm:test", HostDCGMAddress: "127.0.0.1:5556"})
+
+	if len(runner.dockerProbes) != 0 {
+		t.Fatalf("Docker DCGM probes = %v, want none", runner.dockerProbes)
+	}
+	if len(runner.nativeProbes) != 3 {
+		t.Fatalf("native DCGM probes = %v, want all three host checks", runner.nativeProbes)
 	}
 }
 
+func TestDCGMSentinelEvidence(t *testing.T) {
+	for _, output := range []string{
+		"GPU 0 DCGM_FT_INT64_NOT_SUPPORTED",
+		"GPU 0 DCGM_FT_INT64_NOT_FOUND",
+		"GPU 0 DCGM_FT_INT64_NOT_PERMISSIONED",
+		"GPU 0 DCGM_FT_INT64_BLANK",
+	} {
+		if got := dcgmSentinelEvidence(output); got == "" {
+			t.Fatalf("dcgmSentinelEvidence(%q) was empty", output)
+		}
+	}
+}
+
+func TestDCGMFieldIDFromListMatchesLongNames(t *testing.T) {
+	output := "201 DCGM_FI_DEV_ECC_SBE_VOL_TOTAL\n1209 DCGM_FI_DEV_NVLINK_INTEGRITY_ERROR_TOTAL\n"
+	if got := dcgmFieldIDFromList(output, "DCGM_FI_DEV_NVLINK_INTEGRITY_ERROR_TOTAL"); got != "1209" {
+		t.Fatalf("dcgmFieldIDFromList() = %q, want 1209", got)
+	}
+}
+
+func TestC2CEnabledChecksSameLine(t *testing.T) {
+	if c2cEnabled("GPU C2C Mode : Disabled\nUnrelated: Enabled\n") {
+		t.Fatal("unrelated enabled text should not enable C2C")
+	}
+	if !c2cEnabled("GPU C2C Mode : Enabled\n") {
+		t.Fatal("expected C2C to be enabled")
+	}
+}
+
+func TestSnapshotLookupUnknown(t *testing.T) {
+	got := NewSnapshot(nil).Lookup("host:nvlink_fabric")
+	if got.Status != StatusUnknown || !strings.Contains(got.Reason, "not been probed") {
+		t.Fatalf("Lookup() = %#v, want unprobed unknown", got)
+	}
+}
+
+func assertStatuses(t *testing.T, caps Snapshot, want Status, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if got := caps.Lookup(name); got.Status != want {
+			t.Errorf("%s = %#v, want status %s", name, got, want)
+		}
+	}
+}
+
+// hostFixture defines command output for one synthetic hardware platform.
+type hostFixture struct {
+	query       string
+	topo        string
+	nvlink      string
+	nvidiaQ     string
+	lscpu       string
+	migProfiles string
+}
+
+// probeRunner implements e2eexec.Runner from a host fixture.
 type probeRunner struct {
 	outputs      map[string]string
+	results      map[string]e2eexec.Result
 	dcgm         map[string]string
+	dcgmResults  map[string]e2eexec.Result
+	nativeDCGM   map[string]string
 	dockerProbes []string
 	dockerEnvs   [][]string
+	nativeProbes []string
 }
 
-func migProbeRunner(nvidiaL, query, migProfiles string) *probeRunner {
+func newHostProbeRunner(fixture hostFixture) *probeRunner {
 	outputs := map[string]string{
-		"nvidia-smi -L": nvidiaL,
-		"nvidia-smi --query-gpu=index,name,uuid,driver_version,compute_cap,mig.mode.current,mig.mode.pending --format=csv,noheader": query,
-		"nvidia-smi topo -m":   "GPU0 GPU1 CPU Affinity\nGPU0 X SYS\nGPU1 SYS X\n",
-		"nvidia-smi nvlink -s": "",
-		"nvidia-smi -q":        "",
-		"lscpu":                "Architecture: x86_64\n",
-		"nvidia-smi mig -lgip": migProfiles,
+		probeGPUQueryCommand:   fixture.query,
+		"nvidia-smi topo -m":   fixture.topo,
+		"nvidia-smi nvlink -s": fixture.nvlink,
+		"nvidia-smi -q":        fixture.nvidiaQ,
+		"lscpu":                fixture.lscpu,
 	}
-	for _, index := range gpuIndexes(query) {
-		outputs["nvidia-smi mig -i "+index+" -lgip"] = migProfiles
+	for _, index := range gpuIndexes(fixture.query) {
+		outputs["nvidia-smi mig -i "+index+" -lgip"] = fixture.migProfiles
 	}
-	return &probeRunner{outputs: outputs}
+	outputs["nvidia-smi mig -lgip"] = fixture.migProfiles
+	return &probeRunner{
+		outputs:     outputs,
+		results:     make(map[string]e2eexec.Result),
+		dcgmResults: make(map[string]e2eexec.Result),
+		nativeDCGM:  make(map[string]string),
+		dcgm: map[string]string{
+			"discovery -l":   "1 GPU found.\n",
+			"profile --list": "DCGM_FI_PROF_GR_ENGINE_ACTIVE\n",
+			"dmon -l":        "900 DCGM_FI_DEV_C2C_TX_BYTES\n",
+		},
+	}
 }
 
+// Run returns fixture output for one host or Docker probe command.
 func (r *probeRunner) Run(_ context.Context, command e2eexec.Command) e2eexec.Result {
 	if command.Name == "docker" {
 		return r.runDocker(command)
 	}
+	if command.Name == "dcgmi" {
+		probe := strings.Join(command.Args, " ")
+		r.nativeProbes = append(r.nativeProbes, probe)
+		if output, ok := r.nativeDCGM[probe]; ok {
+			return e2eexec.Result{Stdout: []byte(output)}
+		}
+		return e2eexec.Result{ExitCode: 1, Stderr: []byte("error: unexpected native DCGM probe: " + probe)}
+	}
 	key := strings.TrimSpace(command.Name + " " + strings.Join(command.Args, " "))
+	if result, ok := r.results[key]; ok {
+		return result
+	}
 	output, ok := r.outputs[key]
 	if !ok {
 		return e2eexec.Result{ExitCode: 1, Stderr: []byte("error: unexpected probe command: " + key)}
@@ -503,34 +851,26 @@ func (r *probeRunner) Run(_ context.Context, command e2eexec.Command) e2eexec.Re
 	return e2eexec.Result{Stdout: []byte(output)}
 }
 
+// runDocker returns the fixture output corresponding to one DCGM probe.
 func (r *probeRunner) runDocker(command e2eexec.Command) e2eexec.Result {
-	args := command.Args
 	r.dockerEnvs = append(r.dockerEnvs, command.Env)
-	if hasArg(args, "--entrypoint") && hasArg(args, "/usr/bin/nv-hostengine") {
-		return e2eexec.Result{Stdout: []byte(r.dcgm["version"])}
-	}
-	for i, arg := range args {
-		if arg == "dcgmi-probe" && i+1 < len(args) {
-			probe := strings.Join(args[i+1:], " ")
-			r.dockerProbes = append(r.dockerProbes, probe)
-			return e2eexec.Result{Stdout: []byte(r.dcgm[probe])}
+	for index, arg := range command.Args {
+		if arg != "dcgmi-probe" || index+1 >= len(command.Args) {
+			continue
 		}
+		probe := strings.Join(command.Args[index+1:], " ")
+		r.dockerProbes = append(r.dockerProbes, probe)
+		if result, ok := r.dcgmResults[probe]; ok {
+			return result
+		}
+		return e2eexec.Result{Stdout: []byte(r.dcgm[probe])}
 	}
-	return e2eexec.Result{ExitCode: 1, Stderr: []byte("unexpected docker invocation")}
+	return e2eexec.Result{ExitCode: 1, Stderr: []byte("error: unexpected docker probe")}
 }
 
-func (r *probeRunner) sawDockerProbe(probe string) bool {
-	for _, got := range r.dockerProbes {
-		if got == probe {
-			return true
-		}
-	}
-	return false
-}
-
-func hasArg(args []string, want string) bool {
-	for _, arg := range args {
-		if arg == want {
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
 			return true
 		}
 	}

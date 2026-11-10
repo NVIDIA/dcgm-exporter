@@ -20,22 +20,58 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 )
 
-// GetTransformations return list of transformation applicable for metrics
+// ManagedTransforms holds selected transforms and the runtime work they own.
+// Server construction calls Start after it has accepted the transforms, then
+// calls Cleanup once when that server instance retires.
+type ManagedTransforms struct {
+	Transformations []Transform
+	start           func()
+	cleanup         func()
+}
+
+// Start starts the background work owned by the selected transforms without
+// delaying server startup. Pure transforms have no background work, so Start
+// is safe for every set.
+func (m ManagedTransforms) Start() {
+	if m.start != nil {
+		go m.start()
+	}
+}
+
+// Cleanup stops the background work owned by the selected transforms.
+// It is safe to call because each managed transform makes its own shutdown
+// idempotent.
+func (m ManagedTransforms) Cleanup() {
+	if m.cleanup != nil {
+		m.cleanup()
+	}
+}
+
+// GetTransformations returns transformations selected by the resolved config.
 func GetTransformations(c *appconfig.Config) []Transform {
-	var transformations []Transform
+	return NewManagedTransforms(c, nil).Transformations
+}
+
+// NewManagedTransforms selects transforms and keeps lifecycle effects beside
+// the transform that needs them. It lets runtime wiring start and stop the
+// pod mapper without knowing its concrete type or nested DRA resources.
+func NewManagedTransforms(c *appconfig.Config, onDRAChange func()) ManagedTransforms {
+	managed := ManagedTransforms{}
 	if c.Kubernetes {
-		podMapper := NewPodMapper(c)
-		transformations = append(transformations, podMapper)
+		podMapper := NewPodMapperWithDRAChangeCallback(c, onDRAChange)
+		managed.Transformations = append(managed.Transformations, podMapper)
+		managed.start = podMapper.Run
+		managed.cleanup = podMapper.Stop
 	}
 
 	if c.HPCJobMappingDir != "" {
 		hpcMapper := newHPCMapper(c)
-		transformations = append(transformations, hpcMapper)
+		managed.Transformations = append(managed.Transformations, hpcMapper)
 	}
 
 	if c.ContainerLabels && !c.Kubernetes {
-		transformations = append(transformations, newContainerMapper(c))
+		managed.Transformations = append(managed.Transformations, newContainerMapper(c))
 	}
 
-	return transformations
+	return managed
 }

@@ -1,0 +1,106 @@
+# dcgm-exporter configuration file.
+#
+# Commented lines show the other settings at their defaults, with the flag that
+# sets the same thing. Uncomment and edit one to change it. Flags and
+# environment variables override this file.
+version: 2
+
+metrics:                                            # exactly one entry
+  - name: default
+    # Where the fields come from: exactly one of `file` or `fields`.
+    file: /etc/dcgm-exporter/default-counters.csv   # --collectors / -f
+    # fields:                                       # inline rows instead of a CSV file
+    #   - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+    #     prometheus_type: gauge                    # gauge | counter | label
+    #     help: GPU temperature in degrees Celsius.
+    every: 30s                                      # --collect-interval / -c
+    # overrides:                                    # change timing for selected fields
+    #   - name: fast-power                          # optional; unnamed = metrics[0].overrides[N]
+    #     match: ["DCGM_FI_DEV_BOARD_POWER_*"]      # field name, wildcard (* ? [), or /regex/
+    #     every: 1s
+    #     sources: {dcgm: {watch: {max_keep_age: 1m}}}
+    #   - match: [DCGM_EXP_XID_ERRORS_COUNT]        # --xid-count-window-size / -x
+    #     window: 5m                                # counts only the history DCGM keeps (max_keep_age); longer warns
+    #   - match: [DCGM_EXP_CLOCK_EVENTS_COUNT]      # --clock-events-count-window-size
+    #     window: 5m                                # also limited by max_keep_samples x every
+    # entities:
+    #   gpu: {policy: flex}                         # --devices / -d
+    #   switch: {indices: all, links: all}          # --switch-devices / -s
+    #   cpu: {indices: all, cores: all}             # --cpu-devices / -p
+    enrichment:              # false = off (default); auto = try, keep checking; true = required
+      kubernetes: false                             # --kubernetes / -k
+      container: false                              # --container-labels
+      dra: false                                    # --kubernetes-enable-dra (needs sources.dra)
+      hpc_jobs: false                               # --hpc-job-mapping-dir
+
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1
+    listen: ":9400"                                 # --address / -a
+
+sources:
+  dcgm:
+    # hostengine: ""                                # --remote-hostengine-info / -r; empty = embedded
+    watch:
+      max_keep_age: 10m                             # --watch-max-keep-age
+      max_keep_samples: 0                           # --watch-max-keep-samples
+    # detect_bind_unbind:
+    #   enabled: false                              # --enable-gpu-bind-unbind-watch
+    #   every: 1s                                   # --gpu-bind-unbind-poll-interval
+    # cleanup_timeout: 5m                           # --dcgm-cleanup-timeout; wait for DCGM to release watches
+    # embedded_log:                                 # --enable-dcgm-log; adding the block turns the log on
+    #   level: none                                 # --dcgm-log-level
+    #   file: stdout
+  # kubernetes:
+  #   pod_resources_socket: /var/lib/kubelet/pod-resources/kubelet.sock   # --pod-resources-kubelet-socket
+  #   gpu_id_type: uid                              # --kubernetes-gpu-id-type: uid | device-name
+  #   additional_resource_names: []                 # --nvidia-resource-names
+  #   virtual_gpus: false                           # --kubernetes-virtual-gpus
+  #   pod_uid: false                                # --kubernetes-enable-pod-uid
+  #   pod_labels:
+  #     enabled: false                              # --kubernetes-enable-pod-labels
+  #     allow: []                                   # --kubernetes-pod-label-allowlist-regex
+  # container:
+  #   runtime_socket: ""                            # --container-runtime-socket; empty = /var/run/docker.sock when container labels are on
+  # dra:
+  #   mode: kubernetes                              # file only; required for enrichment.dra
+  # hpc_jobs:
+  #   mapping_dir: /var/lib/dcgm-exporter/job-mapping   # --hpc-job-mapping-dir
+  #   max_file_bytes: 65536                         # --hpc-job-mapping-max-file-bytes
+  #   max_job_id_bytes: 256                         # --hpc-job-mapping-max-job-id-bytes
+  #   max_jobs_per_file: 64                         # --hpc-job-mapping-max-jobs-per-file
+
+server:
+  max_concurrent_scrapes: 16                        # --max-concurrent-scrapes
+  # read_timeout: 10s                               # --web-read-timeout
+  # write_timeout: 30s                              # --web-write-timeout
+  # systemd_socket: false                           # --web-systemd-socket
+  # web_config_file: ""                             # --web-config-file
+  # profiling: false                                # --enable-pprof (needs TLS or basic auth in web_config_file)
+
+observability:
+  metrics:
+    enabled: false                                  # --enable-exporter-metrics
+  # logs:
+  #   format: text                                  # --log-format: text | json
+  #   level: info                                   # --debug sets debug
+
+# debug_dump:
+#   enabled: false                                  # --dump-enabled
+#   directory: /tmp/dcgm-exporter-debug             # --dump-directory
+#   retention: 24h                                  # --dump-retention (whole hours); this key takes any duration, 0 = no age cleanup
+#   compression: true                               # --dump-compression
+#   min_interval: 1m                                # --dump-min-interval
+#   max_file_bytes: 16777216                        # --dump-max-file-bytes
+#   max_total_bytes: 268435456                      # --dump-max-total-bytes
+#   max_files: 128                                  # --dump-max-files
+
+# Flags with no key in this file:
+#   --config-file                   selects this file
+#   --disable-startup-validate      per-run escape hatch
+#   --fake-gpus                     tests only
+#   --configmap-data / -m           deprecated; mount the ConfigMap and use metrics[0].file
+#   --use-old-namespace / -o        flag only
+#   --no-hostname / -n              flag only
+#   --replace-blanks-in-model-name / -rbmn   flag only

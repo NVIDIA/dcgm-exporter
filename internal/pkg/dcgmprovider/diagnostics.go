@@ -23,7 +23,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -49,12 +48,14 @@ var dcgmStatusCodePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\berror code\s+(-\d+)\b`),
 }
 
+// dcgmStartupStatus holds a parsed DCGM status code and its known diagnostic, if any.
 type dcgmStartupStatus struct {
 	code       int
 	diagnostic dcgmerrors.Diagnostic
 	known      bool
 }
 
+// logDCGMInitFailure emits startup configuration and status details for a failed DCGM initialization.
 func logDCGMInitFailure(config *appconfig.Config, mode string, err error, extraAttrs ...slog.Attr) {
 	if isDCGMLibraryLoadError(err) {
 		extraAttrs = []slog.Attr{
@@ -74,10 +75,14 @@ func logDCGMInitFailure(config *appconfig.Config, mode string, err error, extraA
 	slog.Error(dcgmInitFailureMessage(mode), attrs...)
 }
 
+// isDCGMLibraryLoadError reports whether err, or an error it wraps, is the
+// *dcgm.LibraryLoadError that dcgm.Init returns when it cannot load libdcgm.
 func isDCGMLibraryLoadError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), dcgmLibraryName+" not found")
+	var loadErr *dcgm.LibraryLoadError
+	return errors.As(err, &loadErr)
 }
 
+// logDCGMFieldsInitFailure classifies and logs a DCGM Fields module initialization failure.
 func logDCGMFieldsInitFailure(config *appconfig.Config, statusCode int) {
 	status := classifyDCGMStatusCode(statusCode)
 	attrs, _ := dcgmStartupLogAttrs(config, dcgmInitModeFields)
@@ -87,6 +92,7 @@ func logDCGMFieldsInitFailure(config *appconfig.Config, statusCode int) {
 	slog.Error("Failed to initialize DCGM Fields module", attrs...)
 }
 
+// dcgmInitFailureMessage selects the startup error message for the DCGM connection mode.
 func dcgmInitFailureMessage(mode string) string {
 	switch mode {
 	case dcgmInitModeEmbedded:
@@ -98,6 +104,7 @@ func dcgmInitFailureMessage(mode string) string {
 	}
 }
 
+// dcgmStartupLogAttrs gathers mode, process, and configuration details and reports whether a hint exists.
 func dcgmStartupLogAttrs(config *appconfig.Config, mode string, extraAttrs ...slog.Attr) ([]any, bool) {
 	attrs := []any{slog.String("mode", mode)}
 	hasHint := false
@@ -131,6 +138,9 @@ func dcgmStartupLogAttrs(config *appconfig.Config, mode string, extraAttrs ...sl
 	return attrs, hasHint
 }
 
+// appendDCGMStatusAttrs adds the status code and an operator hint. The hint
+// goes under "hint", or under "dcgm_status_hint" when the caller already set
+// a hint.
 func appendDCGMStatusAttrs(attrs []any, status dcgmStartupStatus, hasHint bool) []any {
 	attrs = append(attrs, slog.Int("dcgm_status_code", status.code))
 	if status.known {
@@ -147,6 +157,7 @@ func appendDCGMStatusAttrs(attrs []any, status dcgmStartupStatus, hasHint bool) 
 	return append(attrs, slog.String("hint", unknownDCGMStatusHint))
 }
 
+// classifyDCGMStartupError extracts a DCGM status from typed errors or supported error text.
 func classifyDCGMStartupError(err error) (dcgmStartupStatus, bool) {
 	if err == nil {
 		return dcgmStartupStatus{}, false
@@ -168,11 +179,13 @@ func classifyDCGMStartupError(err error) (dcgmStartupStatus, bool) {
 	return classifyDCGMStatusCode(code), true
 }
 
+// classifyDCGMStatusCode resolves a DCGM status code through the shared diagnostic catalog.
 func classifyDCGMStatusCode(code int) dcgmStartupStatus {
 	diagnostic, ok := dcgmerrors.ClassifyCode(code)
 	return dcgmStartupStatus{code: code, diagnostic: diagnostic, known: ok}
 }
 
+// parseDCGMStatusCode extracts a signed status code from known go-dcgm error formats.
 func parseDCGMStatusCode(message string) (int, bool) {
 	for _, pattern := range dcgmStatusCodePatterns {
 		matches := pattern.FindStringSubmatch(message)

@@ -26,8 +26,10 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// pointer builds pointer-valued Prometheus fixture fields.
 func pointer[T any](value T) *T { return &value }
 
+// arbitraryContract supplies nonconsecutive switch/link IDs and varied values for dynamic matching.
 func arbitraryContract() Contract {
 	return Contract{
 		Version:     CurrentVersion,
@@ -57,6 +59,7 @@ func arbitraryContract() Contract {
 	}
 }
 
+// TestContractAcceptsArbitraryTopologyAndValues checks topology validation and generated counter rows.
 func TestContractAcceptsArbitraryTopologyAndValues(t *testing.T) {
 	contract := arbitraryContract()
 	if err := contract.Validate(); err != nil {
@@ -74,12 +77,14 @@ func TestContractAcceptsArbitraryTopologyAndValues(t *testing.T) {
 	}
 }
 
+// TestRead checks schema decoding, malformed input, and rejection of trailing data.
 func TestRead(t *testing.T) {
 	valid, err := json.Marshal(arbitraryContract())
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// Payload cases cover strict decoding independently of scrape matching.
 	tests := []struct {
 		name    string
 		payload []byte
@@ -111,6 +116,7 @@ func TestRead(t *testing.T) {
 	}
 }
 
+// TestContractAcceptsEmptyZeroEntityTelemetry accepts an empty topology and requires metrics for declared switches.
 func TestContractAcceptsEmptyZeroEntityTelemetry(t *testing.T) {
 	if err := (Contract{Version: CurrentVersion}).Validate(); err != nil {
 		t.Fatalf("Validate() zero-entity contract error = %v", err)
@@ -121,6 +127,7 @@ func TestContractAcceptsEmptyZeroEntityTelemetry(t *testing.T) {
 	}
 }
 
+// TestContractRejectsMismatchedLinkParentIdentity rejects a link whose switch label disagrees with its parent ID.
 func TestContractRejectsMismatchedLinkParentIdentity(t *testing.T) {
 	contract := arbitraryContract()
 	contract.Metrics[1].Samples[1].ParentID = 29
@@ -130,7 +137,9 @@ func TestContractRejectsMismatchedLinkParentIdentity(t *testing.T) {
 	}
 }
 
+// TestContractRejectsSamplesWithZeroEntityCount requires positive counts for observed switch or link samples.
 func TestContractRejectsSamplesWithZeroEntityCount(t *testing.T) {
+	// Each fixture observes a sample whose declared entity count is zero.
 	tests := []struct {
 		name     string
 		contract Contract
@@ -165,6 +174,7 @@ func TestContractRejectsSamplesWithZeroEntityCount(t *testing.T) {
 	}
 }
 
+// TestBatchesUseDCGMFieldLimit checks bounded field batches and the final partial batch.
 func TestBatchesUseDCGMFieldLimit(t *testing.T) {
 	contract := Contract{Version: CurrentVersion, SwitchCount: 1}
 	for id := 1; id <= RegularBatchSize+2; id++ {
@@ -181,6 +191,7 @@ func TestBatchesUseDCGMFieldLimit(t *testing.T) {
 	}
 }
 
+// TestValidateFamiliesUsesExactDynamicContract accepts scrape values and labels derived from the dynamic probe contract.
 func TestValidateFamiliesUsesExactDynamicContract(t *testing.T) {
 	contract := arbitraryContract()
 	families := familiesFor(contract.Metrics)
@@ -189,7 +200,9 @@ func TestValidateFamiliesUsesExactDynamicContract(t *testing.T) {
 	}
 }
 
+// TestValidateFamiliesRejectsContractMismatches rejects changed values, labels, types, families, and sample counts.
 func TestValidateFamiliesRejectsContractMismatches(t *testing.T) {
+	// mutate callbacks independently break one aspect of a fresh valid scrape.
 	tests := []struct {
 		name   string
 		mutate func(map[string]*dto.MetricFamily, []Metric)
@@ -252,6 +265,7 @@ func TestValidateFamiliesRejectsContractMismatches(t *testing.T) {
 	}
 }
 
+// familiesFor builds Prometheus families directly from a probe contract.
 func familiesFor(metrics []Metric) map[string]*dto.MetricFamily {
 	families := make(map[string]*dto.MetricFamily, len(metrics))
 	for _, expected := range metrics {

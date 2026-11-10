@@ -1,0 +1,58 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+exports_files(["README.md"])
+
+filegroup(
+    name = "source_files",
+    srcs = glob(["*.go"]),
+    visibility = ["//internal/e2e/scenario:__pkg__"],
+)
+
+go_library(
+    name = "container",
+    srcs = [
+        "doc.go",
+        "helpers.go",
+    ],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/container",
+    visibility = ["//visibility:public"],
+)
+
+# Keep the pure URL test in its untagged target below.
+# keep
+go_test(
+    name = "container_test",
+    srcs = [
+        "configuration_test.go",
+        "dcgm_library_loading_test.go",
+        "env_test.go",
+        "gpu_inventory_test.go",
+        "helpers_test.go",
+        "image_startup_test.go",
+        "log_format_test.go",
+        "remote_dcgm_uri_test.go",
+        "suite_test.go",
+    ],
+    data = ["//:container_testdata"],
+    embed = [":container"],
+    tags = [
+        "manual",
+        "requires-container",
+        "requires-docker",
+        "requires-gpu",
+    ],
+    deps = [
+        "//tests/internal/metriccontract",
+        "//tests/internal/nvidiasmi",
+        "//tests/internal/resultmarker",
+        "@com_github_onsi_ginkgo_v2//:ginkgo",
+        "@com_github_onsi_gomega//:gomega",
+        "@com_github_prometheus_client_model//go",
+    ],
+)
+
+go_test(
+    name = "helpers_unit_test",
+    srcs = ["helpers_unit_test.go"],
+    embed = [":container"],
+)

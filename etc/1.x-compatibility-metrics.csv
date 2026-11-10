@@ -1,3 +1,6 @@
+# Deprecated: this file will be removed in a later release. Use
+# default-counters.csv and update dashboards and alerts to its metric names.
+#
 # Format
 # If line starts with a '#' it is considered a comment
 # DCGM FIELD, Prometheus metric type, help message
@@ -15,8 +18,6 @@ dcgm_power_usage,              gauge, Power draw (in W).
 dcgm_total_energy_consumption, counter, Total energy consumption since boot (in mJ).
 
 # PCIe
-dcgm_fi_prof_pcie_tx_bytes,  counter, Total number of bytes transmitted through PCIe TX via NVML.
-dcgm_fi_prof_pcie_rx_bytes,  counter, Total number of bytes received through PCIe RX via NVML.
 dcgm_pcie_replay_counter, counter, Total number of PCIe retries.
 
 # Utilization (the sample period varies depending on the product)

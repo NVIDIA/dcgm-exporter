@@ -33,6 +33,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 )
 
+// TestMockReader_ReadReturnsConfiguredError checks the empty read and configured failure.
 func TestMockReader_ReadReturnsConfiguredError(t *testing.T) {
 	want := errors.New("entropy unavailable")
 	reader := &MockReader{Err: want}
@@ -43,10 +44,12 @@ func TestMockReader_ReadReturnsConfiguredError(t *testing.T) {
 	assert.ErrorIs(t, err, want)
 }
 
+// TestRequireLinux exercises the platform guard used by Linux-only tests.
 func TestRequireLinux(t *testing.T) {
 	RequireLinux(t)
 }
 
+// TestMockDeviceInfoHelpers checks GPU hierarchy and CPU/switch watch membership fixtures.
 func TestMockDeviceInfoHelpers(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
@@ -80,7 +83,9 @@ func TestMockDeviceInfoHelpers(t *testing.T) {
 	assert.Empty(t, switchInfo.GPUs())
 }
 
+// TestGetStructPrivateFieldValue checks typed access to an unexported fixture field.
 func TestGetStructPrivateFieldValue(t *testing.T) {
+	// sample keeps its value unexported so the helper must use addressable storage.
 	type sample struct {
 		value string
 	}
@@ -91,6 +96,7 @@ func TestGetStructPrivateFieldValue(t *testing.T) {
 	assert.Equal(t, "secret", got)
 }
 
+// TestCreateTmpDir checks that the returned cleanup removes the fixture directory.
 func TestCreateTmpDir(t *testing.T) {
 	path, cleanup := CreateTmpDir(t)
 	_, err := stdos.Stat(path)
@@ -102,6 +108,7 @@ func TestCreateTmpDir(t *testing.T) {
 	assert.True(t, stdos.IsNotExist(err))
 }
 
+// TestMockPodResourcesServer checks per-pod, single-pod, and allocatable device views.
 func TestMockPodResourcesServer(t *testing.T) {
 	server := NewMockPodResourcesServer("nvidia.com/gpu", []string{"GPU-0", "GPU-1"})
 
@@ -120,7 +127,9 @@ func TestMockPodResourcesServer(t *testing.T) {
 	assert.Equal(t, []string{"GPU-0", "GPU-1"}, allocatable.Devices[0].DeviceIds)
 }
 
+// TestGetFields checks data/function selection and ignores nonstruct inputs.
 func TestGetFields(t *testing.T) {
+	// sample separates a data field from an inert function field for selection checks.
 	type sample struct {
 		Name string
 		fn   func()
@@ -142,6 +151,7 @@ func TestGetFields(t *testing.T) {
 	assert.Empty(t, GetFields("not a struct", All))
 }
 
+// TestStrToByteArray checks text bytes, zero padding, and the fixed buffer length.
 func TestStrToByteArray(t *testing.T) {
 	got := StrToByteArray("dcgm")
 
@@ -151,6 +161,7 @@ func TestStrToByteArray(t *testing.T) {
 	assert.Len(t, got, 4096)
 }
 
+// TestStartMockServer checks Unix socket creation and bounded server shutdown.
 func TestStartMockServer(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "podresources.sock")
 	server := grpc.NewServer()

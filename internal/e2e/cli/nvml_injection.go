@@ -17,58 +17,39 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/NVIDIA/dcgm-exporter/internal/e2e/config"
-	e2eexec "github.com/NVIDIA/dcgm-exporter/internal/e2e/exec"
 )
 
-func prepareNVMLInjection(opts *config.Tests, requireFiles bool) error {
-	if opts.DCGMNVMLInjectionYAML == "" {
+func prepareNVMLInjection(opts *config.TestOptions, requireFiles bool) error {
+	return prepareYAMLPath("--dcgm-nvml-injection-yaml", &opts.DCGMNVMLInjectionYAML, requireFiles)
+}
+
+func prepareNVSDMMock(opts *config.TestOptions, requireFiles bool) error {
+	return prepareYAMLPath("--dcgm-nvsdm-mock-yaml", &opts.DCGMNVSDMMockYAML, requireFiles)
+}
+
+func prepareYAMLPath(flagName string, path *string, requireFile bool) error {
+	if *path == "" {
 		return nil
 	}
-	absolute, err := filepath.Abs(opts.DCGMNVMLInjectionYAML)
+	absolute, err := filepath.Abs(*path)
 	if err != nil {
-		return fmt.Errorf("resolve --dcgm-nvml-injection-yaml: %w", err)
+		return fmt.Errorf("resolve %s: %w", flagName, err)
 	}
-	opts.DCGMNVMLInjectionYAML = absolute
-	if !requireFiles {
+	*path = absolute
+	if !requireFile {
 		return nil
 	}
 	info, err := os.Stat(absolute)
 	if err != nil {
-		return fmt.Errorf("read --dcgm-nvml-injection-yaml: %w", err)
+		return fmt.Errorf("read %s: %w", flagName, err)
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("--dcgm-nvml-injection-yaml must name a regular file")
+		return fmt.Errorf("%s must name a regular file", flagName)
 	}
 	return nil
-}
-
-func dcgmFieldsSource(ctx context.Context, root string, runner e2eexec.Runner) (string, error) {
-	packaged := filepath.Join(root, "etc", "go-dcgm-const-fields.go")
-	if info, err := os.Stat(packaged); err == nil && info.Mode().IsRegular() {
-		return packaged, nil
-	}
-	result := runner.Run(ctx, e2eexec.Command{
-		Name: "go",
-		Args: []string{"list", "-m", "-f", "{{.Dir}}", "github.com/NVIDIA/go-dcgm"},
-		Dir:  root,
-	})
-	if result.ExitCode != 0 {
-		return "", fmt.Errorf("locate go-dcgm field definitions: %s%s", result.Stdout, result.Stderr)
-	}
-	path := filepath.Join(strings.TrimSpace(string(result.Stdout)), "pkg", "dcgm", "const_fields.go")
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("read go-dcgm field definitions: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("go-dcgm field definitions must be a regular file: %s", path)
-	}
-	return path, nil
 }

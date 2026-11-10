@@ -15,65 +15,89 @@
 image:
   repository: nvcr.io/nvidia/k8s/dcgm-exporter
   pullPolicy: IfNotPresent
-  # Image tag defaults to AppVersion, but you can use the tag key
-  # for the image tag, e.g:
-  tag: 4.6.1-4.8.4-distroless
+  # The exporter version. Each release also publishes the same image as
+  # <DCGM version>-<exporter version>-distroless. Leave tag empty to use the
+  # chart's appVersion.
+  tag: 4.9.0
   # Optional digest pin. When set, the chart renders repository@digest and
   # ignores tag for the image reference.
   digest: ""
 
-# Add dcgm-exporter command line arguments here. When empty, the exporter uses
-# its built-in default collectors path.
+# Extra dcgm-exporter command line arguments, for flags with no `config` key.
+# Example: ["-n"] removes the hostname label. Flags and extraEnv override
+# `config`, as the exporter applies them over its config file; prefer `config`
+# for settings it has a key for. While the chart renders `config`, it rejects
+# flags and extraEnv for settings its objects or checks use: the listen
+# address, metrics file, web config file, debug dump enabled and directory, and
+# the pod label, pod UID and DRA switches.
 arguments: []
-# NOTE: in general, add any command line arguments to arguments above and they
-# will be passed through.
-# Use "-r", "<HOST>:<PORT>" or a DCGM connection string to connect to an already running DCGM host engine.
-# Connection string formats: "tcp://<HOST>:<PORT>", "unix:///<SOCKET_PATH>", or "vsock://<CID>:<PORT>".
-# Example arguments: ["-r", "host123:5555"]
-# Example VSOCK arguments: ["-r", "vsock://3:5555"]
-# Use "-n" to remove the hostname tag from the output.
-# Example arguments: ["-n"]
-# Use "-d" to specify the devices to monitor. -d must be followed by a string
-# in the following format: f, g[:numeric_range], i[:numeric_range], or
-# g[:numeric_range]+i[:numeric_range]. i+g ordering is also accepted.
-# The flex option f is the default and cannot be combined with g or i.
-# Where a numeric range is something like 0-4 or 0,2,4, etc.
-# Example arguments: ["-d", "f"] to monitor all GPUs or GPU instances, or
-# ["-d", "g:0-3"] to monitor GPUs 0-3, or ["-d", "i"] to monitor GPU instances.
-# Use "-m" to specify the namespace and name of a configmap containing
-# the watched exporter fields.
-# Example arguments: ["-m", "default:exporter-metrics-config-map"]
-# If adding "--enable-pprof", also enable tlsServerConfig and/or basicAuth.
-# Pprof requires a web config file so /debug/pprof/ is protected by
-# exporter-toolkit authentication or TLS.
+# To turn on pprof, set config.server.profiling=true and enable
+# tlsServerConfig or basicAuth; profiling needs a web config with TLS or
+# basic auth.
 
-# Optional dcgm-exporter YAML configuration. YAML is read at exporter startup.
-# Changes to the YAML file require restarting the exporter pod.
+# The exporter's config file, rendered into a ConfigMap. Change one key with
+# --set, for example --set config.sources.dcgm.watch.max_keep_age=5m; a list
+# such as `metrics` is replaced whole. The listen port must equal service.port.
 config:
-  enabled: false
-  # When true, the chart creates a ConfigMap from config.data. When false,
-  # config.name must reference an existing ConfigMap.
-  create: true
-  # Defaults to "<release-name>-dcgm-exporter-config" when empty.
-  name: ""
-  key: config.yaml
-  mountPath: /etc/dcgm-exporter/config.yaml
-  data: |
-    version: 2
-    # Detached-GPU support requires DCGM 4.5+ and an NVIDIA 590+ driver.
-    sources:
-      dcgm:
-        detectBindUnbind:
-          enabled: false
-          pollInterval: 1s
+  version: 2
+  metrics:
+    - name: default
+      # The chart's metrics list (customMetrics, or the default list), mounted
+      # from the <fullname>-metrics ConfigMap.
+      file: /etc/dcgm-exporter/chart/metrics/default-counters.csv
+      every: 30s
+      enrichment:
+        kubernetes: auto    # pod, namespace and container names
+        container: false
+        dra: false
+        hpc_jobs: false
+  outputs:
+    prometheus:
+      type: prometheus
+      schema: dcgm/v1
+      listen: ":9400"      # port must equal service.port
+  sources:
+    dcgm:
+      # hostengine: host123:5555  # a running DCGM host engine (tcp://, unix://, vsock://); omit for embedded
+      watch:
+        max_keep_age: 10m
+        max_keep_samples: 0
+    # kubernetes:           # needs the RBAC from kubernetes.rbac.create
+    #   pod_uid: false
+    #   pod_labels:
+    #     enabled: false
+    #     allow: []         # RE2 patterns, required when enabled; [".*"] keeps every label
+    # dra:
+    #   mode: kubernetes    # with metrics[0].enrichment.dra: true
+  server:
+    max_concurrent_scrapes: 16
+    # read_timeout: 10s     # time to read a scrape request
+    # write_timeout: 30s    # time to build and write a scrape response; keep above serviceMonitor.scrapeTimeout
+  observability:
     metrics:
-      file: /etc/dcgm-exporter/default-counters.csv
-      enableExporterMetrics: false
-    collections:
-      - name: scrape
-        every: 30s
-        metrics:
-          include: ["*"]
+      enabled: false
+  # debug_dump:            # the chart mounts an emptyDir sized by debugDump.sizeLimit
+  #   enabled: false
+  #   directory: /tmp/dcgm-exporter-debug
+  #   retention: 24h
+  #   compression: true
+
+# Where the exporter configuration file comes from. The chart creates a
+# ConfigMap named <fullname>-config from `config` unless existingName is set
+# or `config` is null. The chart mounts the `key` file in the directory
+# /etc/dcgm-exporter/chart/config and sets DCGM_EXPORTER_CONFIG_FILE to it.
+# Every chart-owned config file (the exporter config, the metrics list and the
+# web config) is under /etc/dcgm-exporter/chart/, which the image does not use;
+# TLS certificates mount at /etc/dcgm-exporter/tls.
+configMap:
+  # Mount a ConfigMap that already exists instead of creating one. Its `key` must
+  # hold a complete exporter configuration file; `config` is not used. The exporter
+  # reads this file only at startup, so restart the pods after editing it. In the
+  # file, point metrics[].file at /etc/dcgm-exporter/chart/metrics/default-counters.csv
+  # to use the chart's metrics list.
+  existingName: ""
+  # Key inside the ConfigMap that holds the config file.
+  key: config.yaml
 
 # Image pull secrets for container images
 imagePullSecrets: []
@@ -91,7 +115,9 @@ namespaceOverride: ""
 # Default: false
 hostPID: false
 
-# Defines the runtime class that will be used by the pod
+# Use a Kubernetes RuntimeClass when the default runtime does not inject the
+# NVIDIA driver. Example: nvidia. Leave empty when the default runtime already
+# provides NVIDIA support.
 runtimeClassName: ""
 
 # Defines the priority class that will be used by the pod
@@ -111,14 +137,17 @@ serviceAccount:
   name:
 
   # Whether to mount the SA token on the DaemonSet pod and the ServiceAccount.
-  # If not set, derived from kubernetes.enablePodLabels/enablePodUID with rbac.create, or kubernetesDRA.enabled.
+  # If not set, mounted when kubernetes.rbac.create is true and pod labels, pod UID or DRA is on.
+  # With RBAC you manage yourself, set it to true.
   # Setting this to false disables in-cluster Kubernetes API authentication for those features.
   automountServiceAccountToken:
 
+# Exactly one of maxUnavailable and maxSurge must be nonzero: Kubernetes rejects
+# a DaemonSet with both set above 0 or both at 0, and so does the chart.
 rollingUpdate:
   # Specifies maximum number of DaemonSet pods that can be unavailable during the update
   maxUnavailable: 1
-  # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during during an update
+  # Specifies maximum number of nodes with an existing available DaemonSet pod that can have an updated DaemonSet pod during an update
   maxSurge: 0
 
 # Labels to be added to dcgm-exporter pods
@@ -157,12 +186,8 @@ service:
   # Accepts either "Cluster" or "Local", choose Local if you want to route internal traffic within the node only
   internalTrafficPolicy: Cluster
   clusterIP: ""
+  # Service, container and probe port; config.outputs.<name>.listen must use it.
   port: 9400
-  address: ":9400"
-  # HTTP server read timeout for inbound scrape requests
-  webReadTimeout: 10s
-  # HTTP server write timeout for generating and returning scrape responses
-  webWriteTimeout: 30s
   # Annotations to add to the service
   annotations: {}
 
@@ -174,10 +199,12 @@ resources:
   requests:
     cpu: 100m
     memory: 128Mi
+    ephemeral-storage: 100Mi
 serviceMonitor:
   apiVersion: "monitoring.coreos.com/v1"
   enabled: true
   interval: 30s
+  # Keep below config.server.write_timeout (default 30s) and no greater than interval.
   scrapeTimeout: 25s
   honorLabels: false
   # Additional Kubernetes metadata to expose during target discovery.
@@ -223,25 +250,35 @@ extraHostVolumes: []
 #- name: host-binaries
 #  hostPath: /opt/bin
 
-extraConfigMapVolumes:
-  - name: exporter-metrics-volume
-    configMap:
-      name: exporter-metrics-config-map
-      items:
-      - key: metrics
-        path: default-counters.csv
-
-extraVolumeMounts:
-  - name: exporter-metrics-volume
-    mountPath: /etc/dcgm-exporter/default-counters.csv
-    subPath: default-counters.csv
+# Your own ConfigMap volumes and container mounts. The chart mounts its config,
+# metrics list and web config itself, so leave these empty unless you add files.
+# Mounting at /etc/dcgm-exporter/default-counters.csv fails the render while the
+# chart renders `config` and no config.metrics[].file names that path (the default
+# does not): list the metrics in config.metrics[].fields instead, or point
+# config.metrics[].file at your own file.
+extraConfigMapVolumes: []
+#- name: extra-metrics
+#  configMap:
+#    name: my-metrics
+#
+extraVolumeMounts: []
+#- name: extra-metrics
+#  mountPath: /etc/dcgm-exporter/extra
+#  readOnly: true
 
 extraEnv: []
+
+# Extra init containers for the pod, as full Kubernetes container specs.
+initContainers: []
 
 # Path to the kubelet socket for /pod-resources
 kubeletPath: "/var/lib/kubelet/pod-resources"
 
-# HTTPS configuration
+# HTTPS configuration. With TLS or basic auth on, the chart renders a web config
+# file, mounts it at /etc/dcgm-exporter/chart/web-config/web-config.yaml and sets
+# config.server.web_config_file to it; with configMap.existingName, set
+# server.web_config_file to that path in your file (or pass --web-config-file
+# with that path for a version 1 file).
 tlsServerConfig:
   # Enable or disable HTTPS configuration
   enabled: false
@@ -259,8 +296,10 @@ tlsServerConfig:
   # For more detail on clientAuth options:
   # https://golang.org/pkg/crypto/tls/#ClientAuthType
   #
-  # NOTE: If you want to enable client authentication, you need to use
-  # RequireAndVerifyClientCert. Other values are insecure.
+  # NOTE: To make client certificates mandatory, use RequireAndVerifyClientCert.
+  # VerifyClientCertIfGiven verifies a certificate only when the client sends one,
+  # so clients without one still connect. RequestClientCert and
+  # RequireAnyClientCert do not verify certificates.
   clientAuthType: ""
   # TLS Key for HTTPS - ignored if existingSecret is provided
   key: ""
@@ -270,175 +309,100 @@ tlsServerConfig:
   ca: ""
 
 basicAuth:
-  #Object containing <user>:<passwords> key-value pairs for each user that will have access via basic authentication
+  # Object containing <user>:<password> key-value pairs for each user that will have access via basic authentication.
+  # The chart hashes these passwords in the generated web-config Secret. Treat Helm values and release data as sensitive.
   users: {}
 
-# Kubernetes integration settings
+# Kubernetes integration settings. Pod labels, pod UID and DRA labels are set in
+# `config`: sources.kubernetes.pod_labels, sources.kubernetes.pod_uid, and
+# metrics[0].enrichment.dra with sources.dra.mode: kubernetes.
 kubernetes:
-  # Enable Kubernetes pod labels in metrics
-  # When enabled, metrics will include labels from the pods that are using the GPUs
-  # This requires cluster-level read permissions to pods
-  enablePodLabels: false
-
-  # Enable Kubernetes pod UID in metrics
-  # When enabled, metrics will include the pod UID as an attribute for the pods that are using the GPUs
-  # This requires cluster-level read permissions to pods
-  enablePodUID: false
-
-  # Pod label filtering configuration
-  # Filter which pod labels are included in metrics using regex patterns
-  # Empty list means all labels are included (default behavior)
-  # Examples:
-  #   podLabelAllowlistRegex:
-  #     - "^app$"                         # Exact match for "app" label
-  #     - "^app\\.kubernetes\\.io/.*"     # All labels starting with app.kubernetes.io/
-  #     - "^(tier|environment|version)$"  # Match tier, environment, or version labels
-  podLabelAllowlistRegex: []
-
   # RBAC settings for Kubernetes integration
   rbac:
-    # Automatically creates ClusterRole and ClusterRoleBinding for pod access when enablePodLabels or enablePodUID is true
-    # Set to false if you want to manage RBAC resources manually
+    # Create a ClusterRole and binding when `config` turns on pod labels, pod UID or
+    # DRA labels: Pods get/list/watch, plus ResourceSlices for DRA. With
+    # configMap.existingName the chart cannot read the file and creates none. Set
+    # false to manage them yourself, and set serviceAccount.automountServiceAccountToken
+    # when the exporter needs a token.
     create: true
 
-# Runtime object debug dump configuration for troubleshooting
+# Storage for runtime object debug dumps. Turn dumps on with
+# config.debug_dump.enabled; config.debug_dump holds the directory, retention,
+# compression and size and count limits. When dumps are on, the chart mounts an
+# emptyDir at the dump directory unless values supply a volume named debug-dumps.
 debugDump:
-  # Enable file-based debugging dumps for troubleshooting
-  enabled: false
-  # Directory to store debug dump files
-  directory: "/tmp/dcgm-exporter-debug"
-  # Retention period for debug dump files in hours (0 = no cleanup)
-  retention: 24
-  # Use gzip compression for debug dump files
-  compression: true
-
-# Enable DRA to capture metrics associated with GPUs managed by NVIDIA k8s-dra-driver (https://github.com/NVIDIA/k8s-dra-driver-gpu)
-# default: false
-kubernetesDRA:
-  enabled: false
+  # Size limit of the chart's dump emptyDir. Keep it above
+  # config.debug_dump.max_total_bytes (256MiB by default).
+  sizeLimit: 512Mi
 
 
+# customMetrics is deprecated: list the metrics in config.metrics[].fields instead of setting `file`.
+# Helm replaces the whole metrics list, so repeat the rest of the entry:
+#   config:
+#     metrics:
+#       - name: default
+#         fields:
+#           - {name: DCGM_FI_DEV_GPU_TEMP_CELSIUS, prometheus_type: gauge, help: GPU temperature (in C).}
+#           - {name: DCGM_FI_DEV_BOARD_POWER_WATTS, prometheus_type: gauge, help: Power draw (in W).}
+#         every: 30s
+#         enrichment:
+#           kubernetes: auto
+#           container: false
+#           dra: false
+#           hpc_jobs: false
+#
 # Customized list of metrics to emit. Expected to be in the same format (CSV) as the default list.
 # Must be the complete list and is not additive. If unset, the default list will take effect.
+# The chart mounts it at /etc/dcgm-exporter/chart/metrics/default-counters.csv. The
+# exporter reads it only when its metrics file setting names that path:
+#   - with the chart's `config`: a config.metrics[].file must name it (the default
+#     does); otherwise the render fails.
+#   - with configMap.existingName or `config: null`: set metrics[].file in your
+#     config file, or pass -f, with that path. The chart cannot check this; its
+#     install notes name the path.
+# Running pods reload an edited list without a restart.
 # customMetrics: |
-  # Format
-  # If line starts with a '#' it is considered a comment
-  # DCGM FIELD, Prometheus metric type, help message
-  
-  # Clocks
-  # DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
-  # DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
-  
-  # Temperature
-  # DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in C).
-  # DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
-  
-  # Power
-  # DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
-  # DCGM_FI_DEV_POWER_MGMT_LIMIT,         gauge, Configured power management limit (in W).
-  # DCGM_FI_DEV_ENFORCED_POWER_LIMIT,     gauge, Effective power limit enforced by the driver after all limiters (in W).
-  # DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since the driver was last reloaded (in mJ).
-  
-  # PCIE
-  # PCIe throughput profiling metrics are documented in the DCP metrics section below.
-  # DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
-  
-  # Utilization (the sample period varies depending on the product)
-  # DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
-  # DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
-  # DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
-  # DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
-  
-  # Errors and violations
-  # DCGM_FI_DEV_XID_ERRORS,            gauge,   Value of the last XID error encountered.
-  # DCGM_EXP_CLOCK_EVENTS_TOTAL, counter, cumulative clock events observed since exporter start (edge-counted)
-  # DCGM_EXP_XID_ERRORS_TOTAL, counter, cumulative XID errors observed since exporter start
-  # DCGM_FI_DEV_POWER_VIOLATION,       counter, Throttling duration due to power constraints (in ns).
-  # DCGM_FI_DEV_THERMAL_VIOLATION,     counter, Throttling duration due to thermal constraints (in ns).
-  # DCGM_FI_DEV_SYNC_BOOST_VIOLATION,  counter, Throttling duration due to sync-boost constraints (in ns).
-  # DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limit constraints (in ns).
-  # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in ns).
-  # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in ns).
-  
-  # Fabric health
-  # DCGM_FI_DEV_FABRIC_HEALTH_SUMMARY, gauge, Overall health of the GPU fabric.
-  # DCGM_FI_DEV_FABRIC_HEALTH_MASK,    gauge, GPU fabric health status mask.
+#   # DCGM field, Prometheus type, help text
+#   DCGM_FI_DEV_GPU_TEMP_CELSIUS, gauge, GPU temperature (in C).
+#   DCGM_FI_DEV_BOARD_POWER_WATTS, gauge, Power draw (in W).
 
-  # Memory usage
-  # DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
-  # DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
-  
-  # ECC
-  # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
-  # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL, counter, Total number of double-bit volatile ECC errors.
-  # DCGM_FI_DEV_ECC_SBE_AGG_TOTAL, counter, Total number of single-bit persistent ECC errors.
-  # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
-  
-  # Retired pages
-  # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
-  # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
-  # DCGM_FI_DEV_RETIRED_PENDING, gauge, Whether pages are pending retirement (1 means pending and 0 means not pending).
-  
-  # NVLink
-  # NVLink error counters for pre-Hopper GPUs
-  # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_TOTAL, counter, Total number of NVLink flow-control CRC errors across all lanes.
-  # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_TOTAL, counter, Total number of NVLink data CRC errors across all lanes.
-  # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_TOTAL,   counter, Total number of NVLink replay errors across all lanes.
-  # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_TOTAL, counter, Total number of NVLink recovery errors across all lanes.
-  # NVLink data-link error counters for Hopper GPUs
-  # DCGM_FI_DEV_NVLINK_CRC_ERROR_TOTAL, counter, Total number of NVLink data-link CRC errors.
-  # DCGM_FI_DEV_NVLINK_RECOVERY_TOTAL,  counter, Total number of NVLink data-link recovery errors.
-  # DCGM_FI_DEV_NVLINK_REPLAY_TOTAL,    counter, Total number of NVLink data-link replay errors.
-  # NVLink recovery counters for Blackwell and newer GPUs
-  # DCGM_FI_DEV_NVLINK_RECOVERY_SUCCESSFUL_TOTAL, counter, Total number of successful NVLink recovery events across all links.
-  # DCGM_FI_DEV_NVLINK_RECOVERY_FAILED_TOTAL,     counter, Total number of failed NVLink recovery events across all links.
-  # DCGM_FI_DEV_NVLINK_RECOVERY_EVENT_TOTAL,      counter, Total number of NVLink recovery events across all links.
-  # DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, gauge, Aggregate NVLink throughput across all lanes (in MB/s).
-  # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0, gauge, NVLink lane 0 throughput (in MB/s).
-  
-  # VGPU License status
-  # DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
-  
-  # Remapped rows
-  # DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
-  # DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
-  # DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
-  
-  # DCP metrics
-  # DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
-  # DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
-  # DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
-  # DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
-  # DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
-  # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
-  # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
-  # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
-  # DCGM_FI_PROF_PCIE_TX_BYTES,      gauge, The rate of data transmitted over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
-  # DCGM_FI_PROF_PCIE_RX_BYTES,      gauge, The rate of data received over the PCIe bus - including both protocol headers and data payloads - in bytes per second.
-  # DCGM_FI_PROF_SM_CYCLES_ELAPSED_TOTAL, counter, Total elapsed SM cycles.
-  # DCGM_FI_PROF_SM_CYCLES_ACTIVE_TOTAL,  counter, Total SM cycles with active warps.
-  # DCGM_FI_PROF_MMA_CYCLES_ACTIVE_TOTAL, counter, Total MMA tensor cycles active.
-  # DCGM_FI_PROF_DMMA_CYCLES_ACTIVE_TOTAL, counter, Total DMMA tensor cycles active.
-  # DCGM_FI_PROF_HMMA_CYCLES_ACTIVE_TOTAL, counter, Total HMMA tensor cycles active.
-  # DCGM_FI_PROF_IMMA_CYCLES_ACTIVE_TOTAL, counter, Total IMMA tensor cycles active.
-  # DCGM_FI_PROF_DFMA_CYCLES_ACTIVE_TOTAL, counter, Total DFMA tensor cycles active.
-  # DCGM_FI_PROF_PCIE_TX_BYTES_TOTAL,     counter, Total PCIe transmitted bytes.
-  # DCGM_FI_PROF_PCIE_RX_BYTES_TOTAL,     counter, Total PCIe received bytes.
-  # DCGM_FI_PROF_INT_CYCLES_ACTIVE_TOTAL, counter, Total integer pipe cycles active.
-  # DCGM_FI_PROF_FP64_CYCLES_ACTIVE_TOTAL, counter, Total FP64 pipe cycles active.
-  # DCGM_FI_PROF_FP32_CYCLES_ACTIVE_TOTAL, counter, Total FP32 pipe cycles active.
-  # DCGM_FI_PROF_FP16_CYCLES_ACTIVE_TOTAL, counter, Total FP16 pipe cycles active.
+# The startup probe gives a slow start, such as a large metric file on a node
+# with many GPUs, up to periodSeconds x failureThreshold (5 minutes) to begin
+# serving. The liveness and readiness probes start only after it succeeds, so
+# they need no initial delay. With the startup probe disabled they wait 45
+# seconds unless initialDelaySeconds is set.
+startupProbe:
+  enabled: true
+  periodSeconds: 5
+  failureThreshold: 60
+  # timeoutSeconds uses the Kubernetes default when omitted.
+  # timeoutSeconds: 1
 
 livenessProbe:
-  initialDelaySeconds: 45
+  # initialDelaySeconds: 0
   periodSeconds: 5
   # timeoutSeconds and failureThreshold use the Kubernetes defaults when omitted.
   # timeoutSeconds: 1
   # failureThreshold: 3
 
-readinessProbe:
-  initialDelaySeconds: 45
-  # periodSeconds, timeoutSeconds, and failureThreshold use Kubernetes defaults when omitted.
+# Readiness probe settings left out use the Kubernetes defaults. To set one,
+# replace {} with a mapping, for example:
+readinessProbe: {}
+  # initialDelaySeconds: 0
   # periodSeconds: 10
   # timeoutSeconds: 1
   # failureThreshold: 3
+
+# NetworkPolicy that admits only allowedPeers to the metrics TCP port. Needs a CNI
+# that enforces NetworkPolicy; the chart rejects it with hostNetwork: true.
+networkPolicy:
+  enabled: false
+  # NetworkPolicy peers. [] denies all ingress; a peer {} admits every source.
+  allowedPeers: []
+  # For example:
+  # - namespaceSelector:
+  #     matchLabels:
+  #       kubernetes.io/metadata.name: monitoring
+  #   podSelector:
+  #     matchLabels:
+  #       app.kubernetes.io/name: prometheus

@@ -14,9 +14,9 @@
 # limitations under the License.
 
 # Stage every helper-derived file copied into the distroless image and record
-# its provenance. The notice generator rejects staged files that are absent
-# from this manifest, so this script is the single source of truth for the
-# helper-to-runtime filesystem delta.
+# its provenance. The final count check requires a record for every staged
+# file or link; the notice generator uses those records for package attribution.
+# This script owns the helper-to-runtime filesystem delta.
 
 set -Eeuo pipefail
 export LC_ALL=C
@@ -77,25 +77,59 @@ stage_file() {
     }
 
     mkdir -p "$(dirname "$staged_path")"
-    cp --archive --no-preserve=ownership "$source" "$staged_path"
+    cp --archive --no-preserve=ownership,xattr "$source" "$staged_path"
+    chown --no-dereference root:root "$staged_path"
+    # Public data is read-only; executable files retain only ordinary execute bits.
+    # Do not chmod links: their targets may be outside the staging tree.
+    if [[ ! -L "$staged_path" ]]; then
+        if [[ -x "$source" ]]; then
+            chmod 0755 "$staged_path"
+        else
+            chmod 0644 "$staged_path"
+        fi
+    fi
     printf '%s\t%s\t%s\n' "$category" "$source" "$destination" >> "$manifest"
 }
 
-# stage_pattern stages every file matching one required runtime-library pattern.
-stage_pattern() {
-    local category="$1"
-    local destination_directory="$2"
-    shift 2
+# stage_package_libraries selects required package libraries and preserves their paths.
+stage_package_libraries() {
+    local package_names package_files pattern source
+    local matched
+    local -a installed_packages=() selected_files=()
 
     [[ "$#" -gt 0 ]] || {
-        echo "Runtime library pattern for $destination_directory matched no files" >&2
+        echo "No runtime library patterns supplied" >&2
         exit 1
     }
 
-    local source
-    for source in "$@"; do
-        stage_file "$category" "$source" "${destination_directory}/$(basename "$source")"
+    package_names="$(dpkg-query --show --showformat='${db:Status-Status} ${binary:Package}\n' |
+        awk '$1 == "installed" { print $2 }')"
+    mapfile -t installed_packages <<< "$package_names"
+    package_files="$(dpkg-query --listfiles "${installed_packages[@]}" | sort -u)"
+
+    for pattern in "$@"; do
+        matched=false
+        while IFS= read -r source; do
+            # Selectors are shell patterns, not literal paths.
+            # shellcheck disable=SC2254
+            case "$source" in
+                $pattern)
+                    selected_files+=("$source")
+                    matched=true
+                    ;;
+            esac
+        done <<< "$package_files"
+        [[ "$matched" = true ]] || {
+            echo "Runtime library pattern $pattern matched no package files" >&2
+            exit 1
+        }
     done
+
+    # Select each file once even when required patterns overlap.
+    package_files="$(printf '%s\n' "${selected_files[@]}" | sort -u)"
+    while IFS= read -r source; do
+        stage_file package "$source" "$source"
+    done <<< "$package_files"
 }
 
 # stage_link creates and records a verified runtime symlink.
@@ -116,6 +150,7 @@ stage_link() {
     }
     mkdir -p "$(dirname "$staged_path")"
     ln -s "$target" "$staged_path"
+    chown --no-dereference root:root "$staged_path"
     [[ -e "$staged_path" ]] || {
         echo "Synthetic link target is not staged: $destination -> $target" >&2
         exit 1
@@ -147,10 +182,14 @@ stage_runtime_libraries() {
     local architecture_directory="$1"
     local library_destination="/usr/lib/${architecture_directory}"
 
-    stage_pattern package "$library_destination" /usr/lib/"$architecture_directory"/libdcgm*
-    stage_pattern package "$library_destination" /usr/lib/"$architecture_directory"/libnvperf_dcgm*
-    stage_pattern package "$library_destination" /usr/lib/"$architecture_directory"/libcap.so*
-    stage_pattern package "$library_destination" /usr/lib/"$architecture_directory"/libtinfo.so*
+    # Require Sysmon even when other modules are present.
+    stage_package_libraries \
+        "$library_destination/libdcgm*" \
+        '/*/libdcgmmodule*.so*' \
+        '/*/libdcgmmodulesysmon.so*' \
+        "$library_destination/libnvperf_dcgm*" \
+        "$library_destination/libcap.so*" \
+        "$library_destination/libtinfo.so*"
     stage_link \
         package \
         "/usr/lib/${architecture_directory}/libnvperf_dcgm_host.so" \
@@ -197,7 +236,6 @@ stage_runtime_metadata() {
 stage_runtime_files() {
     local architecture_directory
 
-    shopt -s nullglob
     architecture_directory="$(architecture_library_directory)"
 
     stage_runtime_libraries "$architecture_directory"

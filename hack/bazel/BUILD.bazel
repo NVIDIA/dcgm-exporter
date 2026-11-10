@@ -1,0 +1,10 @@
+filegroup(
+    name = "artifact_scripts",
+    srcs = [
+        "run.sh",
+        "stage-artifacts.sh",
+        "workspace-status.sh",
+        "//hack:utils.sh",
+        "//hack/package:export-archive.sh",
+    ],
+)

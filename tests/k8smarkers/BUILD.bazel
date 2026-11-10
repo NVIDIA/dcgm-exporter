@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "k8smarkers",
+    srcs = ["markers.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/tests/k8smarkers",
+    visibility = ["//visibility:public"],
+)

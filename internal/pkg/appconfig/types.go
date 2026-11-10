@@ -19,10 +19,9 @@ package appconfig
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
-
-	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 )
 
 const (
@@ -34,6 +33,11 @@ const (
 	DefaultConfigMapKey         = "metrics"
 	DefaultWatchMaxKeepAge      = 10 * time.Minute
 	DefaultWatchMaxSamples      = int64(0)
+	DefaultDCGMCleanupTimeout   = 5 * time.Minute
+
+	DefaultHPCJobMappingMaxFileBytes   = int64(65536)
+	DefaultHPCJobMappingMaxJobIDBytes  = int64(256)
+	DefaultHPCJobMappingMaxJobsPerFile = int64(64)
 )
 
 // MetricSourceKind identifies where dcgm-exporter should load metric definitions from.
@@ -45,20 +49,32 @@ const (
 	MetricSourceConfigMap MetricSourceKind = "configMap"
 )
 
+// KubernetesGPUIDType names the key used to join exporter GPUs with Kubernetes
+// pod-resource records. The selected key must match the identifier convention
+// reported by the configured container runtime.
 type KubernetesGPUIDType string
 
+// DeviceOptions preserves the device-selector grammar until hardware discovery
+// can apply it. Each collector family has one value, and reload snapshots copy
+// its ranges so they never share mutable selection state with active settings.
 type DeviceOptions struct {
 	Flex       bool  // If true, then monitor all GPUs if MIG mode is disabled or all GPU instances if MIG is enabled.
 	MajorRange []int // The indices of each GPU/NvSwitch to monitor, or -1 to monitor all
 	MinorRange []int // The indices of each GPUInstance/NvLink to monitor, or -1 to monitor all
 }
 
-// DumpConfig controls file-based debugging dumps
+// DumpConfig carries the user-approved file-dump policy. Collection code reads
+// it before writing diagnostics, so storage location, retention, and compression
+// remain configuration rather than collector-specific decisions.
 type DumpConfig struct {
-	Enabled     bool   `yaml:"enabled" json:"enabled"`         // Enable file-based dumps
-	Directory   string `yaml:"directory" json:"directory"`     // Directory to store dump files
-	Retention   int    `yaml:"retention" json:"retention"`     // Retention period in hours (0 = no cleanup)
-	Compression bool   `yaml:"compression" json:"compression"` // Use gzip compression for dump files
+	Enabled       bool          `yaml:"enabled" json:"enabled"`                 // Enable file-based dumps
+	Directory     string        `yaml:"directory" json:"directory"`             // Directory to store dump files
+	Retention     time.Duration `yaml:"retention" json:"retention"`             // How long dump files are kept (0 = no age cleanup)
+	Compression   bool          `yaml:"compression" json:"compression"`         // Use gzip compression for dump files
+	MinInterval   time.Duration `yaml:"min_interval" json:"min_interval"`       // Minimum time between attempts per dump kind and entity group
+	MaxFileBytes  int64         `yaml:"max_file_bytes" json:"max_file_bytes"`   // Largest dump file on disk, compressed size included
+	MaxTotalBytes int64         `yaml:"max_total_bytes" json:"max_total_bytes"` // Total bytes of exporter-owned dump files
+	MaxFiles      int64         `yaml:"max_files" json:"max_files"`             // Number of exporter-owned dump files
 }
 
 // MetricField is one inline metric definition in the same shape as a three-column metric CSV row.
@@ -145,109 +161,175 @@ func (o WatchRetentionOverride) Resolve(global WatchRetention) WatchRetention {
 	return resolved
 }
 
+// WindowOverride is a counter window override from the config file, kept so
+// its match items can be checked against the metric source once it is read.
+type WindowOverride struct {
+	// Path is the YAML location of the override.
+	Path  string
+	Match FieldMatcher
+}
+
 // WatchGroup assigns a set of metric fields to a collection interval and optional retention policy.
 type WatchGroup struct {
-	Name      string
+	Name string
+	// Path is the YAML location of the override that became this group. It is
+	// empty for groups from the older config format.
+	Path      string
 	Interval  int
 	Fields    []string
 	Retention WatchRetentionOverride
+	// ExtendedMatch lets Fields items be /regular expressions/. Overrides in the
+	// config file set it; groups from the older format read names and wildcards only.
+	ExtendedMatch bool
 }
 
+// Describe names the group for a message: an override when it came from the
+// config file, a watch group when it came from the older config format.
+func (g WatchGroup) Describe() string {
+	if g.Path != "" {
+		return fmt.Sprintf("override %q", g.Name)
+	}
+
+	return fmt.Sprintf("watch group %q", g.Name)
+}
+
+// OTLPWatchCollection retains source selection until watch settings are resolved.
+type OTLPWatchCollection struct {
+	Name      string
+	Sources   []WatchSource
+	Interval  int
+	Retention WatchRetentionOverride
+}
+
+// Config is the complete resolved exporter configuration.
+// Command-line and YAML inputs are merged into this value once during startup;
+// registry builds and reload snapshots only read its resolved settings. Runtime
+// discoveries and callbacks deliberately live outside this type.
 type Config struct {
-	ConfigFile                       string
-	CollectorsFile                   string
-	Address                          string
-	CollectInterval                  int
+	ConfigFile        string
+	ServiceInstanceID string
+	DisablePrometheus bool
+	EnableOTLP        bool
+	Address           string
+	CollectInterval   int
+
 	Kubernetes                       bool
 	KubernetesEnablePodLabels        bool
 	KubernetesEnablePodUID           bool
 	KubernetesGPUIdType              KubernetesGPUIDType
 	KubernetesPodLabelAllowlistRegex []string // Regex patterns for filtering pod labels
 	KubernetesPodLabelCacheSize      int      // Maximum number of label keys to cache (<=0 means default size)
-	CollectDCP                       bool
 	UseOldNamespace                  bool
-	UseRemoteHE                      bool
-	RemoteHEInfo                     string
-	GPUDeviceOptions                 DeviceOptions
-	SwitchDeviceOptions              DeviceOptions
-	CPUDeviceOptions                 DeviceOptions
-	NoHostname                       bool
-	UseFakeGPUs                      bool
-	ConfigMapData                    string
-	MetricSource                     MetricSource
-	WatchRetention                   WatchRetention
-	WatchGroups                      []WatchGroup
-	MetricGroups                     []dcgm.MetricGroup
-	WebSystemdSocket                 bool
-	WebConfigFile                    string
-	WebReadTimeout                   time.Duration
-	WebWriteTimeout                  time.Duration
-	MaxConcurrentScrapes             int
-	EnableExporterMetrics            bool
-	XIDCountWindowSize               int
-	ReplaceBlanksInModelName         bool
-	Debug                            bool
-	ClockEventsCountWindowSize       int
-	EnableDCGMLog                    bool
-	DCGMLogLevel                     string
-	PodResourcesKubeletSocket        string
-	HPCJobMappingDir                 string
-	ContainerLabels                  bool
-	ContainerRuntimeSocket           string
-	NvidiaResourceNames              []string
-	KubernetesVirtualGPUs            bool
-	DumpConfig                       DumpConfig // Configuration for file-based dumps
-	KubernetesEnableDRA              bool
-	DisableStartupValidate           bool
-	EnableGPUBindUnbindWatch         bool          // Enable GPU bind/unbind event monitoring
-	GPUBindUnbindPollInterval        time.Duration // Interval between GPU bind/unbind event reads
-	EnablePprof                      bool          // Enable /debug/pprof/ HTTP endpoints
 
-	// draResourceSliceChangeCallback is runtime-only wiring for the DRA
-	// informer. It is deliberately private so it cannot become a YAML, JSON, or
-	// command-line configuration surface.
-	draResourceSliceChangeCallback func()
+	UseRemoteHE  bool
+	RemoteHEInfo string
+
+	GPUDeviceOptions    DeviceOptions
+	SwitchDeviceOptions DeviceOptions
+	CPUDeviceOptions    DeviceOptions
+	NoHostname          bool
+	UseFakeGPUs         bool
+
+	MetricSource         MetricSource
+	WatchRetention       WatchRetention
+	WatchGroups          []WatchGroup
+	OTLPWatchCollections []OTLPWatchCollection
+	// WindowOverrides are the config file overrides that set a counter window.
+	WindowOverrides []WindowOverride
+
+	WebSystemdSocket      bool
+	WebConfigFile         string
+	WebReadTimeout        time.Duration
+	WebWriteTimeout       time.Duration
+	MaxConcurrentScrapes  int
+	EnableExporterMetrics bool
+
+	XIDCountWindowSize         int
+	ReplaceBlanksInModelName   bool
+	Debug                      bool
+	LogFormat                  string
+	ClockEventsCountWindowSize int
+	EnableDCGMLog              bool
+	DCGMLogLevel               string
+	// DCGMCleanupTimeout bounds each wait for DCGM: to release watches on
+	// reload or GPU reset recovery, at shutdown, after a failed or canceled
+	// registry build, and to start or stop the GPU bind/unbind watch.
+	DCGMCleanupTimeout time.Duration
+
+	PodResourcesKubeletSocket   string
+	HPCJobMappingDir            string
+	HPCJobMappingMaxFileBytes   int64
+	HPCJobMappingMaxJobIDBytes  int64
+	HPCJobMappingMaxJobsPerFile int64
+	ContainerLabels             bool
+	ContainerRuntimeSocket      string
+	NvidiaResourceNames         []string
+	KubernetesVirtualGPUs       bool
+
+	DumpConfig DumpConfig // Configuration for file-based dumps
+
+	KubernetesEnableDRA       bool
+	EnrichmentModes           EnrichmentModes // How the config file asked for each workload-label source
+	DisableStartupValidate    bool
+	EnableGPUBindUnbindWatch  bool          // Enable GPU bind/unbind event monitoring
+	GPUBindUnbindPollInterval time.Duration // Interval between GPU bind/unbind event reads
+	EnablePprof               bool          // Enable /debug/pprof/ HTTP endpoints
 }
 
-// SetDRAResourceSliceChangeCallback installs the in-memory notification used
-// when a complete DRA ResourceSlice generation changes.
-func (c *Config) SetDRAResourceSliceChangeCallback(callback func()) {
-	c.draResourceSliceChangeCallback = callback
-}
-
-// DRAResourceSliceChangeCallback returns the in-memory DRA generation notification.
-func (c *Config) DRAResourceSliceChangeCallback() func() {
-	return c.draResourceSliceChangeCallback
-}
-
-// Clone returns a copy of Config with slices duplicated for reload snapshots.
+// Clone copies all slices and retention pointers into an independent config.
+// Reloads use the copy to build collectors without changing the saved startup
+// settings or another reload snapshot.
 func (c *Config) Clone() *Config {
 	if c == nil {
 		return nil
 	}
 
 	clone := *c
-	clone.KubernetesPodLabelAllowlistRegex = append([]string(nil), c.KubernetesPodLabelAllowlistRegex...)
-	clone.NvidiaResourceNames = append([]string(nil), c.NvidiaResourceNames...)
-	clone.MetricSource.Fields = append([]MetricField(nil), c.MetricSource.Fields...)
-	clone.WatchGroups = append([]WatchGroup(nil), c.WatchGroups...)
+	clone.KubernetesPodLabelAllowlistRegex = slices.Clone(c.KubernetesPodLabelAllowlistRegex)
+	clone.NvidiaResourceNames = slices.Clone(c.NvidiaResourceNames)
+	clone.GPUDeviceOptions = cloneDeviceOptions(c.GPUDeviceOptions)
+	clone.SwitchDeviceOptions = cloneDeviceOptions(c.SwitchDeviceOptions)
+	clone.CPUDeviceOptions = cloneDeviceOptions(c.CPUDeviceOptions)
+	clone.MetricSource.Fields = slices.Clone(c.MetricSource.Fields)
+
+	clone.WindowOverrides = slices.Clone(c.WindowOverrides)
+	clone.WatchGroups = slices.Clone(c.WatchGroups)
+
+	// Each watch group holds a slice and retention pointers, so copy them too.
 	for i := range clone.WatchGroups {
-		clone.WatchGroups[i].Fields = append([]string(nil), c.WatchGroups[i].Fields...)
-		if c.WatchGroups[i].Retention.MaxAge != nil {
-			maxAge := *c.WatchGroups[i].Retention.MaxAge
-			clone.WatchGroups[i].Retention.MaxAge = &maxAge
-		}
-		if c.WatchGroups[i].Retention.MaxSamples != nil {
-			maxSamples := *c.WatchGroups[i].Retention.MaxSamples
-			clone.WatchGroups[i].Retention.MaxSamples = &maxSamples
-		}
+		clone.WatchGroups[i].Fields = slices.Clone(c.WatchGroups[i].Fields)
+		clone.WatchGroups[i].Retention = c.WatchGroups[i].Retention.clone()
 	}
-	clone.MetricGroups = append([]dcgm.MetricGroup(nil), c.MetricGroups...)
-	for i := range clone.MetricGroups {
-		clone.MetricGroups[i].FieldIds = append([]uint(nil), c.MetricGroups[i].FieldIds...)
+	clone.OTLPWatchCollections = slices.Clone(c.OTLPWatchCollections)
+	for i := range clone.OTLPWatchCollections {
+		clone.OTLPWatchCollections[i].Sources = slices.Clone(c.OTLPWatchCollections[i].Sources)
+		clone.OTLPWatchCollections[i].Retention = c.OTLPWatchCollections[i].Retention.clone()
 	}
 
 	return &clone
+}
+
+// clone copies retention pointers so reload configurations do not share mutable overrides.
+func (o WatchRetentionOverride) clone() WatchRetentionOverride {
+	if o.MaxAge != nil {
+		age := *o.MaxAge
+		o.MaxAge = &age
+	}
+	if o.MaxSamples != nil {
+		samples := *o.MaxSamples
+		o.MaxSamples = &samples
+	}
+	return o
+}
+
+// cloneDeviceOptions returns an independent copy of a device selector.
+// Config.Clone uses it for each collector family so reload snapshots cannot
+// share mutable selector ranges with the startup configuration.
+func cloneDeviceOptions(options DeviceOptions) DeviceOptions {
+	clone := options
+	clone.MajorRange = slices.Clone(options.MajorRange)
+	clone.MinorRange = slices.Clone(options.MinorRange)
+	return clone
 }
 
 // MetricFileWatcherPath returns the resolved metrics file path when file reloads should be watched.
@@ -256,16 +338,8 @@ func (c *Config) MetricFileWatcherPath() (string, bool) {
 		return "", false
 	}
 
-	source := c.MetricSource
-	if source.Kind == "" {
-		if c.ConfigMapData != "" && c.ConfigMapData != UndefinedConfigMapData {
-			return "", false
-		}
-		source = MetricSource{Kind: MetricSourceFile, File: c.CollectorsFile}
-	}
-
-	if source.Kind != MetricSourceFile || strings.TrimSpace(source.File) == "" {
+	if c.MetricSource.Kind != MetricSourceFile || strings.TrimSpace(c.MetricSource.File) == "" {
 		return "", false
 	}
-	return source.File, true
+	return c.MetricSource.File, true
 }

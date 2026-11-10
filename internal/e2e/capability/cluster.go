@@ -18,8 +18,8 @@ package capability
 
 // unprobedClusterCapabilities seeds host-only probes with unknown cluster capability rows.
 func unprobedClusterCapabilities() []Capability {
-	entries := make([]Capability, 0, len(ClusterNames()))
-	for _, name := range ClusterNames() {
+	entries := make([]Capability, 0, len(ClusterFeatureNames()))
+	for _, name := range ClusterFeatureNames() {
 		entries = append(entries, Capability{
 			Name:   "cluster:" + name,
 			Status: StatusUnknown,

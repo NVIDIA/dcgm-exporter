@@ -1,0 +1,20 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "testfixtures",
+    srcs = ["deviceinfo.go"],
+    importpath = "github.com/NVIDIA/dcgm-exporter/internal/pkg/testfixtures",
+    testonly = True,
+    visibility = ["//:__subpackages__"],
+    deps = ["@com_github_nvidia_go_dcgm//pkg/dcgm"],
+)
+
+go_test(
+    name = "testfixtures_test",
+    srcs = ["deviceinfo_test.go"],
+    embed = [":testfixtures"],
+    deps = [
+        "@com_github_nvidia_go_dcgm//pkg/dcgm",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

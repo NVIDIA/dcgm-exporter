@@ -1,0 +1,34 @@
+version: 2
+metrics:
+  - name: gpu
+    enrichment: {kubernetes: false, container: false, hpc_jobs: false}
+    fields:
+      - name: DCGM_EXP_CLOCK_EVENTS_COUNT
+        prometheus_type: gauge
+        help: Count of sampled clock event observations in the window.
+      - name: DCGM_EXP_CLOCK_EVENTS_TOTAL
+        prometheus_type: counter
+        help: Clock event reason activations since exporter start.
+      - name: DCGM_EXP_XID_ERRORS_COUNT
+        prometheus_type: gauge
+        help: Count of sampled XID observations in the window.
+      - name: DCGM_EXP_XID_ERRORS_TOTAL
+        prometheus_type: counter
+        help: Cumulative XID observations.
+      - name: DCGM_FI_DEV_GPU_TEMP_CELSIUS
+        prometheus_type: gauge
+        help: GPU temperature.
+      - name: DCGM_FI_DEV_GPU_UTIL_RATIO
+        prometheus_type: gauge
+        help: GPU utilization.
+    overrides:
+      - name: observations
+        match: [DCGM_FI_DEV_CLOCKS_EVENT_REASONS, DCGM_FI_DEV_GPU_TEMP_CELSIUS]
+        every: 1s
+      - name: cumulative
+        match: [DCGM_FI_DEV_XID_ERROR, DCGM_FI_DEV_GPU_UTIL_RATIO]
+        every: 2s
+outputs:
+  prometheus:
+    type: prometheus
+    schema: dcgm/v1

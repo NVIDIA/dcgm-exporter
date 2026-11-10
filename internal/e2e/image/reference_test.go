@@ -20,6 +20,8 @@ import "testing"
 
 const testDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+const testSHA512Digest = "sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestParse(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -34,6 +36,7 @@ func TestParse(t *testing.T) {
 		{name: "qualified tagged", value: "registry.example/team/image:dev", repository: "registry.example/team/image", tag: "dev", pull: "registry.example/team/image:dev", tagged: "registry.example/team/image:dev"},
 		{name: "registry port", value: "localhost:5000/team/image:dev", repository: "localhost:5000/team/image", tag: "dev", pull: "localhost:5000/team/image:dev", tagged: "localhost:5000/team/image:dev"},
 		{name: "digest", value: "registry.example/team/image@" + testDigest, repository: "registry.example/team/image", digest: testDigest, pull: "registry.example/team/image@" + testDigest, tagged: "registry.example/team/image@" + testDigest},
+		{name: "sha512 digest", value: "registry.example/team/image@" + testSHA512Digest, repository: "registry.example/team/image", digest: testSHA512Digest, pull: "registry.example/team/image@" + testSHA512Digest, tagged: "registry.example/team/image@" + testSHA512Digest},
 		{name: "tag and digest", value: "registry.example/team/image:readable@" + testDigest, repository: "registry.example/team/image", tag: "readable", digest: testDigest, pull: "registry.example/team/image@" + testDigest, tagged: "registry.example/team/image:readable"},
 	}
 	for _, tt := range tests {

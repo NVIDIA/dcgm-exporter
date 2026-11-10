@@ -48,28 +48,3 @@ func (s *OSSignalSource) Signals() <-chan os.Signal {
 func (s *OSSignalSource) Cleanup() {
 	s.cleanup()
 }
-
-// TestSignalSource allows programmatic signal injection for testing
-type TestSignalSource struct {
-	ch chan os.Signal
-}
-
-// NewTestSignalSource creates a signal source for testing
-func NewTestSignalSource() *TestSignalSource {
-	return &TestSignalSource{ch: make(chan os.Signal, 10)}
-}
-
-// Signals returns the channel that receives test signals
-func (s *TestSignalSource) Signals() <-chan os.Signal {
-	return s.ch
-}
-
-// Cleanup closes the signal channel
-func (s *TestSignalSource) Cleanup() {
-	close(s.ch)
-}
-
-// SendSignal injects a signal into the channel (test helper)
-func (s *TestSignalSource) SendSignal(sig os.Signal) {
-	s.ch <- sig
-}

@@ -32,14 +32,13 @@ func runIPv6ListenAndReadMetrics(t testing.TB) {
 	}
 
 	port := getRandomAvailableIPv6Port(t)
-	_, metricsResp := startExporterAndWait(
+	_, metricsResp := startFastCSVExporterAndWait(
 		t,
 		fmt.Sprintf("http://[::1]:%d/metrics", port),
-		"--collectors", "./testdata/default-counters.csv",
+		defaultCollectorsFile(t),
 		"--address", fmt.Sprintf("[::1]:%d", port),
 	)
 
-	require.Contains(t, metricsResp, "DCGM_FI_DEV_", "expected DCGM metrics from IPv6 listener")
 	validateHostDefaultMetrics(t, metricsResp)
 }
 
@@ -69,5 +68,54 @@ func getRandomAvailableIPv6Port(t testing.TB) int {
 		}
 		usedPorts[port] = struct{}{}
 		return port
+	}
+}
+
+// runListenAddressEffect runs the exporter on the all-interfaces address
+// (":port") given as the flag and as the output listen key, and checks each
+// run serves the baseline families and matches the other form.
+func runListenAddressEffect(t testing.TB) {
+	base := startSettingBaseline(t)
+	runSettingForms(t, base, []settingForm{
+		{name: "--address", args: listenFlagArgs(":%d"), check: checkSameDCGMShapeAsBaseline},
+		{name: "outputs.prometheus.listen", args: listenKeyArgs(":%d"), check: checkSameDCGMShapeAsBaseline},
+	})
+}
+
+// runIPv6ListenAddressEffect is runListenAddressEffect for the IPv6 loopback
+// address; it skips when the host cannot use that address.
+func runIPv6ListenAddressEffect(t testing.TB) {
+	base := startSettingBaseline(t)
+	runSettingForms(t, base, []settingForm{
+		{name: "--address [::1]", args: listenFlagArgs("[::1]:%d"), check: checkSameDCGMShapeAsBaseline, target: ipv6Target, ipv6: true},
+		{name: "outputs.prometheus.listen [::1]", args: listenKeyArgs("[::1]:%d"), check: checkSameDCGMShapeAsBaseline, target: ipv6Target, ipv6: true},
+	})
+}
+
+// ipv6Target is the plain HTTP metrics URL on the IPv6 loopback address.
+func ipv6Target(port int) scrapeTarget {
+	return scrapeTarget{url: fmt.Sprintf("http://[::1]:%d/metrics", port)}
+}
+
+// listenFlagArgs returns the arguments of a baseline run whose --address
+// is addressFormat filled with the port.
+func listenFlagArgs(addressFormat string) func(testing.TB, *settingBaseline, int) []string {
+	return func(_ testing.TB, base *settingBaseline, port int) []string {
+		return baselineArgsAt(base.collectors, fmt.Sprintf(addressFormat, port))
+	}
+}
+
+// listenKeyArgs returns the arguments of a baseline run that has no --address
+// and sets outputs.prometheus.listen to addressFormat filled with the port.
+func listenKeyArgs(addressFormat string) func(testing.TB, *settingBaseline, int) []string {
+	return func(t testing.TB, base *settingBaseline, port int) []string {
+		return []string{
+			"--collectors", base.collectors,
+			"--collect-interval", "1000",
+			"--config-file", writeSettingConfig(t, map[string]any{
+				"version": 2,
+				"outputs": map[string]any{"prometheus": prometheusOutput(fmt.Sprintf(addressFormat, port))},
+			}),
+		}
 	}
 }

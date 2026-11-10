@@ -16,14 +16,27 @@
 
 package counters
 
+import (
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/signalcatalog"
+)
+
 const (
 	cpuFieldsStart = 1100
 	dcpFieldsStart = 1000
 
-	DCGMExpClockEventsCount = "DCGM_EXP_CLOCK_EVENTS_COUNT"
-	DCGMExpXIDErrorsCount   = "DCGM_EXP_XID_ERRORS_COUNT"
-	DCGMExpGPUHealthStatus  = "DCGM_EXP_GPU_HEALTH_STATUS"
-	DCGMExpP2PStatus        = "DCGM_EXP_P2P_STATUS"
-	DCGMExpXIDErrorsTotal   = "DCGM_EXP_XID_ERRORS_TOTAL"
-	DCGMExpClockEventsTotal = "DCGM_EXP_CLOCK_EVENTS_TOTAL"
+	DCGMExpClockEventsCount = appconfig.ExporterClockEventsCountField
+	DCGMExpClockEventsTotal = signalcatalog.ExporterFieldClockEventsTotal
+	DCGMExpXIDErrorsCount   = appconfig.ExporterXIDErrorsCountField
+	DCGMExpXIDErrorsTotal   = signalcatalog.ExporterFieldXIDErrorsTotal
+	DCGMExpGPUHealthStatus  = signalcatalog.ExporterFieldGPUHealthStatus
+	DCGMExpP2PStatus        = signalcatalog.ExporterFieldP2PStatus
+
+	DCGMExpSystemHealthStatus = "DCGM_EXP_SYSTEM_HEALTH_STATUS"
+
+	DCGMExpFieldPolicyEnabled                     = "DCGM_EXP_FIELD_POLICY_ENABLED"
+	DCGMExpFieldPolicyCurrentValue                = "DCGM_EXP_FIELD_POLICY_CURRENT_VALUE"
+	DCGMExpFieldPolicyThreshold                   = "DCGM_EXP_FIELD_POLICY_THRESHOLD"
+	DCGMExpFieldPolicyViolationCount              = "DCGM_EXP_FIELD_POLICY_VIOLATION_COUNT"
+	DCGMExpFieldPolicyLastTriggerTimestampSeconds = "DCGM_EXP_FIELD_POLICY_LAST_TRIGGER_TIMESTAMP_SECONDS"
 )

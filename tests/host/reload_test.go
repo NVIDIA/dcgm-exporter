@@ -40,14 +40,16 @@ import (
 
 const (
 	dcpCollectorsFixture   = "./testdata/dcp-counters.csv"
-	reloadMarkerMetric     = "DCGM_FI_DEV_GPU_UTIL"
-	fileWatcherProbeMetric = "DCGM_FI_DEV_GPU_TEMP"
+	reloadMarkerMetric     = "DCGM_FI_DEV_GPU_UTIL_RATIO"
+	fileWatcherProbeMetric = "DCGM_FI_DEV_GPU_TEMP_CELSIUS"
 	profilingMetricPrefix  = "DCGM_FI_PROF_"
 	startupWaitTimeout     = 60 * time.Second
 	reloadWaitTimeout      = 30 * time.Second
 	reloadPollInterval     = 500 * time.Millisecond
+	startupPollInterval    = 500 * time.Millisecond
 )
 
+// verifyNoReloadGoroutineLeaks checks reload scenarios for goroutine leaks while ignoring Ginkgo and idle HTTP workers.
 func verifyNoReloadGoroutineLeaks(t testing.TB) {
 	t.Helper()
 	goleak.VerifyNone(
@@ -108,7 +110,7 @@ func writeInvalidCollectorsFile(t testing.TB, collectorsPath string) {
 	t.Helper()
 
 	invalidCollectors := "# Invalid CSV used to prove failed reloads keep last-good metrics.\n" +
-		"DCGM_FI_DEV_GPU_TEMP,not-a-prometheus-type,temp\n"
+		"DCGM_FI_DEV_GPU_TEMP_CELSIUS,not-a-prometheus-type,temp\n"
 	require.NoError(t, os.WriteFile(collectorsPath, []byte(invalidCollectors), 0o600))
 }
 
@@ -236,13 +238,28 @@ func includesAllMetricFamilies(metricFamilies map[string]*io_prometheus_client.M
 	return true
 }
 
+// hotReloadsCompleted counts the reloads the exporter has logged as finished.
+func hotReloadsCompleted(process *hostExporterProcess) int {
+	return strings.Count(process.output.String(), "Hot reload complete")
+}
+
+// waitForHotReload waits until the exporter logs one more finished reload than
+// completedBefore, so a test continues when the reload is done and not after a
+// fixed delay.
+func waitForHotReload(t testing.TB, process *hostExporterProcess, completedBefore int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return hotReloadsCompleted(process) > completedBefore
+	}, reloadWaitTimeout, 100*time.Millisecond, "reload did not complete; output:\n%s", process.output)
+}
+
 // startTestExporter starts dcgm-exporter with a mutable collectors file and returns cleanup controls.
 func startTestExporter(t testing.TB, collectors string) (*hostExporterProcess, string, func()) {
 	t.Helper()
 
 	port := getRandomAvailablePort(t)
 	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
-	process, _ := startExporterAndWait(
+	process, _ := startFastExporterAndWait(
 		t,
 		metricsURL,
 		"--collectors", collectors,
@@ -257,8 +274,17 @@ func startTestExporter(t testing.TB, collectors string) (*hostExporterProcess, s
 	return process, metricsURL, cleanup
 }
 
-// waitForProfilingMetricsOrSkip waits for DCP metrics and skips when the host cannot emit them.
-func waitForProfilingMetricsOrSkip(
+// requireProfilingSupport skips until profiling support has been established
+// by the CLI probe or by the caller preparing a direct native run.
+func requireProfilingSupport(t testing.TB) {
+	t.Helper()
+	if os.Getenv("E2E_REQUIRE_PROFILING") != "1" {
+		t.Skip("profiling requires a support check; run the e2e CLI or set E2E_REQUIRE_PROFILING=1 on a prepared host")
+	}
+}
+
+// waitForProfilingMetrics requires output after profiling support was established.
+func waitForProfilingMetrics(
 	t testing.TB, metricsURL string,
 ) ([]string, map[string]*io_prometheus_client.MetricFamily) {
 	t.Helper()
@@ -278,7 +304,8 @@ func waitForProfilingMetricsOrSkip(
 		time.Sleep(reloadPollInterval)
 	}
 
-	t.Skipf("No %s metric families became available within %s; DCP likely unsupported in this environment",
+	require.Failf(t, "profiling metrics did not become available",
+		"No %s metric families became available within %s after profiling support was established",
 		profilingMetricPrefix, startupWaitTimeout)
 	return nil, nil
 }
@@ -334,13 +361,14 @@ func runSIGHUPReloadPreservesProfilingMetrics(t testing.TB) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
+	requireProfilingSupport(t)
 
 	defer verifyNoReloadGoroutineLeaks(t)
 	collectorsFile := copyCollectorsFixtureToTempFile(t, dcpCollectorsFixture)
 	exporter, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
-	beforeProfiling, beforeFamilies := waitForProfilingMetricsOrSkip(t, metricsURL)
+	beforeProfiling, beforeFamilies := waitForProfilingMetrics(t, metricsURL)
 	require.True(t, hasMetricFamily(beforeFamilies, reloadMarkerMetric),
 		"reload marker metric must be present before SIGHUP reload")
 
@@ -364,6 +392,51 @@ func runSIGHUPReloadPreservesProfilingMetrics(t testing.TB) {
 	}
 }
 
+// runSIGHUPReloadPreservesEventWatches exercises multiple collection cadences
+// and every clock/XID collector on the shared DCGM session. COUNT families are
+// emitted without injected events; TOTAL families depend on observed events.
+func runSIGHUPReloadPreservesEventWatches(t testing.TB) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
+	defer verifyNoReloadGoroutineLeaks(t)
+	configFile, err := filepath.Abs("./testdata/multi-group-events.yaml")
+	require.NoError(t, err)
+	port := getRandomAvailablePort(t)
+	metricsURL := fmt.Sprintf("http://localhost:%d/metrics", port)
+	process, _ := startExporterAndWaitForFamilies(t, metricsURL, nil, nil,
+		"--config-file", configFile,
+		"--address", fmt.Sprintf(":%d", port),
+		"--devices", "f",
+		"--switch-devices", "g",
+		"--collect-interval", "1000",
+		"--clock-events-count-window-size", "5000",
+		"--xid-count-window-size", "5000",
+	)
+	defer process.terminate(t)
+
+	required := []string{"DCGM_EXP_CLOCK_EVENTS_COUNT", "DCGM_EXP_XID_ERRORS_COUNT"}
+	waitForMetricFamilies(t, metricsURL, startupWaitTimeout,
+		func(families map[string]*io_prometheus_client.MetricFamily) bool {
+			return includesAllMetricFamilies(families, required)
+		}, "event COUNT families should be present before reload")
+
+	for reload := 0; reload < 3; reload++ {
+		completed := hotReloadsCompleted(process)
+		process.signal(t, syscall.SIGHUP)
+		deadline := time.Now().Add(reloadWaitTimeout)
+		for hotReloadsCompleted(process) == completed {
+			require.NoError(t, validateMetricFamilyState(metricsURL, required, nil))
+			require.True(t, time.Now().Before(deadline), "reload did not complete; output:\n%s", process.output.String())
+			time.Sleep(100 * time.Millisecond)
+		}
+		assertMetricFamilyStateContinuously(t, metricsURL, required, nil, 5*time.Second, nil)
+	}
+	require.NotContains(t, process.output.String(), "dcgmGetValuesSince_v2 failed",
+		"background event pollers must also retain their native watches")
+}
+
 // runFileWatcherReloadPreservesProfilingMetrics exercises the fsnotify path:
 // changing the watched CSV must reload the registry and keep previously
 // exported profiling metric families intact.
@@ -371,13 +444,14 @@ func runFileWatcherReloadPreservesProfilingMetrics(t testing.TB) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
+	requireProfilingSupport(t)
 
 	defer verifyNoReloadGoroutineLeaks(t)
 	collectorsFile := copyCollectorsFixtureToTempFile(t, dcpCollectorsFixture)
 	_, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
-	beforeProfiling, beforeFamilies := waitForProfilingMetricsOrSkip(t, metricsURL)
+	beforeProfiling, beforeFamilies := waitForProfilingMetrics(t, metricsURL)
 	require.True(t, hasMetricFamily(beforeFamilies, reloadMarkerMetric),
 		"reload marker metric must be present before file-watcher reload")
 
@@ -407,7 +481,7 @@ func runSIGHUPReloadFailureKeepsLastGoodMetrics(t testing.TB) {
 	}
 
 	defer verifyNoReloadGoroutineLeaks(t)
-	collectorsFile := copyCollectorsFixtureToTempFile(t, "./testdata/default-counters.csv")
+	collectorsFile := copyCollectorsFixtureToTempFile(t, defaultCollectorsFile(t))
 	exporter, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
@@ -438,7 +512,7 @@ func runFileWatcherReloadFailureKeepsLastGoodMetrics(t testing.TB) {
 	}
 
 	defer verifyNoReloadGoroutineLeaks(t)
-	collectorsFile := copyCollectorsFixtureToTempFile(t, "./testdata/default-counters.csv")
+	collectorsFile := copyCollectorsFixtureToTempFile(t, defaultCollectorsFile(t))
 	_, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
@@ -481,7 +555,7 @@ func runConcurrentScrapeDuringSIGHUPReloads(t testing.TB) {
 	}
 
 	defer verifyNoReloadGoroutineLeaks(t)
-	collectorsFile := copyCollectorsFixtureToTempFile(t, "./testdata/default-counters.csv")
+	collectorsFile := copyCollectorsFixtureToTempFile(t, defaultCollectorsFile(t))
 	exporter, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
@@ -522,7 +596,11 @@ func runConcurrentScrapeDuringSIGHUPReloads(t testing.TB) {
 		exporter.signal(t, syscall.SIGHUP)
 		time.Sleep(100 * time.Millisecond)
 	}
-	time.Sleep(time.Second)
+	// Signals sent while a reload runs may merge, so one more reload after the
+	// burst gives a point where every earlier reload has finished.
+	completed := hotReloadsCompleted(exporter)
+	exporter.signal(t, syscall.SIGHUP)
+	waitForHotReload(t, exporter, completed)
 
 	close(stopScrapes)
 	scrapeWG.Wait()
@@ -543,7 +621,7 @@ func runMultipleSIGHUPReloads(t testing.TB) {
 	}
 
 	defer verifyNoReloadGoroutineLeaks(t)
-	collectorsFile := copyCollectorsFixtureToTempFile(t, "./testdata/default-counters.csv")
+	collectorsFile := copyCollectorsFixtureToTempFile(t, defaultCollectorsFile(t))
 	exporter, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
@@ -565,6 +643,7 @@ func runMultipleSIGHUPReloads(t testing.TB) {
 		require.Greater(t, len(mf), 0, "Should have metrics before reload")
 
 		t.Log("Triggering reload...")
+		completed := hotReloadsCompleted(exporter)
 		exporter.signal(t, syscall.SIGHUP)
 
 		// Wait for server to restart (race detector slows things down)
@@ -583,13 +662,12 @@ func runMultipleSIGHUPReloads(t testing.TB) {
 		require.NoError(t, err, "Should parse metrics after reload")
 		require.Greater(t, len(mf), 0, "Should have metrics after reload")
 
-		time.Sleep(2 * time.Second)
+		waitForHotReload(t, exporter, completed)
 	}
 
 	t.Logf("Successfully completed %d reload cycles", numReloads)
 
 	runtime.GC()
-	time.Sleep(500 * time.Millisecond)
 }
 
 // TestGoroutineLeakOnReload verifies that goroutines don't leak during SIGHUP reloads
@@ -603,7 +681,7 @@ func TestGoroutineLeakOnReload(t *testing.T) {
 	goroutinesBefore := runtime.NumGoroutine()
 	t.Logf("Goroutines before starting app: %d", goroutinesBefore)
 
-	collectorsFile := copyCollectorsFixtureToTempFile(t, "./testdata/default-counters.csv")
+	collectorsFile := copyCollectorsFixtureToTempFile(t, defaultCollectorsFile(t))
 	exporter, metricsURL, cleanup := startTestExporter(t, collectorsFile)
 	defer cleanup()
 
@@ -627,9 +705,8 @@ func TestGoroutineLeakOnReload(t *testing.T) {
 	}
 
 	// Note: cleanup is handled by deferred function
-	// Force GC and wait for goroutines to cleanup
+	// Force GC; deferred cleanup and goleak handle goroutine teardown.
 	runtime.GC()
-	time.Sleep(500 * time.Millisecond)
 
 	goroutinesAfterShutdown := runtime.NumGoroutine()
 	t.Logf("Goroutines after shutdown: %d", goroutinesAfterShutdown)

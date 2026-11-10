@@ -17,16 +17,12 @@
 package transformation
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
-	sysOS "os"
 	"path"
 	"regexp"
-	"slices"
-	"strconv"
-	"strings"
-	"sync"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -36,260 +32,135 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/logging"
 )
 
+// hpcMapper copies GPU samples for jobs named by files in the configured directory.
 type hpcMapper struct {
-	Config                  *appconfig.Config
-	missingDirectory        bool
-	warningMu               sync.Mutex
-	warnedUnmatchedMappings map[string]string
+	Config              *appconfig.Config
+	unavailableWarnings warningLimiter
 }
 
+// newHPCMapper creates the mapper. A directory that is missing or unreadable
+// is not an error: Process checks it on every scrape, warns at most every few
+// minutes, and uses the directory once it can be read.
 func newHPCMapper(c *appconfig.Config) *hpcMapper {
 	slog.Info(fmt.Sprintf("HPC job mapping is enabled and watch for the %q directory", c.HPCJobMappingDir))
-	_, err := os.Stat(c.HPCJobMappingDir)
-	missingDirectory := false
-	if err != nil && os.IsNotExist(err) {
-		missingDirectory = true
-		slog.Error(fmt.Sprintf("HPC job mapping file directory '%s' not found on initialization.",
-			c.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
-	}
-	return &hpcMapper{
-		Config:           c,
-		missingDirectory: missingDirectory,
-	}
+	return &hpcMapper{Config: c}
 }
 
+// Name identifies the HPC transform in logs and tests.
 func (p *hpcMapper) Name() string {
 	return "hpcMapper"
 }
 
-func (p *hpcMapper) Process(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
-	_, err := os.Stat(p.Config.HPCJobMappingDir)
-	if err != nil {
-		if os.IsNotExist(err) && p.missingDirectory {
-			return nil
-		}
-		slog.Error(fmt.Sprintf("Unable to access HPC job mapping file directory '%s' - directory not found. Ignoring.",
-			p.Config.HPCJobMappingDir), slog.String(logging.ErrorKey, err.Error()))
+// warnUnavailable logs that the mapping directory or one of its files cannot be
+// read, at most once per interval, because the failure repeats on every scrape.
+func (p *hpcMapper) warnUnavailable(location string, err error) {
+	if !p.unavailableWarnings.allowFor(location) {
+		return
+	}
+
+	slog.Warn(fmt.Sprintf("HPC job mapping '%s' is not usable; job labels are missing for it until it is. "+
+		"The exporter keeps checking.", location), slog.String(logging.ErrorKey, err.Error()))
+}
+
+// Process copies samples per mapped job and keeps samples without a job mapping.
+func (p *hpcMapper) Process(metrics collector.MetricsByCounter, _ deviceinfo.Provider) error {
+	gpuToJobMap, ok := p.readJobMapping(metrics)
+	if !ok {
 		return nil
-	} else {
-		p.missingDirectory = false
 	}
-
-	gpuFiles, err := getGPUFiles(p.Config.HPCJobMappingDir)
-	if err != nil {
-		return err
-	}
-
-	gpuToJobMap := make(map[string][]string)
-
-	slog.Debug(fmt.Sprintf("HPC job mapping files: %#v", gpuFiles))
-
-	for _, gpuFileName := range gpuFiles {
-		jobs, err := readFile(path.Join(p.Config.HPCJobMappingDir, gpuFileName))
-		if err != nil {
-			return err
-		}
-
-		if _, exist := gpuToJobMap[gpuFileName]; !exist {
-			gpuToJobMap[gpuFileName] = []string{}
-		}
-		gpuToJobMap[gpuFileName] = append(gpuToJobMap[gpuFileName], jobs...)
-	}
-
-	slog.Debug(fmt.Sprintf("GPU to job mapping: %+v", gpuToJobMap))
-
-	p.warnUnmatchedMIGMappings(gpuFiles, deviceInfo)
 
 	for counter := range metrics {
 		var modifiedMetrics []collector.Metric
-		for _, metric := range metrics[counter] {
 
-			var jobMapKey string
-			if metric.MigProfile != "" {
-				jobMapKey = fmt.Sprintf("%s.%s", metric.GPU, metric.GPUInstanceID)
-			} else {
-				jobMapKey = metric.GPU
+		for _, metric := range metrics[counter] {
+			jobs := gpuToJobMap[hpcJobMapKey(metric)]
+			if len(jobs) == 0 {
+				modifiedMetrics = append(modifiedMetrics, metric)
+				continue
 			}
 
-			jobs, exists := gpuToJobMap[jobMapKey]
-
-			if exists && len(jobs) != 0 {
-				for _, job := range jobs {
-					modifiedMetric := cloneMetric(metric)
-					if modifiedMetric.Attributes == nil {
-						slog.Debug("modifiedMetric.Attributes is nil, making an empty map")
-						modifiedMetric.Attributes = make(map[string]string)
-					}
-					modifiedMetric.Attributes[hpcJobAttribute] = job
-					modifiedMetrics = append(modifiedMetrics, modifiedMetric)
-				}
-			} else {
-				modifiedMetrics = append(modifiedMetrics, metric)
+			for _, job := range jobs {
+				modifiedMetrics = append(modifiedMetrics, metricWithHPCJob(metric, job))
 			}
 		}
+
 		metrics[counter] = modifiedMetrics
 	}
 
 	return nil
 }
 
-func (p *hpcMapper) warnUnmatchedMIGMappings(
-	mappingFiles []string, deviceInfo deviceinfo.Provider,
-) {
-	if deviceInfo == nil || deviceInfo.InfoType() != dcgm.FE_GPU {
+// readJobMapping opens the directory once and reads only the files named after
+// the GPUs and MIG instances in metrics. It reports false, after a rate-limited
+// warning, when the directory cannot be opened, so the scrape goes on without
+// job labels. A missing file or a directory is skipped quietly; an unsafe or
+// invalid file warns and only leaves its own GPU without labels.
+func (p *hpcMapper) readJobMapping(metrics collector.MetricsByCounter) (map[string][]string, bool) {
+	dir := p.Config.HPCJobMappingDir
+
+	directory, err := openMappingDirectory(dir)
+	if err != nil {
+		p.warnUnavailable(dir, err)
+		return nil, false
+	}
+	defer directory.Close()
+
+	gpuToJobMap := make(map[string][]string)
+	for _, samples := range metrics {
+		for _, metric := range samples {
+			name := hpcJobMapKey(metric)
+			if _, seen := gpuToJobMap[name]; seen || !validGPUFile.MatchString(name) {
+				continue
+			}
+
+			jobs, err := readMappingAt(directory, name, p.Config)
+			gpuToJobMap[name] = jobs
+
+			if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, errMappingIsDirectory) {
+				p.warnUnavailable(path.Join(dir, name), err)
+			}
+		}
+	}
+
+	return gpuToJobMap, true
+}
+
+// hpcJobMapKey is the job file name that applies to a metric: the GPU, or the
+// GPU and instance for a MIG sample.
+func hpcJobMapKey(metric collector.Metric) string {
+	if metric.MigProfile != "" {
+		return fmt.Sprintf("%s.%s", metric.GPU, metric.GPUInstanceID)
+	}
+	return metric.GPU
+}
+
+// metricWithHPCJob copies a sample and labels the copy with one job.
+func metricWithHPCJob(metric collector.Metric, job string) collector.Metric {
+	modified := cloneMetric(metric)
+	if modified.Attributes == nil {
+		slog.Debug("modifiedMetric.Attributes is nil, making an empty map")
+		modified.Attributes = make(map[string]string)
+	}
+	preserveHPCJobPodLabel(&modified)
+	modified.Attributes[hpcJobAttribute] = job
+	return modified
+}
+
+// preserveHPCJobPodLabel renames a Kubernetes pod label that would collide
+// with the scheduler-owned hpc_job attribute added by this transform. FE_GPU
+// is intentional: the generated pod_label_hpc_job[_conflictN] names do not
+// overlap static built-ins of any supported group, and GPU rules also protect
+// the configurable UUID label. Revisit the group if the fallback base changes.
+func preserveHPCJobPodLabel(metric *collector.Metric) {
+	value, exists := metric.Labels[hpcJobAttribute]
+	if !exists {
 		return
 	}
 
-	availableIDsByGPU := make(map[string][]uint)
-	for _, gpu := range deviceInfo.GPUs() {
-		gpuID := fmt.Sprint(gpu.DeviceInfo.GPU)
-		ids := make([]uint, 0, len(gpu.GPUInstances))
-		for _, instance := range gpu.GPUInstances {
-			ids = append(ids, instance.Info.NvmlInstanceId)
-		}
-		slices.Sort(ids)
-		availableIDsByGPU[gpuID] = slices.Compact(ids)
-	}
-
-	type mismatch struct {
-		gpuID        string
-		instanceID   string
-		availableIDs []uint
-		signature    string
-	}
-	type pendingWarning struct {
-		mappingFile string
-		entry       mismatch
-	}
-	unmatched := make(map[string]mismatch)
-
-	for _, mappingFile := range mappingFiles {
-		gpuID, instanceID, isMIGMapping := strings.Cut(mappingFile, ".")
-		if !isMIGMapping {
-			continue
-		}
-
-		availableIDs, gpuFound := availableIDsByGPU[gpuID]
-		matchesInstance := slices.ContainsFunc(availableIDs, func(availableID uint) bool {
-			return strconv.FormatUint(uint64(availableID), 10) == instanceID
-		})
-		if matchesInstance {
-			continue
-		}
-		if !gpuFound {
-			availableIDs = []uint{}
-		}
-
-		unmatched[mappingFile] = mismatch{
-			gpuID:        gpuID,
-			instanceID:   instanceID,
-			availableIDs: availableIDs,
-			signature:    fmt.Sprintf("%t:%v", gpuFound, availableIDs),
-		}
-	}
-
-	nextWarnings := make(map[string]string, len(unmatched))
-	for mappingFile, entry := range unmatched {
-		nextWarnings[mappingFile] = entry.signature
-	}
-	pendingWarnings := make([]pendingWarning, 0, len(unmatched))
-
-	p.warningMu.Lock()
-	for _, mappingFile := range mappingFiles {
-		entry, exists := unmatched[mappingFile]
-		if !exists || p.warnedUnmatchedMappings[mappingFile] == entry.signature {
-			continue
-		}
-
-		pendingWarnings = append(pendingWarnings, pendingWarning{
-			mappingFile: mappingFile,
-			entry:       entry,
-		})
-	}
-	p.warnedUnmatchedMappings = nextWarnings
-	p.warningMu.Unlock()
-
-	for _, warning := range pendingWarnings {
-		slog.Warn(
-			"HPC job mapping file does not match a discovered MIG GPU instance; job labels from this file will not be applied",
-			slog.String("mapping_file", warning.mappingFile),
-			slog.String("gpu_id", warning.entry.gpuID),
-			slog.String("gpu_instance_id", warning.entry.instanceID),
-			slog.Any("available_gpu_instance_ids", warning.entry.availableIDs),
-			slog.String("hint", "name MIG mapping files using the GPU_I_ID metric label, not the nvidia-smi Device ordinal"),
-		)
-	}
-}
-
-func readFile(path string) ([]string, error) {
-	var jobs []string
-
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func(file *sysOS.File) {
-		err := file.Close()
-		if err != nil {
-			slog.Error(fmt.Sprintf("Failed for close the file: %s", file.Name()),
-				slog.String(logging.ErrorKey, err.Error()))
-		}
-	}(file)
-
-	// Example of the expected file format:
-	// job1
-	// job2
-	// job3
-	scanner := bufio.NewScanner(file)
-	seen := make(map[string]struct{})
-	for scanner.Scan() {
-		job := scanner.Text()
-		if _, exists := seen[job]; exists {
-			continue
-		}
-		seen[job] = struct{}{}
-		jobs = append(jobs, job)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return jobs, nil
+	delete(metric.Labels, hpcJobAttribute)
+	metric.Labels[availablePodLabelName(*metric, dcgm.FE_GPU, hpcJobAttribute)] = value
 }
 
 // validGPUFile matches Slurm job mapping filenames: plain GPU IDs (e.g. "0", "1")
 // or MIG instance IDs in <GPU_ID>.<GPU_INSTANCE_ID> format (e.g. "2.0", "3.10").
 var validGPUFile = regexp.MustCompile(`^\d+(\.\d+)?$`)
-
-func getGPUFiles(dirPath string) ([]string, error) {
-	files, err := os.ReadDir(dirPath)
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Debug(fmt.Sprintf("hpc mapper: %d files in the %q found", len(files), dirPath))
-
-	var mappingFiles []string
-
-	for _, file := range files {
-		finfo, err := file.Info()
-		if err != nil {
-			slog.Warn(fmt.Sprintf("HPC mapper: can not get file info for the %s file.", file.Name()))
-			continue // Skip files that we can't read
-		}
-
-		if finfo.IsDir() {
-			slog.Debug(fmt.Sprintf("HPC mapper: the %q file is directory", file.Name()))
-			continue // Skip directories
-		}
-
-		if !validGPUFile.MatchString(file.Name()) {
-			slog.Debug(fmt.Sprintf("HPC mapper: file %q name doesn't match with <GPU_ID> or <GPU_ID>.<GPU_INSTANCE_ID> convention", file.Name()))
-			continue
-		}
-		mappingFiles = append(mappingFiles, file.Name())
-	}
-
-	return mappingFiles, nil
-}
