@@ -498,7 +498,7 @@ list with comments.
 | `podAnnotations` | Extra pod annotations | `{}` |
 | `daemonSetAnnotations` | Extra DaemonSet annotations | `{}` |
 | `podSecurityContext` | Pod security context | `{}` |
-| `securityContext` | Container security context. The default runs as root and keeps only `SYS_ADMIN`, which profiling metrics (`DCGM_FI_PROF_*`) need | see `values.yaml` |
+| `securityContext` | Container security context. The default runs as root and keeps only `SYS_ADMIN`, which profiling metrics (`DCGM_FI_PROF_*`) need. Without `SYS_ADMIN`, also set `NVIDIA_MIG_MONITOR_DEVICES` to `""` in `extraEnv`: NVIDIA Container Toolkit 1.20.1 and later refuse to create a container that requests MIG monitor devices without `CAP_SYS_ADMIN` | see `values.yaml` |
 | `resources` | CPU, memory and ephemeral-storage requests and limits | 100m CPU, 128Mi memory and 100Mi ephemeral-storage requests; 200m CPU and 512Mi memory limits |
 | `initContainers` | Extra init containers, as full container specs | `[]` |
 
