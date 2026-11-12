@@ -178,8 +178,8 @@ securityContext:
   # Note: For non-root without profiling metrics, use:
   # runAsNonRoot: true, runAsUser: 1000, remove SYS_ADMIN from capabilities.add,
   # and set NVIDIA_MIG_MONITOR_DEVICES to "" in extraEnv. The image requests MIG
-  # monitor devices, and NVIDIA Container Toolkit 1.20.1 and later refuse to
-  # create the container without CAP_SYS_ADMIN.
+  # monitor devices, and NVIDIA Container Toolkit refuses to create the container
+  # without CAP_SYS_ADMIN.
 
 # Defines the dcgm-exporter service
 service:
