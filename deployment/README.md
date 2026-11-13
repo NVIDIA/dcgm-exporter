@@ -319,7 +319,15 @@ extraVolumeMounts:
     mountPath: /tmp/dcgm-exporter-debug
 ```
 
-Copy the files out with `kubectl cp <namespace>/<pod>:/tmp/dcgm-exporter-debug ./debug-files`.
+The image has no `tar`, `ls` or `cat`, so `kubectl cp` and `kubectl exec ... -- ls` fail with
+`executable file not found in $PATH`. The image does have `bash`. Use it to list the dumps
+and to copy one out:
+
+```bash
+kubectl exec -n <namespace> <pod> -- bash -c 'printf "%s\n" /tmp/dcgm-exporter-debug/*'
+kubectl exec -n <namespace> <pod> -- \
+  bash -c 'printf "%s\n" "$(</tmp/dcgm-exporter-debug/<file>)"' > <file>
+```
 
 ## Security
 
