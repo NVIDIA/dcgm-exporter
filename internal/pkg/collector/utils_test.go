@@ -283,6 +283,12 @@ func Test_isStringBlank(t *testing.T) {
 			want:  true,
 		},
 		{
+			// DCGM_STR_NOT_PERMISSIONED in dcgm_structs.h, the value the hostengine writes.
+			name:  "DCGM_STR_NOT_PERMISSIONED from the hostengine",
+			value: "<<<NOT_PERM>>>",
+			want:  true,
+		},
+		{
 			name:  "Valid empty string",
 			value: "",
 			want:  false,
