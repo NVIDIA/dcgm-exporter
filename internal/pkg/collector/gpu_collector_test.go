@@ -2647,6 +2647,11 @@ func TestToString(t *testing.T) {
 			want:  skipDCGMValue,
 		},
 		{
+			name:  "not permissioned string",
+			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_STRING, Value: createStringByteArray("<<<NOT_PERM>>>")},
+			want:  skipDCGMValue,
+		},
+		{
 			name:  "unsupported field type",
 			value: dcgm.FieldValue_v1{FieldType: dcgm.DCGM_FT_BINARY},
 			want:  skipDCGMValue,

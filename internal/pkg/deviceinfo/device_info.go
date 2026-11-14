@@ -487,13 +487,14 @@ func syntheticGPUUUID(gpuID uint) string {
 }
 
 // normalizeDCGMStringField converts DCGM string sentinels into empty values.
+// It follows DCGM_STR_IS_BLANK in dcgm_structs.h: a value that starts with
+// "<<<" and contains ">>>" is blank, including "<<<NOT_PERM>>>".
 func normalizeDCGMStringField(value string) string {
-	switch value {
-	case "", dcgm.DCGM_FT_STR_BLANK, dcgm.DCGM_FT_STR_NOT_FOUND, dcgm.DCGM_FT_STR_NOT_SUPPORTED, dcgm.DCGM_FT_STR_NOT_PERMISSIONED:
+	if strings.HasPrefix(value, "<<<") && strings.Contains(value, ">>>") {
 		return ""
-	default:
-		return value
 	}
+
+	return value
 }
 
 // WarnMIGInstancesWithoutComputeInstances logs one warning for every MIG GPU

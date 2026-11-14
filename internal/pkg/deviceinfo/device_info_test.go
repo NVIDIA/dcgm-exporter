@@ -563,6 +563,50 @@ func TestInitializeUsesSyntheticMinimalGPUInfoFallback(t *testing.T) {
 	assert.Equal(t, dcgmerrors.SupportedVersionHint, placeholderRecords[0]["hint"])
 }
 
+// TestInitializeMinimalGPUInfoDropsNotPermissionedStrings checks that the
+// fallback identity query treats the string DCGM writes for a field that is not
+// permissioned as missing, so the GPU gets its placeholder UUID.
+func TestInitializeMinimalGPUInfoDropsNotPermissionedStrings(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockDCGMProvider := mockdcgm.NewMockDCGM(ctrl)
+	mockDCGMProvider.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+
+	realDCGM := dcgmprovider.Client()
+	defer func() {
+		dcgmprovider.SetClient(realDCGM)
+	}()
+	dcgmprovider.SetClient(mockDCGMProvider)
+
+	// DCGM_STR_NOT_PERMISSIONED in dcgm_structs.h.
+	const notPermissioned = "<<<NOT_PERM>>>"
+	mockDCGMProvider.EXPECT().GetAllDeviceCount().Return(uint(1), nil)
+	mockDCGMProvider.EXPECT().GetDeviceInfo(uint(0)).Return(
+		dcgm.Device{},
+		&dcgm.Error{Code: dcgm.DCGM_ST_FUNCTION_NOT_FOUND},
+	)
+	mockDCGMProvider.EXPECT().EntityGetLatestValues(
+		dcgm.FE_GPU,
+		uint(0),
+		[]dcgm.Short{dcgm.DCGM_FI_DEV_NAME, dcgm.DCGM_FI_DEV_UUID, dcgm.DCGM_FI_DEV_PCI_BUSID},
+	).Return([]dcgm.FieldValue_v1{
+		dcgmStringFieldValue(dcgm.DCGM_FI_DEV_NAME, notPermissioned),
+		dcgmStringFieldValue(dcgm.DCGM_FI_DEV_UUID, notPermissioned),
+		dcgmStringFieldValue(dcgm.DCGM_FI_DEV_PCI_BUSID, notPermissioned),
+	}, nil)
+	mockDCGMProvider.EXPECT().GetNvLinkLinkStatus().Return([]dcgm.NvLinkStatus{}, nil)
+	mockDCGMProvider.EXPECT().GetGPUInstanceHierarchy().Return(dcgm.MigHierarchy_v2{}, nil)
+
+	info, err := Initialize(appconfig.DeviceOptions{Flex: true}, appconfig.DeviceOptions{}, appconfig.DeviceOptions{}, false, dcgm.FE_GPU)
+
+	require.NoError(t, err)
+	require.Equal(t, uint(1), info.GPUCount())
+	gpu := info.GPU(0).DeviceInfo
+	assert.Equal(t, "GPU-0", gpu.UUID)
+	assert.True(t, info.GPU(0).SyntheticGPUUUID)
+	assert.Empty(t, gpu.Identifiers.Model)
+	assert.Empty(t, gpu.PCI.BusID)
+}
+
 // TestInitializeWarnsOnceForGPUIdentityFallbacks checks that several GPUs on
 // the identity fallback share one warning per fallback step, listing their IDs.
 func TestInitializeWarnsOnceForGPUIdentityFallbacks(t *testing.T) {

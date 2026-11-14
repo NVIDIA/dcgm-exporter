@@ -19,6 +19,7 @@ package collector
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
@@ -127,10 +128,10 @@ func isFloat64Blank(v float64) bool {
 		v == dcgm.DCGM_FT_FP64_NOT_PERMISSIONED
 }
 
-// isStringBlank checks if a string value is a DCGM blank/sentinel value.
+// isStringBlank checks if a string value is a DCGM blank/sentinel value. It
+// follows DCGM_STR_IS_BLANK in dcgm_structs.h: a value that starts with "<<<"
+// and contains ">>>" is blank. This also covers "<<<NOT_PERM>>>", which DCGM
+// writes for a string field that is not permissioned.
 func isStringBlank(v string) bool {
-	return v == dcgm.DCGM_FT_STR_BLANK ||
-		v == dcgm.DCGM_FT_STR_NOT_FOUND ||
-		v == dcgm.DCGM_FT_STR_NOT_SUPPORTED ||
-		v == dcgm.DCGM_FT_STR_NOT_PERMISSIONED
+	return strings.HasPrefix(v, "<<<") && strings.Contains(v, ">>>")
 }
