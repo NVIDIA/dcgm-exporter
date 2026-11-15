@@ -1106,6 +1106,13 @@ func (c *DCGMCollector) toSelectedMetrics(
 	}
 
 	for _, val := range values {
+		// Binary values expand into one metric per struct member. Values
+		// without a registered layout fall through and are skipped below.
+		if val.FieldType == dcgm.DCGM_FT_BINARY &&
+			c.appendBinaryFieldMetrics(metrics, val, mi, readTimestamp, source, selected, labels) {
+			continue
+		}
+
 		v := toString(val)
 		// Filter out counters with no value and ignored fields for this entity
 		if v == skipDCGMValue {
