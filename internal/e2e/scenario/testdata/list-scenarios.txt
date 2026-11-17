@@ -9,6 +9,7 @@ static/grafanaDashboardMetrics Grafana dashboard queries only metrics in the def
 static/chartServiceMonitorRendering Helm chart ServiceMonitor rendering
 static/chartNaming     Helm chart renders name and namespace overrides and release-scoped object names
 static/chartPodSettings Helm chart renders update strategy, resources and init containers
+static/chartSecurityContext Helm chart and raw-manifest container security context
 static/chartWebConfig  Helm chart TLS and basic-auth web configuration rendering
 static/chartYamlConfig Helm chart YAML config rendering
 static/chartMounts     Helm chart file mounts (whole directories, no subPath) and metrics list value checks

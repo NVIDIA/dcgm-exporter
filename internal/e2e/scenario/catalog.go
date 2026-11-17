@@ -357,6 +357,14 @@ var Catalog = []Scenario{
 	},
 	{
 		Suite:       SuiteStatic,
+		Name:        "chartSecurityContext",
+		Group:       GroupStaticBaseline,
+		Description: "Helm chart and raw-manifest container security context",
+		ResultName:  "TestChartSecurityContextRenderContract,TestRawManifestSecurityContextMatchesTheChartDefaults",
+		Enabled:     "always",
+	},
+	{
+		Suite:       SuiteStatic,
 		Name:        "chartWebConfig",
 		Group:       GroupStaticBaseline,
 		Description: "Helm chart TLS and basic-auth web configuration rendering",

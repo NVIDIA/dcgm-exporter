@@ -994,6 +994,9 @@ type container struct {
 	StartupProbe   *probe        `yaml:"startupProbe"`
 	LivenessProbe  probe         `yaml:"livenessProbe"`
 	ReadinessProbe probe         `yaml:"readinessProbe"`
+	// SecurityContext keeps the rendered keys and values as they are, so a test
+	// can compare them exactly.
+	SecurityContext map[string]interface{} `yaml:"securityContext"`
 }
 
 // toleration captures the pod toleration fields needed by render-contract tests.
