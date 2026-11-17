@@ -31,6 +31,7 @@ go_test(
         "chart_pod_settings_rendering_test.go",
         "chart_rbac_rendering_test.go",
         "chart_scheduling_rendering_test.go",
+        "chart_security_context_rendering_test.go",
         "chart_web_config_rendering_test.go",
         "docker_default_config_test.go",
         "grafana_dashboard_test.go",
