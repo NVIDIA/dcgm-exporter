@@ -30,6 +30,10 @@ metadata:
 {{- $mountConfig := or $configFile $configMap.existingName }}
 {{- /* The debug dump directory that gets the chart's emptyDir, if any. */}}
 {{- $dumpDirectory := include "dcgm-exporter.dumpVolumeDirectory" . }}
+{{- /* Kubelet probes cannot present a client certificate. RequireClientCert is a legacy exporter-toolkit alias. */}}
+{{- $requiredClientCertPolicies := list "RequireAndVerifyClientCert" "RequireAnyClientCert" "RequireClientCert" }}
+{{- $requiresClientCert := and .Values.tlsServerConfig.enabled (has .Values.tlsServerConfig.clientAuthType $requiredClientCertPolicies) }}
+{{- $useTCPProbe := or .Values.basicAuth.users $requiresClientCert }}
 spec:
   updateStrategy:
     type: RollingUpdate
@@ -207,7 +211,7 @@ spec:
         {{- end }}
         {{- if and .Values.startupProbe .Values.startupProbe.enabled }}
         startupProbe:
-          {{- if not $.Values.basicAuth.users }}
+          {{- if not $useTCPProbe }}
           httpGet:
             path: /health
             port: {{ .Values.service.port }}
@@ -223,7 +227,7 @@ spec:
           {{- end }}
         {{- end }}
         livenessProbe:
-          {{- if not $.Values.basicAuth.users }}
+          {{- if not $useTCPProbe }}
           httpGet:
             path: /health
             port: {{ .Values.service.port }}
@@ -241,7 +245,7 @@ spec:
           failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
           {{- end }}
         readinessProbe:
-          {{- if not $.Values.basicAuth.users }}
+          {{- if not $useTCPProbe }}
           httpGet:
             path: /health
             port: {{ .Values.service.port }}
