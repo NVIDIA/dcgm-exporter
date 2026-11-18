@@ -535,17 +535,24 @@ func TestChartStartupProbeRenderContract(t *testing.T) {
 }
 
 // TestChartProbeHandlersRenderContract checks that the startup, liveness and
-// readiness probes all reach the exporter the same way: HTTP on /health, HTTPS
-// with TLS, and a TCP connection when basic authentication would refuse an
-// unauthenticated request.
+// readiness probes use /health over HTTP or HTTPS unless the endpoint requires
+// credentials, in which case they check the TCP port.
 func TestChartProbeHandlersRenderContract(t *testing.T) {
+	tls := func(clientAuthType string) map[string]interface{} {
+		return map[string]interface{}{"tlsServerConfig": map[string]interface{}{"enabled": true, "existingSecret": "exporter-tls", "clientAuthType": clientAuthType}}
+	}
 	testCases := []struct {
 		name       string
 		values     map[string]interface{}
 		wantScheme string // empty means a TCP socket check
 	}{
 		{name: "defaults use HTTP", wantScheme: "HTTP"},
-		{name: "TLS uses HTTPS", values: map[string]interface{}{"tlsServerConfig": map[string]interface{}{"enabled": true}}, wantScheme: "HTTPS"},
+		{name: "TLS uses HTTPS", values: tls(""), wantScheme: "HTTPS"},
+		{name: "requesting a client certificate uses HTTPS", values: tls("RequestClientCert"), wantScheme: "HTTPS"},
+		{name: "verifying an optional client certificate uses HTTPS", values: tls("VerifyClientCertIfGiven"), wantScheme: "HTTPS"},
+		{name: "requiring and verifying a client certificate uses TCP", values: tls("RequireAndVerifyClientCert")},
+		{name: "requiring any client certificate uses TCP", values: tls("RequireAnyClientCert")},
+		{name: "requiring a client certificate with the legacy policy uses TCP", values: tls("RequireClientCert")},
 		{name: "basic auth uses a TCP socket", values: map[string]interface{}{"basicAuth": map[string]interface{}{"users": map[string]interface{}{"admin": "secret"}}}},
 	}
 
@@ -584,8 +591,9 @@ func TestChartProbeHandlersRenderContract(t *testing.T) {
 				require.NotNil(t, handler, "%s probe", name)
 				if tc.wantScheme == "" {
 					assert.Nil(t, handler.HTTPGet, "%s probe", name)
-					require.NotNil(t, handler.TCPSocket, "%s probe", name)
-					assert.Equal(t, 9400, handler.TCPSocket.Port, "%s probe", name)
+					if assert.NotNil(t, handler.TCPSocket, "%s probe", name) {
+						assert.Equal(t, 9400, handler.TCPSocket.Port, "%s probe", name)
+					}
 					continue
 				}
 				assert.Nil(t, handler.TCPSocket, "%s probe", name)

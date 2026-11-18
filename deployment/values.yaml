@@ -291,10 +291,10 @@ tlsServerConfig:
   # For more detail on clientAuth options:
   # https://golang.org/pkg/crypto/tls/#ClientAuthType
   #
-  # NOTE: To make client certificates mandatory, use RequireAndVerifyClientCert.
-  # VerifyClientCertIfGiven verifies a certificate only when the client sends one,
-  # so clients without one still connect. RequestClientCert and
-  # RequireAnyClientCert do not verify certificates.
+  # RequireAndVerifyClientCert requires and verifies a client certificate.
+  # VerifyClientCertIfGiven verifies a certificate only when the client sends one.
+  # RequireAnyClientCert requires a certificate without verifying it.
+  # RequestClientCert requests an optional certificate without verifying it.
   clientAuthType: ""
   # TLS Key for HTTPS - ignored if existingSecret is provided
   key: ""
