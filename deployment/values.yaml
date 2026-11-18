@@ -181,7 +181,7 @@ securityContext:
 # Defines the dcgm-exporter service
 service:
   # When enabled, the helm chart will create service
-  enable: true
+  enabled: true
   type: ClusterIP
   # Accepts either "Cluster" or "Local", choose Local if you want to route internal traffic within the node only
   internalTrafficPolicy: Cluster
