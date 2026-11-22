@@ -26,6 +26,9 @@ import (
 // versionMismatchText is DCGM's status text for DCGM_ST_VER_MISMATCH, in lower case.
 const versionMismatchText = "api version mismatch"
 
+// profilingNotSupportedText is DCGM's status text for DCGM_ST_PROFILING_NOT_SUPPORTED, in lower case.
+const profilingNotSupportedText = "profiling is not supported"
+
 // SupportedVersionHint is the "hint" log attribute for warnings that a DCGM
 // version fallback is in use.
 const SupportedVersionHint = "Make sure the DCGM library and the DCGM hostengine both run the DCGM version " +
@@ -61,6 +64,26 @@ func IsVersionMismatch(err error) bool {
 	}
 
 	return strings.Contains(strings.ToLower(err.Error()), versionMismatchText)
+}
+
+// IsProfilingNotSupported reports whether err is DCGM_ST_PROFILING_NOT_SUPPORTED.
+// go-dcgm returns field watch failures with only DCGM's status text, so the
+// text is checked as well.
+func IsProfilingNotSupported(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if diagnostic, ok := Classify(err); ok {
+		return diagnostic.Code == dcgm.DCGM_ST_PROFILING_NOT_SUPPORTED
+	}
+
+	var derr *dcgm.Error
+	if errors.As(err, &derr) {
+		return int(derr.Code) == dcgm.DCGM_ST_PROFILING_NOT_SUPPORTED
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), profilingNotSupportedText)
 }
 
 // IsFatalScrapeError reports whether err means DCGM cannot safely serve

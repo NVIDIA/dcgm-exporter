@@ -204,6 +204,49 @@ func TestIsVersionMismatch(t *testing.T) {
 	}
 }
 
+// TestIsProfilingNotSupported checks typed and text-only profiling-not-supported
+// errors, including the text go-dcgm returns from a refused field watch.
+func TestIsProfilingNotSupported(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "wrapped typed error",
+			err:  fmt.Errorf("watch: %w", &dcgm.Error{Code: dcgm.DCGM_ST_PROFILING_NOT_SUPPORTED}),
+			want: true,
+		},
+		{
+			name: "go-dcgm field watch text",
+			err: fmt.Errorf("watch fields for logical group %q chunk 1/1: %w", "default",
+				errors.New("error watching fields: Profiling is not supported for this group of GPUs or GPU")),
+			want: true,
+		},
+		{
+			name: "other typed error",
+			err:  &dcgm.Error{Code: dcgm.DCGM_ST_NOT_SUPPORTED},
+			want: false,
+		},
+		{
+			name: "other text error",
+			err:  assert.AnError,
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsProfilingNotSupported(tc.err))
+		})
+	}
+}
+
 // TestIsFatalScrapeError verifies that only terminal DCGM states cause the
 // server to end the exporter rather than keep responding with failed scrapes.
 func TestIsFatalScrapeError(t *testing.T) {
