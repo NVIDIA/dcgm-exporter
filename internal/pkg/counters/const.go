@@ -40,3 +40,9 @@ const (
 	DCGMExpFieldPolicyViolationCount              = "DCGM_EXP_FIELD_POLICY_VIOLATION_COUNT"
 	DCGMExpFieldPolicyLastTriggerTimestampSeconds = "DCGM_EXP_FIELD_POLICY_LAST_TRIGGER_TIMESTAMP_SECONDS"
 )
+
+// IsDCPField reports whether fieldID is in the DCP/profiling field ID range
+// (DCGM_FI_PROF_*).
+func IsDCPField(fieldID uint) bool {
+	return fieldID >= dcpFieldsStart && fieldID < cpuFieldsStart
+}

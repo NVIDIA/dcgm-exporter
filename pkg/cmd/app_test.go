@@ -808,7 +808,6 @@ func TestRunDCGMExporter_HotReloadAndShutdown(t *testing.T) {
 	mock := withMockDCGMClient(t)
 	groups := sampleMetricGroups()
 	mock.EXPECT().GetSupportedMetricGroups(uint(0)).Return(groups, nil)
-	mock.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no GPUs"))
 	mock.EXPECT().Cleanup()
 
 	countersFile := filepath.Join(t.TempDir(), "counters.csv")
@@ -977,6 +976,7 @@ func TestRunDCGMExporter_ShutdownCleansCurrentDCGMClient(t *testing.T) {
 	currentDCGM := mockdcgmprovider.NewMockDCGM(ctrl)
 	initialDCGM.EXPECT().GetGPUStatus(uint(0)).Return(dcgm.EntityStatusUnknown)
 	initialDCGM.EXPECT().GetSupportedMetricGroups(uint(0)).Return(nil, errors.New("profiling unsupported"))
+	initialDCGM.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no gpus")).AnyTimes()
 	initialDCGM.EXPECT().Cleanup().Times(0)
 	currentDCGM.EXPECT().Cleanup().Times(1)
 	dcgmprovider.SetClient(initialDCGM)
