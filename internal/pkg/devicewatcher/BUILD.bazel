@@ -27,6 +27,7 @@ go_library(
 go_test(
     name = "devicewatcher_test",
     srcs = [
+        "dcp_support_regression_test.go",
         "dcp_support_test.go",
         "device_watcher_test.go",
         "field_group_split_test.go",
