@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatchlistmanager"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/registry"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/server"
@@ -860,24 +862,19 @@ func (r *reloadCoordinator) queryDCPMetrics(reloadID uint64) {
 		gpuID = gpuIDs[0]
 	}
 
-	groups, err := client.GetSupportedMetricGroups(gpuID)
+	// Query one GPU per model so a mixed-model node offers every DCP field some
+	// model supports; watches then filter fields per model.
+	groups, gpuModels, err := devicewatcher.RefreshDCPSupport(client, gpuID)
 	if err != nil {
 		r.dcp = counters.DCPCapabilities{}
 		slog.Info("Not collecting DCP metrics: " + err.Error())
 		return
 	}
 
-	gpuModel := "unknown"
-	if gpuCount, err := client.GetAllDeviceCount(); err == nil && gpuCount > 0 {
-		if gpuInfo, err := client.GetDeviceInfo(gpuID); err == nil {
-			gpuModel = gpuInfo.Identifiers.Model
-		}
-	}
-
 	slog.Info("Successfully queried DCGM profiling metric groups",
 		slog.Uint64("reload_id", reloadID),
 		slog.Int("count", len(groups)),
-		slog.String("gpu_model", gpuModel))
+		slog.String("gpu_model", strings.Join(gpuModels, ", ")))
 
 	r.dcp = counters.NewDCPCapabilities(groups)
 }

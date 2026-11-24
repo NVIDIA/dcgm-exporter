@@ -84,6 +84,9 @@ func withMockDCGMClient(t *testing.T) *mockdcgmprovider.MockDCGM {
 	ctrl := gomock.NewController(t)
 	mock := mockdcgmprovider.NewMockDCGM(ctrl)
 	mock.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+	// DCP discovery enumerates GPUs to query one per model; by default report
+	// none so it falls back to the primary GPU answer each test mocks.
+	mock.EXPECT().GetAllDeviceCount().Return(uint(0), errors.New("no gpus")).AnyTimes()
 	prev := dcgmprovider.Client()
 	t.Cleanup(func() { dcgmprovider.SetClient(prev) })
 	dcgmprovider.SetClient(mock)
@@ -112,6 +115,8 @@ func TestQueryDCPMetricsSkipsDetachedGPU(t *testing.T) {
 				client.EXPECT().GetSupportedMetricGroups(uint(1)).Return(groups, nil)
 				client.EXPECT().GetAllDeviceCount().Return(uint(2), nil)
 				client.EXPECT().GetDeviceInfo(uint(1)).Return(dcgm.Device{GPU: 1}, nil)
+				// Per-model discovery never uses the detached GPU 0 as a representative.
+				client.EXPECT().GetGPUStatus(uint(0)).Return(dcgm.EntityStatusDetached)
 			}
 			coord := newTestCoordinator(t)
 			coord.dcp = counters.NewDCPCapabilities(groups)

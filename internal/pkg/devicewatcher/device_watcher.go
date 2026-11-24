@@ -394,8 +394,15 @@ func (d *DeviceWatcher) Watch(
 ) (*WatchResult, error) {
 	resources := &WatchResult{client: d.dcgmClient()}
 
-	groups, err := d.createGroups(deviceInfo, scope)
-	resources.groups = groups
+	var partitions []watchPartition
+	var err error
+	if deviceInfo.InfoType() == dcgm.FE_GPU && anyDCPField(fieldWatchGroups) && dcpSupportRefreshed(d.dcgmClient()) {
+		// See dcpSupport: DCP fields need one group per GPU model.
+		partitions, err = d.createGroupsPerGPUModel(resources, deviceInfo, scope, fieldWatchGroups)
+	} else {
+		resources.groups, err = d.createGroups(deviceInfo, scope)
+		partitions = []watchPartition{{groups: resources.groups}}
+	}
 	if err != nil {
 		resources.Close()
 		return nil, err
@@ -405,13 +412,65 @@ func (d *DeviceWatcher) Watch(
 	}
 
 	for _, fieldWatchGroup := range fieldWatchGroups {
-		if err := d.installFieldWatchGroup(resources, fieldWatchGroup, deviceInfo); err != nil {
-			resources.Close()
-			return nil, err
+		for _, partition := range partitions {
+			partitionGroup := fieldWatchGroup
+			if partition.dcpSupported != nil {
+				partitionGroup.Fields = filterFieldsForModel(fieldWatchGroup.Fields, partition.dcpSupported)
+			}
+			if err := d.installFieldWatchGroup(resources, partitionGroup, partition.groups, deviceInfo); err != nil {
+				resources.Close()
+				return nil, err
+			}
 		}
 	}
 
 	return resources, nil
+}
+
+// watchPartition is a set of DCGM groups that watch the same fields. A non-nil
+// dcpSupported limits which DCP fields the partition watches.
+type watchPartition struct {
+	groups       []dcgm.GroupHandle
+	dcpSupported map[dcgm.Short]bool
+}
+
+// createGroupsPerGPUModel creates one DCGM group per GPU model among the
+// scope's entities, recording each group in resources as it is created so a
+// failure leaves them for Close. A model gets no group when none of its fields
+// survive DCP filtering.
+func (d *DeviceWatcher) createGroupsPerGPUModel(
+	resources *WatchResult,
+	deviceInfo deviceinfo.Provider,
+	scope WatchScope,
+	fieldWatchGroups []FieldWatchGroup,
+) ([]watchPartition, error) {
+	entities, err := EntitiesForScope(deviceInfo, scope)
+	if err != nil {
+		return nil, err
+	}
+	models, byModel := partitionMonitoredEntitiesByModel(entities)
+
+	partitions := make([]watchPartition, 0, len(models))
+	for _, model := range models {
+		modelEntities := byModel[model]
+		supported := dcpSupportForModel(d.dcgmClient(), model, modelEntities[0].DeviceInfo.GPU)
+		if !anyFieldToWatch(fieldWatchGroups, supported) {
+			slog.Debug("No fields to watch for GPU model; skipping its DCGM group",
+				slog.String("gpu_model", model))
+			continue
+		}
+
+		group, err := d.createGroupForEntities(modelEntities)
+		if err != nil {
+			return nil, err
+		}
+		resources.groups = append(resources.groups, *group)
+		partitions = append(partitions, watchPartition{
+			groups:       []dcgm.GroupHandle{*group},
+			dcpSupported: supported,
+		})
+	}
+	return partitions, nil
 }
 
 // ExplainWatchFailure adds a plain explanation to err when the hostengine
@@ -423,7 +482,12 @@ func (d *DeviceWatcher) ExplainWatchFailure(groups []FieldWatchGroup, err error)
 
 // installFieldWatchGroup records created field groups and installed watches.
 // Watch cleans up all recorded resources if setup fails.
-func (d *DeviceWatcher) installFieldWatchGroup(resources *WatchResult, fieldWatchGroup FieldWatchGroup, deviceInfo deviceinfo.Provider) error {
+func (d *DeviceWatcher) installFieldWatchGroup(
+	resources *WatchResult,
+	fieldWatchGroup FieldWatchGroup,
+	groups []dcgm.GroupHandle,
+	deviceInfo deviceinfo.Provider,
+) error {
 	fields := dedupeFields(fieldWatchGroup.Fields)
 	if len(fields) == 0 {
 		return nil
@@ -454,7 +518,7 @@ func (d *DeviceWatcher) installFieldWatchGroup(resources *WatchResult, fieldWatc
 		resources.fieldGroups = append(resources.fieldGroups, fieldGroup)
 		fieldOffset += len(chunk)
 
-		for _, group := range resources.groups {
+		for _, group := range groups {
 			logWatchFieldsCall(d.dcgmClient(), deviceInfo, group, fieldGroup, chunk)
 			watchErr := watchFieldGroup(d.dcgmClient(), group, fieldGroup, updateFreqInUsec, keepAge, keepSamples)
 			if watchErr != nil {
@@ -508,6 +572,12 @@ func (d *DeviceWatcher) createGenericGroup(
 	if err != nil {
 		return nil, err
 	}
+	return d.createGroupForEntities(monitoringInfo)
+}
+
+// createGroupForEntities creates one group containing exactly monitoringInfo.
+// It returns nil without a group when monitoringInfo is empty.
+func (d *DeviceWatcher) createGroupForEntities(monitoringInfo []devicemonitoring.Info) (*dcgm.GroupHandle, error) {
 	if len(monitoringInfo) == 0 {
 		return nil, nil
 	}

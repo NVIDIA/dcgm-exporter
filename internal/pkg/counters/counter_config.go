@@ -418,7 +418,7 @@ func retiredPCIeFieldReplacement(fieldID dcgm.Short) (string, bool) {
 // capability snapshot to contain profiling fields. ExtractCounters calls it
 // for every resolved DCGM field before adding it to a counter set.
 func fieldIsSupported(fieldID uint, dcp DCPCapabilities) bool {
-	if fieldID < dcpFieldsStart || fieldID >= cpuFieldsStart {
+	if !IsDCPField(fieldID) {
 		return true
 	}
 	return dcp.Supports(fieldID)

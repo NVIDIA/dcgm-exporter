@@ -4,6 +4,7 @@ go_library(
     name = "devicewatcher",
     srcs = [
         "const.go",
+        "dcp_support.go",
         "device_watcher.go",
         "field_group_split.go",
         "refused_fields.go",
@@ -26,6 +27,8 @@ go_library(
 go_test(
     name = "devicewatcher_test",
     srcs = [
+        "dcp_support_regression_test.go",
+        "dcp_support_test.go",
         "device_watcher_test.go",
         "field_group_split_test.go",
         "refused_fields_test.go",
@@ -38,6 +41,7 @@ go_test(
         "//internal/pkg/counters",
         "//internal/pkg/dcgmprovider",
         "//internal/pkg/deviceinfo",
+        "//internal/pkg/devicemonitoring",
         "//internal/pkg/logging",
         "//internal/pkg/testutils",
         "@com_github_nvidia_go_dcgm//pkg/dcgm",
