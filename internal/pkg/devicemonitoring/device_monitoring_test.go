@@ -489,10 +489,10 @@ func monitoredEntitiesSwitchCases() []monitoredEntitiesCase {
 
 				watchedSwitches := map[uint]bool{0: true, 1: true}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 0}: true,
-					{0, 1}: true,
-					{1, 0}: true,
-					{1, 1}: true,
+					{ParentID: 0, ChildID: 0}: true,
+					{ParentID: 0, ChildID: 1}: true,
+					{ParentID: 1, ChildID: 0}: true,
+					{ParentID: 1, ChildID: 1}: true,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -548,10 +548,10 @@ func monitoredEntitiesCPUCases() []monitoredEntitiesCase {
 
 				watchedCPUs := map[uint]bool{0: true, 1: true}
 				watchedCores := map[testutils.WatchedEntityKey]bool{
-					{0, 0}: true,
-					{0, 1}: false,
-					{1, 0}: false,
-					{1, 1}: true,
+					{ParentID: 0, ChildID: 0}: true,
+					{ParentID: 0, ChildID: 1}: false,
+					{ParentID: 1, ChildID: 0}: false,
+					{ParentID: 1, ChildID: 1}: true,
 				}
 				return testutils.MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
@@ -1315,7 +1315,7 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				watchedSwitches := map[uint]bool{0: true}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: true,
+					{ParentID: 0, ChildID: 1}: true,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -1340,7 +1340,7 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				watchedSwitches := map[uint]bool{0: false}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: true,
+					{ParentID: 0, ChildID: 1}: true,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -1357,7 +1357,7 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				watchedSwitches := map[uint]bool{0: true}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: false,
+					{ParentID: 0, ChildID: 1}: false,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -1374,7 +1374,7 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				watchedSwitches := map[uint]bool{0: true}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 0}: true,
+					{ParentID: 0, ChildID: 0}: true,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 1, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -1393,8 +1393,8 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				watchedSwitches := map[uint]bool{0: true, 1: true}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: true,
-					{1, 1}: true,
+					{ParentID: 0, ChildID: 1}: true,
+					{ParentID: 1, ChildID: 1}: true,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 2, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -1428,10 +1428,10 @@ func Test_monitorAllLinks(t *testing.T) {
 
 				watchedSwitches := map[uint]bool{0: true, 1: true}
 				watchedLinks := map[testutils.WatchedEntityKey]bool{
-					{0, 0}: true,
-					{0, 1}: false,
-					{1, 0}: true,
-					{1, 1}: true,
+					{ParentID: 0, ChildID: 0}: true,
+					{ParentID: 0, ChildID: 1}: false,
+					{ParentID: 1, ChildID: 0}: true,
+					{ParentID: 1, ChildID: 1}: true,
 				}
 				return testutils.MockSwitchDeviceInfo(ctrl, 5, switchToNvLinks, watchedSwitches, watchedLinks,
 					dcgm.FE_LINK)
@@ -1592,7 +1592,7 @@ func Test_monitorAllCPUCores(t *testing.T) {
 
 				watchedCPUs := map[uint]bool{0: true}
 				watchedCores := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: true,
+					{ParentID: 0, ChildID: 1}: true,
 				}
 				return testutils.MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
@@ -1616,7 +1616,7 @@ func Test_monitorAllCPUCores(t *testing.T) {
 
 				watchedCPUs := map[uint]bool{0: false}
 				watchedCores := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: true,
+					{ParentID: 0, ChildID: 1}: true,
 				}
 				return testutils.MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
@@ -1632,7 +1632,7 @@ func Test_monitorAllCPUCores(t *testing.T) {
 
 				watchedCPUs := map[uint]bool{0: true}
 				watchedCores := map[testutils.WatchedEntityKey]bool{
-					{0, 1}: false,
+					{ParentID: 0, ChildID: 1}: false,
 				}
 				return testutils.MockCPUDeviceInfo(ctrl, 1, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
@@ -1649,10 +1649,10 @@ func Test_monitorAllCPUCores(t *testing.T) {
 
 				watchedCPUs := map[uint]bool{0: true, 1: true}
 				watchedCores := map[testutils.WatchedEntityKey]bool{
-					{0, 0}: true,
-					{0, 1}: true,
-					{1, 0}: true,
-					{1, 1}: true,
+					{ParentID: 0, ChildID: 0}: true,
+					{ParentID: 0, ChildID: 1}: true,
+					{ParentID: 1, ChildID: 0}: true,
+					{ParentID: 1, ChildID: 1}: true,
 				}
 				return testutils.MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
@@ -1698,10 +1698,10 @@ func Test_monitorAllCPUCores(t *testing.T) {
 
 				watchedCPUs := map[uint]bool{0: true, 1: true}
 				watchedCores := map[testutils.WatchedEntityKey]bool{
-					{0, 0}: true,
-					{0, 1}: false,
-					{1, 0}: false,
-					{1, 1}: true,
+					{ParentID: 0, ChildID: 0}: true,
+					{ParentID: 0, ChildID: 1}: false,
+					{ParentID: 1, ChildID: 0}: false,
+					{ParentID: 1, ChildID: 1}: true,
 				}
 				return testutils.MockCPUDeviceInfo(ctrl, 2, cpuToCores, watchedCPUs, watchedCores, dcgm.FE_CPU_CORE)
 			},
