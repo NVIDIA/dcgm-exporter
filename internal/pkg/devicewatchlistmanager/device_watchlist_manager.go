@@ -310,6 +310,17 @@ func (d *WatchList) withoutFields(fields []dcgm.Short) *WatchList {
 	return &rest
 }
 
+// WithoutFields returns a copy of this list that neither watches nor scrapes
+// fields. Every other field, the device topology and the watcher are kept.
+func (d *WatchList) WithoutFields(fields []dcgm.Short) WatchList {
+	rest := *d.withoutFields(fields)
+	rest.gpuLevelFields = fieldsOutsideScope(d.gpuLevelFields, fields)
+	rest.computeInstanceFields = fieldsOutsideScope(d.computeInstanceFields, fields)
+	rest.fieldsAtMultipleScopes = fieldsOutsideScope(d.fieldsAtMultipleScopes, fields)
+
+	return rest
+}
+
 // watchInstanceScopes installs the configured scope or, when this list has
 // compute-instance fields, separate base, compute-instance and parent-GPU scopes.
 func (d *WatchList) watchInstanceScopes() (*devicewatcher.WatchResult, error) {

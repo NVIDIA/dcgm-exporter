@@ -25,6 +25,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicewatcher"
@@ -408,6 +409,14 @@ func (cf *collectorFactory) enableDCGMCollector(
 ) (Collector, error) {
 	newCollector, err := newDCGMCollectorWithClient(cf.client, cf.counterSet.DCGMCounters, cf.hostname, cf.config,
 		entityWatchList)
+	if err != nil && entityType == dcgm.FE_LINK {
+		// Some GPUs cannot profile their NVLinks; keep the other per-link fields.
+		var linkCollector Collector
+		linkCollector, err = cf.newLinkCollectorWithoutProfiling(entityWatchList, err)
+		if err == nil {
+			return linkCollector, nil
+		}
+	}
 	if err != nil {
 		err = cf.logDCGMCollectorFailure(entityType, err, refusedFields)
 		if entityWatchList.HasOTLPWatches() || cf.config == nil || !cf.config.DisableStartupValidate {
@@ -417,6 +426,64 @@ func (cf *collectorFactory) enableDCGMCollector(
 	}
 
 	return newCollector, nil
+}
+
+// linkProfilingFields are the profiling fields that DCGM watches on each NVLink
+// as well as on its GPU.
+var linkProfilingFields = []dcgm.Short{dcgm.DCGM_FI_PROF_NVLINK_TX_BYTES, dcgm.DCGM_FI_PROF_NVLINK_RX_BYTES}
+
+// newLinkCollectorWithoutProfiling builds the NvLink collector again without
+// the per-link profiling fields after DCGM refused to profile the links, as it
+// can for GPUs whose NVLinks are down. The GPU collector still
+// reports these fields per GPU, and every other per-link field is kept. It
+// returns watchErr unchanged for any other failure, and (nil, nil) when the
+// profiling fields were the only per-link fields.
+func (cf *collectorFactory) newLinkCollectorWithoutProfiling(
+	entityWatchList devicewatchlistmanager.WatchList, watchErr error,
+) (Collector, error) {
+	if !dcgmerrors.IsProfilingNotSupported(watchErr) {
+		return nil, watchErr
+	}
+
+	refused := intersectLinkProfilingFields(entityWatchList.DeviceFields())
+	if len(refused) == 0 {
+		return nil, watchErr
+	}
+
+	slog.Warn("DCGM cannot profile the NVLinks of these GPUs; watching the other per-link fields without "+
+		"the NVLink profiling fields, which are still reported per GPU",
+		slog.Any("field_ids", refused),
+		slog.String(logging.ErrorKey, watchErr.Error()))
+
+	rest := entityWatchList.WithoutFields(refused)
+	if rest.IsEmpty() {
+		return nil, nil
+	}
+
+	newCollector, err := newDCGMCollectorWithClient(cf.client, cf.counterSet.DCGMCounters, cf.hostname, cf.config,
+		rest)
+	if err != nil {
+		return nil, err
+	}
+
+	return newCollector, nil
+}
+
+// intersectLinkProfilingFields returns the per-link profiling fields that
+// fields contains, in linkProfilingFields order.
+func intersectLinkProfilingFields(fields []dcgm.Short) []dcgm.Short {
+	present := make(map[dcgm.Short]struct{}, len(fields))
+	for _, field := range fields {
+		present[field] = struct{}{}
+	}
+
+	var found []dcgm.Short
+	for _, field := range linkProfilingFields {
+		if _, ok := present[field]; ok {
+			found = append(found, field)
+		}
+	}
+	return found
 }
 
 // enableExporterFamily creates one enabled exporter-owned family using the

@@ -517,6 +517,42 @@ func TestWatchListExplainsRefusedFieldsAcrossScopes(t *testing.T) {
 }
 
 // TestWatchResult_BindingsReturnsCopy checks that changing the slice returned by Bindings does not change the
+// TestWatchList_WithoutFields checks that the copy drops the fields from every
+// field subset and its watch groups, keeps the other fields, and leaves the
+// original list unchanged.
+func TestWatchList_WithoutFields(t *testing.T) {
+	deviceFields := []dcgm.Short{dcgm.DCGM_FI_PROF_NVLINK_TX_BYTES, dcgm.DCGM_FI_DEV_GPU_TEMP, dcgm.DCGM_FI_PROF_NVLINK_RX_BYTES}
+	labelFields := []dcgm.Short{dcgm.DCGM_FI_DEV_UUID}
+	dropped := []dcgm.Short{dcgm.DCGM_FI_PROF_NVLINK_TX_BYTES, dcgm.DCGM_FI_PROF_NVLINK_RX_BYTES}
+	original := newWatchListWithGroups(
+		nil,
+		deviceFields,
+		labelFields,
+		[]dcgm.Short{dcgm.DCGM_FI_PROF_NVLINK_TX_BYTES},
+		nil,
+		[]dcgm.Short{dcgm.DCGM_FI_PROF_NVLINK_RX_BYTES, dcgm.DCGM_FI_DEV_GPU_TEMP},
+		defaultFieldWatchGroups(buildWatchFields(deviceFields, labelFields), 1),
+		nil,
+		1,
+		appconfig.DefaultWatchMaxKeepAge.Seconds(),
+		int32(appconfig.DefaultWatchMaxSamples),
+	)
+
+	rest := original.WithoutFields(dropped)
+
+	assert.Equal(t, []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP}, rest.DeviceFields())
+	assert.Equal(t, labelFields, rest.LabelDeviceFields())
+	assert.Empty(t, rest.ComputeInstanceFields())
+	assert.Equal(t, []dcgm.Short{dcgm.DCGM_FI_DEV_GPU_TEMP}, rest.gpuLevelFields)
+	for _, group := range rest.FieldWatchGroups() {
+		for _, field := range dropped {
+			assert.NotContains(t, group.Fields, field, "watch group %q", group.Name)
+		}
+	}
+	assert.Equal(t, deviceFields, original.DeviceFields(), "the original list must not change")
+	assert.Len(t, original.ComputeInstanceFields(), 1)
+}
+
 // bindings stored in the result.
 func TestWatchResult_BindingsReturnsCopy(t *testing.T) {
 	original := dcgm.FieldHandle{}

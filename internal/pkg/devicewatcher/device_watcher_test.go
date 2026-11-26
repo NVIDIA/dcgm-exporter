@@ -1224,6 +1224,79 @@ func TestDeviceWatcher_WatchDeviceFieldsLogsFieldDetailsOnWatchFailure(t *testin
 	}
 }
 
+// TestDeviceWatcher_logWatchFieldsFailureLevel checks that a refused NVLink
+// profiling watch, which the collector factory handles, is logged at debug
+// level, and that every other watch failure is still logged as an error.
+func TestDeviceWatcher_logWatchFieldsFailureLevel(t *testing.T) {
+	const message = "Failed to watch DCGM fields"
+	profilingErr := errors.New("error watching fields: Profiling is not supported for this group of GPUs or GPU\n" +
+		"rollback failed DCGM watch: error unwatching fields: Field is not being watched")
+
+	tests := []struct {
+		name       string
+		entityType dcgm.Field_Entity_Group
+		err        error
+		wantLevel  string
+	}{
+		{
+			name:       "NvLink profiling not supported",
+			entityType: dcgm.FE_LINK,
+			err:        profilingErr,
+			wantLevel:  slog.LevelDebug.String(),
+		},
+		{
+			name:       "NvLink typed profiling not supported",
+			entityType: dcgm.FE_LINK,
+			err:        &dcgm.Error{Code: dcgm.DCGM_ST_PROFILING_NOT_SUPPORTED},
+			wantLevel:  slog.LevelDebug.String(),
+		},
+		{
+			name:       "NvLink other error",
+			entityType: dcgm.FE_LINK,
+			err:        errors.New("error watching fields: Generic unspecified error"),
+			wantLevel:  slog.LevelError.String(),
+		},
+		{
+			name:       "GPU profiling not supported",
+			entityType: dcgm.FE_GPU,
+			err:        profilingErr,
+			wantLevel:  slog.LevelError.String(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+			ctrl := gomock.NewController(t)
+			mockDCGM := mockdcgm.NewMockDCGM(ctrl)
+			mockDCGM.EXPECT().FieldGetByID(gomock.Any()).Return(dcgm.FieldMeta{}, nil).AnyTimes()
+			deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			deviceInfo.EXPECT().InfoType().Return(tt.entityType).AnyTimes()
+			deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+			deviceInfo.EXPECT().SOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+
+			fields := []dcgm.Short{dcgm.DCGM_FI_PROF_NVLINK_RX_BYTES, dcgm.DCGM_FI_PROF_NVLINK_TX_BYTES}
+			logWatchFieldsFailure(mockDCGM, deviceInfo, dcgm.GroupHandle{}, dcgm.FieldHandle{}, fields, tt.err)
+
+			// Collect the level of every record with the failure message.
+			var levels []string
+			for _, rawRecord := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(rawRecord, &record))
+				if record["msg"] == message {
+					levels = append(levels, record["level"].(string))
+				}
+			}
+
+			assert.Equal(t, []string{tt.wantLevel}, levels)
+		})
+	}
+}
+
 // TestDeviceWatcher_createGenericGroupWithoutComputeInstances checks that the group gets every monitored
 // GPU, GPU instance, CPU or switch, that DCGM errors when creating or filling the group are returned,
 // and that a failed group destroy is not.

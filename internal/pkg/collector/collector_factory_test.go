@@ -981,6 +981,148 @@ func TestCollectorFactoryKeepsEachEntityExplanationWhenWideningFails(t *testing.
 	assert.NotContains(t, logs.String(), "DCGM collectors cannot be initialized")
 }
 
+// TestCollectorFactoryDropsRefusedNVLinkProfilingFields checks that an NvLink
+// watch that DCGM refuses because the links cannot be profiled is installed
+// again without the per-link profiling fields, keeping every other link field,
+// and that no other failure or entity type gets this fallback.
+func TestCollectorFactoryDropsRefusedNVLinkProfilingFields(t *testing.T) {
+	const (
+		linkErrorField = dcgm.Short(dcgm.DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL)
+		profilingText  = "error watching fields: Profiling is not supported for this group of GPUs or GPU"
+	)
+	profTX := dcgm.Short(dcgm.DCGM_FI_PROF_NVLINK_TX_BYTES)
+	profRX := dcgm.Short(dcgm.DCGM_FI_PROF_NVLINK_RX_BYTES)
+
+	tests := []struct {
+		name           string
+		linkFields     []dcgm.Short
+		gpuFields      []dcgm.Short
+		watchErr       error
+		wantErr        string
+		wantLinkFields []dcgm.Short
+		wantWarning    bool
+	}{
+		{
+			name:           "link profiling refused keeps the other link fields",
+			linkFields:     []dcgm.Short{profRX, profTX, linkErrorField},
+			watchErr:       errors.New(profilingText),
+			wantLinkFields: []dcgm.Short{linkErrorField},
+			wantWarning:    true,
+		},
+		{
+			name:        "only profiling fields on links builds no link collector",
+			linkFields:  []dcgm.Short{profRX, profTX},
+			watchErr:    errors.New(profilingText),
+			wantWarning: true,
+		},
+		{
+			name:       "another link watch failure still fails",
+			linkFields: []dcgm.Short{profRX, profTX, linkErrorField},
+			watchErr:   &dcgm.Error{Code: dcgm.DCGM_ST_CONNECTION_NOT_VALID},
+			wantErr:    "build DCGM collector for entity type NvLink",
+		},
+		{
+			name:      "a refused GPU profiling watch still fails",
+			gpuFields: []dcgm.Short{profRX, profTX},
+			watchErr:  errors.New(profilingText),
+			wantErr:   "build DCGM collector for entity type GPU",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client := mockdcgm.NewMockDCGM(ctrl)
+			realDCGM := dcgmprovider.Client()
+			defer dcgmprovider.SetClient(realDCGM)
+			dcgmprovider.SetClient(client)
+
+			// Field groups that contain a profiling field get their own handle, and only
+			// that handle's watch fails.
+			groupHandle := dcgm.GroupHandle{}
+			groupHandle.SetHandle(uintptr(42))
+			plainFields := dcgm.FieldHandle{}
+			plainFields.SetHandle(uintptr(43))
+			profilingFields := dcgm.FieldHandle{}
+			profilingFields.SetHandle(uintptr(44))
+			client.EXPECT().GetGPUStatus(gomock.Any()).Return(dcgm.EntityStatusUnknown).AnyTimes()
+			client.EXPECT().CreateGroup(gomock.Any()).Return(groupHandle, nil).AnyTimes()
+			client.EXPECT().AddEntityToGroup(groupHandle, dcgm.FE_GPU, uint(0)).Return(nil).AnyTimes()
+			client.EXPECT().DestroyGroup(gomock.Any()).Return(nil).AnyTimes()
+			client.EXPECT().FieldGroupDestroy(gomock.Any()).Return(nil).AnyTimes()
+			client.EXPECT().UnwatchFields(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+			client.EXPECT().FieldGetByID(gomock.Any()).Return(dcgm.FieldMeta{}, nil).AnyTimes()
+			client.EXPECT().FieldGroupCreate(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ string, fields []dcgm.Short) (dcgm.FieldHandle, error) {
+					for _, field := range fields {
+						if field == profTX || field == profRX {
+							return profilingFields, nil
+						}
+					}
+					return plainFields, nil
+				}).AnyTimes()
+			client.EXPECT().WatchFieldsWithGroupExNoRefresh(gomock.Any(), groupHandle, gomock.Any(), gomock.Any(),
+				gomock.Any()).DoAndReturn(
+				func(fieldGroup dcgm.FieldHandle, _ dcgm.GroupHandle, _ int64, _ float64, _ int32) error {
+					if fieldGroup == profilingFields {
+						return tt.watchErr
+					}
+					return nil
+				}).AnyTimes()
+
+			deviceInfo := mockdeviceinfo.NewMockProvider(ctrl)
+			deviceInfo.EXPECT().InfoType().Return(dcgm.FE_NONE).AnyTimes()
+			deviceInfo.EXPECT().GOpts().Return(appconfig.DeviceOptions{Flex: true}).AnyTimes()
+			deviceInfo.EXPECT().GPUCount().Return(uint(1)).AnyTimes()
+			deviceInfo.EXPECT().GPU(uint(0)).Return(mockGPU).AnyTimes()
+
+			watcher := devicewatcher.NewDeviceWatcherWithClient(client)
+			manager := mockdevicewatchlistmanager.NewMockManager(ctrl)
+			if len(tt.gpuFields) > 0 {
+				manager.EXPECT().EntityWatchList(dcgm.FE_GPU).
+					Return(*devicewatchlistmanager.NewWatchList(deviceInfo, tt.gpuFields, nil, watcher, 1), true).AnyTimes()
+			}
+			if len(tt.linkFields) > 0 {
+				manager.EXPECT().EntityWatchList(dcgm.FE_LINK).
+					Return(*devicewatchlistmanager.NewWatchList(deviceInfo, tt.linkFields, nil, watcher, 1), true).AnyTimes()
+			}
+			manager.EXPECT().EntityWatchList(gomock.Any()).Return(devicewatchlistmanager.WatchList{}, false).AnyTimes()
+
+			counterSet := &counters.CounterSet{DCGMCounters: []counters.Counter{
+				{FieldID: profRX, FieldName: "DCGM_FI_PROF_NVLINK_RX_BYTES", PromType: "gauge"},
+				{FieldID: profTX, FieldName: "DCGM_FI_PROF_NVLINK_TX_BYTES", PromType: "gauge"},
+				{FieldID: linkErrorField, FieldName: "DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL", PromType: "counter"},
+			}}
+			logs := captureSlogOutput(t)
+			collectors, err := InitCollectorFactory(counterSet, manager, "testhost", &appconfig.Config{}).NewCollectors()
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				assert.Empty(t, collectors)
+				assert.NotContains(t, logs.String(), "DCGM cannot profile the NVLinks")
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantWarning, strings.Contains(logs.String(), "DCGM cannot profile the NVLinks"))
+			if len(tt.wantLinkFields) == 0 {
+				assert.Empty(t, collectors)
+				return
+			}
+
+			require.Len(t, collectors, 1)
+			assert.Equal(t, dcgm.FE_LINK, collectors[0].entity)
+			linkCollector, ok := collectors[0].Collector().(*DCGMCollector)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantLinkFields, linkCollector.deviceWatchList.DeviceFields())
+			for _, collector := range collectors {
+				collector.Collector().Cleanup()
+			}
+		})
+	}
+}
+
 // recordingWatchListManager records entity watch-list lookups made by a collector factory.
 type recordingWatchListManager struct {
 	requested []dcgm.Field_Entity_Group

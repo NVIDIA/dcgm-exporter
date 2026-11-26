@@ -28,6 +28,7 @@ import (
 
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/appconfig"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/counters"
+	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmerrors"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/dcgmprovider"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/deviceinfo"
 	"github.com/NVIDIA/dcgm-exporter/internal/pkg/devicemonitoring"
@@ -772,6 +773,7 @@ func logWatchFieldsCall(
 
 // logWatchFieldsFailure records a failed watch call with the creating client's
 // field metadata, keeping diagnostics in the same generation as the failure.
+// watchFailureLevel picks the level.
 func logWatchFieldsFailure(
 	client dcgmprovider.DCGM,
 	deviceInfo deviceinfo.Provider,
@@ -780,11 +782,28 @@ func logWatchFieldsFailure(
 	fieldIDs []dcgm.Short,
 	err error,
 ) {
+	level := watchFailureLevel(deviceInfo.InfoType(), err)
+	if !slog.Default().Enabled(context.Background(), level) {
+		return
+	}
+
 	attrs := append(
 		watchLogAttrs(client, deviceInfo, group, fieldGroup, fieldIDs),
 		slog.String(ErrorKey, err.Error()),
 	)
-	slog.LogAttrs(context.Background(), slog.LevelError, "Failed to watch DCGM fields", attrs...)
+	slog.LogAttrs(context.Background(), level, "Failed to watch DCGM fields", attrs...)
+}
+
+// watchFailureLevel returns the level for a failed watch log. When DCGM cannot
+// profile the NVLinks of a GPU, the collector factory watches the links again
+// without the profiling fields and logs a warning, or logs an error if it
+// cannot, so that NvLink failure is logged here at debug level only. Every
+// other failure is an error.
+func watchFailureLevel(entityType dcgm.Field_Entity_Group, err error) slog.Level {
+	if entityType == dcgm.FE_LINK && dcgmerrors.IsProfilingNotSupported(err) {
+		return slog.LevelDebug
+	}
+	return slog.LevelError
 }
 
 // watchLogAttrs builds structured watch diagnostics from one captured client.
