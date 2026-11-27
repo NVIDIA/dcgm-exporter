@@ -120,6 +120,9 @@ hostPID: false
 # provides NVIDIA support.
 runtimeClassName: ""
 
+# Pod resource claims for Dynamic Resource Allocation. Reference their names in resources.claims.
+resourceClaims: []
+
 # Defines the priority class that will be used by the pod
 priorityClassName: "system-node-critical"
 
@@ -191,7 +194,7 @@ service:
   # Annotations to add to the service
   annotations: {}
 
-# Allows to control pod resources
+# Exporter container resource requests, limits and claim references.
 resources:
   limits:
     cpu: 200m

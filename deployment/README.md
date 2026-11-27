@@ -449,6 +449,33 @@ serviceAccount:
   automountServiceAccountToken: true
 ```
 
+### GPU access through DRA
+
+On a cluster with the NVIDIA DRA driver and a CDI-compatible runtime, use Pod
+resource claims to allocate GPU access to the exporter. Create a
+`ResourceClaimTemplate` in the namespace where the chart deploys the DaemonSet.
+Then set these chart values to use it:
+
+```yaml
+resourceClaims:
+  - name: gpu-access
+    resourceClaimTemplateName: exporter-gpu-admin
+resources:
+  claims:
+    - name: gpu-access
+```
+
+The `resources.claims` name matches the Pod claim's `name`. The template name
+identifies the existing Kubernetes object. A Pod claim can also reference an
+existing `ResourceClaim` by `resourceClaimName`. Leave `runtimeClassName` empty
+when your runtime injects DRA-allocated GPUs through CDI without a RuntimeClass.
+See the [Kubernetes DRA guide](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/).
+
+For a template that requests `adminAccess: true`, a cluster administrator must
+label its namespace `resource.kubernetes.io/admin-access: "true"`. This
+allocation setting is independent of the DRA metric enrichment settings above.
+See [DRA administrative access](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/dra-api/#admin-access).
+
 ## Parameters
 
 Each table lists a chart value, what it does and its default. `values.yaml` has the same
@@ -491,6 +518,7 @@ list with comments.
 | `hostPID` | Let the exporter see host processes | `false` |
 | `hostNetwork` | Use the host network | `false` |
 | `runtimeClassName` | RuntimeClass that provides the NVIDIA driver | `""` |
+| `resourceClaims` | DRA claims to place in the DaemonSet Pod spec | `[]` |
 | `priorityClassName` | Pod priority class | `system-node-critical` |
 | `rollingUpdate.maxUnavailable` | DaemonSet pods that can be down during an update; exactly one of this and `maxSurge` is nonzero | `1` |
 | `rollingUpdate.maxSurge` | Nodes that can run an extra updated pod during an update; exactly one of this and `maxUnavailable` is nonzero | `0` |
@@ -499,7 +527,7 @@ list with comments.
 | `daemonSetAnnotations` | Extra DaemonSet annotations | `{}` |
 | `podSecurityContext` | Pod security context | `{}` |
 | `securityContext` | Container security context. The default runs as root and keeps only `SYS_ADMIN`, which profiling metrics (`DCGM_FI_PROF_*`) need | see `values.yaml` |
-| `resources` | CPU, memory and ephemeral-storage requests and limits | 100m CPU, 128Mi memory and 100Mi ephemeral-storage requests; 200m CPU and 512Mi memory limits |
+| `resources` | Exporter container requests, limits and claim references | Requests: 100m CPU, 128Mi memory, 100Mi ephemeral storage. Limits: 200m CPU, 512Mi memory |
 | `initContainers` | Extra init containers, as full container specs | `[]` |
 
 ### Scheduling
@@ -596,7 +624,7 @@ readiness probes wait 45 seconds unless you set `initialDelaySeconds`.
 | `no matches for kind "ServiceMonitor"` | The Prometheus Operator CRDs are missing. Install them, or set `serviceMonitor.enabled=false` |
 | Render fails with `removed chart values` | Your values use a setting that moved into `config`. See [Upgrading](#upgrading) |
 | Render fails with `must use service.port` | A `config.outputs.<name>.listen` port differs from `service.port`. Change both together |
-| The exporter cannot load the NVIDIA libraries | The runtime does not inject the driver. Set `runtimeClassName` |
+| The exporter cannot load the NVIDIA libraries | Check driver injection through `runtimeClassName` or [GPU access through DRA](#gpu-access-through-dra), depending on the cluster |
 | A scrape fails with `networkPolicy.enabled` | Prometheus is not in `allowedPeers`. Add its namespace or pod labels |
 | The pod is evicted with debug dumps on | The dumps outgrew `debugDump.sizeLimit`. Raise it above `config.debug_dump.max_total_bytes` |
 | Edits to `config` have no effect | The exporter reads the file at startup. With `configMap.existingName`, restart the pods |
