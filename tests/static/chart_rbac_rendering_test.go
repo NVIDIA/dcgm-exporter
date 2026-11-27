@@ -960,12 +960,13 @@ type chartResource struct {
 		Template struct {
 			Metadata metadata `yaml:"metadata"`
 			Spec     struct {
-				AutomountServiceAccountToken *bool             `yaml:"automountServiceAccountToken"`
-				Containers                   []container       `yaml:"containers"`
-				InitContainers               []container       `yaml:"initContainers"`
-				ImagePullSecrets             []imagePullSecret `yaml:"imagePullSecrets"`
-				Tolerations                  []toleration      `yaml:"tolerations"`
-				Volumes                      []volume          `yaml:"volumes"`
+				AutomountServiceAccountToken *bool               `yaml:"automountServiceAccountToken"`
+				Containers                   []container         `yaml:"containers"`
+				InitContainers               []container         `yaml:"initContainers"`
+				ImagePullSecrets             []imagePullSecret   `yaml:"imagePullSecrets"`
+				ResourceClaims               []map[string]string `yaml:"resourceClaims"`
+				Tolerations                  []toleration        `yaml:"tolerations"`
+				Volumes                      []volume            `yaml:"volumes"`
 			} `yaml:"spec"`
 		} `yaml:"template"`
 	} `yaml:"spec"`
@@ -987,8 +988,9 @@ type container struct {
 	Args      []string `yaml:"args"`
 	Env       []env    `yaml:"env"`
 	Resources struct {
-		Limits   map[string]string `yaml:"limits"`
-		Requests map[string]string `yaml:"requests"`
+		Limits   map[string]string   `yaml:"limits"`
+		Requests map[string]string   `yaml:"requests"`
+		Claims   []map[string]string `yaml:"claims"`
 	} `yaml:"resources"`
 	VolumeMounts   []volumeMount `yaml:"volumeMounts"`
 	StartupProbe   *probe        `yaml:"startupProbe"`

@@ -133,3 +133,45 @@ func TestChartResourcesAndInitContainers(t *testing.T) {
 	require.Len(t, daemonSet.Spec.Template.Spec.InitContainers, 1)
 	assert.Equal(t, "wait-for-driver", daemonSet.Spec.Template.Spec.InitContainers[0].Name)
 }
+
+// TestChartOmitsEmptyResourceClaims checks that unconfigured DRA claims do not appear in the DaemonSet.
+func TestChartOmitsEmptyResourceClaims(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]interface{}
+	}{
+		{name: "defaults"},
+		{name: "explicitly empty Pod claims", values: map[string]interface{}{"resourceClaims": []interface{}{}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			daemonSet := requireResourceKind(t, renderChart(t, tt.values), "DaemonSet")
+			exporter := requireContainer(t, daemonSet, "exporter")
+
+			assert.Nil(t, daemonSet.Spec.Template.Spec.ResourceClaims)
+			assert.Nil(t, exporter.Resources.Claims)
+		})
+	}
+}
+
+// TestChartResourceClaims checks that the exporter can reference either Pod claim source by its local name.
+func TestChartResourceClaims(t *testing.T) {
+	for _, source := range []string{"resourceClaimTemplateName", "resourceClaimName"} {
+		t.Run(source, func(t *testing.T) {
+			podClaims := []map[string]string{{"name": "gpu-access", source: "exporter-gpu"}}
+			containerClaims := []map[string]string{{"name": "gpu-access", "request": "gpu"}}
+			values := map[string]interface{}{
+				"resourceClaims": podClaims,
+				"resources":      map[string]interface{}{"claims": containerClaims},
+			}
+			daemonSet := requireResourceKind(t, renderChart(t, values), "DaemonSet")
+			exporter := requireContainer(t, daemonSet, "exporter")
+
+			assert.Equal(t, podClaims, daemonSet.Spec.Template.Spec.ResourceClaims)
+			assert.Equal(t, containerClaims, exporter.Resources.Claims)
+			assert.Equal(t, "100m", exporter.Resources.Requests["cpu"])
+			assert.Equal(t, "512Mi", exporter.Resources.Limits["memory"])
+		})
+	}
+}
